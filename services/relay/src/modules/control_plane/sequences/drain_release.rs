@@ -35,7 +35,6 @@ impl ReleaseUnwatchedPublishes {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use super::*;
     use crate::modules::test_support::directory_fixtures::downstream_subscription;
@@ -48,7 +47,6 @@ mod tests {
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, delivery_control,
                 register_downstream, track_key, upstream_release_context,
             },
-            mock_session::MockPublishHandler,
             stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
     };
@@ -89,15 +87,6 @@ mod tests {
     async fn an_unwatched_published_track_has_its_route_withdrawn() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Publish).await;
-        ctx.table.register_publish(
-            PUBLISHER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new(
-                &track_key().track_namespace,
-                &track_key().track_name,
-                10,
-            )),
-        );
         let route_registry = StubRouteRegistry::new(PublisherLookup::MustNotBeCalled);
 
         // Act

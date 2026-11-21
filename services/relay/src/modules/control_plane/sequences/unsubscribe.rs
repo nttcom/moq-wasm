@@ -69,14 +69,13 @@ mod tests {
         domain::{publish_done_reason::PublishDoneReason, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{
-                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
-                register_downstream, track_key, upstream_release_context,
+                UPSTREAM_REQUEST_ID, UpstreamReleaseContext, register_downstream, track_key,
+                upstream_release_context,
             },
-            mock_session::{MockPublishHandler, runner_stopped},
+            mock_session::runner_stopped,
             stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
     };
-    use std::sync::Arc;
 
     struct TestContext {
         upstream: UpstreamReleaseContext,
@@ -225,15 +224,6 @@ mod tests {
     async fn the_last_subscriber_of_a_draining_relay_withdraws_the_route_of_the_released_publish() {
         // Arrange
         let ctx = setup(ProducerOrigin::Publish, &[(100, 10)]).await;
-        ctx.upstream.table.register_publish(
-            PUBLISHER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new(
-                &track_key().track_namespace,
-                &track_key().track_name,
-                10,
-            )),
-        );
         ctx.upstream.table.begin_draining(1);
 
         // Act

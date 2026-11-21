@@ -1,6 +1,6 @@
 # [S] Remove a directory namespace entry only while it is still empty
 
-Next: in `unregister_peer` (`services/relay/src/modules/directory.rs:213`), replace `namespaces.remove(namespace)` with `namespaces.remove_if(namespace, |_, peers| peers.is_empty())`.
+Next: in `unregister_peer` (`services/relay/src/modules/directory.rs:207`), replace `namespaces.remove(namespace)` with `namespaces.remove_if(namespace, |_, peers| peers.is_empty())`.
 
 ## Goal
 
@@ -9,5 +9,5 @@ Now `unregister_peer` drops its guard on the entry, then removes it unconditiona
 
 ## Plan
 
-The same check-then-remove is in `purge_relay_publish_namespaces` (`:495`), `unregister_subscribe_namespace` (`:592`) and `remove_namespace_subscriptions` (`:617`).
+The same check-then-remove is in `purge_relay_publish_namespaces` (`:468`), `unregister_subscribe_namespace` (`:565`) and `remove_namespace_subscriptions` (`:590`).
 Found by reading the code; not reproduced.

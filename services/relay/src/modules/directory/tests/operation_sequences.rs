@@ -36,7 +36,6 @@ use crate::modules::{
         directory_fixtures::{
             active_upstream, delivery_control, downstream_subscription, producer_with,
         },
-        mock_session::MockPublishHandler,
         relay_harness::fixtures::subscription::upstream_subscription,
     },
 };
@@ -538,16 +537,10 @@ impl Harness {
                     on_demand,
                     ..active_upstream(ProducerOrigin::Publish)
                 });
-                let (namespace, name) = TRACKS[track];
                 let (_, replaced) = self.directory.register_published_subscription(
                     track_key(track),
                     session_id,
                     producer,
-                    Arc::new(MockPublishHandler::new(
-                        NAMESPACES[namespace],
-                        name,
-                        request_id,
-                    )),
                 );
                 let expected = self
                     .producers
@@ -950,16 +943,6 @@ impl Harness {
             !subscribes_namespace,
             "removed session {session_id} still subscribes a namespace"
         );
-        let has_handler = directory
-            .published_handlers
-            .read()
-            .unwrap()
-            .iter()
-            .any(|published| published.publisher_session_id == session_id);
-        prop_assert!(
-            !has_handler,
-            "removed session {session_id} still has a PUBLISH handler"
-        );
         let blocked = directory
             .blocked_publishes()
             .iter()
@@ -1016,33 +999,6 @@ impl Harness {
             .collect();
         prop_assert_eq!(producers, self.producers.clone(), "upstream subscriptions");
 
-        // A PUBLISH handler is registered exactly while its PUBLISH feeds
-        // the track.
-        let mut handlers: Vec<_> = directory
-            .published_handlers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|published| {
-                (
-                    published.publisher_session_id,
-                    track_of(&TrackKey::new(
-                        published.handler.track_namespace(),
-                        published.handler.track_name(),
-                    )),
-                )
-            })
-            .collect();
-        handlers.sort();
-        let mut expected_handlers: Vec<_> = self
-            .producers
-            .iter()
-            .filter(|(_, (_, origin))| *origin == ProducerOrigin::Publish)
-            .map(|((track, publisher), _)| (*publisher, *track))
-            .collect();
-        expected_handlers.sort();
-        prop_assert_eq!(&handlers, &expected_handlers, "PUBLISH handlers");
-
         // The upstream publishers of a track are the clients publishing its
         // namespace or PUBLISHing it.
         for (track, (namespace, name)) in TRACKS.into_iter().enumerate() {
@@ -1054,13 +1010,14 @@ impl Harness {
                 })
                 .map(|((session_id, _), _)| *session_id)
                 .chain(
-                    handlers
+                    self.producers
                         .iter()
-                        .filter(|(session_id, published)| {
-                            *published == track
-                                && self.peer_of(*session_id) == Some(SessionPeer::Client)
+                        .filter(|((produced, publisher), (_, origin))| {
+                            *produced == track
+                                && *origin == ProducerOrigin::Publish
+                                && self.peer_of(*publisher) == Some(SessionPeer::Client)
                         })
-                        .map(|(session_id, _)| *session_id),
+                        .map(|((_, publisher), _)| *publisher),
                 )
                 .collect();
             prop_assert_eq!(

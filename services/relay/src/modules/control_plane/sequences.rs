@@ -16,8 +16,6 @@ pub(crate) mod unsubscribe_namespace;
 pub(crate) mod upstream_forward;
 pub(crate) mod upstream_publish_done;
 
-use std::sync::Arc;
-
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
@@ -42,10 +40,7 @@ use crate::modules::{
         runner_signals::DownstreamRunnerSignals, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
-    session::{
-        handler::publish::PublishHandler,
-        subscription::{DownstreamSubscription, UpstreamSubscription},
-    },
+    session::subscription::{DownstreamSubscription, UpstreamSubscription},
 };
 use tokio::sync::oneshot;
 use tracing::Span;
@@ -208,10 +203,9 @@ pub(crate) async fn register_published_subscription(
     track_key: TrackKey,
     publisher_session_id: SessionId,
     producer: Producer,
-    handler: Arc<dyn PublishHandler>,
 ) -> bool {
     let (forward, replaced) =
-        table.register_published_subscription(track_key, publisher_session_id, producer, handler);
+        table.register_published_subscription(track_key, publisher_session_id, producer);
     let Some(replaced) = replaced else {
         return forward;
     };
@@ -389,7 +383,7 @@ mod tests {
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, delivery_control,
                 producer_with, register_downstream, track_key, upstream_release_context,
             },
-            mock_session::{MockPublishHandler, wait_until},
+            mock_session::wait_until,
             relay_harness::fixtures::subscription::upstream_subscription,
         },
     };
@@ -401,10 +395,6 @@ mod tests {
             subscription: upstream_subscription(PUBLISH_REQUEST_ID),
             ..active_upstream(ProducerOrigin::Publish)
         })
-    }
-
-    fn published_handler() -> Arc<dyn PublishHandler> {
-        Arc::new(MockPublishHandler::new("ns", "track", PUBLISH_REQUEST_ID))
     }
 
     #[tokio::test]
@@ -419,7 +409,6 @@ mod tests {
             track_key(),
             PUBLISHER_SESSION,
             published(),
-            published_handler(),
         )
         .await;
 
@@ -450,7 +439,6 @@ mod tests {
             track_key(),
             PUBLISHER_SESSION,
             published(),
-            published_handler(),
         )
         .await;
         ctx.table.begin_draining(0);
@@ -495,7 +483,6 @@ mod tests {
                 track_key(),
                 PUBLISHER_SESSION,
                 published(),
-                published_handler(),
             ),
             async {
                 wait_until(|| ctx.recorded.unsubscribed_request_ids() == [UPSTREAM_REQUEST_ID])
@@ -506,7 +493,7 @@ mod tests {
             },
         );
 
-        // Assert: the released PUBLISH leaves no handler that would keep the track's route
+        // Assert
         assert!(ctx.table.upstream_tracks.get(&track_key()).is_none());
         assert!(!ctx.table.has_client_published_track(&track_key()));
     }
