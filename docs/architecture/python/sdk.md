@@ -788,7 +788,26 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   that does not decode, its decoder refusing three of its objects in a row
   or the group ending without a picture after a refusal, raises the
   decoder's error, so the transport fails the track instead of waiting on
-  a broken stream; a group joined midway decodes to nothing. A
+  a broken stream; a group joined midway decodes to nothing. An H.264 or
+  H.265 object of a group without a Video Config is read as Annex B when
+  it starts with a 4-byte or 3-byte start
+  code, and else as 4-byte length prefixes (draft-ietf-moq-loc-04
+  §2.1.3–2.1.4). A start code followed by bytes that 4-byte length
+  prefixes would also cover exactly, as a 3-byte one followed by the first
+  bytes of a 256 to 511 byte length, is read as the group's earlier
+  objects were, so a short Annex B slice of a group that began Annex B
+  is not skipped as a length; in a group's first object, a 4-byte start
+  code is Annex B and a 3-byte one a length. Length prefixes that cover the
+  payload exactly are rewritten as start codes once the group carried an
+  SPS in band, as an `avc3` or `hev1` track may, so the decoder reads
+  them without extradata. A length-prefixed object before the group's
+  parameter sets, as when a subscriber joined after the only object
+  carrying the Video Config, and one readable neither way, are skipped
+  without reaching the decoder, which could make garbage pictures of
+  them, until a group carrying a Video Config arrives; the first one
+  skipped in a group joined at its keyframe, which would have carried the
+  parameter sets in band, logs a warning, since only a Video Config given
+  beforehand, as the catalog's initialization data, decodes them. A
   group's decoder takes the LOC Video Config property
   (draft-ietf-moq-loc-04 §2.3.2.1) as its extradata, so length-prefixed
   H.264 with its avcC record decodes too: the one its first object carries,
