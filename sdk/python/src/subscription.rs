@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::scope::SessionScope;
-use bytes::Bytes;
+use mediapack::loc::{LocObject, LocValue, from_extension_headers};
 use moqt::{
     client::{self, ReceivedObject},
     wire::publish_done_code_to_wire,
@@ -20,14 +20,41 @@ pub struct Object {
     object_id: u64,
     #[pyo3(get)]
     status: Option<u8>,
-    payload: Bytes,
+    /// The payload and the extension headers, which carry the object's LOC
+    /// properties (draft-ietf-moq-loc-04 §2.2).
+    loc: LocObject,
 }
 
 #[pymethods]
 impl Object {
     #[getter]
     fn payload<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.payload)
+        PyBytes::new(py, &self.loc.payload)
+    }
+
+    /// The extension headers as `(id, value)` pairs in the order they came:
+    /// an even id carries an integer, an odd one bytes.
+    #[getter]
+    fn extension_headers<'py>(&self, py: Python<'py>) -> PyResult<Vec<(u64, Bound<'py, PyAny>)>> {
+        self.loc
+            .extensions
+            .iter()
+            .map(|extension| {
+                let value = match &extension.value {
+                    LocValue::Varint(value) => value.into_pyobject(py)?.into_any(),
+                    LocValue::Bytes(bytes) => PyBytes::new(py, bytes).into_any(),
+                };
+                Ok((extension.id, value))
+            })
+            .collect()
+    }
+
+    /// The LOC Timestamp property in µs (draft-ietf-moq-loc-04 §2.3.1):
+    /// wall-clock time since the Unix epoch, or media time when a Timescale
+    /// property comes with it; None without one.
+    #[getter]
+    fn timestamp_micros(&self) -> Option<u64> {
+        self.loc.timestamp().map(|timestamp| timestamp.micros())
     }
 }
 
@@ -38,7 +65,10 @@ impl From<ReceivedObject> for Object {
             subgroup_id: object.subgroup_id,
             object_id: object.object_id,
             status: object.status.map(|status| status as u8),
-            payload: object.payload,
+            loc: LocObject {
+                extensions: from_extension_headers(&object.extension_headers),
+                payload: object.payload,
+            },
         }
     }
 }

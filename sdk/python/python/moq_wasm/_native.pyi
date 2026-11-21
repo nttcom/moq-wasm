@@ -186,6 +186,15 @@ class Object:
         payload."""
     @property
     def payload(self) -> bytes: ...
+    @property
+    def extension_headers(self) -> list[tuple[int, int | bytes]]:
+        """The extension headers as `(id, value)` pairs in the order they came, which carry the
+        object's LOC properties (draft-ietf-moq-loc-04 §2.2): an even id carries an integer, an odd
+        one bytes."""
+    @property
+    def timestamp_micros(self) -> int | None:
+        """The LOC Timestamp property in µs (draft-ietf-moq-loc-04 §2.3.1): wall-clock time since
+        the Unix epoch, or media time when a Timescale property comes with it; None without one."""
 
 class PublishDone:
     @property

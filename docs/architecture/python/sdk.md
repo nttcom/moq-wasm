@@ -163,8 +163,10 @@ object went into when a subscriber took it, and `next_subscriber`; its
 objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
 through `groups()`, and has `largest`, `done()`, `set_forward`,
 `set_priority`, `request_new_group`, `end_before_group` and `close`. An
-`Object` carries `group_id`, `subgroup_id`, `object_id`, `status` and
-`payload`; its extension headers are left out until a bot reads one.
+`Object` carries `group_id`, `subgroup_id`, `object_id`, `status`,
+`payload`, its `extension_headers` as `(id, value)` pairs and
+`timestamp_micros`, the LOC Timestamp a recorder aligns audio and video
+by.
 
 A request that fails raises `RequestError`, as the browser SDK does, with
 `message_type` (`"SUBSCRIBE"`, ...), `code`, the draft-14 number of its
