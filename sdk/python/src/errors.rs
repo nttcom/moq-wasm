@@ -1,9 +1,13 @@
 use moqt::{
     RequestErrorCode, RequestFailure, TransportClose,
-    client::RequestError as ClientRequestError,
+    client::{PublishTrackError, RequestError as ClientRequestError},
     wire::{RequestKind, request_error_code_to_wire},
 };
-use pyo3::{create_exception, exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    create_exception,
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 create_exception!(
     moq_wasm,
@@ -26,6 +30,16 @@ pub(crate) fn request_error_in(error: anyhow::Error, kind: RequestKind) -> PyErr
     match error.downcast::<RequestFailure>() {
         Ok(failure) => failed_request(kind, &failure),
         Err(error) => error.into(),
+    }
+}
+
+/// The Python exception of a failed `publish_track`: a `ValueError` for a
+/// registration with the other delivery than the track's objects took, and
+/// as `request_error_in` for a failed PUBLISH.
+pub(crate) fn publish_track_error(error: anyhow::Error) -> PyErr {
+    match error.downcast::<PublishTrackError>() {
+        Ok(error) => PyValueError::new_err(error.to_string()),
+        Err(error) => request_error_in(error, RequestKind::Publish),
     }
 }
 
