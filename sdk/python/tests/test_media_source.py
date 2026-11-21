@@ -822,6 +822,7 @@ async def test_a_subscriber_gets_aac_audio_listed_with_its_codec_and_loc_propert
         # Assert: the frame comes with its LOC Timestamp, which the broadcast puts on the wall
         # clock, and its Audio Level
         assert catalog.select(role="audio").codec == "mp4a.40.2"
+        assert catalog.init_data(catalog.select(role="audio")) == AAC_LC_48K_MONO
         received = await within(anext(audio))
         assert received.payload == b"aac frame 1"
         assert abs(received.timestamp_micros - time.time() * 1_000_000) < 60_000_000

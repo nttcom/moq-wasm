@@ -56,6 +56,29 @@ def test_parse_reads_the_track_fields_and_refuses_another_version():
         Catalog.parse(b'{"version":"draft-03","tracks":[]}')
 
 
+def test_init_data_resolves_a_tracks_init_ref_in_the_catalogs_init_data_list():
+    # Arrange: AAC-LC, 48 kHz, mono, as the SDK's AAC publisher lists it
+    document = {
+        "version": "draft-02",
+        "tracks": [
+            {"name": "audio", "packaging": "loc", "isLive": True, "initRef": "audio-init"},
+            {"name": "property", "packaging": "loc", "isLive": True, "initRef": "property-init"},
+            {"name": "video", "packaging": "loc", "isLive": True},
+        ],
+        "initDataList": [
+            {"id": "audio-init", "type": "inline", "data": "EYg="},
+            {"id": "property-init", "type": "track-property", "data": "0x0D"},
+        ],
+    }
+
+    # Act
+    catalog = Catalog.parse(json.dumps(document).encode())
+
+    # Assert: the track-property type's data is carried by the track, not the catalog
+    assert catalog.fields["initDataList"] == document["initDataList"]
+    assert [catalog.init_data(track) for track in catalog.tracks] == [bytes([0x11, 0x88]), None, None]
+
+
 async def test_a_broadcast_registers_its_tracks_before_it_publishes_and_withdraws_them_on_exit():
     # Arrange
     relay = FakeRelay()

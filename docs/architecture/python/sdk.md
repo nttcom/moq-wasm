@@ -617,8 +617,12 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
 - **`Catalog`** is a typed draft-ietf-moq-msf-02 catalog (`tracks` of
   `CatalogTrack` with `name`, `namespace`, `role`, `packaging`, `codec`,
   `bitrate`, `width`, `height`, `framerate`, `samplerate`, and every field in
-  `fields`). `select` picks one track by its fields; `codec="avc1"` matches
-  `avc1.42e01f`.
+  `fields`), with every field of its root in `fields`, `initDataList`
+  included. `select` picks one track by its fields; `codec="avc1"` matches
+  `avc1.42e01f`. `init_data(track)` resolves the track's `initRef` in the
+  same catalog's `initDataList` and decodes an `inline` entry from Base64,
+  such as the AudioSpecificConfig of an AAC track or a CMAF track's
+  initialization segment.
   `parse_catalog`'s dict stays in the bindings.
 
 ### pipecat: `moq_wasm.pipecat`
