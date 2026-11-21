@@ -6,6 +6,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from moq_wasm._errors import SessionEnded
+
 logger = logging.getLogger("moq_wasm")
 
 # A token is refreshed this long before it expires, as the pages do (examples/browser/utils/access.ts).
@@ -33,7 +35,7 @@ def read_claims(token: str) -> TokenClaims:
         raise ValueError(f"not a token with an appId claim: {error}") from error
 
 
-class TokenExpired(Exception):
+class TokenExpired(SessionEnded):
     """The session's token expired before `refresh_token` returned a later one."""
 
 

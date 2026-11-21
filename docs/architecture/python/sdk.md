@@ -145,7 +145,10 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   cancelling what runs inside it through `session.run`, which raises
   `SessionClosed` when `close()` ends the session instead. `run` raises the
   failure even when the work returned because of it, as a watch does when
-  the session ends:
+  the session ends. The three subclass `SessionEnded`, which is no
+  `RuntimeError`: a request made after the session ended raises what ended
+  it, so the loops that retry a refused request (`RemoteBroadcast.follow`)
+  end with it:
 
 ```python
 async with moq_wasm.connect(...) as session:
