@@ -274,7 +274,9 @@ class TrackWriter:
         object."""
 
 class MediaBroadcast:
-    def announce(self) -> asyncio.Future[None]: ...
+    def announce(self) -> asyncio.Future[None]:
+        """Publishes the namespace; raises `RequestError` when the relay refuses the
+        PUBLISH_NAMESPACE."""
     def close(self) -> None:
         """Stops answering for the broadcast's tracks; withdraw the namespace with `unannounce`
         first."""

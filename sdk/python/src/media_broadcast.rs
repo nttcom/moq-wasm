@@ -5,14 +5,17 @@ use broadcast::{
 };
 use bytes::Bytes;
 use mediapack::{AudioLevel, aac::AudioSpecificConfig};
-use moqt::client::{self, HandlerId};
+use moqt::{
+    client::{self, HandlerId},
+    wire::RequestKind,
+};
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
 use tokio::sync::Notify;
 
-use crate::scope::SessionScope;
+use crate::{errors::request_error_in, scope::SessionScope};
 
 /// An MSF broadcast of media the caller encodes, built by `broadcast` as the
 /// browser SDK's is: it publishes the catalog, the LOC tracks and the media
@@ -32,7 +35,10 @@ impl MediaBroadcast {
     fn announce<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let broadcast = self.broadcast.clone();
         self.scope.future_into_py(py, async move {
-            broadcast.announce().await?;
+            broadcast
+                .announce()
+                .await
+                .map_err(|error| request_error_in(error, RequestKind::PublishNamespace))?;
             Ok(())
         })
     }
