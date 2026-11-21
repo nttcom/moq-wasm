@@ -15,6 +15,7 @@ from typing import cast
 import av
 import numpy as np
 from av.error import FFmpegError
+from av.video.frame import PictureType
 
 from moq_wasm._native import Location, Object
 from moq_wasm._once import retrieve
@@ -119,6 +120,99 @@ class OpusDecoder:
         )
 
 
+class _PcmResampler:
+    """Resamples 16-bit interleaved PCM, mono or stereo at any rate, to `sample_rate` and
+    `num_channels` as one stream, whose layout and rate may change from one call to the next. The
+    resampler holds back a few samples of what it was given; `flush` returns them at the end of the
+    stream, so what came out lasts as long as what went in."""
+
+    def __init__(self, sample_rate: int, num_channels: int):
+        self._layout = _pcm_layout(num_channels)
+        self._rate = sample_rate
+        # A resampler takes the layout and rate of its first frame only, so each input layout and
+        # rate gets one of its own.
+        self._resampler: av.AudioResampler | None = None
+        self._input: tuple[str, int] | None = None
+        # The input's duration and what the resamplers gave of it so far, in output samples: a
+        # resampler may keep, or drop at its end, a few samples of a short input.
+        self._samples_in = 0.0
+        self._samples_out = 0
+
+    def resample(self, pcm: bytes, sample_rate: int, num_channels: int = 1) -> bytes:
+        """What `pcm` makes of the stream so far. Raises ValueError for more than two channels and
+        for a `sample_rate` that is no positive integer, before it changes anything, so the stream
+        goes on with the next call."""
+        layout = _pcm_layout(num_channels)
+        sample_rate = _pcm_rate(sample_rate)
+        frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout=layout)
+        frame.sample_rate = sample_rate
+        drained = b""
+        if self._resampler is None or self._input != (layout, sample_rate):
+            drained = self._drain()
+            self._resampler = av.AudioResampler(format="s16", layout=self._layout, rate=self._rate)
+            self._input = (layout, sample_rate)
+        self._samples_in += frame.samples * self._rate / sample_rate
+        return drained + self._take(self._resampler.resample(frame))
+
+    def flush(self) -> bytes:
+        """The rest of the stream: what the resampler holds, then silence up to the input's
+        duration. The next call starts a new stream."""
+        pcm = self._drain()
+        missing = round(self._samples_in) - self._samples_out
+        if missing > 0:
+            pcm += bytes(missing * self._channels * 2)
+        self.reset()
+        return pcm
+
+    def reset(self) -> None:
+        """Drops what the resampler holds; the next call starts a new stream."""
+        self._resampler = None
+        self._input = None
+        self._samples_in = 0.0
+        self._samples_out = 0
+
+    @property
+    def _channels(self) -> int:
+        return 2 if self._layout == "stereo" else 1
+
+    def _drain(self) -> bytes:
+        """The samples the resampler holds, up to the input's duration; the resampler takes no
+        more. A resampler gives nothing of an input shorter than its filter, even flushed, so it is
+        given 20 ms of silence first, and what comes of the silence is dropped."""
+        if self._resampler is None or self._input is None:
+            return b""
+        layout, sample_rate = self._input
+        channels = 2 if layout == "stereo" else 1
+        padding = np.zeros((1, sample_rate // 50 * channels), np.int16)
+        silence = av.AudioFrame.from_ndarray(padding, format="s16", layout=layout)
+        silence.sample_rate = sample_rate
+        drained = [*self._resampler.resample(silence), *self._resampler.resample(None)]
+        self._resampler = None
+        return self._take(drained, limit=round(self._samples_in) - self._samples_out)
+
+    def _take(self, resampled: list[av.AudioFrame], limit: int | None = None) -> bytes:
+        """The frames' samples, or their first `limit` samples."""
+        pcm = b""
+        for frame in resampled:
+            samples = frame.to_ndarray()[:, : frame.samples * self._channels]
+            if limit is not None:
+                samples = samples[:, : max(limit, 0) * self._channels]
+                limit -= samples.shape[1] // self._channels
+            pcm += samples.tobytes()
+            self._samples_out += samples.shape[1] // self._channels
+        return pcm
+
+
+def _pcm_rate(sample_rate: int) -> int:
+    try:
+        rate = operator.index(sample_rate)
+    except TypeError:
+        rate = 0
+    if rate <= 0:
+        raise ValueError(f"the sample rate must be a positive integer: {sample_rate!r}")
+    return rate
+
+
 def _pcm_layout(num_channels: int) -> str:
     layout = PCM_LAYOUTS.get(num_channels)
     if layout is None:
@@ -127,48 +221,57 @@ def _pcm_layout(num_channels: int) -> str:
 
 
 class OpusEncoder:
-    """Turns mono 16-bit PCM at any rate into 20 ms Opus packets at 48 kHz."""
+    """Turns 16-bit PCM at any rate into 20 ms Opus packets at 48 kHz of `channels` channels, mono
+    or stereo, at `bitrate` bits a second. Raises ValueError for another channel count."""
 
-    def __init__(self):
+    def __init__(self, bitrate: int = OPUS_BITRATE, channels: int = 1):
+        self._layout = _pcm_layout(channels)
+        self._channels = channels
         self._encoder = av.CodecContext.create("libopus", "w")
         self._encoder.sample_rate = OPUS_SAMPLE_RATE
-        self._encoder.layout = "mono"
+        self._encoder.layout = self._layout
         self._encoder.format = "s16"
-        self._encoder.bit_rate = OPUS_BITRATE
+        self._encoder.bit_rate = bitrate
         self._encoder.open()
-        # A resampler takes the rate of its first frame only, so each input rate gets one of its own.
-        self._resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
-        self._input_rate: int | None = None
+        self._resampler = _PcmResampler(OPUS_SAMPLE_RATE, channels)
         self._fifo = av.AudioFifo()
         self.frame_samples = self._encoder.frame_size
 
-    def encode(self, pcm: bytes, sample_rate: int) -> list[bytes]:
-        """Returns the packets `pcm`, mono 16-bit PCM at `sample_rate`, completes; the samples short
-        of a packet wait for the next call. The rate may change from one call to the next. Raises
-        ValueError, taking none of `pcm`, for a `sample_rate` that is not a positive integer."""
-        try:
-            rate = operator.index(sample_rate)
-        except TypeError:
-            rate = 0
-        if rate <= 0:
-            raise ValueError(f"the sample rate must be a positive integer: {sample_rate!r}")
-        frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout="mono")
-        frame.sample_rate = rate
-        if rate != self._input_rate:
-            self._write(self._resampler.resample(None))
-            self._resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
-            self._input_rate = rate
-        self._write(self._resampler.resample(frame))
+    def encode(self, pcm: bytes, sample_rate: int, num_channels: int = 1) -> list[bytes]:
+        """Returns the packets `pcm`, 16-bit PCM at `sample_rate` with `num_channels` interleaved
+        channels, downmixed or upmixed to the encoder's, completes; the samples short of a packet
+        wait for the next call. The layout and rate may change from one call to the next. Raises
+        ValueError, taking none of `pcm`, for more than two channels and for a `sample_rate` that is
+        not a positive integer."""
+        self._write(self._resampler.resample(pcm, sample_rate, num_channels))
+        return self._encode_fifo()
+
+    def finish(self) -> list[bytes]:
+        """The packets of the samples the encoder still holds, at the end of a stream: at least the
+        input's duration, the last packet padded with silence. The encoder takes no more PCM after
+        it."""
+        self._write(self._resampler.flush())
+        self._write(bytes(-self._fifo.samples % self.frame_samples * self._channels * 2))
+        packets = self._encode_fifo()
+        packets.extend(bytes(packet) for packet in self._encoder.encode(None))
+        return packets
+
+    def _write(self, pcm: bytes) -> None:
+        """Writes 48 kHz PCM of the encoder's channels into the FIFO."""
+        if not pcm:
+            return
+        frame = av.AudioFrame.from_ndarray(
+            np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout=self._layout
+        )
+        frame.sample_rate = OPUS_SAMPLE_RATE
+        self._fifo.write(frame)
+
+    def _encode_fifo(self) -> list[bytes]:
         packets = []
         while (chunk := self._fifo.read(self.frame_samples)) is not None:
             chunk.pts = None
             packets.extend(bytes(packet) for packet in self._encoder.encode(chunk))
         return packets
-
-    def _write(self, resampled: list[av.AudioFrame]) -> None:
-        for frame in resampled:
-            frame.pts = None
-            self._fifo.write(frame)
 
 
 class VideoDecoder:
@@ -799,38 +902,40 @@ def _video_config(extension_headers: list[tuple[int, int | bytes]]) -> bytes | N
     return None
 
 
-# ITU-T H.264 Table A-1: level_idc, MaxMBPS (macroblocks/s), MaxFS (macroblocks/frame). Level 1b is omitted.
+# ITU-T H.264 Table A-1: level_idc, MaxMBPS (macroblocks/s), MaxFS (macroblocks/frame), MaxBR
+# (Baseline, 1000 bits/s). Level 1b is omitted.
 H264_LEVELS = [
-    (10, 1485, 99),
-    (11, 3000, 396),
-    (12, 6000, 396),
-    (13, 11880, 396),
-    (20, 11880, 396),
-    (21, 19800, 792),
-    (22, 20250, 1620),
-    (30, 40500, 1620),
-    (31, 108000, 3600),
-    (32, 216000, 5120),
-    (40, 245760, 8192),
-    (41, 245760, 8192),
-    (42, 522240, 8704),
-    (50, 589824, 22080),
-    (51, 983040, 36864),
-    (52, 2073600, 36864),
-    (60, 4177920, 139264),
-    (61, 8355840, 139264),
-    (62, 16711680, 139264),
+    (10, 1485, 99, 64),
+    (11, 3000, 396, 192),
+    (12, 6000, 396, 384),
+    (13, 11880, 396, 768),
+    (20, 11880, 396, 2000),
+    (21, 19800, 792, 4000),
+    (22, 20250, 1620, 4000),
+    (30, 40500, 1620, 10000),
+    (31, 108000, 3600, 14000),
+    (32, 216000, 5120, 20000),
+    (40, 245760, 8192, 20000),
+    (41, 245760, 8192, 50000),
+    (42, 522240, 8704, 50000),
+    (50, 589824, 22080, 135000),
+    (51, 983040, 36864, 240000),
+    (52, 2073600, 36864, 240000),
+    (60, 4177920, 139264, 240000),
+    (61, 8355840, 139264, 480000),
+    (62, 16711680, 139264, 800000),
 ]
 
 
-def _h264_level(width: int, height: int, framerate: int) -> int:
-    """Returns the lowest level whose limits take this size and framerate (A.3.1): macroblocks per
-    frame <= MaxFS, each side <= sqrt(8 MaxFS), macroblocks per second <= MaxMBPS. Returns the
-    highest level when none does."""
+def _h264_level(width: int, height: int, framerate: int, bitrate: int | None) -> int:
+    """Returns the lowest level whose limits take this size, framerate and bitrate (A.3.1):
+    macroblocks per frame <= MaxFS, each side <= sqrt(8 MaxFS), macroblocks per second <= MaxMBPS,
+    bitrate <= MaxBR. Returns the highest level when none does."""
     mb_width, mb_height = -(-width // 16), -(-height // 16)
     frame_size = mb_width * mb_height
-    for level, max_mbps, max_fs in H264_LEVELS:
-        if frame_size <= max_fs and max(mb_width, mb_height) ** 2 <= 8 * max_fs and frame_size * framerate <= max_mbps:
+    for level, max_mbps, max_fs, max_br in H264_LEVELS:
+        fits = frame_size <= max_fs and max(mb_width, mb_height) ** 2 <= 8 * max_fs
+        if fits and frame_size * framerate <= max_mbps and (bitrate is None or bitrate <= max_br * 1000):
             return level
     return H264_LEVELS[-1][0]
 
@@ -858,13 +963,14 @@ def _checked_picture(image: bytes, size: tuple[int, int], color_format: str) -> 
 
 
 class VideoEncoder:
-    """Encodes RGB or BGR pictures into H.264 (Annex B, its parameter sets in every keyframe) or VP8. A
-    keyframe comes every two seconds, and on `request_keyframe`. `codec_string` is the WebCodecs
-    codec string; for H.264 it names Constrained Baseline at the level the SPS carries."""
+    """Encodes RGB or BGR pictures into H.264 (Annex B, its parameter sets in every keyframe) or
+    VP8, at `bitrate` bits a second, or the encoder's default quality when it is None. A keyframe
+    comes every two seconds, and on `request_keyframe`. `codec_string` is the WebCodecs codec
+    string; for H.264 it names Constrained Baseline at the level the SPS carries."""
 
-    def __init__(self, codec: str, width: int, height: int, framerate: int):
+    def __init__(self, codec: str, width: int, height: int, framerate: int, bitrate: int | None = None):
         if codec == "H264":
-            level = _h264_level(width, height, framerate)
+            level = _h264_level(width, height, framerate, bitrate)
             # x264's baseline sets constraint_set0_flag and constraint_set1_flag: Constrained Baseline.
             self.codec_string = f"avc1.42C0{level:02X}"
             self._encoder = av.CodecContext.create("libx264", "w")
@@ -885,7 +991,9 @@ class VideoEncoder:
         self._encoder.height = height
         self._encoder.pix_fmt = "yuv420p"
         self._encoder.time_base = Fraction(1, framerate)
-        self._encoder.framerate = framerate
+        self._encoder.framerate = Fraction(framerate)
+        if bitrate is not None:
+            self._encoder.bit_rate = bitrate
         self._encoder.open()
         self._width = width
         self._height = height
@@ -908,6 +1016,6 @@ class VideoEncoder:
         picture.pts = self._frames
         self._frames += 1
         if self._keyframe_requested:
-            picture.pict_type = av.video.frame.PictureType.I
+            picture.pict_type = PictureType.I
             self._keyframe_requested = False
         return [bytes(packet) for packet in self._encoder.encode(picture)]
