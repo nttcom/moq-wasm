@@ -247,6 +247,7 @@ impl MediaSource {
     ) -> Result<(), JsValue> {
         self.rendition(index)?
             .push_video(Bytes::from(data), timestamp_micros as u64)
+            .map(drop)
             .map_err(source_error)
     }
 

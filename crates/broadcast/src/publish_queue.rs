@@ -28,6 +28,23 @@ const DROP_LOG_INTERVAL: u64 = 500;
 const BACKLOG_WARN_DEPTH: usize = 3 * SAMPLES_PER_SECOND;
 const BACKLOG_CLEARED_DEPTH: usize = BACKLOG_WARN_DEPTH / 2;
 
+/// What became of a pushed frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PushOutcome {
+    Queued,
+    /// Dropped because the queue was full while the relay did not keep up,
+    /// or because it comes before the next keyframe that fits after such a
+    /// drop, so that no subscriber gets a group it cannot decode. The
+    /// source's keyframe requests are notified when the dropping starts and
+    /// for every dropped keyframe.
+    Dropped,
+    /// The frame holds no picture, as an H.264 or H.265 access unit without
+    /// a slice, so nothing was published; its parameter sets go with the
+    /// next keyframe.
+    NoPicture,
+}
+
 /// Hands media to the publish task without ever waiting for the relay. When
 /// the queue is full, samples are dropped, and video stays dropped until a
 /// keyframe fits so that no viewer receives a group it cannot decode from its

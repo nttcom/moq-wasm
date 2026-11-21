@@ -17,6 +17,7 @@ pub use broadcast::{Broadcast, SourceTracks, VIDEO_TRACK_NAME, VideoTrackInfo};
 pub use media_source::{
     MediaRendition, MediaSource, MediaSourceConfig, MediaSourceError, TrackKind,
 };
+pub use publish_queue::PushOutcome;
 pub use reader::BroadcastReader;
 pub use relay_connection::{MoqtTarget, RelayConnection};
 pub use rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack};

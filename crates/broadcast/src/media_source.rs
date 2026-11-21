@@ -13,6 +13,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::{
     broadcast::{Broadcast, SourceTracks},
+    publish_queue::PushOutcome,
     rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack},
     writer::BroadcastWriter,
 };
@@ -73,7 +74,7 @@ pub struct MediaSource {
     video: Option<LocDemuxer>,
     keyframe_requests: Arc<Notify>,
     demand_receiver: Option<mpsc::UnboundedReceiver<TrackDemand>>,
-    renditions: Vec<mpsc::UnboundedSender<RenditionCommand>>,
+    renditions: Vec<mpsc::Sender<RenditionCommand>>,
 }
 
 impl MediaSource {
@@ -193,7 +194,12 @@ impl MediaSource {
             keyframes: RenditionKeyframes::SameFrames,
         };
         let track = RenditionTrack::new(&self.writer, config);
-        let task = RenditionTask::run(track, self.writer.broadcast().clone(), track_name);
+        let task = RenditionTask::run(
+            track,
+            self.writer.broadcast().clone(),
+            track_name,
+            self.keyframe_requests.clone(),
+        );
         self.renditions.push(task.command_sender());
         MediaRendition { task, video: None }
     }
@@ -260,26 +266,39 @@ impl MediaRendition {
     }
 
     /// The encoded frame of the same picture as a video frame, at that
-    /// frame's timestamp. Fails once an earlier frame stopped the rendition.
+    /// frame's timestamp. While the relay does not keep up, up to 296 frames
+    /// wait in the queue; later frames are dropped up to the next keyframe
+    /// that fits (`PushOutcome::Dropped`). Fails once an earlier frame
+    /// stopped the rendition.
     pub fn push_video(
         &mut self,
         data: Bytes,
         timestamp_micros: u64,
-    ) -> Result<(), MediaSourceError> {
+    ) -> Result<PushOutcome, MediaSourceError> {
+        let mut outcome = PushOutcome::NoPicture;
         for event in demux(self.video.as_mut(), data, timestamp_micros)? {
-            self.task.push(event).map_err(MediaSourceError::Stopped)?;
+            let is_frame = matches!(event, MediaEvent::Video(_));
+            let pushed = self.task.push(event).map_err(MediaSourceError::Stopped)?;
+            if is_frame {
+                outcome = pushed;
+            }
         }
-        Ok(())
+        Ok(outcome)
     }
 }
 
+/// Waits for room in the rendition's queue rather than dropping the removal,
+/// which is never repeated.
 fn remove_rendition(
-    command_sender: &mpsc::UnboundedSender<RenditionCommand>,
+    command_sender: &mpsc::Sender<RenditionCommand>,
 ) -> impl Future<Output = anyhow::Result<()>> + use<> {
-    let (done_sender, done_receiver) = oneshot::channel();
-    let sent = command_sender.send(RenditionCommand::Remove(done_sender));
+    let command_sender = command_sender.clone();
     async move {
-        sent.map_err(|_| anyhow::anyhow!("rendition task ended"))?;
+        let (done_sender, done_receiver) = oneshot::channel();
+        command_sender
+            .send(RenditionCommand::Remove(done_sender))
+            .await
+            .map_err(|_| anyhow::anyhow!("rendition task ended"))?;
         done_receiver
             .await
             .map_err(|_| anyhow::anyhow!("rendition task ended"))?
@@ -525,10 +544,26 @@ mod tests {
 
         // Act
         rendition.configure_video("vp8").unwrap();
-        rendition.push_video(frame.clone(), 0).unwrap();
+        let outcome = rendition.push_video(frame.clone(), 0).unwrap();
         let object = relay.first_track_object("video_low").await;
 
         // Assert
+        assert_eq!(outcome, PushOutcome::Queued);
         assert_eq!(object.payload, frame);
+    }
+
+    #[tokio::test]
+    async fn a_rendition_frame_without_a_slice_has_no_picture() {
+        // Arrange
+        let mut source = source();
+        let mut rendition = source.add_rendition("low", "low".to_string(), None, None);
+        rendition.configure_video("avc1.42001f").unwrap();
+        let access_unit_delimiter = Bytes::from_static(&[0, 0, 0, 1, 0x09, 0xf0]);
+
+        // Act
+        let outcome = rendition.push_video(access_unit_delimiter, 0);
+
+        // Assert
+        assert_eq!(outcome.unwrap(), PushOutcome::NoPicture);
     }
 }
