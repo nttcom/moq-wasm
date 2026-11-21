@@ -656,18 +656,70 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   of the transport dialing the relay. The input and the output processors
   share one room: the first `StartFrame` publishes the transport's broadcast
   and starts following the participants, and the last `EndFrame` or
-  `CancelFrame` withdraws it.
-  Each opening of the room owns what it opened, and a room started
-  again while its teardown runs opens once that teardown finished; stopping
-  that start before it opened leaves the teardown running, and the next
-  start waits for it as well; a start
-  cancelled as the room opened, by its last processor, closes it. Both processors become ready only once the
-  relay accepted the broadcast and the room's SUBSCRIBE_NAMESPACE. A room
+  `CancelFrame` withdraws it, or the processors' `cleanup`, which pipecat
+  runs at teardown also for a processor no `EndFrame` or `CancelFrame`
+  reached; the room is left even when pipecat's own part of the cleanup
+  raises, as an audio filter's `stop` may. Once no processor uses the room,
+  each `stop`, `cancel` and `cleanup` returns only once the room's teardown
+  finished, also one of a processor that left the room already: pipecat's
+  cleanup cancels a stop still in progress as the `EndFrame` it pushed on
+  ends the pipeline, and the cleanup waits for the withdrawal that stop
+  started, so a worker that returned has left the room and a new transport
+  can publish the same broadcast on the session. A withdrawal that fails at an
+  `EndFrame` or a `CancelFrame`, as when the relay refuses it, is pushed
+  upstream as a non-fatal `ErrorFrame` and the frame still goes on: pipecat
+  passes it on only once the processor's `stop` or `cancel` returned, and the
+  pipeline ends only once it came out. pipecat's input passes an `EndFrame`
+  on before it stops, so the input leaves the room before passing the frame
+  on, and the failure of a withdrawal it makes, as the only processor of an
+  input-only pipeline, reaches the pipeline's `on_pipeline_error` too. A processor serves one
+  pipeline run: pipecat's processor keeps what its run left, such as the frames
+  still queued as a `CancelFrame` came, which then makes it drop every
+  frame, or the unusable state an error set, and resetting pipecat's
+  private state cannot undo all of it. So `input()` and `output()` return
+  the same processor until pipecat cleaned it up at the end of its
+  pipeline, and a new one after that, which opens the room again: each
+  pipeline built from the transport gets fresh processors sharing its
+  room. A processor that ran fails its next `setup`, which pipecat reports
+  as an `ErrorFrame` treated as permanent, and its `start` does nothing;
+  after a `CancelFrame` it drops the next pipeline's `StartFrame` as well,
+  so that pipeline never starts and the worker tears it down, at once with
+  `ProcessorUnusablePolicy.CANCEL`. A `StopFrame` ends no run: pipecat
+  keeps the stopped processors running without cleaning them up, so they
+  stay in the room, `input()` and `output()` return them again, and the
+  next pipeline's `StartFrame` resumes them. pipecat's output then starts
+  new media senders, so the output first ends the ones the `StopFrame`
+  left running, which wrote the audio queued before it; a participant input
+  keeps its subscriptions while stopped, dropping what they bring as
+  pipecat's paused input does, and resumes them rather than subscribing
+  again, so no two senders or receivers ever run. pipecat starts a
+  processor's audio filter as it sets the processor up and stops it as it
+  cleans it up, and the pipeline that resumes a stopped processor sets it up
+  again, at that pipeline's sample rate: the processor stops its filter
+  first, so each start of the filter has its stop. Each opening of the room
+  owns what it opened, and a room started again while its teardown runs
+  opens once that teardown finished; stopping that start before it opened
+  leaves the teardown running, and the next start waits for it as well; a
+  start cancelled as the room opened, by its last processor, closes it. Both
+  processors become ready only once the relay accepted the broadcast and the
+  room's SUBSCRIBE_NAMESPACE. A room
   that cannot open fires `on_error` and withdraws what it opened, as a
   broadcast the relay accepted before refusing the room's
   SUBSCRIBE_NAMESPACE: that withdrawal is the room's teardown, which the
   processors' `stop`, `cancel` and `cleanup` and the next start wait for,
-  also when pipecat cancelled the start during it. `on_connected` and `on_disconnected` mark those
+  also when pipecat cancelled the start during it. Each processor pushes an
+  `ErrorFrame` treated as permanent (`force_treat_as_permanent`), which
+  leaves it unusable, so the pipeline worker's `processor_unusable_policy`
+  decides whether the pipeline ends, as for pipecat's `MOQTransport` when
+  its relay cannot be reached. pipecat's default, `CONTINUE`, keeps a
+  pipeline running with a room that never opened, so the bots in this
+  repository build their worker with
+  `ProcessorUnusablePolicy.CANCEL`, which ends it at once (`END` drains it
+  first). pipecat routes the frames an output does not handle itself to its
+  media sender, which an output whose room never opened has none of, and
+  drops them there: such an output passes them on instead, a `StopFrame`
+  included, so the pipeline still stops, but not the audio and pictures it
+  did not write. `on_connected` and `on_disconnected` mark those
   two moments; `on_track_subscribed` takes a `MoqWasmTrack` (participant id,
   track name, `audio` or `video`).
 - **Peers.** Every broadcast one level under `room` is a participant, its last
@@ -723,7 +775,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
 - **Data tracks.** The objects of `data_in_tracks` (a camera page's
   `prompt`, a chat) are pushed as `InputTransportMessageFrame`s carrying a
   `MoqWasmTrackMessage` (participant id, track, payload, `Location`), as
-  pipecat transports push a client's app messages. An
+  pipecat transports push a client's app messages; an input a `StopFrame`
+  paused drops them until the next `StartFrame`, as it drops audio and
+  pictures. An
   `OutputTransportMessageFrame` carrying a `MoqWasmTrackObject` writes an
   object on one of `data_out_tracks`, and one carrying a
   `MoqWasmEventRecord` appends a record to one of `event_timelines_out`;
@@ -754,7 +808,22 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   speaker, so a bot may run a pipeline per participant.
   `MoqWasmParticipantInput(broadcast, MoqWasmInputParams(...))` is the input
   of one `RemoteBroadcast`: it picks, decodes and pushes the tracks as the
-  transport's input does, with the same `on_track_subscribed`, and publishes
+  transport's input does, with the same `on_track_subscribed`, until its
+  `EndFrame`, `CancelFrame` or `cleanup`, and publishes nothing. The first
+  of them starts the teardown once, and each returns once it finished,
+  every track unsubscribed and the image requests waiting answered: pipecat's
+  cleanup cancels a stop still in progress as the `EndFrame` it pushed on
+  ends the pipeline, and the cancelled stop leaves the teardown running for
+  the cleanup to wait for. The session's end starts that same teardown,
+  which runs in a task of the participant's receiver: when `Session.run`
+  then cancels the worker, the input's stop waits for it rather than cutting
+  it short, so the image requests waiting are answered and the answers under
+  way delivered before the worker returns. Once the teardown finished, the
+  input drops its receiver, so an input the bot still holds keeps neither
+  the broadcast, nor through it the session, nor the catalog, and answers
+  a later image request with the participant's departure. It serves
+  one pipeline run, as the transport's processors do, so a bot creates one
+  for each pipeline; set up again, it fails as they do and receives
   nothing. A failed track is pushed upstream as a non-fatal `ErrorFrame`, the
   way pipecat processors report errors: `on_error` belongs to pipecat's
   `FrameProcessor`. The bot follows the room with
