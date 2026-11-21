@@ -159,6 +159,36 @@ async def test_a_subscriber_gets_the_media_with_its_catalog_and_the_broadcasts_o
         await session.close()
 
 
+async def test_leaving_a_media_broadcast_ends_its_media_and_catalog_for_their_subscribers(relay_url):
+    # Arrange
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    bot = create_broadcast(publisher, namespace)
+    await bot.__aenter__()
+    media = bot.add_media_source(label="bot")
+    media.configure_audio("opus", 48000, 1)
+    await bot.published()
+    media.push_audio(b"opus frame 0", 0)
+    catalogs = RemoteBroadcast(subscriber, namespace).catalogs()
+    await within(anext(catalogs))
+    catalog = await within(subscriber.subscribe(namespace, "catalog"))
+    audio = await within(subscriber.subscribe(namespace, "audio"))
+    await within(wanted(media, "audio"))
+    media.push_audio(b"opus frame 1", 20_000)
+    await within(anext(audio))
+
+    # Act
+    await bot.__aexit__(None, None, None)
+
+    # Assert: PUBLISH_DONE for each, so a later broadcast of the namespace does not reach them
+    assert await within(audio.done()) is not None
+    assert await within(catalog.done()) is not None
+    await catalogs.aclose()
+    for session in (subscriber, publisher):
+        await session.close()
+
+
 async def test_a_rendition_declared_before_publishing_is_built_with_its_source():
     # Arrange
     relay = FakeRelay()
@@ -272,6 +302,15 @@ async def test_a_subscriber_gets_aac_audio_listed_with_its_codec_and_loc_propert
         await catalogs.aclose()
     for session in (subscriber, publisher):
         await session.close()
+
+
+async def wanted(media: MediaSource, track_name: str) -> None:
+    """Returns once `media` was told a subscriber wants `track_name`: a source published on demand
+    sends nothing of a track before, so a frame pushed earlier never reaches that subscriber."""
+    while True:
+        demand = await media.demand_change()
+        if (demand.track_name, demand.wanted) == (track_name, True):
+            return
 
 
 async def catalog_without(catalogs, tracks: set[str]):

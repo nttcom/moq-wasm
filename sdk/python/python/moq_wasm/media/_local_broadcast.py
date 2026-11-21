@@ -121,7 +121,7 @@ class LocalBroadcast:
             for source in self._media_sources:
                 source._detach()
             if self._media_broadcast is not None:
-                self._media_broadcast.close()
+                await self._media_broadcast.close()
 
 
 def create_broadcast(session: Session, namespace: list[str]) -> LocalBroadcast:

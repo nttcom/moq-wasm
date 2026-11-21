@@ -277,9 +277,11 @@ class MediaBroadcast:
     def announce(self) -> asyncio.Future[None]:
         """Publishes the namespace; raises `RequestError` when the relay refuses the
         PUBLISH_NAMESPACE."""
-    def close(self) -> None:
-        """Stops answering for the broadcast's tracks; withdraw the namespace with `unannounce`
-        first."""
+    def close(self) -> asyncio.Future[None]:
+        """Stops answering for the broadcast's tracks, ends them and the catalog with PUBLISH_DONE
+        after the media pushed before, and stops resending the catalog, so a later broadcast of the
+        namespace gets none of this one's media or catalog; later frames raise RuntimeError.
+        Withdraw the namespace with `unannounce` first. Does nothing the second time."""
     def add_source(
         self,
         video: str,
@@ -298,7 +300,7 @@ class MediaBroadcast:
         are: the relay has each sent only while a subscriber takes it, and
         `MediaSource.demand_change` reports when that changes. `on_demand=False` keeps them sent
         with no subscriber, for a track that should stay in the relay's cache, FETCHable, while
-        nobody takes it."""
+        nobody takes it. Raises RuntimeError once the broadcast was closed."""
 
 class MediaSource:
     def configure_video(self, codec: str) -> None:
@@ -310,7 +312,8 @@ class MediaSource:
         that fits, and `keyframe_request` asks for one), and for a frame without a picture, as an
         H.264 access unit without NAL units or without a slice, which is not published; the
         parameter sets of one without a slice go to the keyframes after it. Raises RuntimeError
-        before `configure_video`, and once publishing stopped, as when the session ended."""
+        before `configure_video`, once publishing stopped, as when the session ended, and once the
+        broadcast was closed."""
     def add_rendition(
         self, name: str, *, label: str, bitrate: int | None = None, framerate: int | None = None
     ) -> Rendition:
@@ -319,8 +322,8 @@ class MediaSource:
         wait for a slow relay; past that, frames are dropped up to the next keyframe that fits, a
         new configuration waits to go out with it, and `keyframe_request` asks for one. It joins the
         video's switching set (one catalog `altGroup`), so a rendition in another codec is an
-        alternative to the video. `bitrate` (bits per second) and `framerate` go into the
-        catalog."""
+        alternative to the video. `bitrate` (bits per second) and `framerate` go into the catalog.
+        Raises RuntimeError once the broadcast was closed."""
     def configure_audio(
         self, codec: str, sample_rate: int, channels: int, *, description: bytes | None = None
     ) -> None:
@@ -332,7 +335,7 @@ class MediaSource:
         """One encoded audio frame. `level` is its RFC 6464 level in -dBov (0 to 127), written with
         `voice_activity` as its LOC Audio Level property. Returns whether it was queued: False for a
         frame the publish queue dropped while the relay does not keep up. Raises RuntimeError once
-        publishing stopped, as when the session ended."""
+        publishing stopped, as when the session ended, and once the broadcast was closed."""
     def remove_track(self, kind: str) -> asyncio.Future[None]:
         """Ends the source's video or audio track (`kind` is `"video"` or `"audio"`) with
         PUBLISH_DONE and sends the catalog without it; removing the video removes its renditions
@@ -364,5 +367,5 @@ class Rendition:
         """An encoded frame of the same picture as a video frame, at that frame's timestamp. Returns
         False when the rendition's queue, full while the relay does not keep up, dropped the frame,
         and for a frame without a picture, as `MediaSource.push_video`. Raises RuntimeError before
-        `configure_video`, once an earlier frame stopped the rendition, as when the session
-        ended."""
+        `configure_video`, once an earlier frame stopped the rendition, as when the session ended,
+        and once the broadcast was closed."""
