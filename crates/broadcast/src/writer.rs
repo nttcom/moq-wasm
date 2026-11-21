@@ -47,6 +47,17 @@ impl BroadcastWriter {
         {
             self.timing.loc_muxer(*pts);
         }
+        // Number a keyframe's group here: the publish task reaches the sample
+        // only after the relay takes those queued before, and a `FollowSource`
+        // rendition looks the id up meanwhile.
+        if let MediaEvent::Video(VideoSample {
+            pts,
+            is_keyframe: true,
+            ..
+        }) = &event
+        {
+            self.timing.alignment.keyframe(pts.micros());
+        }
         self.queue.push(event)
     }
 
