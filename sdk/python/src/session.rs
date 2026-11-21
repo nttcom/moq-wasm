@@ -9,7 +9,6 @@ use moqt::{
     object::GroupOrder,
     publish::Retention,
     subscribe::FilterType,
-    wire::RequestKind,
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
@@ -19,7 +18,7 @@ use pyo3::{
 use broadcast::{Broadcast, RelayConnection};
 
 use crate::{
-    errors::{CloseInfo, TransportStats, request_error, request_error_in},
+    errors::{CloseInfo, TransportStats, publish_track_error, request_error},
     fetch::Fetch,
     location::Location,
     log_sink,
@@ -361,7 +360,7 @@ impl Session {
             let writer = session
                 .publish_track(&namespace, &name, options)
                 .await
-                .map_err(|error| request_error_in(error, RequestKind::Publish))?;
+                .map_err(publish_track_error)?;
             Ok(TrackWriter::new(writer, scope))
         })
     }

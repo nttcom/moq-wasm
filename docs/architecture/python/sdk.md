@@ -157,7 +157,10 @@ SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 `priority`, `delivery_timeout` in seconds and `group_order`),
 `subscribe_current_group`, `subscribe_group_start`, `fetch` (between two
 `Location`s), `track_status`, `watch_namespaces`, `publish_track` (with
-`retention_seconds`, `publish` and `datagram`) and `announce`. A
+`retention_seconds`, `publish` and `datagram`) and `announce`. The native
+origin keeps the delivery a track sent its objects with: registering it
+again with the other `datagram` switches a track that has no object yet and
+raises ValueError, from the native call, for one that has. A
 `TrackWriter` has `write` and `write_group`, which return the group id an
 object went into when a subscriber took it, and `next_subscriber`; its
 objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
