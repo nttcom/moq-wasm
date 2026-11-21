@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.1
 
 - The first release of `moq-wasm` for Rust, as a git dependency on the
   `rust-sdk-v0.0.1` tag, tested on Linux x86_64, Linux aarch64 and macOS
