@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 use tokio::sync::{Mutex, MutexGuard, Notify, mpsc};
 
-use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
+use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
 use crate::{
     Publisher, Session, SessionEvent, Subscription, TrackProperties, TrackWriter,
@@ -34,6 +34,7 @@ mod new_group_delay_task;
 mod new_group_requests;
 mod object_cache;
 mod object_numbering;
+mod outlet_send_task;
 
 pub use new_group_requests::MIN_GROUP_OBJECTS;
 pub use object_cache::Retention;
@@ -43,6 +44,7 @@ use fetch_serve_task::FetchServeTask;
 use new_group_requests::NewGroupRequests;
 use object_cache::{CachedObject, FetchRange, ObjectCache};
 use object_numbering::ObjectNumbering;
+use outlet_send_task::{OutletSendTask, Payload};
 
 /// An Origin never ends a subscription on a timer (draft-ietf-moq-transport-14
 /// §9.8). Relays forward this value, and some subscribers (moq-ffi before
@@ -143,9 +145,6 @@ enum Publication {
     /// A PUBLISH the peer unsubscribed from; kept so that `publish` does not
     /// send it again.
     Released,
-    /// Marked by `end_track` while a write held the writer; the write ends the
-    /// outlet when it returns the writer.
-    Ending,
 }
 
 struct OriginTrack {
@@ -197,7 +196,7 @@ struct Outlet {
     /// The Forward State (draft-14 §5.1, draft-18 §5.1); no object is sent
     /// while it is 0.
     forward: bool,
-    writer: Option<TrackWriter>,
+    send_task: OutletSendTask,
     publisher: Publisher,
     subscription: Subscription,
 }
@@ -215,12 +214,19 @@ impl OriginTrack {
         }
     }
 
-    /// The first group id `0` is never used: `send_placed` and
-    /// `Origin::write_group` open every group at the Group ID the numbering
-    /// placed.
-    fn outlet_writer(&self, publisher: &Publisher, subscription: &Subscription) -> TrackWriter {
-        TrackWriter::new(publisher.create_stream(subscription), 0)
-            .with_priorities(subscription.subscriber_priority(), self.publisher_priority)
+    /// The writer's first group id `0` is never used: the task opens every
+    /// group at the Group ID the numbering placed.
+    fn outlet_send_task(
+        &self,
+        publisher: &Publisher,
+        subscription: &Subscription,
+    ) -> OutletSendTask {
+        let writer = TrackWriter::new(publisher.create_stream(subscription), 0)
+            .with_priorities(subscription.subscriber_priority(), self.publisher_priority);
+        let publisher = Publisher {
+            session: publisher.session.clone(),
+        };
+        OutletSendTask::run(writer, publisher, subscription.clone())
     }
 
     fn wanted(&self) -> bool {
@@ -278,23 +284,6 @@ impl OriginTrack {
 impl Outlet {
     fn serving(&self) -> bool {
         self.publication != Publication::Released
-    }
-
-    /// Finishes the open group before PUBLISH_DONE, which draft-14 §9.12
-    /// forbids until every stream of the subscription is closed.
-    async fn end(self, writer: TrackWriter) -> Result<()> {
-        let opened_streams = writer.opened_streams();
-        if let Err(error) = writer.finish().await {
-            tracing::debug!(?error, "open group could not be finished");
-        }
-        self.publisher
-            .publish_done(
-                &self.subscription,
-                PublishDoneCode::TrackEnded,
-                opened_streams,
-                "track ended".to_string(),
-            )
-            .await
     }
 }
 
@@ -458,7 +447,7 @@ impl Origin {
             publication: Publication::Published,
             start,
             forward,
-            writer: Some(track.outlet_writer(&publisher, &subscription)),
+            send_task: track.outlet_send_task(&publisher, &subscription),
             publisher,
             subscription,
         });
@@ -481,6 +470,8 @@ impl Origin {
 
     /// Sends the object on every session that takes the track. A send error
     /// is returned only when no session sent the object and none stopped it.
+    /// Writes reach every session in the order they were numbered, and one
+    /// dropped once numbered is still sent.
     pub async fn write(
         &self,
         namespace: &str,
@@ -488,7 +479,7 @@ impl Origin {
         object: OutgoingObject,
     ) -> Result<WriteOutcome> {
         let key = track_key(namespace, track_name);
-        let (placement, writers) = {
+        let (placement, sends) = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             let Some(placement) = track.numbering.place(object.group)? else {
@@ -505,19 +496,13 @@ impl Origin {
                 drop(state);
                 return send_datagrams(senders, placement, priority, object).await;
             }
-            (placement, take_writers(track))
+            let sends = queue_sends(track, placement, Payload::Object(object));
+            (placement, sends)
         };
-        let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
-            let object = object.clone();
-            async move {
-                let result = send_placed(&mut writer, start, placement, object).await;
-                (session, writer, result)
-            }
-        }))
-        .await;
-        self.settle(&key, placement, results).await
+        write_outcome(&key, placement, join_all(sends).await)
     }
 
+    /// Sends `payload` as a group of its own, as `write` sends an object.
     pub async fn write_group(
         &self,
         namespace: &str,
@@ -525,7 +510,7 @@ impl Origin {
         payload: Bytes,
     ) -> Result<WriteOutcome> {
         let key = track_key(namespace, track_name);
-        let (placement, writers) = {
+        let (placement, sends) = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             let placement = track
@@ -540,25 +525,10 @@ impl Origin {
                 let object = OutgoingObject::plain(GroupBoundary::Next, payload);
                 return send_datagrams(senders, placement, priority, object).await;
             }
-            (placement, take_writers(track))
+            let sends = queue_sends(track, placement, Payload::Group(payload));
+            (placement, sends)
         };
-        let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
-            let payload = payload.clone();
-            async move {
-                let result = if !starts_at_or_before(start, placement.location) {
-                    Ok(false)
-                } else {
-                    writer
-                        .write_group_at(placement.location.group_id, payload)
-                        .await
-                        .context("send group")
-                        .map(|()| true)
-                };
-                (session, writer, result)
-            }
-        }))
-        .await;
-        self.settle(&key, placement, results).await
+        write_outcome(&key, placement, join_all(sends).await)
     }
 
     /// Answers a SUBSCRIBE to a track registered with `ensure_track`, the
@@ -665,7 +635,7 @@ impl Origin {
             publication: Publication::Subscribed,
             start,
             forward: handler.forward,
-            writer: Some(track.outlet_writer(&publisher, &subscription)),
+            send_task: track.outlet_send_task(&publisher, &subscription),
             publisher,
             subscription,
         });
@@ -714,7 +684,9 @@ impl Origin {
     }
 
     /// Returns the released track's `(namespace, name)`; its numbering and
-    /// cache are kept.
+    /// cache are kept. The subscription's open group is reset in the
+    /// background without waiting for queued sends, which are dropped: the
+    /// subscriber may never read them.
     pub async fn release(&self, handler: &UnsubscribeHandler) -> Option<(String, String)> {
         let request = (
             session_key(&handler.session_context),
@@ -722,13 +694,12 @@ impl Origin {
         );
         let mut state = self.lock_state_knowing(request).await;
         let key = state.subscriptions.remove(&request)?.track;
-        let mut released = None;
         if let Some(track) = state.tracks.get_mut(&key) {
             track.outlets.retain_mut(|outlet| {
                 if outlet.request != request {
                     return true;
                 }
-                released = outlet.writer.take();
+                outlet.send_task.cancel();
                 if outlet.publication != Publication::Published {
                     return false;
                 }
@@ -736,10 +707,6 @@ impl Origin {
                 true
             });
             track.refresh_demand();
-        }
-        drop(state);
-        if let Some(writer) = released {
-            writer.cancel().await;
         }
         Some(key)
     }
@@ -760,15 +727,10 @@ impl Origin {
             };
             let mut ended = Vec::new();
             let mut requests = Vec::new();
-            for mut outlet in std::mem::take(&mut track.outlets) {
+            for outlet in std::mem::take(&mut track.outlets) {
                 requests.push(outlet.request);
-                match outlet.writer.take() {
-                    Some(writer) => ended.push((outlet, writer)),
-                    None if outlet.serving() => {
-                        outlet.publication = Publication::Ending;
-                        track.outlets.push(outlet);
-                    }
-                    None => {}
+                if outlet.serving() {
+                    ended.push(outlet.send_task.end());
                 }
             }
             // A producer that publishes the track again must produce its first
@@ -779,7 +741,8 @@ impl Origin {
             }
             ended
         };
-        end_outlets(ended).await
+        // The first failure, after every outlet was ended.
+        join_all(ended).await.into_iter().collect()
     }
 
     /// Serves a Standalone or Joining Fetch from the cache. A Joining Fetch
@@ -892,66 +855,41 @@ impl Origin {
         }
         Ok(())
     }
+}
 
-    async fn settle(
-        &self,
-        key: &TrackKey,
-        placement: Placement,
-        results: Vec<(RequestKey, TrackWriter, Result<bool>)>,
-    ) -> Result<WriteOutcome> {
-        let mut state = self.state.lock().await;
-        let track = state.track_mut(key)?;
-        let (mut sent, mut stopped, mut failure) = (false, false, None);
-        // Writers whose outlet was released or replaced during the write; reset,
-        // not dropped (a drop FINs).
-        let mut orphaned = Vec::new();
-        let mut ended = Vec::new();
-        for (request, writer, result) in results {
-            let ending = track.outlets.iter().position(|outlet| {
-                outlet.request == request && outlet.publication == Publication::Ending
-            });
-            match (ending, track.outlet_mut(request)) {
-                (Some(index), _) => ended.push((track.outlets.remove(index), writer)),
-                (None, Some(outlet)) if outlet.writer.is_none() && outlet.serving() => {
-                    outlet.writer = Some(writer)
-                }
-                _ => orphaned.push(writer),
+fn write_outcome(
+    key: &TrackKey,
+    placement: Placement,
+    results: Vec<Result<bool>>,
+) -> Result<WriteOutcome> {
+    let (mut sent, mut stopped, mut failure) = (false, false, None);
+    for result in results {
+        match result {
+            Ok(true) => sent = true,
+            Ok(false) => {}
+            Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
+                tracing::info!(
+                    track_namespace = %key.0,
+                    track_name = %key.1,
+                    "subscriber stopped a subgroup; the track resumes at the next group"
+                );
+                stopped = true;
             }
-            match result {
-                Ok(true) => sent = true,
-                Ok(false) => {}
-                Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
-                    tracing::info!(
-                        track_namespace = %key.0,
-                        track_name = %key.1,
-                        "subscriber stopped a subgroup; the track resumes at the next group"
-                    );
-                    stopped = true;
-                }
-                Err(error) => {
-                    tracing::debug!(track_namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
-                    failure.get_or_insert(error);
-                }
+            Err(error) => {
+                tracing::debug!(track_namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
+                failure.get_or_insert(error);
             }
         }
-        track.refresh_demand();
-        drop(state);
-        for writer in orphaned {
-            writer.cancel().await;
-        }
-        if let Err(error) = end_outlets(ended).await {
-            tracing::debug!(%error, "PUBLISH_DONE could not be sent");
-        }
-        if sent {
-            return Ok(WriteOutcome::Sent(placement));
-        }
-        if stopped {
-            return Ok(WriteOutcome::Stopped(placement));
-        }
-        match failure {
-            Some(error) => Err(error),
-            None => Ok(WriteOutcome::NotSent),
-        }
+    }
+    if sent {
+        return Ok(WriteOutcome::Sent(placement));
+    }
+    if stopped {
+        return Ok(WriteOutcome::Stopped(placement));
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(WriteOutcome::NotSent),
     }
 }
 
@@ -996,24 +934,25 @@ fn fetch_target(
     Ok((track.clone(), start, end))
 }
 
-/// The writers of the subscriptions an object is sent on: those in Forward
-/// State 1. One in Forward State 0 leaves its open group, which the object
-/// is omitted from, and takes the group up again once it is back in 1.
-fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Option<Location>, TrackWriter)> {
-    track
-        .outlets
-        .iter_mut()
-        .filter_map(|outlet| {
-            if !outlet.forward {
-                if let Some(writer) = &mut outlet.writer {
-                    writer.abandon_group();
-                }
-                return None;
-            }
-            let writer = outlet.writer.take()?;
-            Some((outlet.request, outlet.start, writer))
-        })
-        .collect()
+/// Queues a send on every outlet in Forward State 1 whose Start Location is
+/// not after the object, and has every outlet in Forward State 0 leave its
+/// open group, which the object is omitted from; it takes the group up
+/// again once it is back in 1. Called under the state lock, so each outlet
+/// is given the objects in the order they were numbered.
+fn queue_sends(
+    track: &OriginTrack,
+    placement: Placement,
+    payload: Payload,
+) -> Vec<impl Future<Output = Result<bool>> + use<>> {
+    let mut sends = Vec::new();
+    for outlet in track.outlets.iter().filter(|outlet| outlet.serving()) {
+        if !outlet.forward {
+            outlet.send_task.leave_group();
+        } else if starts_at_or_before(outlet.start, placement.location) {
+            sends.push(outlet.send_task.send(placement, payload.clone()));
+        }
+    }
+    sends
 }
 
 fn datagram_senders(track: &OriginTrack, placement: Placement) -> Vec<DatagramSender> {
@@ -1062,17 +1001,6 @@ async fn send_datagrams(
     }
 }
 
-/// Returns the first failure after trying every outlet.
-async fn end_outlets(outlets: Vec<(Outlet, TrackWriter)>) -> Result<()> {
-    let results = join_all(
-        outlets
-            .into_iter()
-            .map(|(outlet, writer)| outlet.end(writer)),
-    )
-    .await;
-    results.into_iter().collect()
-}
-
 fn session_key(session: &Arc<SessionContext>) -> SessionKey {
     Arc::as_ptr(session) as SessionKey
 }
@@ -1092,48 +1020,6 @@ fn starts_at_or_before(start: Option<Location>, location: Location) -> bool {
     start.is_some_and(|start| start <= location)
 }
 
-/// A writer that has sent nothing joins the group the object is in, and so
-/// does one that left the group in Forward State 0; one whose group a peer
-/// stopped or the transport reset resumes at the next group.
-async fn send_placed(
-    writer: &mut TrackWriter,
-    start: Option<Location>,
-    placement: Placement,
-    object: OutgoingObject,
-) -> Result<bool> {
-    let Location {
-        group_id,
-        object_id,
-    } = placement.location;
-    if !starts_at_or_before(start, placement.location) {
-        return Ok(false);
-    }
-    if placement.starts_group {
-        writer
-            .start_group_at(group_id)
-            .await
-            .context("start group")?;
-    } else if writer.abandoned_group_id() == Some(group_id) {
-        writer
-            .rejoin_group_at(object_id)
-            .await
-            .context("rejoin group")?;
-    } else if writer.current_group_id() != Some(group_id) {
-        if writer.groups() > 0 {
-            return Ok(false);
-        }
-        writer
-            .join_group_at(group_id, object_id)
-            .await
-            .context("join group")?;
-    }
-    writer
-        .write_with_extension_headers(object.payload, object.extension_headers)
-        .await
-        .context("send subgroup object")?;
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{pin::pin, time::Duration};
@@ -1142,9 +1028,10 @@ mod tests {
 
     use super::new_group_requests::MIN_GROUP_DURATION;
     use super::*;
+    use crate::modules::moqt::control_plane::error_codes::PublishDoneCode;
     use crate::modules::test_support::location;
     use crate::{
-        RequestFailure, SessionEvent, Subscription, TrackObject, Version,
+        RequestFailure, SessionEvent, Subscription, TrackObject, TrackReader, Version,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
             DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_datagram,
@@ -2486,48 +2373,238 @@ mod tests {
         );
     }
 
+    /// Larger than the subscribing session's stream receive window, so a
+    /// send of it waits until the subscriber reads.
+    const LARGER_THAN_A_STREAM_WINDOW: usize = 2 * 1024 * 1024;
+
+    fn large_payload() -> Bytes {
+        Bytes::from(vec![0; LARGER_THAN_A_STREAM_WINDOW])
+    }
+
+    /// Reads `count` objects as their group id, object id and payload length.
+    async fn read_objects(reader: &mut TrackReader, count: usize) -> Vec<(u64, u64, usize)> {
+        let mut objects = Vec::new();
+        for _ in 0..count {
+            let object = reader.next_object().await.unwrap().unwrap();
+            objects.push((object.group_id, object.object_id, object.payload.len()));
+        }
+        objects
+    }
+
+    async fn write_dropped_after_numbering(peers: &Peers, object: OutgoingObject) {
+        let mut write = pin!(peers.origin.write(NAMESPACE, TRACK, object));
+        let _ = futures::poll!(&mut write);
+    }
+
     #[tokio::test]
-    async fn a_group_written_while_another_is_in_flight_does_not_stall_the_track() {
+    async fn groups_written_while_one_waits_for_the_subscriber_are_each_sent() {
         for version in DRAFTS {
-            // Arrange
-            let peers = origin_with_track("origin-write-group-in-flight", RETENTION, version).await;
+            // Arrange: the groups are told apart by their payload length
+            let peers = origin_with_track("origin-write-groups-at-once", RETENTION, version).await;
             let origin = &peers.origin;
             let accepted = publish(&peers).await;
-            let key = track_key(NAMESPACE, TRACK);
-            origin
-                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c0"))
-                .await
-                .unwrap();
-            let in_flight = origin.state.lock().await.track_mut(&key).unwrap().outlets[0]
-                .writer
-                .take()
-                .unwrap();
+            let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+            let payloads: Vec<Bytes> = std::iter::once(large_payload())
+                .chain((1..32).map(|length| Bytes::from(vec![0; length])))
+                .collect();
 
             // Act
-            let overlapped = origin
-                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c1"))
-                .await
-                .unwrap();
-            origin.state.lock().await.track_mut(&key).unwrap().outlets[0].writer = Some(in_flight);
-            let after = origin
-                .write_group(NAMESPACE, TRACK, Bytes::from_static(b"c2"))
-                .await
-                .unwrap();
+            let (written, mut received) = within(async {
+                tokio::join!(
+                    join_all(payloads.iter().map(|payload| origin.write_group(
+                        NAMESPACE,
+                        TRACK,
+                        payload.clone()
+                    ))),
+                    read_objects(&mut reader, payloads.len())
+                )
+            })
+            .await;
+
+            // Assert: the groups take consecutive ids, and each arrives with the id its write returned
+            let mut expected = Vec::new();
+            for (written, payload) in written.into_iter().zip(&payloads) {
+                let WriteOutcome::Sent(placement) = written.unwrap() else {
+                    panic!("a group was not sent");
+                };
+                let Location {
+                    group_id,
+                    object_id,
+                } = placement.location;
+                expected.push((group_id, object_id, payload.len()));
+            }
+            expected.sort();
+            received.sort();
+            let group_ids: Vec<u64> = expected.iter().map(|(group_id, _, _)| *group_id).collect();
+            assert_eq!(
+                group_ids,
+                (FIRST_GROUP_ID..FIRST_GROUP_ID + payloads.len() as u64).collect::<Vec<_>>()
+            );
+            assert_eq!(received, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn objects_written_while_the_first_waits_for_the_subscriber_are_each_sent_in_order() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-write-objects-at-once", RETENTION, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
             let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
-            let received_first = within(reader.next_object()).await.unwrap().unwrap();
-            let received_after = within(reader.next_object()).await.unwrap().unwrap();
+            let write = |group, payload| {
+                origin.write(NAMESPACE, TRACK, OutgoingObject::plain(group, payload))
+            };
+
+            // Act
+            let (first, second, third, fourth, received) = within(async {
+                tokio::join!(
+                    write(GroupBoundary::Next, large_payload()),
+                    write(GroupBoundary::Within, Bytes::from_static(b"b")),
+                    write(GroupBoundary::Within, Bytes::from_static(b"c")),
+                    write(GroupBoundary::Within, Bytes::from_static(b"d")),
+                    read_objects(&mut reader, 4)
+                )
+            })
+            .await;
 
             // Assert
-            assert_eq!(overlapped, WriteOutcome::NotSent);
-            assert_eq!(after, sent(FIRST_GROUP_ID + 2, 0, true));
-            assert_eq!(received_first.group_id, FIRST_GROUP_ID);
             assert_eq!(
-                (received_after.group_id, received_after.payload),
-                (FIRST_GROUP_ID + 2, Bytes::from_static(b"c2"))
+                [first, second, third, fourth].map(Result::unwrap),
+                [
+                    sent(FIRST_GROUP_ID, 0, true),
+                    sent(FIRST_GROUP_ID, 1, false),
+                    sent(FIRST_GROUP_ID, 2, false),
+                    sent(FIRST_GROUP_ID, 3, false),
+                ]
             );
             assert_eq!(
-                received_after.extension_headers.prior_group_id_gap(),
-                vec![1]
+                received,
+                [
+                    (FIRST_GROUP_ID, 0, LARGER_THAN_A_STREAM_WINDOW),
+                    (FIRST_GROUP_ID, 1, 1),
+                    (FIRST_GROUP_ID, 2, 1),
+                    (FIRST_GROUP_ID, 3, 1),
+                ]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_write_dropped_once_numbered_is_still_sent_and_the_track_goes_on() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-dropped-write", RETENTION, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
+            let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+
+            // Act
+            write_dropped_after_numbering(
+                &peers,
+                OutgoingObject::plain(GroupBoundary::Next, large_payload()),
+            )
+            .await;
+            let (next, received) = within(async {
+                tokio::join!(
+                    origin.write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b")),
+                    read_objects(&mut reader, 2)
+                )
+            })
+            .await;
+
+            // Assert
+            assert_eq!(next.unwrap(), sent(FIRST_GROUP_ID, 1, false));
+            assert_eq!(
+                received,
+                [
+                    (FIRST_GROUP_ID, 0, LARGER_THAN_A_STREAM_WINDOW),
+                    (FIRST_GROUP_ID, 1, 1)
+                ]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn end_track_after_a_dropped_write_sends_publish_done_counting_its_stream() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-dropped-write-end", RETENTION, version).await;
+            let accepted = publish(&peers).await;
+            let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+            write_dropped_after_numbering(
+                &peers,
+                OutgoingObject::plain(GroupBoundary::Next, large_payload()),
+            )
+            .await;
+
+            // Act
+            let (done, received) = tokio::join!(end_track(&peers), read_objects(&mut reader, 1));
+
+            // Assert
+            assert_eq!(received, [(FIRST_GROUP_ID, 0, LARGER_THAN_A_STREAM_WINDOW)]);
+            assert_eq!(done.request_id(), accepted.request_id());
+            assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
+            assert_eq!(done.stream_count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unsubscribe_while_a_send_waits_for_the_subscriber_neither_hangs_nor_stalls_the_track()
+     {
+        for version in DRAFTS {
+            // Arrange: one subscriber holds its stream without reading it; another reads everything
+            let peers = origin_with_track("origin-release-stalled", RETENTION, version).await;
+            let origin = &peers.origin;
+            let stalled = subscribe(&peers, FilterType::NextGroupStart).await;
+            let mut stalled_streams = data_receiver(&peers.server, &stalled).await;
+            let (client, server) = connected_sessions("origin-release-reading", version).await;
+            let reading = Peers {
+                origin: origin.clone(),
+                client: Arc::new(client),
+                server,
+            };
+            let accepted = publish(&reading).await;
+            let mut reader = subscribed_track_reader(&reading.server, &accepted).await;
+            let mut in_flight = pin!(origin.write(
+                NAMESPACE,
+                TRACK,
+                OutgoingObject::plain(GroupBoundary::Next, large_payload())
+            ));
+            let (first_received, _held_stream) = within(async {
+                tokio::select! {
+                    _ = &mut in_flight => panic!("a write returned while a subscriber does not read"),
+                    received = async {
+                        tokio::join!(
+                            read_objects(&mut reader, 1),
+                            next_subgroup(&mut stalled_streams)
+                        )
+                    } => received,
+                }
+            })
+            .await;
+
+            // Act
+            let released = unsubscribe(&peers, &stalled).await;
+            let first = within(in_flight).await;
+            let (next, next_received) = within(async {
+                tokio::join!(
+                    origin.write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b")),
+                    read_objects(&mut reader, 1)
+                )
+            })
+            .await;
+
+            // Assert
+            assert_eq!(released, Some((NAMESPACE.to_string(), TRACK.to_string())));
+            assert_eq!(first.unwrap(), sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(next.unwrap(), sent(FIRST_GROUP_ID, 1, false));
+            assert_eq!(
+                [first_received, next_received].concat(),
+                [
+                    (FIRST_GROUP_ID, 0, LARGER_THAN_A_STREAM_WINDOW),
+                    (FIRST_GROUP_ID, 1, 1)
+                ]
             );
         }
     }

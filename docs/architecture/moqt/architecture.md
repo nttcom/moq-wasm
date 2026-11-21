@@ -706,23 +706,28 @@ forward from their own cache through the raw stream senders.
   an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
   and one outlet per subscription to
   the track (a SUBSCRIBE served or a PUBLISH sent): its publication state and
-  its optional `TrackWriter`. An outlet is keyed by the session, identified
+  its `OutletSendTask` (`origin/outlet_send_task.rs`), which owns the
+  subscription's `TrackWriter`. An outlet is keyed by the session, identified
   by its `SessionContext`, which the SUBSCRIBE, UNSUBSCRIBE, FETCH and
   FETCH_CANCEL handlers carry, and the logical request id, so the SUBSCRIBEs
   an old and a new server send during a migration get one outlet each. The
   caller chooses the retention and the first group id.
 - `write(namespace, name, OutgoingObject) -> WriteOutcome` numbers and
   caches the object first, whether or not the track is published, so the
-  cache and the live streams always agree on ids, then sends it to every
-  outlet at once. Each writer is taken out of its slot for the duration of
-  the awaited send and put back only if nothing replaced or released it
-  meanwhile. A send that fails on one outlet is returned only when no outlet
-  took the object. `Sent(placement)` and
-  `Stopped(placement)` (STOP_SENDING by the peer; the track resumes at the
-  next group) carry the placement so the caller can account the stream;
-  `NotSent` covers a `Within` object with no open group, a track without a
-  writer, and writers that start after the object or wait for the next group
-  after a stopped stream.
+  cache and the live streams always agree on ids, then queues it on every
+  outlet's send task while still holding the state lock, and awaits the
+  replies after releasing it. Each send task runs its commands one at a time
+  from an unbounded channel, so every subscription receives the objects in
+  numbering order, as `TrackWriter` requires: it numbers objects itself and
+  refuses a group before the last one. Overlapping writes are all sent. A
+  write dropped after numbering is still sent. A caller that awaits each
+  write still waits for the slowest subscription. A send that fails on one
+  outlet is returned only when no outlet took the object.
+  `Sent(placement)` and `Stopped(placement)` (STOP_SENDING by the peer; the
+  track resumes at the next group) carry the placement so the caller can
+  account the stream; `NotSent` covers a `Within` object with no open
+  group, a track with no outlet in Forward State 1, and writers that start
+  after the object or wait for the next group after a stopped stream.
   `write_group` sends one object as a finished group (the MSF catalog layout).
 - `set_delivery(namespace, name, datagrams)` gives a track the Object
   Forwarding Preference Datagram (draft-14 §10.3) or Subgroup. A track has
@@ -733,7 +738,7 @@ forward from their own cache through the raw stream senders.
   registration changes nothing. With Datagram, `write`
   and `write_group` send each object as one OBJECT_DATAGRAM to every
   outlet in Forward State 1 whose Start Location is not after it, through
-  `Publisher::create_datagram`, instead of taking the outlets' writers. The
+  `Publisher::create_datagram`, instead of queuing it on the send tasks. The
   writers stay idle, so PUBLISH_DONE counts no stream, as §9.12 requires, and
   numbering, the cache and FETCH work as for a subgroup track. An object every
   session dropped as larger than its maximum datagram size is `NotSent`.
@@ -756,9 +761,13 @@ forward from their own cache through the raw stream senders.
   does not start a group, the writer opens that group on a new stream starting
   at that object, so Largest Object takes the rest of the open group;
   `release(&handler)`
-  drops the session's writer on UNSUBSCRIBE, resetting its open group with
-  CANCELLED rather than finishing it (draft-14 §10.4.3), and returns the
-  track so the caller can account it; `serve_fetch` answers a Standalone or
+  cancels the session's send task on UNSUBSCRIBE through a
+  `CancellationToken` and does not wait for it. The task stops the send in
+  progress and drops the queued sends, which count as not sent. It then
+  resets its open group with CANCELLED instead of finishing it (draft-14
+  §10.4.3). The cancellation skips the queue because a subscriber that
+  unsubscribed may never read the stream a send waits on. `release` returns
+  the track so the caller can account it; `serve_fetch` answers a Standalone or
   Joining FETCH from the cache on its own stream (`FetchServeTask`, one per
   request, aborted by `cancel_fetch` and when the `Origin` is dropped). Each
   accepted SUBSCRIBE keeps its `JoinPoint`: the Largest Location its
@@ -786,8 +795,13 @@ forward from their own cache through the raw stream senders.
   group without reusing a location. Each outlet's open group is finished with
   End of Group before PUBLISH_DONE, which may not precede the close of any
   stream of the subscription, and its Stream Count is the number of streams
-  the outlet's `TrackWriter` opened. An outlet whose writer a write holds is
-  marked ending and ended when the write puts the writer back.
+  the outlet's `TrackWriter` opened. The send task ends its outlet after the
+  sends queued before it, so a write dropped after numbering still precedes
+  PUBLISH_DONE. `end_track` waits for every outlet. A send task exits once
+  it is cancelled or has ended its outlet. Unlike the other tasks, it is not
+  aborted when its handle is dropped: a writer dropped mid-send finishes its
+  open group with a FIN. When its command channel closes (the `Origin` is
+  dropped), the task resets the open group itself and exits.
 - `accept_new_group_requests(namespace, name, requested)` gives a track
   dynamic groups (draft-18 §12.6): its PUBLISH and SUBSCRIBE_OK carry
   DYNAMIC_GROUPS, and the `Notify` is notified when a SUBSCRIBE or a
