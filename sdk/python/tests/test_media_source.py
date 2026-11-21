@@ -339,6 +339,25 @@ async def test_a_rendition_declared_before_publishing_is_built_with_its_source()
     await session.close()
 
 
+async def test_source_options_the_native_broadcast_would_refuse_raise_before_anything_is_built():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="camera")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="video_bitrate"):
+            bot.add_media_source("screen", "screen_audio", label="screen", video_bitrate=-1)
+        with pytest.raises(ValueError, match="framerate"):
+            media.add_rendition("low", label="180p", framerate=-1)
+        with pytest.raises(ValueError, match="channels"):
+            media.configure_audio("opus", 48000, 256)
+        await bot.published()
+        assert [source.video for source in relay.sessions[0].media_broadcasts[0].sources] == ["video"]
+    await session.close()
+
+
 async def test_a_media_broadcast_is_not_entered_while_a_writer_of_the_session_publishes_its_catalog():
     # Arrange: the writer keeps the newest catalog only, as the media broadcast does
     relay = FakeRelay()
@@ -546,6 +565,68 @@ async def test_a_track_or_rendition_named_as_another_track_of_the_broadcast_is_r
         media.add_rendition("timeline", label="timeline")
     with pytest.raises(RuntimeError, match="already publishes track catalog"):
         bot.publish_track("catalog")
+    await session.close()
+
+
+async def test_the_track_names_of_a_media_source_and_its_renditions_cannot_be_changed_after_their_claim():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    media = bot.add_media_source(label="camera")
+    rendition = media.add_rendition("low", label="180p")
+
+    # Act / Assert: renamed, they would publish under a name another track of the broadcast owns
+    with pytest.raises(AttributeError):
+        media.audio = "messages"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        media.video = "screen"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        rendition.name = "high"  # type: ignore[misc]
+    assert (media.video, media.audio, rendition.name) == ("video", "audio", "low")
+    await session.close()
+
+
+async def test_source_options_of_a_type_the_native_broadcast_would_refuse_raise_before_anything_is_built():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="camera")
+
+        # Act / Assert
+        with pytest.raises(TypeError, match="video_framerate"):
+            bot.add_media_source("screen", "screen_audio", label="screen", video_framerate=29.97)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="cmaf"):
+            bot.add_media_source("screen", "screen_audio", label="screen", cmaf=1)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="bitrate"):
+            media.add_rendition("low", label="180p", bitrate=2e5)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="sample_rate"):
+            media.configure_audio("opus", 48000.0, 1)  # type: ignore[arg-type]
+        await bot.published()
+        assert [source.video for source in relay.sessions[0].media_broadcasts[0].sources] == ["video"]
+        assert relay.sessions[0].media_broadcasts[0].sources[0].renditions == []
+    await session.close()
+
+
+@pytest.mark.parametrize("sample_rate, channels", [(None, 1), (48000, None)])
+async def test_an_audio_configuration_without_its_sample_rate_or_channels_is_refused_at_once(sample_rate, channels):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    status = bot.publish_track("status")
+    media = bot.add_media_source(label="bot")
+
+    # Act
+    with pytest.raises(TypeError, match="sample_rate|channels"):
+        media.configure_audio("opus", sample_rate, channels)  # type: ignore[arg-type]
+
+    # Assert: the broadcast and its other track publish as if it was never given
+    async with bot:
+        await within(bot.published())
+        await within(status.write(b"ok"))
+    assert relay.sessions[0].media_broadcasts[0].sources[0].calls == []
     await session.close()
 
 
