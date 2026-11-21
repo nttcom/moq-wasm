@@ -633,6 +633,11 @@ pipeline:
 
 ```python
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
+from pipecat.transports.base_transport import VideoInSourceParams
 
 transport = MoqWasmTransport(
     session,
@@ -653,7 +658,13 @@ transport = MoqWasmTransport(
 @transport.event_handler("on_client_connected")
 async def on_client_connected(transport, participant_id): ...
 
-pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
+# An LLM service answers the context the user aggregator builds from the transcriptions.
+context = LLMContextAggregatorPair(
+    LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
+)
+pipeline = Pipeline(
+    [transport.input(), stt, context.user(), llm, tts, transport.output(), context.assistant()]
+)
 ```
 
 - It is a pipecat `BaseTransport` with `input()` and `output()` and the
