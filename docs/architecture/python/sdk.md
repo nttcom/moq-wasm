@@ -731,8 +731,8 @@ pipeline = Pipeline(
   leaves it unusable, so the pipeline worker's `processor_unusable_policy`
   decides whether the pipeline ends, as for pipecat's `MOQTransport` when
   its relay cannot be reached. pipecat's default, `CONTINUE`, keeps a
-  pipeline running with a room that never opened, so the bots in this
-  repository build their worker with
+  pipeline running with a room that never opened, so the README's bot and
+  the bots in this repository build their worker with
   `ProcessorUnusablePolicy.CANCEL`, which ends it at once (`END` drains it
   first). pipecat routes the frames an output does not handle itself to its
   media sender, which an output whose room never opened has none of, and
