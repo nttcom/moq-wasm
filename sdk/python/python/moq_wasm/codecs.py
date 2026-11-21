@@ -3,6 +3,7 @@ carries no codec of its own (docs/architecture/python/sdk.md "No codec in the wh
 
 import asyncio
 import functools
+import logging
 import operator
 import time
 from collections import deque
@@ -18,6 +19,8 @@ from av.error import FFmpegError
 from moq_wasm._native import Location, Object
 from moq_wasm._once import retrieve
 from moq_wasm.media import Following
+
+logger = logging.getLogger("moq_wasm")
 
 OPUS_SAMPLE_RATE = 48_000
 OPUS_BITRATE = 32_000
@@ -40,6 +43,17 @@ MAX_HELD_BYTES = 4 * 1024 * 1024
 # How many objects in a row `decode_pictures` lets the decoder of a group joined at its keyframe
 # refuse before it takes the track as undecodable.
 MAX_REFUSED_OBJECTS = 3
+# The first elements of the codec strings whose payloads may be length-prefixed, which only the Video
+# Config tells how to read (draft-ietf-moq-loc-04 §2.1.3).
+LENGTH_PREFIXED_CODECS = ("avc1", "avc3", "hvc1", "hev1")
+# The 4-byte start code an Annex B payload starts with, and the 3-byte one a track without a Video
+# Config may use instead (draft-ietf-moq-loc-04 §2.1.4).
+START_CODE = b"\x00\x00\x00\x01"
+SHORT_START_CODE = b"\x00\x00\x01"
+# The NAL unit type of a sequence parameter set: H.264's (ITU-T H.264 Table 7-1) and H.265's (ITU-T
+# H.265 Table 7-1).
+H264_SPS = 7
+HEVC_SPS = 33
 
 # A video codec string's first element, as the catalog writes it, to the PyAV decoders that decode
 # it in software, the preferred first. FFmpeg's own AV1 decoder (`av1`) is left out: it decodes only
@@ -198,10 +212,26 @@ class _Group:
     it, after the pictures the previous one held back. A group joined at its keyframe, its object 0,
     should decode: the decoder refusing `MAX_REFUSED_OBJECTS` of its objects in a row, or the group
     ending without a picture after it refused one, raises the decoder's error. A group joined midway
-    decodes to nothing, which is expected."""
+    decodes to nothing, which is expected. An H.264 or H.265 object of a group without a Video
+    Config is read as Annex B when it starts with a start code, 4-byte or 3-byte, and else as 4-byte
+    length prefixes; one that reads either way is read as the group's earlier objects were. Length
+    prefixes are rewritten as start codes once the group carried its parameter sets in band (an
+    SPS), as `avc3` and `hev1` may. One readable neither way, or length-prefixed before the group's
+    parameter sets, is skipped without being decoded, which could make garbage of it, and, in a
+    group joined at its keyframe, which would have carried them, `unconfigured` is called."""
 
-    def __init__(self, codec: str, config: bytes | None, from_keyframe: bool):
+    def __init__(self, codec: str, config: bytes | None, from_keyframe: bool, unconfigured: Callable[[], None]):
         self._codec = codec
+        self._unconfigured = unconfigured
+        family = codec.split(".")[0]
+        self._length_prefixed = family in LENGTH_PREFIXED_CODECS
+        self._hevc = family in ("hvc1", "hev1")
+        # Whether a length-prefixed object of the group carried an SPS, which a group without a
+        # Video Config needs before its length-prefixed objects decode.
+        self._in_band_parameter_sets = False
+        # Whether the group's objects are Annex B, as its first one readable either way was; None
+        # before it.
+        self._framed_annex_b: bool | None = None
         # The Video Config the group decodes with now.
         self.config = config
         self._decoder = VideoDecoder(codec, config)
@@ -220,6 +250,15 @@ class _Group:
             self._pictured = self._pictured or bool(held_back)
             self.config = config
             self._decoder = VideoDecoder(self._codec, config)
+        if self.config is None and self._length_prefixed:
+            annex_b = self._annex_b(payload)
+            if annex_b is None:
+                # Without the parameter sets, as after a subscriber joined past the only object
+                # carrying the Video Config.
+                if self._from_keyframe:
+                    self._unconfigured()
+                return held_back
+            payload = annex_b
         try:
             pictures = self._decoder._decode(payload, location)
         except FFmpegError as error:
@@ -231,6 +270,31 @@ class _Group:
         self._refused_in_a_row = 0
         self._pictured = self._pictured or bool(pictures)
         return held_back + pictures
+
+    def _annex_b(self, payload: bytes) -> bytes | None:
+        """`payload`, of a group without a Video Config, in Annex B, or None when it cannot be read
+        without one. A payload starting with a start code whose 4-byte length prefixes also cover
+        it exactly, as a 3-byte one followed by the first bytes of a length of 256 to 511 bytes
+        does, is read as the group's earlier objects were (draft-ietf-moq-loc-04 §2.1.3–2.1.4); in
+        the group's first object, a 4-byte start code is Annex B and a 3-byte one a length."""
+        units = _length_prefixed_units(payload)
+        annex_b = payload.startswith((SHORT_START_CODE, START_CODE))
+        if annex_b and units is not None:
+            framed = self._framed_annex_b
+            annex_b = payload.startswith(START_CODE) if framed is None else framed
+        if annex_b or units is not None:
+            self._framed_annex_b = annex_b
+        if annex_b:
+            return payload
+        if units is None:
+            return None
+        self._in_band_parameter_sets = self._in_band_parameter_sets or any(map(self._is_sps, units))
+        return b"".join(START_CODE + unit for unit in units) if self._in_band_parameter_sets else None
+
+    def _is_sps(self, unit: bytes) -> bool:
+        if self._hevc:
+            return unit[0] >> 1 & 0x3F == HEVC_SPS
+        return unit[0] & 0x1F == H264_SPS
 
     def flush(self) -> list[tuple[av.VideoFrame, Location | None]]:
         pictures = self._decoder.flush()
@@ -298,7 +362,14 @@ def decode_pictures(
     Raises ValueError at once when no decoder takes `codec`; its reads raise the decoder's
     `av.error.FFmpegError` when a group joined at its keyframe does not decode: the decoder refused
     `MAX_REFUSED_OBJECTS` of its objects in a row, or the group ended without a picture after it
-    refused one.
+    refused one. An H.264 or H.265 object of a group without a Video Config is Annex B when it
+    starts with a start code, 4-byte or 3-byte, and else length-prefixed; one that reads either way,
+    its start code followed by bytes that 4-byte lengths would cover exactly, is read as the group's
+    earlier objects were. A length-prefixed object decodes once the group carried its parameter sets
+    (SPS and PPS) in band, as an `avc3` or `hev1` track may. A length-prefixed object before them,
+    as of a track whose only Video Config came before the subscription joined, is skipped without
+    being decoded, with one warning logged when its group was joined at its keyframe, until a group
+    carrying a Video Config arrives; give the track's Video Config as `config` to decode it.
 
     `objects` stays the caller's: each read advances it in the reader's own task and context, and
     neither closing nor dropping the decoding cancels or closes it. A read cancelled, as by
@@ -402,6 +473,7 @@ class _PictureDecoder:
         # changed one.
         self._provisional: dict[int, list[Object]] = {}
         self._carries_configs = False
+        self._warned_unconfigured = False
 
     def take(self, video_object: Object) -> list[DecodedPicture]:
         """The pictures `video_object` completes."""
@@ -444,6 +516,18 @@ class _PictureDecoder:
         while self._groups:
             pictures.extend(self._finish(min(self._groups)))
         return pictures
+
+    def _unconfigured(self) -> None:
+        """Warns, once, that length-prefixed objects are skipped for want of their parameter
+        sets."""
+        if not self._warned_unconfigured:
+            self._warned_unconfigured = True
+            logger.warning(
+                "%s objects skipped until a group carries its Video Config: they are length-prefixed "
+                "without their parameter sets in band, and the subscription joined past the object "
+                "carrying it with none given beforehand",
+                self._codec,
+            )
 
     def _sampled(self, pictures: list[tuple[av.VideoFrame, Location | None]]) -> list[DecodedPicture]:
         decoded_at = time.monotonic()
@@ -515,7 +599,7 @@ class _PictureDecoder:
             kept = self._provisional.get(later_id)
             if not kept or not isinstance(self._groups.get(later_id), _Group):
                 continue
-            group = self._groups[later_id] = _Group(self._codec, config, kept[0].object_id == 0)
+            group = self._groups[later_id] = _Group(self._codec, config, kept[0].object_id == 0, self._unconfigured)
             for video_object in kept:
                 location = Location(later_id, video_object.object_id)
                 pictures.extend(group.decode(video_object.payload, location, None))
@@ -530,7 +614,7 @@ class _PictureDecoder:
         own = passed.config is not None
         if not own:
             passed = self._inherited(group_id)
-        group = self._groups[group_id] = _Group(self._codec, passed.config, held[0].object_id == 0 or own)
+        group = self._groups[group_id] = _Group(self._codec, passed.config, held[0].object_id == 0 or own, self._unconfigured)
         self._remember(group_id, passed)
         if not own and isinstance(self._groups.get(group_id - 1), _Group):
             self._provisional[group_id] = []
@@ -556,6 +640,21 @@ class _PictureDecoder:
         if group is not None:
             decoded.extend(self._sampled(cast(_Group, group).flush()))
         return decoded + self._release(group_id + 1)
+
+
+def _length_prefixed_units(payload: bytes) -> list[bytes] | None:
+    """The NAL units of `payload`, each after a 4-byte length, or None when such lengths do not
+    cover it exactly."""
+    units = []
+    offset = 0
+    while offset < len(payload):
+        length = int.from_bytes(payload[offset : offset + 4], "big")
+        offset += 4
+        if length == 0 or offset + length > len(payload):
+            return None
+        units.append(payload[offset : offset + length])
+        offset += length
+    return units or None
 
 
 def _payload_bytes(video_objects: list[Object]) -> int:
