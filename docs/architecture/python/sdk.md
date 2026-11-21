@@ -287,12 +287,18 @@ track waits for it, so that PUBLISH_DONE cannot end its replacement's
 subscriptions. Its
 objects carry no extension headers. Leaving a
 `LocalBroadcast` closes its writers, so a handle kept past the broadcast
-cannot write into a later broadcast of the same namespace. The session, its
-writers and watches copy the namespace lists
-they are given, and the `namespace` of a writer
+cannot write into a later broadcast of the same namespace. A namespace has
+one owner in a session: `announce` raises RuntimeError while another
+announcement of the session publishes it, until that one finished
+withdrawing it (its `close()` finished). An
+`Announcement` withdraws only the publication it made, and its `close()`
+sends the PUBLISH_NAMESPACE_DONE even when cancelled. The session, its
+announcements, writers and watches copy the namespace lists
+they are given, and the `namespace` of an announcement or a writer
 returns a new list each time, and a writer's `name` is
-read-only, so a caller changing a list or a name cannot make them end
-another track. A `Subscription` iterates its objects, or its subgroup streams
+read-only, so a caller changing a list or a name cannot make them withdraw
+or end another namespace or track. A `Subscription` iterates its objects,
+or its subgroup streams
 through `groups()`, whose every call returns the same iterator, whichever
 is read first: reading the other raises RuntimeError at once, even while
 the first read still waits, as one a timeout cancelled does. One from

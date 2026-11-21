@@ -822,6 +822,40 @@ async def test_every_close_of_a_watch_waits_for_the_unsubscribe_even_after_one_w
     await session.close()
 
 
+async def test_changing_the_list_a_namespace_was_given_in_does_not_change_what_close_withdraws():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    namespace = list(NAMESPACE)
+    writer = await session.publish_track(namespace, "status")
+    announcement = await session.announce(namespace)
+
+    # Act
+    namespace[-1] = "someone-else"
+    await writer.close()
+    await announcement.close()
+
+    # Assert
+    assert native.ended == [(NAMESPACE, "status")]
+    assert native.calls[-1] == ("unannounce", NAMESPACE)
+    await session.close()
+
+
+async def test_announcing_a_namespace_the_session_publishes_raises_until_it_was_withdrawn():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    announcement = await session.announce(NAMESPACE)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="already publishes"):
+        await session.announce(NAMESPACE)
+    await announcement.close()
+    await within(session.announce(NAMESPACE))
+    await session.close()
+
+
 async def test_the_first_connection_failure_raises():
     # Arrange
     relay = FakeRelay()
