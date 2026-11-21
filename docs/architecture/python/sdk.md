@@ -900,7 +900,14 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   pipeline. The input that receives video answers image requests and keeps
   them, and an input without video passes them upstream. pipecat's output
   passes every transport message on, so the other output writes the ones for
-  its tracks; an urgent one it does not write is passed on as well.
+  its tracks; an urgent one it does not write is passed on as well. The
+  output publishes pipecat's default destination only: a frame for
+  another `transport_destination`, audio, a picture or a message, urgent
+  or not, goes on as it came, and the output neither resamples nor writes
+  it. So does a control frame for another destination: a `TTSStoppedFrame`
+  or a `StopFrame` ends none of the output's speech, and an
+  `InterruptionFrame` or a `CancelFrame` neither interrupts nor cancels the
+  output, which acts only on those without a destination, the pipeline's.
 - **Data tracks.** The objects of `data_in_tracks` (a camera page's
   `prompt`, a chat) are pushed as `InputTransportMessageFrame`s carrying a
   `MoqWasmTrackMessage` (participant id, track, payload, `Location`), as
@@ -924,15 +931,85 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `OutputImageRawFrame` (`RGB`, `RGBA`, `BGR` or `BGRA`) with PyAV to
   `video_out_codec` (`"H264"` by default,
   the codec the browser SDK publishes; `"VP8"` is royalty-free), at
-  `video_out_width`, `video_out_height` and `video_out_framerate`, all
-  fields of pipecat's `TransportParams`. Both are pushed into the transport's
+  `video_out_width`, `video_out_height` and `video_out_framerate`, the Opus
+  encoder at `audio_out_bitrate` with `audio_out_channels`, which the
+  catalog's channel config gives, and the video encoder at
+  `video_out_bitrate` (the encoder's default quality when unset), all
+  fields of pipecat's `TransportParams`; the catalog lists the video's
+  bitrate and framerate. Both are pushed into the transport's
   broadcast, so the browser plays it with `RemoteBroadcast`. The encoder
   makes a keyframe every two seconds, and on `MediaSource.keyframe_request`
   (a NEW_GROUP_REQUEST). Timestamps
   are wall-clock microseconds that follow the previous frame by its
-  duration. `write_audio_frame` waits while the speech written so far runs
+  duration. pipecat's media sender cuts the audio of consecutive frames
+  into chunks of `audio_out_10ms_chunks`, labelling each with the output's
+  sample rate and the channel count of the frame that completed it, and
+  its resampler takes mono at one input rate only. So each
+  `OutputAudioRawFrame` is copied as it reaches the output, before pipecat
+  queues it, its class and `interruptible` flag kept, with its audio
+  resampled as one stream to the output's sample rate and
+  `audio_out_channels` (mono or stereo; the transport refuses more, stereo
+  with pipecat's `SoundfileMixer` as `audio_out_mixer`, which mixes one
+  sample of its mono file into each sample and so would play it twice as
+  fast, and an
+  `audio_out_10ms_chunks` that is not positive, with which pipecat's sender
+  would cut empty chunks forever; an output sample rate under 100 Hz,
+  whose 10 ms hold no sample, makes the output push an `ErrorFrame` treated
+  as permanent instead of starting a sender); what
+  the resampler holds back is queued at a `TTSStoppedFrame` or an
+  `EndFrame`, and an interruption drops what it holds of interruptible
+  speech. A frame that is no 16-bit mono or stereo PCM, or whose sample rate
+  is no positive integer, is dropped and reported as a non-fatal
+  `ErrorFrame`, leaving the resampler as it was. A failure to flush the
+  resampler at a `TTSStoppedFrame` or an `EndFrame` is reported the same
+  way, and the frame still goes on, so an `EndFrame` still ends the
+  pipeline. `write_audio_frame` waits while the speech written so far runs
   more than 100 ms ahead of the clock, as `MOQTransport` paces its own, so
-  an interruption stops speech the browser has not yet received.
+  an interruption stops speech the browser has not yet received. The
+  interruption stops the chunk being written at its next packet. It drops
+  what the Opus encoder holds of interruptible speech, short of a packet,
+  and keeps what it holds of uninterruptible speech, which is written whole:
+  when interruptible speech follows it, what the encoder holds of it is
+  written first, its last packet padded with silence, so the encoder never
+  holds both and an interruption drops none of it.
+  pipecat's media sender drops the audio it holds short of a chunk as it
+  takes the bot as no longer speaking, which a pause in the speech also
+  makes it do, as when speech frames stop without a `TTSStoppedFrame`; the
+  output keeps that audio, written with the speech after the pause or at the
+  next `TTSStoppedFrame`, `EndFrame` or `StopFrame`, and only an
+  interruption drops it.
+  A `TTSStoppedFrame` ends an utterance: once pipecat's media sender wrote
+  the speech queued ahead of it, the encoder's last packet of it is written,
+  padded with silence, so an interruption after the utterance drops none of
+  its ending. An `EndFrame` writes the rest of the speech before the output leaves the
+  room: pipecat's last chunk, shorter than `audio_out_10ms_chunks`, which
+  pipecat itself writes only at a `TTSStoppedFrame`, and the encoder's last
+  packet, both padded with silence; a `CancelFrame` does not. A failure to
+  write them, as once publishing the media source failed, is pushed as an
+  `ErrorFrame`, and the output still leaves the room and passes the
+  `EndFrame` on, so the pipeline ends. A `StopFrame` writes the rest of the
+  speech the same way, what the resampler holds, pipecat's last chunk and
+  the encoder's last packet, once pipecat wrote the audio queued ahead of
+  it: the media senders the next `StartFrame` replaces would drop it.
+  pipecat's media sender writes the audio and the transport messages in one
+  task and the pictures in another, and a write that raises would end that
+  task for good, silencing the bot. So a write that fails, as a picture in a
+  color format the encoder does not take, is pushed upstream as a
+  non-fatal `ErrorFrame` and the frames after it are written. Publishing the
+  media source fails for good, so the write that finds it failed reports it
+  once and the audio and pictures after it are dropped; `write_audio_frame`
+  and `write_video_frame` return False for each frame not written in full,
+  as one an interruption stopped before its last packet or one the media
+  source dropped once the session ended, so pipecat does not pass that
+  audio on as sent. The room checks the source before the encoders take a
+  frame, so speech too short for a packet, which pushes nothing, is not
+  taken as written once the session ended either. An output that writes no
+  data track or event timeline
+  can do nothing more then, so it reports that failure as an `ErrorFrame`
+  treated as permanent, as a room that cannot open, and the worker's
+  `processor_unusable_policy` decides whether the pipeline ends; with one,
+  the output stays usable for its messages. Any other failed write stays
+  non-fatal.
 - **A pipeline per participant.** A voice activity detector must hear one
   speaker, so a bot may run a pipeline per participant.
   `MoqWasmParticipantInput(broadcast, MoqWasmInputParams(...))` is the input
@@ -962,7 +1039,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   and the participant input each keep a copy of the params they are built
   with, and of its lists and mappings, so a caller assigning a field or
   changing `room` afterwards cannot relabel the audio and pictures their
-  processors were set up for, nor move the room.
+  processors were set up for, nor move the room, and a mixer the transport
+  refused, as a `SoundfileMixer` with stereo output, cannot be put into the
+  `audio_out_mixer` mapping afterwards.
 - **Codecs are the transport's job.** pipecat's frames carry raw audio and
   pictures, and each transport encodes and decodes with its own stack (the
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and

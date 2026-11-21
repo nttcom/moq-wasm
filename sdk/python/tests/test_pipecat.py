@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 import uuid
 import warnings
 import weakref
@@ -30,22 +29,27 @@ from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipa
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
 from moq_wasm.pipecat import _participant, _room
 from moq_wasm.pipecat._participant import ParticipantReceiver, ReceiveOptions
-from moq_wasm.pipecat._room import Room, RoomOptions
+from moq_wasm.pipecat._room import MAX_AUDIO_AHEAD_MICROS, OPUS_FRAME_MICROS, Room, RoomOptions, _now_micros
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
+from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
 from pipecat.clocks.system_clock import SystemClock
 from pipecat.frames.frames import (
     CancelFrame,
     EndFrame,
     ErrorFrame,
     Frame,
+    InterruptionFrame,
     StartFrame,
     StopFrame,
     InputTransportMessageFrame,
     InputTransportStartAudioStreamingFrame,
     OutputAudioRawFrame,
+    OutputImageRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
+    SpeechOutputAudioRawFrame,
+    TTSAudioRawFrame,
     TTSStoppedFrame,
     UserAudioRawFrame,
     UserImageRawFrame,
@@ -56,7 +60,7 @@ from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnu
 from pipecat.transports.base_transport import VideoInSourceParams
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
 from pipecat.transports.base_input import BaseInputTransport
-from pipecat.transports import video_in_sampler
+from pipecat.transports import base_output, video_in_sampler
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.utils import deprecation
 from pipecat.utils.asyncio.task_manager import TaskManager
@@ -1513,6 +1517,56 @@ async def test_the_bots_audio_and_video_go_into_its_media_source_and_a_keyframe_
     await session.close()
 
 
+async def test_the_bots_media_write_that_finds_its_media_source_failed_raises_and_later_ones_are_dropped():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True, video_out=True), RecordingSink())
+    await room.start("input")
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    source.failure = RuntimeError("media publishing stopped")
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="media publishing stopped"):
+        await room.write_picture(picture(0), SIZE, "RGB")
+    assert await room.write_audio(tone(0.04), SAMPLE_RATE) is False
+    room.finish_audio()
+    assert await room.write_picture(picture(10), SIZE, "RGB") is False
+    assert [call[0] for call in source.calls if call[0].startswith("push")] == []
+    await room.stop("input")
+    await session.close()
+
+
+async def test_the_transport_encodes_and_lists_its_media_at_the_bitrates_and_framerate_of_its_params():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_bitrate=64_000,
+        video_out_enabled=True,
+        video_out_bitrate=500_000,
+        video_out_framerate=15,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    room = MoqWasmTransport(session, params)._room
+
+    # Act: an interruption replaces the Opus encoder
+    await room.start("output")
+    room.interrupt_audio()
+
+    # Assert
+    options = relay.sessions[0].media_broadcasts[0].sources[0].options
+    assert (options["video_bitrate"], options["video_framerate"]) == (500_000, 15)
+    opened = room._opened
+    assert opened is not None and opened.opus is not None and opened.opus._encoder.bit_rate == 64_000
+    assert opened.video is not None and opened.video._encoder.bit_rate == 500_000
+    await room.stop("output")
+    await session.close()
+
+
 async def test_the_room_ends_once_both_processors_stopped_it_however_often_each_did():
     # Arrange
     relay = FakeRelay()
@@ -2529,7 +2583,7 @@ async def test_an_output_run_again_after_a_stop_frame_ends_the_media_senders_of_
     source = relay.sessions[0].media_broadcasts[0].sources[0]
     assert again is output
     assert first_audio_task is not None and first_audio_task.done()
-    assert source.audio_timestamps
+    assert len(source.audio_timestamps) * OPUS_FRAME_MICROS >= 80_000
     await session.close()
 
 
@@ -3389,23 +3443,6 @@ async def test_the_bots_speech_reaches_another_room_through_a_relay(relay_url):
         await session.close()
 
 
-async def test_writing_speech_waits_while_it_runs_ahead_of_the_clock():
-    # Arrange
-    relay = FakeRelay()
-    session = await open_session(relay)
-    room = Room(session, room_options(audio_out=True), RecordingSink())
-    await room.start("output")
-    started = time.monotonic()
-
-    # Act
-    await room.write_audio(tone(0.5), SAMPLE_RATE)
-
-    # Assert: half a second of speech is written ahead by at most 100 ms
-    assert time.monotonic() - started >= 0.35
-    await room.stop("output")
-    await session.close()
-
-
 def opus_packets() -> list[bytes]:
     """A second of speech, in 20 ms Opus packets."""
     return OpusEncoder().encode(tone(1.0), SAMPLE_RATE)
@@ -3480,10 +3517,164 @@ async def test_a_participant_switching_its_tracks_again_and_again_keeps_only_the
         await session.close()
 
 
+async def test_each_packet_of_speech_is_written_at_most_100_ms_ahead_of_the_clock():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+    await room.start("output")
+    native = relay.sessions[0].media_broadcasts[0].sources[0]
+    ahead_when_written: list[int] = []
+    push_audio = native.push_audio
+
+    def record_ahead(data: bytes, timestamp_micros: int, **level) -> None:
+        ahead_when_written.append(timestamp_micros - _now_micros())
+        push_audio(data, timestamp_micros, **level)
+
+    native.push_audio = record_ahead
+
+    # Act: half a second of speech in one chunk
+    await room.write_audio(tone(0.5), SAMPLE_RATE)
+
+    # Assert: each packet ends at most 100 ms (and a scheduling margin) ahead
+    assert len(ahead_when_written) >= 24
+    assert max(ahead_when_written) <= MAX_AUDIO_AHEAD_MICROS + OPUS_FRAME_MICROS + 15_000
+    await room.stop("output")
+    await session.close()
+
+
+async def test_an_interruption_stops_the_speech_being_written_but_not_uninterruptible_speech():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+    await room.start("output")
+    native = relay.sessions[0].media_broadcasts[0].sources[0]
+
+    # Act
+    speaking = asyncio.create_task(room.write_audio(tone(1.0), SAMPLE_RATE))
+    await asyncio.sleep(0.15)
+    room.interrupt_audio()
+    await within(speaking)
+    interrupted = len(native.audio_timestamps)
+    announcing = asyncio.create_task(room.write_audio(tone(0.3), SAMPLE_RATE, interruptible=False))
+    await asyncio.sleep(0.05)
+    room.interrupt_audio()
+    await within(announcing)
+
+    # Assert: about 250 ms of the second of speech was written, and all of the uninterruptible one
+    assert interrupted * OPUS_FRAME_MICROS <= 400_000
+    assert len(native.audio_timestamps) - interrupted >= 14
+    await room.stop("output")
+    await session.close()
+
+
+async def test_speech_an_interruption_cut_short_is_reported_as_not_written():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+    await room.start("output")
+    native = relay.sessions[0].media_broadcasts[0].sources[0]
+
+    # Act: the interruption comes while the speech waits for the clock
+    speaking = asyncio.create_task(room.write_audio(tone(1.0), SAMPLE_RATE))
+    await asyncio.sleep(0.15)
+    room.interrupt_audio()
+    written = await within(speaking)
+
+    # Assert
+    assert written is False
+    assert 0 < len(native.audio_timestamps) * OPUS_FRAME_MICROS < 1_000_000
+    await room.stop("output")
+    await session.close()
+
+
+async def test_media_the_media_source_dropped_once_the_session_ended_is_reported_as_not_written():
+    # Arrange: the native source refuses the pushes once the session ended, which drops them
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True, video_out=True), RecordingSink())
+    await room.start("output")
+    native = relay.sessions[0].media_broadcasts[0].sources[0]
+    native.failure = RuntimeError("media publishing stopped")
+    await session.close()
+
+    # Act
+    speech = await room.write_audio(tone(0.04), SAMPLE_RATE)
+    shown = await room.write_picture(picture(0), SIZE, "RGB")
+
+    # Assert
+    assert (speech, shown) == (False, False)
+    await room.stop("output")
+
+
+async def test_speech_too_short_for_a_packet_written_once_the_session_closed_is_reported_as_not_written():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+    await room.start("output")
+    await session.close()
+
+    # Act: 10 ms, short of an Opus packet of 20 ms
+    written = await room.write_audio(tone(0.01), SAMPLE_RATE)
+
+    # Assert
+    assert written is False
+    await room.stop("output")
+
+
 def sine(seconds: float, sample_rate: int, start: float = 0.0, frequency: float = 1000.0) -> np.ndarray:
     """A sine from `start` seconds on, so consecutive pieces continue its phase."""
     times = start + np.arange(int(seconds * sample_rate)) / sample_rate
     return (np.sin(2 * np.pi * frequency * times) * 8000).astype(np.int16)
+
+
+def frames_switching_channels() -> list[OutputAudioRawFrame]:
+    """A 1 kHz tone at 16 kHz in 10 ms frames, every other one stereo."""
+    frames = []
+    for index in range(20):
+        mono = sine(0.01, SAMPLE_RATE, start=index * 0.01)
+        stereo = index % 2 == 0
+        audio = np.repeat(mono, 2).tobytes() if stereo else mono.tobytes()
+        frames.append(OutputAudioRawFrame(audio=audio, sample_rate=SAMPLE_RATE, num_channels=2 if stereo else 1))
+    return frames
+
+
+def frames_switching_rates() -> list[OutputAudioRawFrame]:
+    """A 1 kHz tone in 20 ms frames, at 16 kHz then at 24 kHz."""
+    return [
+        OutputAudioRawFrame(audio=sine(0.02, rate, start=index * 0.02).tobytes(), sample_rate=rate, num_channels=1)
+        for index, rate in enumerate([SAMPLE_RATE] * 5 + [24_000] * 5)
+    ]
+
+
+@pytest.mark.parametrize(
+    "frames, output_rate", [(frames_switching_channels, SAMPLE_RATE), (frames_switching_rates, 48_000)]
+)
+async def test_speech_whose_channel_count_or_rate_changes_is_published_at_its_pitch(frames, output_rate):
+    # Arrange: 200 ms of a 1 kHz tone, in frames whose channel count or rate changes
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=output_rate, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[*frames(), TTSStoppedFrame(), SleepFrame(0.3)]))
+
+    # Assert: all of it was written, and nearly all its energy is at 1 kHz
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    decoder = OpusDecoder(SAMPLE_RATE)
+    decoded = np.frombuffer(b"".join(decoder.decode(call[1]) for call in source.calls if call[0] == "push_audio"), np.int16)
+    spectrum = np.abs(np.fft.rfft(decoded.astype(np.float64))) ** 2
+    frequencies = np.fft.rfftfreq(len(decoded), 1 / SAMPLE_RATE)
+    assert not [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(source.audio_timestamps) * OPUS_FRAME_MICROS >= 200_000
+    assert spectrum[np.abs(frequencies - 1000) < 100].sum() > 0.9 * spectrum.sum()
+    await session.close()
 
 
 def stereo_tone(seconds: float, sample_rate: int) -> bytes:
@@ -3494,6 +3685,140 @@ def stereo_tone(seconds: float, sample_rate: int) -> bytes:
 def dominant_frequency(samples: np.ndarray, sample_rate: int) -> float:
     spectrum = np.abs(np.fft.rfft(samples.astype(np.float64)))
     return float(np.fft.rfftfreq(len(samples), 1 / sample_rate)[spectrum.argmax()])
+
+
+async def test_a_stereo_output_publishes_stereo_opus_also_after_the_speech_ended():
+    # Arrange: two utterances of a 440 Hz tone on the left and a 1 kHz tone on the right, the
+    # second written by the encoder that replaced the first one's at its end
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=48_000,
+        audio_out_channels=2,
+        audio_out_end_silence_secs=0,
+    )
+    transport = MoqWasmTransport(session, params)
+    speech = OutputAudioRawFrame(audio=stereo_tone(0.2, 48_000), sample_rate=48_000, num_channels=2)
+    utterance = [speech, TTSStoppedFrame()]
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[*utterance, *utterance, SleepFrame(0.3)]))
+
+    # Assert: the catalog says stereo, every packet is stereo (the TOC byte's s flag, RFC 6716
+    # §3.1), and each channel kept its own tone
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    packets = [call[1] for call in source.calls if call[0] == "push_audio"]
+    decoder = av.CodecContext.create("opus", "r")
+    left, right = np.concatenate(
+        [frame.to_ndarray() for packet in packets for frame in decoder.decode(av.Packet(packet))], axis=1
+    )
+    assert ("configure_audio", "opus", 48_000, 2) in source.calls
+    assert len(packets) * OPUS_FRAME_MICROS >= 400_000
+    assert all(packet[0] & 0x04 for packet in packets)
+    assert abs(dominant_frequency(left, 48_000) - 440) < 20
+    assert abs(dominant_frequency(right, 48_000) - 1000) < 20
+    await session.close()
+
+
+async def test_resampled_speech_keeps_its_frame_class_and_interruptible_flag():
+    # Arrange: uninterruptible TTS speech at 24 kHz through a 16 kHz output
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    speech = TTSAudioRawFrame(audio=sine(0.1, 24_000).tobytes(), sample_rate=24_000, num_channels=1, context_id="reply")
+    speech.interruptible = False
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[speech, TTSStoppedFrame(), SleepFrame(0.3)]))
+
+    # Assert: pipecat passed on the chunks it wrote as TTS speech, uninterruptible,
+    # at the output's rate
+    chunks = [frame for frame in down if isinstance(frame, OutputAudioRawFrame)]
+    assert sum(chunk.num_frames for chunk in chunks) >= 0.1 * SAMPLE_RATE
+    assert all(isinstance(chunk, TTSAudioRawFrame) and not chunk.interruptible for chunk in chunks)
+    assert {chunk.sample_rate for chunk in chunks} == {SAMPLE_RATE}
+    await session.close()
+
+
+async def test_audio_that_is_no_pcm_of_one_or_two_channels_is_reported_and_the_audio_after_it_is_written():
+    # Arrange: three channels, then a tone
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    three_channels = OutputAudioRawFrame(audio=bytes(6 * 160), sample_rate=SAMPLE_RATE, num_channels=3)
+    speech = OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[three_channels, speech, SleepFrame(0.3)]))
+
+    # Assert
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(errors) == 1 and "cannot write audio" in errors[0].error and not errors[0].fatal
+    assert len(source.audio_timestamps) * OPUS_FRAME_MICROS >= 80_000
+    await session.close()
+
+
+async def test_an_output_ending_gracefully_writes_the_last_partial_chunk_of_its_speech():
+    # Arrange: 40 ms of silence, pipecat's chunk, then 10 ms of tone, less than a chunk, and no
+    # silence after it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    silence = bytes(int(0.04 * SAMPLE_RATE) * 2)
+    speech = OutputAudioRawFrame(audio=silence + tone(0.01), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act: run_test ends the pipeline with an EndFrame
+    await within(run_test(transport.output(), frames_to_send=[speech]))
+
+    # Assert: the tone was written
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    decoder = OpusDecoder(SAMPLE_RATE)
+    decoded = b"".join(decoder.decode(call[1]) for call in source.calls if call[0] == "push_audio")
+    assert len(source.audio_timestamps) * OPUS_FRAME_MICROS >= 50_000
+    assert np.abs(np.frombuffer(decoded, np.int16)).max() > 2000
+    await session.close()
+
+
+def fail_media_publishing_soon(relay: FakeRelay) -> None:
+    """Fails publishing the media source of the relay's first session in 100 ms."""
+
+    def fail_publishing() -> None:
+        relay.sessions[0].media_broadcasts[0].sources[0].failure = RuntimeError("media publishing stopped")
+
+    asyncio.get_running_loop().call_later(0.1, fail_publishing)
+
+
+async def test_an_output_whose_last_packet_cannot_be_written_reports_it_and_still_ends_the_pipeline():
+    # Arrange: publishing the bot's audio fails while 10 ms of speech waits for the EndFrame
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    speech = OutputAudioRawFrame(audio=tone(0.01), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    fail_media_publishing_soon(relay)
+
+    # Act: run_test ends the pipeline with an EndFrame and waits for it to come out
+    _, up = await within(run_test(transport.output(), frames_to_send=[SleepFrame(0.2), speech]))
+
+    # Assert: the failure went upstream as an ErrorFrame, and the room was left
+    assert any(isinstance(frame, ErrorFrame) and "media publishing stopped" in frame.error for frame in up)
+    assert ("unannounce", [*ROOM, "bot"]) in relay.sessions[0].calls
+    await session.close()
 
 
 @pytest.mark.parametrize("processor", ["input", "output"])
@@ -3556,6 +3881,195 @@ async def test_an_input_only_worker_reports_the_room_it_fails_to_withdraw_at_an_
 
     # Assert
     assert [error.error for error in errors] == ["cannot leave the room: withdrawal refused"]
+    await session.close()
+
+
+async def test_a_picture_that_cannot_be_encoded_is_reported_and_the_pictures_after_it_are_written():
+    # Arrange: a grayscale picture, which the encoder does not take, then an RGB one
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    grayscale = OutputImageRawFrame(image=bytes(SIZE[0] * SIZE[1]), size=SIZE, format="L")
+    rgb = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[grayscale, rgb, SleepFrame(0.2)]))
+
+    # Assert
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(errors) == 1 and "cannot write a picture" in errors[0].error
+    assert [call[0] for call in source.calls].count("push_video") == 1
+    await session.close()
+
+
+BGR_PICTURE = bytes(320 * 240 * 3)
+
+
+async def test_media_whose_publishing_failed_is_reported_once_and_dropped_after_it():
+    # Arrange: publishing the bot's media fails before it speaks and shows pictures; the output
+    # writes a data track too
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=SAMPLE_RATE,
+        audio_out_end_silence_secs=0,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+        data_out_tracks={"status": 60},
+    )
+    transport = MoqWasmTransport(session, params)
+    output = transport.output()
+
+    fail_media_publishing_soon(relay)
+    speech = [OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1) for _ in range(2)]
+    rgb = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+
+    # Act
+    _, up = await within(run_test(output, frames_to_send=[SleepFrame(0.2), *speech, SleepFrame(0.3), rgb, SleepFrame(0.1)]))
+
+    # Assert: only the first failed push was reported, and the output, which still writes its data
+    # track, stays usable
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(errors) == 1 and "media publishing stopped" in errors[0].error
+    assert output.is_usable
+    await session.close()
+
+
+async def test_an_output_whose_media_publishing_failed_with_nothing_else_to_write_ends_the_pipeline():
+    # Arrange: an output that publishes speech alone, in a worker that cancels its pipeline once a
+    # processor is unusable
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    output = MoqWasmTransport(session, params).output()
+    worker = PipelineWorker(
+        Pipeline([output]),
+        cancel_on_idle_timeout=False,
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
+    )
+    errors: list[ErrorFrame] = []
+    worker.event_handler("on_pipeline_error")(lambda _, frame: errors.append(frame))
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    running = asyncio.create_task(runner.run())
+    await until(lambda: ("watch_namespaces", ROOM) in native.calls)
+    await asyncio.sleep(0.1)
+    native.media_broadcasts[0].sources[0].failure = RuntimeError("media publishing stopped")
+
+    # Act
+    await worker.queue_frames([OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)])
+
+    # Assert: the failure left the output unusable, and the worker cancelled the pipeline
+    try:
+        await within(asyncio.shield(running))
+    finally:
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+    assert len(errors) == 1 and "media publishing stopped" in errors[0].error
+    assert not output.is_usable
+    await session.close()
+
+
+async def test_speech_dropped_after_its_media_source_failed_is_not_passed_on_as_sent():
+    # Arrange: publishing the bot's audio fails before it speaks
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+
+    fail_media_publishing_soon(relay)
+    speech = [OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1) for _ in range(2)]
+
+    # Act
+    down, up = await within(run_test(transport.output(), frames_to_send=[SleepFrame(0.2), *speech, SleepFrame(0.3)]))
+
+    # Assert: the first chunk's failure was reported once, and no chunk went on as sent
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(errors) == 1 and "media publishing stopped" in errors[0].error
+    assert not [frame for frame in down if isinstance(frame, OutputAudioRawFrame)]
+    await session.close()
+
+
+async def test_a_finished_utterance_writes_its_ending_before_a_later_interruption():
+    # Arrange: one chunk of speech, 20 ms of silence then 20 ms of tone, ends with a
+    # TTSStoppedFrame; an interruption comes once the output wrote it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    silence = bytes(int(0.02 * SAMPLE_RATE) * 2)
+    speech = OutputAudioRawFrame(audio=silence + tone(0.02), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act: run_test ends the pipeline with an EndFrame
+    frames = [speech, TTSStoppedFrame(), SleepFrame(0.2), InterruptionFrame()]
+    await within(run_test(transport.output(), frames_to_send=frames))
+
+    # Assert: the tone was written
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    decoder = OpusDecoder(SAMPLE_RATE)
+    decoded = b"".join(decoder.decode(call[1]) for call in source.calls if call[0] == "push_audio")
+    assert np.abs(np.frombuffer(decoded, np.int16)).max() > 2000
+    await session.close()
+
+
+async def test_an_interruption_between_uninterruptible_chunks_keeps_what_the_encoder_holds_of_them():
+    # Arrange: two 15 ms chunks of uninterruptible speech make one packet together
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+    await room.start("output")
+    native = relay.sessions[0].media_broadcasts[0].sources[0]
+    reference = OpusEncoder()
+    expected = [*reference.encode(tone(0.015), SAMPLE_RATE), *reference.encode(tone(0.015), SAMPLE_RATE)]
+
+    # Act
+    await room.write_audio(tone(0.015), SAMPLE_RATE, interruptible=False)
+    room.interrupt_audio()
+    await room.write_audio(tone(0.015), SAMPLE_RATE, interruptible=False)
+
+    # Assert
+    assert len(expected) == 1
+    assert len(native.audio_timestamps) == len(expected)
+    await room.stop("output")
+    await session.close()
+
+
+async def test_an_interruption_after_interruptible_speech_keeps_the_uninterruptible_speech_before_it():
+    # Arrange: 30 ms of uninterruptible speech, a packet and a half, then 5 ms of
+    # interruptible speech
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+    await room.start("output")
+    native = relay.sessions[0].media_broadcasts[0].sources[0]
+    await room.write_audio(tone(0.03), SAMPLE_RATE, interruptible=False)
+    await room.write_audio(tone(0.005), SAMPLE_RATE)
+
+    # Act
+    room.interrupt_audio()
+
+    # Assert: all of the uninterruptible speech was written
+    assert len(native.audio_timestamps) * OPUS_FRAME_MICROS >= 30_000
+    await room.stop("output")
     await session.close()
 
 
@@ -4609,6 +5123,30 @@ def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder
     assert len(packets) in (10, 11)
 
 
+def test_the_transport_refuses_output_destinations():
+    # Act / Assert
+    with pytest.raises(ValueError, match="destinations"):
+        MoqWasmTransport(SimpleNamespace(), MoqWasmParams(room=ROOM, audio_out_destinations=["es"]))
+
+
+def test_the_transport_refuses_output_audio_of_more_than_two_channels():
+    # Act / Assert
+    with pytest.raises(ValueError, match="mono or stereo"):
+        MoqWasmTransport(SimpleNamespace(), MoqWasmParams(room=ROOM, audio_out_channels=3))
+
+
+@pytest.mark.parametrize("by_destination", [False, True], ids=["mixer", "mixer by destination"])
+def test_the_transport_refuses_a_soundfile_mixer_with_stereo_output_audio(by_destination):
+    # Arrange: pipecat's SoundfileMixer mixes one sample of its mono file into each
+    # sample of the audio
+    mixer = SoundfileMixer(sound_files={"office": "office.wav"}, default_sound="office")
+    params = MoqWasmParams(room=ROOM, audio_out_channels=2, audio_out_mixer={None: mixer} if by_destination else mixer)
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="SoundfileMixer"):
+        MoqWasmTransport(SimpleNamespace(), params)
+
+
 def test_the_transport_refuses_an_input_audio_filter():
     # Arrange: the transport's input carries every participant's audio through the one filter
     params = MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_in_filter=RecordingFilter())
@@ -4639,7 +5177,8 @@ class RecordingMixer(BaseAudioMixer):
 
 
 async def test_the_transport_keeps_the_audio_mixers_by_destination_it_was_built_with():
-    # Arrange: a stereo output whose mixer mapping the caller changes once it is built
+    # Arrange: a stereo output whose mixer mapping the caller changes once it is built, as to a
+    # SoundfileMixer the transport would have refused
     relay = FakeRelay()
     session = await open_session(relay)
     kept, replaced = RecordingMixer(), RecordingMixer()
@@ -4686,6 +5225,31 @@ def test_an_input_refuses_input_audio_of_more_than_two_channels(input_kind):
             MoqWasmParticipantInput(remote, MoqWasmInputParams(audio_in_channels=3))
 
 
+@pytest.mark.parametrize("chunks", [0, -1])
+def test_the_transport_refuses_audio_chunks_of_no_10_ms(chunks):
+    # Act / Assert
+    with pytest.raises(ValueError, match="audio_out_10ms_chunks"):
+        MoqWasmTransport(SimpleNamespace(), MoqWasmParams(room=ROOM, audio_out_10ms_chunks=chunks))
+
+
+async def test_an_output_whose_audio_chunks_hold_no_sample_starts_no_sender_and_is_unusable():
+    # Arrange: at 50 Hz, 10 ms of audio holds no sample, so pipecat's chunks would be empty
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(room=ROOM, audio_out_enabled=True, audio_out_sample_rate=50)
+    output = MoqWasmTransport(session, params).output()
+
+    # Act
+    _, up = await within(run_test(output, frames_to_send=[SleepFrame(0.1)]))
+
+    # Assert: no audio sender started, and the output reported it can write nothing
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert output._media_senders == {}
+    assert len(errors) == 1 and "no sample in 10 ms" in errors[0].error
+    assert not output.is_usable
+    await session.close()
+
+
 def message_payloads(frames) -> list[bytes]:
     return [frame.message.payload for frame in frames if isinstance(frame, InputTransportMessageFrame)]
 
@@ -4716,6 +5280,93 @@ async def test_a_participant_input_a_stop_frame_paused_pushes_no_message_until_t
     assert message_payloads(first_run) == [b"first"]
     assert message_payloads(while_paused.frames) == []
     assert message_payloads(second_run) == [b"resumed"]
+    await session.close()
+
+
+async def test_audio_at_no_sample_rate_is_reported_and_the_speech_after_it_is_written_to_its_end():
+    # Arrange: 10 ms at a sample rate of 0, then 50 ms of speech, the last 10 ms of it short of
+    # pipecat's chunk
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    no_rate = OutputAudioRawFrame(audio=tone(0.01), sample_rate=0, num_channels=1)
+    speech = OutputAudioRawFrame(audio=tone(0.05), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act: run_test ends the pipeline with an EndFrame and waits for it to come out
+    _, up = await within(run_test(transport.output(), frames_to_send=[no_rate, speech]))
+
+    # Assert: the frame without a rate was reported, and all of the speech was written
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(errors) == 1 and "sample rate" in errors[0].error and not errors[0].fatal
+    assert len(source.audio_timestamps) * OPUS_FRAME_MICROS >= 50_000
+    assert ("unannounce", [*ROOM, "bot"]) in relay.sessions[0].calls
+    await session.close()
+
+
+async def test_an_output_whose_resampler_fails_at_the_end_of_the_speech_reports_it_and_still_ends(monkeypatch):
+    # Arrange: flushing a resampler fails, as the output's EndFrame flushes what it holds of 100 ms
+    # of speech
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    output = MoqWasmTransport(session, params).output()
+    upstream, downstream = link_recorders(output)
+    await within(start_alone(output))
+    await within(output.process_frame(OutputAudioRawFrame(audio=tone(0.1), sample_rate=24_000, num_channels=1), FrameDirection.DOWNSTREAM))
+
+    def fail_flush(self) -> bytes:
+        raise RuntimeError("flush failed")
+
+    monkeypatch.setattr(codecs._PcmResampler, "flush", fail_flush)
+    end = EndFrame()
+
+    # Act
+    await within(output.process_frame(end, FrameDirection.DOWNSTREAM))
+
+    # Assert: the EndFrame went on, so the pipeline ends, the failure went upstream as a non-fatal
+    # ErrorFrame, and the room was left
+    errors = [frame for frame in upstream.frames if isinstance(frame, ErrorFrame)]
+    assert end in downstream.frames
+    assert errors and all("flush failed" in error.error and not error.fatal for error in errors)
+    assert ("unannounce", [*ROOM, "bot"]) in relay.sessions[0].calls
+    await within(output.cleanup())
+    await session.close()
+
+
+def decoded_speech(source) -> np.ndarray:
+    decoder = OpusDecoder(SAMPLE_RATE)
+    return np.frombuffer(b"".join(decoder.decode(call[1]) for call in source.calls if call[0] == "push_audio"), np.int16)
+
+
+async def test_an_output_a_stop_frame_stopped_writes_the_speech_before_it_and_the_speech_of_the_next_run():
+    # Arrange: pipecat's chunks of 40 ms, and 10 ms of speech at 24 kHz before the StopFrame, short
+    # of a chunk and resampled to the output's 16 kHz
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    before_stop = OutputAudioRawFrame(audio=sine(0.01, 24_000).tobytes(), sample_rate=24_000, num_channels=1)
+    after_resume = OutputAudioRawFrame(audio=tone(0.01), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act: the first pipeline stops at the StopFrame, and the next one resumes the output and ends
+    await within(
+        run_test(transport.output(), frames_to_send=[before_stop, SleepFrame(0.1), StopFrame()], send_end_frame=False)
+    )
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    stopped = decoded_speech(source)
+    await within(run_test(transport.output(), frames_to_send=[SleepFrame(0.1), after_resume]))
+
+    # Assert: the speech before the StopFrame was written at it, and the next run's after it
+    assert np.abs(stopped).max() > 2000
+    assert np.abs(decoded_speech(source)[len(stopped) :]).max() > 2000
     await session.close()
 
 
@@ -4869,3 +5520,134 @@ async def test_a_processor_stopped_resumed_and_ended_stops_its_audio_filter_afte
     # Assert: the filter filtered each run's speech at that run's rate, and was stopped after each
     assert audio_filter.calls == [("start", SAMPLE_RATE), ("filter",), ("stop",), ("start", 24_000), ("filter",), ("stop",)]
     await session.close()
+
+
+async def test_an_output_whose_speech_paused_writes_the_partial_chunk_the_pause_left_at_its_stop_frame(monkeypatch):
+    # Arrange: pipecat's chunks of 40 ms, 50 ms of speech whose last 10 ms are louder, and a pause
+    # longer than the one after which pipecat's sender takes the bot as no longer speaking
+    monkeypatch.setattr(base_output, "BOT_VAD_STOP_FALLBACK_SECS", 0.2)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    output = MoqWasmTransport(session, params).output()
+    quiet = (sine(0.04, SAMPLE_RATE) // 10).astype(np.int16)
+    speech = np.concatenate([quiet, sine(0.01, SAMPLE_RATE, start=0.04)])
+    frame = SpeechOutputAudioRawFrame(audio=speech.tobytes(), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    try:
+        # Act
+        await within(run_test(output, frames_to_send=[frame, SleepFrame(0.5), StopFrame()], send_end_frame=False))
+
+        # Assert: the louder 10 ms were written
+        source = relay.sessions[0].media_broadcasts[0].sources[0]
+        assert np.abs(decoded_speech(source)).max() > 4000
+    finally:
+        # The StopFrame left the output running, as pipecat keeps a stopped processor.
+        await within(output.cleanup())
+        await session.close()
+
+
+def speaking_params(**overrides) -> MoqWasmParams:
+    """The params of an output that speaks at `SAMPLE_RATE` and shows live pictures of `SIZE`."""
+    params = dict(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=SAMPLE_RATE,
+        audio_out_end_silence_secs=0,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    return MoqWasmParams(**{**params, **overrides})
+
+
+async def test_frames_for_another_destination_go_on_as_they_came_and_write_nothing():
+    # Arrange: an urgent track object and speech at another sample rate, both for another
+    # destination, then the output's own speech
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=SAMPLE_RATE,
+        audio_out_end_silence_secs=0,
+        data_out_tracks={"status": 60},
+    )
+    transport = MoqWasmTransport(session, params)
+    urgent = OutputTransportMessageUrgentFrame(message=MoqWasmTrackObject("status", b"elsewhere"))
+    foreign_audio = tone(0.1, 48_000)
+    foreign = OutputAudioRawFrame(audio=foreign_audio, sample_rate=48_000, num_channels=1)
+    for frame in (urgent, foreign):
+        frame.transport_destination = "other"
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[urgent, foreign, SleepFrame(0.2)]))
+
+    # Assert: both went on untouched, and the output wrote neither
+    source = native.media_broadcasts[0].sources[0]
+    assert native.writers["status"].objects == []
+    assert source.audio_timestamps == []
+    passed = {frame.id: frame for frame in down}
+    assert urgent.id in passed
+    assert passed[foreign.id] is foreign and foreign.audio == foreign_audio and foreign.sample_rate == 48_000
+    await session.close()
+
+
+async def test_a_tts_stopped_frame_for_another_destination_leaves_the_outputs_speech_going():
+    # Arrange: 30 ms of speech in chunks of 10 ms, of which the Opus encoder holds 10 ms once it
+    # wrote a packet, then 10 ms more speech, with and without a TTSStoppedFrame for another
+    # destination between them
+    foreign = TTSStoppedFrame()
+    foreign.transport_destination = "other"
+
+    async def packets(*between: Frame) -> tuple[int, list[Frame]]:
+        relay = FakeRelay()
+        session = await open_session(relay)
+        transport = MoqWasmTransport(session, speaking_params(audio_out_10ms_chunks=1, video_out_enabled=False))
+        first = OutputAudioRawFrame(audio=tone(0.03), sample_rate=SAMPLE_RATE, num_channels=1)
+        second = OutputAudioRawFrame(audio=tone(0.01), sample_rate=SAMPLE_RATE, num_channels=1)
+        down, _ = await within(run_test(transport.output(), frames_to_send=[first, SleepFrame(0.1), *between, second]))
+        await session.close()
+        return len(relay.sessions[0].media_broadcasts[0].sources[0].audio_timestamps), down
+
+    # Act
+    alone, _ = await packets()
+    count, down = await packets(foreign)
+
+    # Assert: the foreign frame padded no packet of the speech, and went on
+    assert count == alone
+    assert foreign.id in [frame.id for frame in down]
+
+
+async def test_a_cancel_frame_for_another_destination_leaves_the_output_running():
+    # Arrange: an output queued frames as in a pipeline, without the processors around it, which
+    # pipecat cancels with any CancelFrame; then a CancelFrame for another destination
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_is_live=True, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    output = MoqWasmTransport(session, params).output()
+    _, down = link_recorders(output)
+    setup = FrameProcessorSetup(clock=SystemClock(), task_manager=TaskManager(), pipeline_worker=SimpleNamespace())
+    await output.setup(setup)
+    await output.queue_frame(StartFrame())
+    await until(lambda: None in output._media_senders)
+    foreign = CancelFrame()
+    foreign.transport_destination = "other"
+
+    # Act
+    await output.queue_frame(foreign)
+    await output.queue_frame(OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB"))
+
+    # Assert: the output wrote the picture after it, and the foreign frame went on
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await until(lambda: len(source.video_timestamps) == 1)
+    assert foreign.id in [frame.id for frame in down.frames]
+    await within(output.cleanup())
+    await session.close()
+
