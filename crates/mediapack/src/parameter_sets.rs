@@ -151,14 +151,18 @@ impl<C: NalDecoderConfig> ParameterSetTracker<C> {
         }
     }
 
+    /// Takes in the parameter sets `annexb` carries and returns it as an
+    /// access unit, with the known parameter sets on a keyframe that lacks
+    /// them. `None` when it holds no slice (parameter sets, SEI or an access
+    /// unit delimiter alone); the configuration its parameter sets make is
+    /// reported with the next access unit that holds a slice.
     pub fn track(&mut self, annexb: &[u8]) -> Result<Option<TrackedAccessUnit<C>>> {
         let nals: Vec<&[u8]> = nal_units(annexb).collect();
-        if nals.is_empty() {
-            return Ok(None);
-        }
+        let mut has_slice = false;
         let mut is_keyframe = false;
         let mut inline = vec![Vec::new(); C::PARAMETER_SET_KINDS];
         for nal in &nals {
+            has_slice |= C::is_slice(nal);
             match C::nal_kind(nal) {
                 NalKind::KeyframeSlice => is_keyframe = true,
                 NalKind::ParameterSet(kind) => inline[kind].push(Bytes::copy_from_slice(nal)),
@@ -169,6 +173,9 @@ impl<C: NalDecoderConfig> ParameterSetTracker<C> {
             if !inline.is_empty() {
                 *known = inline;
             }
+        }
+        if !has_slice {
+            return Ok(None);
         }
         let mut config_changed = None;
         if self.sets.iter().all(|sets| !sets.is_empty()) {
