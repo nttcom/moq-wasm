@@ -1,6 +1,6 @@
 [package]
 name = "moq-wasm"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 description = "Rust SDK for Media over QUIC Transport: relay sessions, tracks and MSF broadcasts"
 license = "MIT"

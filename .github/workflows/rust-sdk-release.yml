@@ -1,0 +1,80 @@
+name: Rust SDK release
+
+# `docs/architecture/moq-wasm/sdk.md` "Release".
+on:
+  push:
+    tags:
+      - "rust-sdk-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Check the tag names the crate version
+        id: version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('sdk/rust/Cargo.toml', 'rb'))['package']['version'])")
+          if [ "${GITHUB_REF_NAME}" != "rust-sdk-v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not name the crate version ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Check the changelog has the version's section
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/rust/CHANGELOG.md "${{ steps.version.outputs.version }}"
+
+  test:
+    needs: version
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      # A git dependency does not read this repository's Cargo.lock, so the
+      # crate is tested with the dependencies a user's build resolves.
+      - name: Resolve the dependencies as a user's build does
+        run: cargo update
+      - name: Run the crate's tests
+        run: cargo test -p moq-wasm
+
+  release:
+    needs: [version, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Take the release notes from the changelog
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/rust/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag --latest=false \
+            --title "moq-wasm (Rust) ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"

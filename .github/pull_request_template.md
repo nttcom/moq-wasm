@@ -30,5 +30,9 @@
 <!-- Python SDK（sdk/python の moq-wasm）の利用者に見える変更なら、sdk/python/CHANGELOG.md にそのまま載せる英文の箇条書き。見えない変更ならこの節を消す -->
 
 
+## リリースノート（Rust）
+<!-- Rust SDK（sdk/rust の moq-wasm）の利用者に見える変更なら、sdk/rust/CHANGELOG.md にそのまま載せる英文の箇条書き。見えない変更ならこの節を消す -->
+
+
 ## 備考
 <!-- レビュワーへの伝達事項や残しておきたい情報 -->

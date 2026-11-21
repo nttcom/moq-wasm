@@ -159,3 +159,4 @@ A span that lives longer than the request that starts it (a track, a session) ro
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
 - When releasing the browser SDK (`moq-wasm`), follow the skill in `.agents/skills/release-sdk/SKILL.md`.
 - When releasing the Python SDK (`moq-wasm` in `sdk/python`), follow the skill in `.agents/skills/release-python-sdk/SKILL.md`.
+- When releasing the Rust SDK (`moq-wasm` in `sdk/rust`), follow the skill in `.agents/skills/release-rust-sdk/SKILL.md`.

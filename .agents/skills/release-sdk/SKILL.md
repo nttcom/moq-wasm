@@ -21,7 +21,7 @@ The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` 
    - Set the version in `sdk/js/js/package.json` and in the `sdk/js/js` entry of `package-lock.json`.
    - Check `node sdk/js/js/scripts/release-notes.mjs sdk/js/js/CHANGELOG.md <version>` prints the section, and run prettier on the changed files.
    - Commit as `chore(wasm): release moq-wasm <version>`.
-7. Open the release PR with the `create-pull-request` skill, titled `chore(wasm): moq-wasm <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート` section.
+7. Open the release PR with the `create-pull-request` skill, titled `chore(wasm): moq-wasm <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート`, `## リリースノート（Python）` or `## リリースノート（Rust）` section.
 8. After the user merges it, confirm with them, then tag the merge commit and push the tag: `git tag js-sdk-v<version> <merge commit>` and `git push origin js-sdk-v<version>`. Check the commit's `sdk/js/js/package.json` names `<version>` first; the workflow stops otherwise.
 9. Wait for the `SDK release` workflow (`gh run list --workflow sdk-release.yml`), then report the GitHub Release URL and its `moq-wasm-<version>.tgz`.
 
