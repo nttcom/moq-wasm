@@ -102,6 +102,8 @@ class TokenKeeper:
             deadline = asyncio.get_running_loop().time() + min(REFRESH_TIMEOUT_SECONDS, left)
             try:
                 token = await self._call(lambda: self._refresh(self.token), deadline, "refresh_token")
+                if not isinstance(token, str):
+                    raise TypeError(f"refresh_token returned {type(token).__name__}, not a str")
                 claims = self._later(read_claims(token))
                 await self._call(lambda: hand_over(token), deadline, "handing the token over")
                 self._claims = claims
