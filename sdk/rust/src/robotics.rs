@@ -5,7 +5,7 @@ use anyhow::bail;
 
 use crate::{Session, media::LocalBroadcast};
 
-pub use ::robotics::{ArbiterConfig, Command, HoldReason, Robot};
+pub use ::robotics::{ArbiterConfig, Command, Driver, HoldReason, Robot, State, decode_object};
 
 /// Runs the robot of the room `broadcast` belongs to: `broadcast` is
 /// `<room>/robot`, announced on `session`. Keep `broadcast` alive while the
@@ -27,6 +27,14 @@ pub async fn run_robot(
         ),
     };
     Robot::run(session.client().clone(), broadcast, room, config).await
+}
+
+/// Starts driving a robot room from `broadcast`, a driver's announced
+/// broadcast (`<room>/operators/<id>` or `<room>/bots/policy`): lists its
+/// `action` track in the catalog. Keep `broadcast` alive while sending.
+/// Fails when the track cannot be offered.
+pub async fn offer_actions(broadcast: &LocalBroadcast) -> anyhow::Result<Driver> {
+    Driver::offer(broadcast.broadcast()).await
 }
 
 #[cfg(test)]
@@ -63,6 +71,36 @@ mod tests {
             assert!(requests.contains(&publish), "{publish} not in {requests:?}");
         }
         assert_eq!(requests.last().unwrap(), "SUBSCRIBE_NAMESPACE anon/lab");
+    }
+
+    #[tokio::test]
+    async fn a_driver_publishes_its_action_track_and_sends_on_it() {
+        // Arrange
+        let mut relay = TestRelay::spawn("driver");
+        let session = relay.connect().await;
+        let broadcast = create_broadcast(&session, &["anon", "lab", "bots", "policy"])
+            .announce()
+            .await
+            .unwrap();
+        relay.next_request().await;
+
+        // Act
+        let driver = offer_actions(&broadcast).await.unwrap();
+        let sent = driver.send(1_000, 50, vec![vec![0.5, 0.0]]).await;
+
+        // Assert
+        let mut requests = Vec::new();
+        while !requests
+            .iter()
+            .any(|request: &String| request.ends_with("/catalog"))
+        {
+            requests.push(relay.next_request().await);
+        }
+        assert!(
+            requests.contains(&"PUBLISH anon/lab/bots/policy/action".to_string()),
+            "{requests:?}"
+        );
+        assert!(sent.is_ok());
     }
 
     #[tokio::test]

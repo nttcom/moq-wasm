@@ -292,7 +292,10 @@ recording and the LeRobot export. That logic lives once in the crate
 `moq_wasm::robotics` is the robot side: `run_robot(session, broadcast,
 config)` runs `robotics::Robot` on an announced `LocalBroadcast` named
 `<room>/robot`, the room being its namespace without `robot`, and the module
-re-exports `Robot`, `Command`, `HoldReason` and `ArbiterConfig`. The Rust
+re-exports `Robot`, `Command`, `HoldReason` and `ArbiterConfig`. The driver
+side is `offer_actions(broadcast)`, which lists `action` on a driver's
+announced `LocalBroadcast` and returns `robotics::Driver`; with `State` and
+`decode_object` it is what a policy bot uses. The Rust
 SDK has it first; the Python SDK's module follows when a Python robot needs
 it. It is not behind a Cargo feature: `robotics` adds record types and
 logic, not a heavy dependency, and a feature would split the tested builds.
