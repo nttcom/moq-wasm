@@ -12,8 +12,9 @@ pub(crate) mod subscription;
 
 use async_trait::async_trait;
 
-use crate::modules::session::{
-    moqt_session_event::MoqtSessionEvent, publisher::Publisher, subscriber::Subscriber,
+use crate::modules::{
+    domain::publish_done_reason::PublishDoneReason,
+    session::{moqt_session_event::MoqtSessionEvent, publisher::Publisher, subscriber::Subscriber},
 };
 
 #[async_trait]
@@ -90,7 +91,9 @@ impl Session for moqt::Session {
                     MoqtSessionEvent::Subscribe(Box::new(subscribe_handler))
                 }
                 moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
-                    MoqtSessionEvent::Unsubscribe(unsubscribe_handler)
+                    MoqtSessionEvent::Unsubscribe {
+                        request_id: unsubscribe_handler.subscribe_id(),
+                    }
                 }
                 moqt::SessionEvent::Disconnected() => MoqtSessionEvent::Disconnected(),
                 moqt::SessionEvent::ProtocolViolation() => MoqtSessionEvent::ProtocolViolation(),
@@ -104,7 +107,14 @@ impl Session for moqt::Session {
                     MoqtSessionEvent::GoAway(go_away_handler)
                 }
                 moqt::SessionEvent::PublishDone(publish_done_handler) => {
-                    MoqtSessionEvent::PublishDone(publish_done_handler)
+                    MoqtSessionEvent::PublishDone {
+                        request_id: publish_done_handler.request_id(),
+                        reason: PublishDoneReason {
+                            status_code: publish_done_handler.status_code(),
+                            error_reason: publish_done_handler.error_reason().to_string(),
+                        },
+                        stream_count: publish_done_handler.stream_count(),
+                    }
                 }
                 moqt::SessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler) => {
                     MoqtSessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler)

@@ -1,8 +1,11 @@
-use crate::modules::session::handler::{
-    fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
-    subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
-    subscribe_namespace_update::SubscribeNamespaceUpdateHandler,
-    subscribe_update::SubscribeUpdateHandler, track_status::TrackStatusHandler,
+use crate::modules::{
+    domain::publish_done_reason::PublishDoneReason,
+    session::handler::{
+        fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+        subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+        subscribe_namespace_update::SubscribeNamespaceUpdateHandler,
+        subscribe_update::SubscribeUpdateHandler, track_status::TrackStatusHandler,
+    },
 };
 
 pub(crate) enum MoqtSessionEvent {
@@ -15,10 +18,16 @@ pub(crate) enum MoqtSessionEvent {
     UnsubscribeNamespace(moqt::namespace::UnsubscribeNamespaceHandler),
     PublishBlocked(moqt::namespace::PublishBlockedHandler),
     Publish(Box<dyn PublishHandler>),
-    PublishDone(moqt::publish::PublishDoneHandler),
+    PublishDone {
+        request_id: u64,
+        reason: PublishDoneReason,
+        stream_count: u64,
+    },
     Subscribe(Box<dyn SubscribeHandler>),
     SubscribeUpdate(Box<dyn SubscribeUpdateHandler>),
-    Unsubscribe(moqt::subscribe::UnsubscribeHandler),
+    Unsubscribe {
+        request_id: u64,
+    },
     Fetch(Box<dyn FetchHandler>),
     FetchCancel(moqt::fetch::FetchCancelHandler),
     TrackStatus(Box<dyn TrackStatusHandler>),
@@ -38,10 +47,10 @@ impl std::fmt::Debug for MoqtSessionEvent {
             MoqtSessionEvent::UnsubscribeNamespace(_) => "UnsubscribeNamespace",
             MoqtSessionEvent::PublishBlocked(_) => "PublishBlocked",
             MoqtSessionEvent::Publish(_) => "Publish",
-            MoqtSessionEvent::PublishDone(_) => "PublishDone",
+            MoqtSessionEvent::PublishDone { .. } => "PublishDone",
             MoqtSessionEvent::Subscribe(_) => "Subscribe",
             MoqtSessionEvent::SubscribeUpdate(_) => "SubscribeUpdate",
-            MoqtSessionEvent::Unsubscribe(_) => "Unsubscribe",
+            MoqtSessionEvent::Unsubscribe { .. } => "Unsubscribe",
             MoqtSessionEvent::Fetch(_) => "Fetch",
             MoqtSessionEvent::FetchCancel(_) => "FetchCancel",
             MoqtSessionEvent::TrackStatus(_) => "TrackStatus",
