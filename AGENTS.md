@@ -31,8 +31,8 @@ All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are appli
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
 ### Architecture Documents
-- Architecture documents live under `docs/architecture/${package_name}/` (typically `architecture.md`; the SDKs use `browser-sdk.md` or `sdk.md`).
-- Before making structural changes to a component (module layout, layering, task/channel topology), read its architecture document first.
+- Architecture documents live under `docs/architecture/${package_name}/`. Most crates have `architecture.md`; the SDKs use `sdk.md`, and `wasm` uses `browser-sdk.md`. A directory that holds only ADRs has no architecture document.
+- Before making structural changes to a component (module layout, layering, task/channel topology), read its architecture document if it has one.
 - When a change alters the design intent, module boundaries, runtime flow, or key invariants described in an architecture document, update that document in the same change.
 
 ## 3. Specifications
@@ -119,6 +119,7 @@ A span that lives longer than the request that starts it (a track, a session) ro
 
 ## 8. Git Conventions
 - Commit messages must be written in English.
+- A squash-merged commit on `master` takes the Japanese PR title as its subject; the English rule applies to the commits you write on a branch.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
   - Scope: use the component or crate name (e.g. `moqt`, `relay`, `wasm`, `python`, `moq-wasm`, `broadcast`, `live-ingest`, `live-egress`, `onvif-ingest`, `msf`, `mediapack`)
