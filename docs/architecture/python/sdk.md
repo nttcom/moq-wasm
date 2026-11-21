@@ -157,23 +157,29 @@ SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 `priority`, `delivery_timeout` in seconds and `group_order`),
 `subscribe_current_group`, `subscribe_group_start`, `fetch` (between two
 `Location`s), `track_status`, `watch_namespaces`, `publish_track` (with
-`retention_seconds`, `publish` and `datagram`) and `announce`. A
+`retention_seconds`, `publish` and `datagram`) and `announce`. The native
+origin keeps the delivery a track sent its objects with: registering it
+again with the other `datagram` switches a track that has no object yet and
+raises ValueError, from the native call, for one that has. A
 `TrackWriter` has `write` and `write_group`, which return the group id an
 object went into when a subscriber took it, and `next_subscriber`; its
 objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
 through `groups()`, and has `largest`, `done()`, `set_forward`,
 `set_priority`, `request_new_group`, `end_before_group` and `close`. An
-`Object` carries `group_id`, `subgroup_id`, `object_id`, `status` and
-`payload`; its extension headers are left out until a bot reads one.
+`Object` carries `group_id`, `subgroup_id`, `object_id`, `status`,
+`payload`, its `extension_headers` as `(id, value)` pairs and
+`timestamp_micros`, the LOC Timestamp a recorder aligns audio and video
+by.
 
 A request that fails raises `RequestError`, as the browser SDK does, with
 `message_type` (`"SUBSCRIBE"`, ...), `code`, the draft-14 number of its
 error code (`RequestErrorCode` names those of SUBSCRIBE, FETCH and
 TRACK_STATUS), and `reason`. It subclasses `RuntimeError`, which the bots
 and the media layer catch around their requests. The requests the
-browser SDK wraps raise it; a refused PUBLISH or SUBSCRIBE_UPDATE,
-`MediaBroadcast.announce`, `refresh_token` and a FETCH stream that never
-arrives raise a plain `RuntimeError`. A
+browser SDK wraps raise it, as does a refused PUBLISH (`publish_track` with
+`publish`); a refused SUBSCRIBE_UPDATE, `MediaBroadcast.announce`,
+`refresh_token` and a FETCH stream that never arrives raise a plain
+`RuntimeError`. A
 `ConnectionLost` carries the `CloseInfo` (termination `code` and `reason`)
 of the last connection, and `transport_stats()` the bytes the session sent
 and received.
