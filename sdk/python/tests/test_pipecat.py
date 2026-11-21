@@ -26,7 +26,7 @@ from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder
 from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
-from moq_wasm.pipecat import _room
+from moq_wasm.pipecat import _participant, _room
 from moq_wasm.pipecat._participant import ParticipantReceiver, ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
@@ -533,6 +533,212 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
         ("on_track_subscribed", MoqWasmTrack("alice", "audio", "audio")),
     ]
     await room.stop("input")
+    await session.close()
+
+
+async def test_a_track_the_catalog_puts_in_another_namespace_is_subscribed_there():
+    # Arrange: alice's catalog names her audio in a namespace of its own
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    audio = {"name": "audio", "namespace": "anon/room/alice-mic", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True}
+    native.tracks["catalog"] = [[catalog_payload(audio), STAY_OPEN]]
+    native.tracks["audio"] = [OpusEncoder().encode(tone(0.04), SAMPLE_RATE)]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await within(sink.received.wait())
+
+    # Assert
+    assert native.subscribed[0] == (["anon", "room", "alice-mic"], "audio")
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+def renamed_audio_catalog(name: str) -> bytes:
+    return catalog_payload({"name": name, "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True})
+
+
+async def test_a_track_a_new_catalog_replaces_is_subscribed_to_once_the_old_one_is_unsubscribed():
+    # Arrange: alice's second catalog renames her audio track; the relay holds the answer to its
+    # UNSUBSCRIBE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    renaming = asyncio.Event()
+    native.tracks["catalog"] = [[AUDIO_CATALOG, renaming, renamed_audio_catalog("mic"), STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    native.tracks["mic"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["audio"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    while len(native.subscriptions) < 2:
+        await asyncio.sleep(0.01)
+
+    # Act
+    renaming.set()
+    await asyncio.sleep(0.05)
+    subscribed_while_unsubscribing = [name for _, name in native.subscribed]
+    unsubscribing.set()
+    while len(native.subscribed) < 2:
+        await within(asyncio.sleep(0.01))
+
+    # Assert
+    assert subscribed_while_unsubscribing == ["audio"]
+    assert [name for _, name in native.subscribed] == ["audio", "mic"]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+@pytest.mark.parametrize("kind", ["audio", "video"])
+async def test_a_track_replaced_while_its_media_is_being_pushed_is_unsubscribed_before_its_replacement(kind):
+    # Arrange: the sink holds alice's first audio or picture back; her second catalog renames the
+    # track; the relay holds the answer to its UNSUBSCRIBE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    renaming = asyncio.Event()
+    if kind == "audio":
+        catalogs = [AUDIO_CATALOG, renaming, renamed_audio_catalog("renamed")]
+        native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.1), SAMPLE_RATE), STAY_OPEN]]
+        options = receive_options(audio_in=True)
+    else:
+        renamed = {"name": "renamed", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 1000000, "framerate": 30, "isLive": True}
+        catalogs = [VIDEO_CATALOG, renaming, catalog_payload(renamed)]
+        native.tracks["video"] = [[*video_frames(3), STAY_OPEN]]
+        options = receive_options(camera=True)
+    native.tracks["catalog"] = [[*catalogs, STAY_OPEN]]
+    native.tracks["renamed"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates[kind] = asyncio.Event()
+    sink = RecordingSink()
+    pushing = asyncio.Event()
+
+    async def hold(*args) -> bool:
+        pushing.set()
+        await asyncio.Event().wait()
+        return True
+
+    sink.push_audio = hold
+    sink.push_picture = hold
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await within(pushing.wait())
+
+    # Act
+    renaming.set()
+    await asyncio.sleep(0.05)
+    subscribed_while_unsubscribing = [name for _, name in native.subscribed]
+    unsubscribing.set()
+    while len(native.subscribed) < 2:
+        await within(asyncio.sleep(0.01))
+
+    # Assert
+    assert subscribed_while_unsubscribing == [kind]
+    assert [name for _, name in native.subscribed] == [kind, "renamed"]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def test_a_participant_ends_only_once_the_tracks_a_new_catalog_replaced_are_unsubscribed():
+    # Arrange: alice's second catalog renames her audio track; the relay holds the answer to its
+    # UNSUBSCRIBE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    renaming = asyncio.Event()
+    native.tracks["catalog"] = [[AUDIO_CATALOG, renaming, renamed_audio_catalog("mic"), STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["audio"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    while len(native.subscriptions) < 2:
+        await asyncio.sleep(0.01)
+    renaming.set()
+    await asyncio.sleep(0.05)
+
+    # Act: alice leaves
+    running.cancel()
+    await asyncio.sleep(0.05)
+    ended_while_unsubscribing = running.done()
+    unsubscribing.set()
+    await within(asyncio.gather(running, return_exceptions=True))
+
+    # Assert
+    assert not ended_while_unsubscribing
+    assert all(subscription.closed for subscription in native.subscriptions)
+    await session.close()
+
+
+async def test_a_refused_subscribe_reports_no_subscribed_track():
+    # Arrange: alice's catalog names an audio track the relay does not have
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.05)
+
+    # Assert
+    assert [event for event in sink.events if event[0] == "on_track_subscribed"] == []
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def test_a_track_that_failed_to_decode_is_received_again_with_a_fresh_decoder(monkeypatch):
+    # Arrange: alice's first audio object is no Opus packet, which leaves an Opus decoder unusable
+    monkeypatch.setattr(_participant, "RETRY_DELAY_SECONDS", 0.01)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[b"\xff\xff\xff", STAY_OPEN], [*OpusEncoder().encode(tone(0.04), SAMPLE_RATE), STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await within(sink.received.wait())
+
+    # Assert: the catalog did not change, and the track came back after one failure
+    assert [event[0] for event in sink.events].count("on_error") == 1
+    assert sink.audio[0][2] == "alice"
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def test_a_track_that_keeps_failing_is_received_again_less_and_less_often(monkeypatch):
+    # Arrange: a video track no decoder takes
+    monkeypatch.setattr(_participant, "RETRY_DELAY_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    catalog = catalog_payload({"name": "video", "role": "video", "packaging": "loc", "codec": "xyz1", "bitrate": 1000000, "framerate": 30, "isLive": True})
+    native.tracks["catalog"] = [[catalog, STAY_OPEN]]
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": None}, video_in_track=lambda catalog: catalog.tracks[0])
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.25)
+
+    # Assert: attempts at 0, 0.05 and 0.15 s, and the next at 0.35 s; a fixed delay would make seven
+    assert [event[0] for event in sink.events].count("on_error") == 3
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
     await session.close()
 
 

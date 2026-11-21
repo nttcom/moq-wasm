@@ -260,7 +260,8 @@ class MoqWasmParticipantInput(_ReceivingInput):
 
     Event handlers: `on_track_subscribed` (takes a `MoqWasmTrack`). A failed track, such as one
     PyAV cannot decode, is pushed upstream as a non-fatal `ErrorFrame`, which reaches pipecat's
-    `on_error`."""
+    `on_error`; an audio or video track is then received again with a fresh decoder, after a
+    delay that doubles with each failure in a row."""
 
     def __init__(self, broadcast: RemoteBroadcast, params: MoqWasmInputParams, **kwargs):
         super().__init__(params, **kwargs)

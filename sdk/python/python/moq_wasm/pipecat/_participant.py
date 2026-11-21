@@ -7,16 +7,21 @@ from typing import Literal, Protocol
 
 from pipecat.frames.frames import UserImageRequestFrame
 
-from moq_wasm._native import Location
+from moq_wasm._errors import SessionEnded
+from moq_wasm._native import Location, Object
 from moq_wasm._once import retrieve, wait_through_cancellation
 from moq_wasm.codecs import DecodedPicture, OpusDecoder, VideoDecoder, follow_pictures
-from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
-from moq_wasm.media._remote_broadcast import RESUBSCRIBE_DELAY_SECONDS
+from moq_wasm.media import Catalog, CatalogTrack, Following, RemoteBroadcast
+from moq_wasm.media._remote_broadcast import DEFAULT_DELIVERY_TIMEOUT_SECONDS, RESUBSCRIBE_DELAY_SECONDS
 
 logger = logging.getLogger("moq_wasm")
 
 # The video source naming a participant's default video track, as pipecat names a user's camera.
 CAMERA_SOURCE = "camera"
+# Seconds before a failed audio or video track is received again; the delay doubles with each
+# failure in a row, up to the maximum.
+RETRY_DELAY_SECONDS = 1.0
+MAX_RETRY_DELAY_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -85,7 +90,12 @@ class ParticipantReceiver:
         self._sink = sink
         self._sources = dict(options.video_sources)
         self._samplers: dict[str, _Sampler] = {}
-        self._receiving: dict[str, tuple[str, asyncio.Task]] = {}
+        # What identifies the track each key ("audio", "video:<source>") receives
+        # (`_track_identity`), and its task.
+        self._receiving: dict[str, tuple[tuple, asyncio.Task]] = {}
+        # The cancelled tasks of replaced or released tracks, by key, until they finished
+        # unsubscribing.
+        self._retiring: dict[asyncio.Task, str] = {}
         self._catalog: Catalog | None = None
         self._picking = asyncio.Lock()
         self._closed = False
@@ -125,8 +135,10 @@ class ParticipantReceiver:
         tasks = [*data, *(task for _, task in self._receiving.values())]
         for task in tasks:
             task.cancel()
-        # A picture task hands back the request it was answering as it ends.
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # A picture task hands back the request it was answering as it ends. A replaced or released
+        # track's task, cancelled already, is not cancelled again, which would cut its UNSUBSCRIBE
+        # short.
+        await asyncio.gather(*tasks, *self._retiring, return_exceptions=True)
         # A cancelled task's traceback keeps its locals, as its decoder, last picture or last
         # object: a receiver the application still holds once it left keeps none of them.
         self._receiving.clear()
@@ -211,37 +223,116 @@ class ParticipantReceiver:
         if self._closed:
             return
         current = self._receiving.get(key)
-        if current is not None and track is not None and current[0] == track.name:
+        identity = None if track is None else _track_identity(track)
+        if current is not None and current[0] == identity:
             return
-        if current is not None:
-            current[1].cancel()
-            del self._receiving[key]
+        self._stop(key)
         if track is not None:
             source = key.removeprefix("video:") if kind == "video" else None
-            receiving = asyncio.create_task(self._report_failure(track.name, lambda: follow(track), source))
-            self._receiving[key] = (track.name, receiving)
-            await self._sink.event("on_track_subscribed", MoqWasmTrack(self.participant_id, track.name, kind))
+            receiving = asyncio.create_task(
+                self._keep_receiving(track.name, lambda: follow(track), source, self._retiring_tasks(key))
+            )
+            self._receiving[key] = (_track_identity(track), receiving)
+
+    def _stop(self, key: str) -> None:
+        """Cancels the task receiving the track of `key` and keeps it in `_retiring` until it
+        finished unsubscribing, so the teardown, a release and the task of a track replacing it wait
+        for it."""
+        current = self._receiving.pop(key, None)
+        if current is None:
+            return
+        current[1].cancel()
+        self._retiring[current[1]] = key
+        current[1].add_done_callback(self._retire)
+
+    def _retiring_tasks(self, key: str) -> list[asyncio.Task]:
+        """The cancelled tasks of the tracks `key` received that have not finished unsubscribing."""
+        return [task for task, retiring_key in self._retiring.items() if retiring_key == key]
+
+    def _retire(self, task: asyncio.Task) -> None:
+        self._retiring.pop(task, None)
+
+    async def _keep_receiving(
+        self,
+        track_name: str,
+        receive: Callable[[], Awaitable[None]],
+        video_source: str | None,
+        predecessors: list[asyncio.Task],
+    ) -> None:
+        """Receives an audio or video track for as long as it is picked, once the tasks of the
+        tracks it replaces finished unsubscribing. After a failure, such as a frame PyAV cannot
+        decode, receives it again with a fresh decoder `RETRY_DELAY_SECONDS` later, twice as long
+        after each failure in a row, up to `MAX_RETRY_DELAY_SECONDS`; an attempt that lasted that
+        long starts the delays over. Ends once the session ended."""
+        try:
+            if predecessors:
+                await asyncio.wait(predecessors)
+        finally:
+            # A cancelled predecessor's traceback keeps its locals, as its decoder and last picture,
+            # and its own predecessors in turn: kept for this track's whole life, they would
+            # outlive it.
+            predecessors.clear()
+        loop = asyncio.get_running_loop()
+        delay = RETRY_DELAY_SECONDS
+        while True:
+            started = loop.time()
+            if not await self._report_failure(track_name, receive, video_source):
+                return
+            if loop.time() - started >= MAX_RETRY_DELAY_SECONDS:
+                delay = RETRY_DELAY_SECONDS
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
 
     async def _report_failure(
         self, track_name: str, receive: Callable[[], Awaitable[None]], video_source: str | None = None
-    ) -> None:
-        """Ends the participant's track on a failure, such as a frame PyAV cannot decode, hands it to
-        `on_error` and answers the image requests waiting on its video source with an error. An audio
-        or video track starts afresh when the next catalog names another track; a data track stays
-        ended."""
+    ) -> bool:
+        """Runs `receive`. On a failure, hands it to `on_error` and answers the image requests
+        waiting on `video_source` with an error. Returns whether it failed while the session is
+        still open, so the track may be received again."""
         try:
             await receive()
+            return False
         except Exception as error:
             logger.exception("receiving %s of %s failed", track_name, self.participant_id)
             message = f"receiving {track_name} of {self.participant_id} failed"
             if video_source is not None:
                 await self._sink.answer_image_requests(self._sampler(video_source).take_requests(), message)
             await self._sink.event("on_error", message, error)
+            return not isinstance(error, SessionEnded)
+
+    def _follow(
+        self,
+        name: str,
+        namespace: list[str] | None,
+        kind: Literal["audio", "video", "data"],
+        on_subscribed: Callable[[], None] | None = None,
+    ) -> Following[Object]:
+        """`RemoteBroadcast.follow`, reporting `on_track_subscribed` once each SUBSCRIBE is
+        accepted, after calling `on_subscribed`, with no DELIVERY TIMEOUT for a data track, such as
+        chat, whose every object matters. Read it in `aclosing`: a generator left at a `yield`, as when
+        its reader is cancelled while it handles an object, unsubscribes only once closed, and a
+        replaced track must be unsubscribed by the time its task ends."""
+        return self._remote.follow(
+            name,
+            namespace=namespace,
+            on_subscribed=self._subscribed(name, kind, on_subscribed),
+            delivery_timeout=None if kind == "data" else DEFAULT_DELIVERY_TIMEOUT_SECONDS,
+        )
+
+    def _subscribed(
+        self, name: str, kind: Literal["audio", "video", "data"], on_subscribed: Callable[[], None] | None = None
+    ) -> Callable[[], Awaitable[None]]:
+        async def subscribed() -> None:
+            if on_subscribed is not None:
+                on_subscribed()
+            await self._sink.event("on_track_subscribed", MoqWasmTrack(self.participant_id, name, kind))
+
+        return subscribed
 
     async def _receive_audio(self, track: CatalogTrack) -> None:
         sample_rate = self._sink.audio_in_sample_rate()
         decoder = OpusDecoder(sample_rate)
-        async with aclosing(self._remote.follow(track.name)) as objects:
+        async with aclosing(self._follow(track.name, track.namespace, "audio")) as objects:
             async for audio_object in objects:
                 pcm = decoder.decode(audio_object.payload)
                 if pcm:
@@ -251,7 +342,11 @@ class ParticipantReceiver:
         """Decodes each subscription to the track afresh, as of a publisher that took over and
         starts its groups at 0 again."""
         sampler = self._sampler(source)
-        async with aclosing(follow_pictures(self._remote, track.name, track.codec or "")) as pictures:
+        subscribed = self._subscribed(track.name, "video")
+        pictures = follow_pictures(
+            self._remote, track.name, track.codec or "", namespace=track.namespace, on_subscribed=subscribed
+        )
+        async with aclosing(pictures):
             async for decoded in pictures:
                 await self._pass_picture(source, sampler, decoded)
 
@@ -274,11 +369,11 @@ class ParticipantReceiver:
             raise
 
     async def _receive_data(self, track_name: str) -> None:
-        await self._sink.event("on_track_subscribed", MoqWasmTrack(self.participant_id, track_name, "data"))
+        # A data track has no decoder to start afresh, so a failed one stays ended.
         await self._report_failure(track_name, lambda: self._forward_data(track_name))
 
     async def _forward_data(self, track_name: str) -> None:
-        async with aclosing(self._remote.follow(track_name, delivery_timeout=None)) as objects:
+        async with aclosing(self._follow(track_name, None, "data")) as objects:
             async for data_object in objects:
                 location = Location(data_object.group_id, data_object.object_id)
                 await self._sink.push_message(
@@ -325,6 +420,12 @@ class _Sampler:
 def departure_error(participant_id: str) -> str:
     """The error answering the image requests of a participant who left."""
     return f"{participant_id} left"
+
+
+def _track_identity(track: CatalogTrack) -> tuple:
+    """What a newer catalog's track must share with the one being received for it not to be
+    replaced: its namespace, name, packaging and codec."""
+    return (track.namespace, track.name, track.packaging, track.codec)
 
 
 def _decodable(track: CatalogTrack) -> bool:
