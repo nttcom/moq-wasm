@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -46,15 +47,21 @@ class _Sink:
         # once stopped, it drains the queue into the final telemetry report first.
         while True:
             records = _native.wait_log_records()
-            for kind, payload, token in records:
-                record = json.loads(payload)
-                if kind == "log":
-                    _to_logging(record)
-                    _call(self.on_log, record, token)
-                else:
-                    _call(self.on_span, record, token)
+            self.deliver(records)
             if self.stopped.is_set() and not records:
                 return
+
+    def deliver(self, records: list[tuple[str, str, str | None]]) -> None:
+        for kind, payload, token in records:
+            record = json.loads(payload)
+            if kind == "log":
+                try:
+                    _to_logging(record)
+                except Exception:
+                    traceback.print_exc()
+                _call(self.on_log, record, token)
+            else:
+                _call(self.on_span, record, token)
 
 
 _sink: _Sink | None = None
@@ -158,5 +165,8 @@ def _call(callbacks: list[RecordCallback], record: Record, token: str | None) ->
         try:
             callback(record, token)
         except Exception:
-            # A failing callback must not stop the records that follow.
-            logger.exception("log sink callback failed")
+            # Neither a failing callback nor a failing handler logging it stops the sink's thread.
+            try:
+                logger.exception("log sink callback failed")
+            except Exception:
+                traceback.print_exc()
