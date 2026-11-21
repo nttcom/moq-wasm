@@ -1,10 +1,12 @@
 use std::sync::{Arc, Mutex};
 
-use broadcast::{Broadcast, MediaRendition, MediaSourceConfig, MediaSourceError, TrackKind};
+use broadcast::{
+    Broadcast, DemandChanges, MediaRendition, MediaSourceConfig, MediaSourceError, TrackKind,
+};
 use bytes::Bytes;
 use mediapack::AudioLevel;
 use moqt::publish::TrackDemand;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::Notify;
 
 use super::broadcast_end::BroadcastEnd;
 
@@ -50,7 +52,7 @@ pub struct MediaSource {
     end: BroadcastEnd,
     keyframe_requests: Arc<Notify>,
     /// `None` for a source not published on demand.
-    demand_receiver: Option<mpsc::UnboundedReceiver<TrackDemand>>,
+    demand_changes: Option<DemandChanges>,
 }
 
 impl MediaSource {
@@ -68,10 +70,10 @@ impl MediaSource {
             cmaf: false,
             on_demand: options.on_demand,
         };
-        let mut source = broadcast::MediaSource::new(broadcast.clone(), config);
+        let source = broadcast::MediaSource::new(broadcast.clone(), config);
         Self {
             keyframe_requests: source.keyframe_requests(),
-            demand_receiver: source.take_demand_receiver(),
+            demand_changes: source.demand_changes(),
             source: Mutex::new(source),
             end,
         }
@@ -159,14 +161,15 @@ impl MediaSource {
     }
 
     /// The next change of whether a subscriber takes one of the source's
-    /// tracks. Fails for a source added without `on_demand`.
-    pub async fn demand_change(&mut self) -> anyhow::Result<TrackDemand> {
-        let demand_receiver = self
-            .demand_receiver
-            .as_mut()
+    /// tracks. A change replaces its track's unread one, so a late reader
+    /// gets each track's latest. Fails for a source added without `on_demand`.
+    pub async fn demand_change(&self) -> anyhow::Result<TrackDemand> {
+        let demand_changes = self
+            .demand_changes
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("the source was added without on_demand"))?;
         self.end
-            .until(demand_receiver.recv())
+            .until(demand_changes.next())
             .await?
             .ok_or_else(|| anyhow::anyhow!("the media source stopped publishing"))
     }

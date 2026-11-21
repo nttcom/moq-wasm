@@ -1,9 +1,6 @@
+use broadcast::DemandChanges;
 use js_sys::Function;
-use moqt::{
-    executor::{self, JoinHandle},
-    publish::TrackDemand,
-};
-use tokio::sync::mpsc;
+use moqt::executor::{self, JoinHandle};
 use wasm_bindgen::JsValue;
 
 /// Calls the page's callback with each `TrackDemand` of the source, until
@@ -13,12 +10,9 @@ pub(super) struct DemandTask {
 }
 
 impl DemandTask {
-    pub(super) fn run(
-        mut demand_receiver: mpsc::UnboundedReceiver<TrackDemand>,
-        on_demand_change: Function,
-    ) -> Self {
+    pub(super) fn run(demand_changes: DemandChanges, on_demand_change: Function) -> Self {
         let join_handle = executor::spawn("media-broadcast-demand", async move {
-            while let Some(demand) = demand_receiver.recv().await {
+            while let Some(demand) = demand_changes.next().await {
                 if let Err(error) = on_demand_change.call2(
                     &JsValue::NULL,
                     &JsValue::from_str(&demand.track_name),

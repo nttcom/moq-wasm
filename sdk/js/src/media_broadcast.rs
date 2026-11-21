@@ -120,12 +120,12 @@ impl MediaBroadcast {
             cmaf,
             on_demand: true,
         };
-        let mut source = self
+        let source = self
             .scope
             .in_scope(|| broadcast::MediaSource::new(self.broadcast.clone(), config));
-        let demand = source.take_demand_receiver().map(|demand_receiver| {
+        let demand = source.demand_changes().map(|demand_changes| {
             self.scope
-                .in_scope(|| DemandTask::run(demand_receiver, on_demand_change))
+                .in_scope(|| DemandTask::run(demand_changes, on_demand_change))
         });
         let keyframe_requests = source.keyframe_requests();
         let keyframe_request_task = self

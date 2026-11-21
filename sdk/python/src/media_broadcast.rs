@@ -1,15 +1,16 @@
 use std::sync::{Arc, Mutex};
 
-use broadcast::{Broadcast, MediaRendition, MediaSourceConfig, MediaSourceError, TrackKind};
+use broadcast::{
+    Broadcast, DemandChanges, MediaRendition, MediaSourceConfig, MediaSourceError, TrackKind,
+};
 use bytes::Bytes;
 use mediapack::{AudioLevel, aac::AudioSpecificConfig};
 use moqt::client::{self, HandlerId};
-use moqt::publish::TrackDemand;
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
-use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
+use tokio::sync::Notify;
 
 use crate::scope::SessionScope;
 
@@ -73,14 +74,12 @@ impl MediaBroadcast {
         // The source spawns its publish task, which needs the runtime the module's futures run on
         // and keeps the scope it is spawned in.
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let mut source = self
+        let source = self
             .scope
             .run(|| broadcast::MediaSource::new(self.broadcast.clone(), config));
         MediaSource {
             keyframe_requests: source.keyframe_requests(),
-            demands: source
-                .take_demand_receiver()
-                .map(|receiver| Arc::new(AsyncMutex::new(receiver))),
+            demands: source.demand_changes(),
             source: Mutex::new(source),
             scope: self.scope,
         }
@@ -95,7 +94,7 @@ pub struct MediaSource {
     scope: SessionScope,
     keyframe_requests: Arc<Notify>,
     /// `None` for a source not published on demand.
-    demands: Option<Arc<AsyncMutex<mpsc::UnboundedReceiver<TrackDemand>>>>,
+    demands: Option<DemandChanges>,
 }
 
 #[pymethods]
@@ -225,18 +224,19 @@ impl MediaSource {
 
     /// The next change of whether a subscriber takes one of the source's
     /// tracks, the video's and renditions' CMAF siblings included, for a
-    /// source published on demand. Fails once every track of the source
-    /// is gone.
+    /// source published on demand. A change replaces its track's unread one,
+    /// so a late reader gets each track's latest. Fails once every track of
+    /// the source is gone.
     fn demand_change<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let demands = self
+        let next = self
             .demands
-            .clone()
-            .ok_or_else(|| PyRuntimeError::new_err("the source was added with on_demand=False"))?;
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("the source was added with on_demand=False"))?
+            .next();
         self.scope.future_into_py(py, async move {
-            let demand =
-                demands.lock().await.recv().await.ok_or_else(|| {
-                    PyRuntimeError::new_err("the media source stopped publishing")
-                })?;
+            let demand = next
+                .await
+                .ok_or_else(|| PyRuntimeError::new_err("the media source stopped publishing"))?;
             Ok(Demand {
                 track_name: demand.track_name,
                 wanted: demand.wanted,

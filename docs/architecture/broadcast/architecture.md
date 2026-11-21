@@ -290,6 +290,11 @@ they hold a state a late subscriber needs, which a relay could not hand it
 had it never received it. The browser sets the sender (`MediaBroadcast`'s
 `onDemandChange`); the other sources encode whether or not anyone watches and
 leave it unset, so their tracks are sent as before.
+`MediaSource` reads the channel on a task of its own into `DemandChanges`,
+which keeps one unread change per track: a change replaces its track's unread
+one, in the place of the first, so a Python or Rust caller that awaits the
+changes late, or never, holds one change per track rather than every
+transition, and reads the latest state of each track.
 
 The audio tracks follow the same boundaries: an audio sample belongs to the
 group of the latest video keyframe at or before it, so audio groups start at
