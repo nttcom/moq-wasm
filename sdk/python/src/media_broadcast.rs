@@ -18,6 +18,11 @@ use tokio::sync::Notify;
 
 use crate::{errors::request_error_in, scope::SessionScope};
 
+const CLOSED: &str = "the media broadcast was closed";
+
+/// A source of the broadcast; `None` once `MediaBroadcast.close` ended it.
+type SharedSource = Arc<Mutex<Option<broadcast::MediaSource>>>;
+
 /// An MSF broadcast of media the caller encodes, built by `broadcast` as the
 /// browser SDK's is: it publishes the catalog, the LOC tracks and the media
 /// timeline, keeps objects for FETCH and answers SUBSCRIBE. Its tracks share
@@ -25,15 +30,37 @@ use crate::{errors::request_error_in, scope::SessionScope};
 /// still answered.
 #[pyclass(module = "moq_wasm")]
 pub struct MediaBroadcast {
-    pub(crate) broadcast: Broadcast,
-    pub(crate) session: Arc<client::Session>,
-    pub(crate) handler: HandlerId,
-    pub(crate) scope: SessionScope,
+    broadcast: Broadcast,
+    /// The sources `close` ends; `None` once closed.
+    sources: Mutex<Option<Vec<SharedSource>>>,
+    session: Arc<client::Session>,
+    handler: HandlerId,
+    scope: SessionScope,
+}
+
+impl MediaBroadcast {
+    pub(crate) fn new(
+        broadcast: Broadcast,
+        session: Arc<client::Session>,
+        handler: HandlerId,
+        scope: SessionScope,
+    ) -> Self {
+        Self {
+            broadcast,
+            sources: Mutex::new(Some(Vec::new())),
+            session,
+            handler,
+            scope,
+        }
+    }
 }
 
 #[pymethods]
 impl MediaBroadcast {
     fn announce<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if self.sources.lock().unwrap().is_none() {
+            return Err(PyRuntimeError::new_err(CLOSED));
+        }
         let broadcast = self.broadcast.clone();
         self.scope.future_into_py(py, async move {
             broadcast
@@ -44,10 +71,31 @@ impl MediaBroadcast {
         })
     }
 
-    /// Stops answering for the broadcast's tracks; withdraw the namespace
-    /// with `Session.unannounce` first.
-    fn close(&self) {
+    /// Stops answering for the broadcast's tracks, ends them and the catalog
+    /// with PUBLISH_DONE after the media pushed before, and stops the
+    /// catalog refresh; later frames raise. Withdraw the namespace with
+    /// `Session.unannounce` first. A failed step, as once the session ended,
+    /// does not stop the others. Does nothing the second time.
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         self.session.remove_handler(self.handler);
+        let sources = self.sources.lock().unwrap().take();
+        let ends: Vec<_> = sources
+            .iter()
+            .flatten()
+            .filter_map(|source| source.lock().unwrap().take())
+            .map(|source| self.scope.run(|| source.end()))
+            .collect();
+        let broadcast = self.broadcast.clone();
+        self.scope.future_into_py(py, async move {
+            if sources.is_none() {
+                return Ok(());
+            }
+            for end in ends {
+                report_teardown(end.await);
+            }
+            report_teardown(broadcast.end_catalog().await);
+            Ok(())
+        })
     }
 
     /// A source on the tracks `video` and `audio`, with the media timeline
@@ -68,7 +116,11 @@ impl MediaBroadcast {
         video_framerate: Option<u32>,
         cmaf: bool,
         on_demand: bool,
-    ) -> MediaSource {
+    ) -> PyResult<MediaSource> {
+        let mut sources = self.sources.lock().unwrap();
+        let sources = sources
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err(CLOSED))?;
         let config = MediaSourceConfig {
             video,
             audio,
@@ -84,12 +136,22 @@ impl MediaBroadcast {
         let source = self
             .scope
             .run(|| broadcast::MediaSource::new(self.broadcast.clone(), config));
-        MediaSource {
-            keyframe_requests: source.keyframe_requests(),
-            demands: source.demand_changes(),
-            source: Mutex::new(source),
+        let keyframe_requests = source.keyframe_requests();
+        let demands = source.demand_changes();
+        let source = Arc::new(Mutex::new(Some(source)));
+        sources.push(source.clone());
+        Ok(MediaSource {
+            source,
             scope: self.scope,
-        }
+            keyframe_requests,
+            demands,
+        })
+    }
+}
+
+fn report_teardown(result: anyhow::Result<()>) {
+    if let Err(error) = result {
+        tracing::debug!(%error, "media broadcast teardown step failed");
     }
 }
 
@@ -97,11 +159,27 @@ impl MediaBroadcast {
 /// encoded frames.
 #[pyclass(module = "moq_wasm")]
 pub struct MediaSource {
-    source: Mutex<broadcast::MediaSource>,
+    source: SharedSource,
     scope: SessionScope,
     keyframe_requests: Arc<Notify>,
     /// `None` for a source not published on demand.
     demands: Option<DemandChanges>,
+}
+
+impl MediaSource {
+    fn with<R>(
+        &self,
+        call: impl FnOnce(&mut broadcast::MediaSource) -> PyResult<R>,
+    ) -> PyResult<R> {
+        self.scope.run(|| {
+            let mut source = self.source.lock().unwrap();
+            call(
+                source
+                    .as_mut()
+                    .ok_or_else(|| PyRuntimeError::new_err(CLOSED))?,
+            )
+        })
+    }
 }
 
 #[pymethods]
@@ -109,11 +187,7 @@ impl MediaSource {
     /// `codec` is a WebCodecs codec string: `avc1.*`, `hvc1.*`, `vp8`,
     /// `vp09.*` or `av01.*`; H.264 and H.265 frames are Annex B.
     fn configure_video(&self, codec: &str) -> PyResult<()> {
-        self.source
-            .lock()
-            .unwrap()
-            .configure_video(codec)
-            .map_err(py_error)
+        self.with(|source| source.configure_video(codec).map_err(py_error))
     }
 
     /// One encoded frame; call `configure_video` first. A keyframe opens a
@@ -125,14 +199,7 @@ impl MediaSource {
     /// published; the parameter sets of one without a slice still go to the
     /// keyframes after it.
     fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<bool> {
-        self.scope.run(|| {
-            queued(
-                self.source
-                    .lock()
-                    .unwrap()
-                    .push_video(Bytes::from(data), timestamp_micros),
-            )
-        })
+        self.with(|source| queued(source.push_video(Bytes::from(data), timestamp_micros)))
     }
 
     /// A rendition of the video in the track `<video>_<name>`, in the group
@@ -146,18 +213,15 @@ impl MediaSource {
         label: String,
         bitrate: Option<u64>,
         framerate: Option<u32>,
-    ) -> Rendition {
+    ) -> PyResult<Rendition> {
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let rendition = self.scope.run(|| {
-            self.source
-                .lock()
-                .unwrap()
-                .add_rendition(name, label, bitrate, framerate)
-        });
-        Rendition {
+        let rendition =
+            self.with(|source| Ok(source.add_rendition(name, label, bitrate, framerate)))?;
+        Ok(Rendition {
             rendition: Mutex::new(rendition),
+            source: self.source.clone(),
             scope: self.scope,
-        }
+        })
     }
 
     /// Ends the source's video or audio track (`kind` is `video` or `audio`)
@@ -175,7 +239,7 @@ impl MediaSource {
                 )));
             }
         };
-        let removal = self.source.lock().unwrap().remove_track(kind);
+        let removal = self.with(|source| Ok(source.remove_track(kind)))?;
         self.scope
             .future_into_py(py, async move { Ok(removal.await?) })
     }
@@ -190,10 +254,8 @@ impl MediaSource {
         channels: u8,
         description: Option<Vec<u8>>,
     ) -> PyResult<()> {
-        self.scope.run(|| {
-            self.source
-                .lock()
-                .unwrap()
+        self.with(|source| {
+            source
                 .configure_audio(codec, sample_rate, channels, description.as_deref())
                 .map_err(py_error)
         })
@@ -215,13 +277,7 @@ impl MediaSource {
             level,
             voice_activity,
         });
-        self.scope.run(|| {
-            queued(self.source.lock().unwrap().push_audio(
-                Bytes::from(data),
-                timestamp_micros,
-                level,
-            ))
-        })
+        self.with(|source| queued(source.push_audio(Bytes::from(data), timestamp_micros, level)))
     }
 
     /// Resolves the next time a subscriber asks for a new group
@@ -263,18 +319,25 @@ impl MediaSource {
 #[pyclass(module = "moq_wasm")]
 pub struct Rendition {
     rendition: Mutex<MediaRendition>,
+    /// The slot of its source, which `MediaBroadcast.close` empties.
+    source: SharedSource,
     scope: SessionScope,
+}
+
+impl Rendition {
+    fn with<R>(&self, call: impl FnOnce(&mut MediaRendition) -> PyResult<R>) -> PyResult<R> {
+        if self.source.lock().unwrap().is_none() {
+            return Err(PyRuntimeError::new_err(CLOSED));
+        }
+        self.scope.run(|| call(&mut self.rendition.lock().unwrap()))
+    }
 }
 
 #[pymethods]
 impl Rendition {
     /// As `MediaSource.configure_video`.
     fn configure_video(&self, codec: &str) -> PyResult<()> {
-        self.rendition
-            .lock()
-            .unwrap()
-            .configure_video(codec)
-            .map_err(py_error)
+        self.with(|rendition| rendition.configure_video(codec).map_err(py_error))
     }
 
     /// An encoded frame of the same picture as a video frame, at that
@@ -283,14 +346,7 @@ impl Rendition {
     /// without a picture, as `MediaSource.push_video`. Fails once an earlier
     /// frame stopped the rendition.
     fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<bool> {
-        self.scope.run(|| {
-            queued(
-                self.rendition
-                    .lock()
-                    .unwrap()
-                    .push_video(Bytes::from(data), timestamp_micros),
-            )
-        })
+        self.with(|rendition| queued(rendition.push_video(Bytes::from(data), timestamp_micros)))
     }
 }
 

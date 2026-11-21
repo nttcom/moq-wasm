@@ -283,12 +283,12 @@ impl Session {
             .scope
             .run(|| RelayConnection::with_client_session(&self.session));
         let handler = self.session.add_handler(Arc::new(connection.clone()));
-        MediaBroadcast {
-            broadcast: Broadcast::new(connection, namespace),
-            session: self.session.clone(),
+        MediaBroadcast::new(
+            Broadcast::new(connection, namespace),
+            self.session.clone(),
             handler,
-            scope: self.scope,
-        }
+            self.scope,
+        )
     }
 
     /// PUBLISH_NAMESPACE_DONE for a namespace `announce` published.

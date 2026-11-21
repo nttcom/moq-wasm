@@ -503,8 +503,12 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
 - A broadcast with a media source is published by the media broadcast's
   `announce` instead of `Session.announce`, so the namespace is published
   once. Leaving the block withdraws the namespace and closes the media
-  broadcast, so its tracks are no longer answered and later frames are
-  dropped.
+  broadcast: its tracks are no longer answered, each is removed from the
+  catalog after the media pushed before, which ends it with PUBLISH_DONE,
+  the catalog track ends too, and later frames are dropped. The binding
+  then drops every writer of the broadcast, the last holders of its
+  `RelayConnection`, whose catalog refresh would otherwise keep resending
+  the old catalog into a later broadcast of the same namespace.
 - `keyframe_request()` is awaited rather than registered as a callback, the
   asyncio form of the browser SDK's `on_keyframe_request`. It and
   `demand_change()` raise RuntimeError once the broadcast was left or the

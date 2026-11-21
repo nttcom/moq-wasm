@@ -123,7 +123,7 @@ class FakeMediaBroadcast:
     async def announce(self) -> None:
         self._session.calls.append(("media_announce", self._namespace))
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self._session.calls.append(("media_close", self._namespace))
 
 
