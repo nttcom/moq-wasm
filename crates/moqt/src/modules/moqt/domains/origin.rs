@@ -1035,8 +1035,8 @@ mod tests {
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
             DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_datagram,
-            next_event, next_subgroup, read_fetch_objects, rejection, subscribed_track_reader,
-            within,
+            next_event, next_subgroup, read_fetch_objects, receive_disconnected, rejection,
+            subscribed_track_reader, within,
         },
         object::{DataReceiver, GroupOrder, Object, ObjectStatus, StreamDataReceiver, Subgroup},
         subscribe::{FilterType, SubscribeOption},
@@ -1868,6 +1868,23 @@ mod tests {
             "{end_of_group:?}"
         );
         assert!(matches!(fin, Ok(None)), "{fin:?}");
+    }
+
+    #[tokio::test]
+    async fn end_track_after_the_subscriber_closes_its_session_succeeds() {
+        for version in DRAFTS {
+            // Arrange: the only subscriber closes its session while a group is open
+            let peers = origin_with_track("origin-end-closed", RETENTION, version).await;
+            let (_subscription, _streams, _subgroup) = open_group_stream(&peers).await;
+            peers.server.close().await;
+            receive_disconnected(&peers.client).await.unwrap();
+
+            // Act
+            let ended = within(peers.origin.end_track(NAMESPACE, TRACK)).await;
+
+            // Assert
+            assert!(ended.is_ok(), "{ended:?}");
+        }
     }
 
     #[tokio::test]

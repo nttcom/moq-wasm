@@ -146,7 +146,8 @@ impl Publisher {
     }
 
     /// Ends a subscription this endpoint publishes on (draft-14 §9.12), on
-    /// every connection it is on.
+    /// every connection it is on. A connection already lost has ended it, so
+    /// it is not an error.
     pub async fn publish_done(
         &self,
         subscription: &Subscription,
@@ -169,7 +170,7 @@ impl Publisher {
             self.session.note_served_changed();
             connection
                 .control
-                .notify(Notification::PublishDone {
+                .notify_end(Notification::PublishDone {
                     request_id: wire_request_id,
                     code: status_code,
                     stream_count,
