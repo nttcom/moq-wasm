@@ -940,7 +940,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "av", marker = "extra == 'codecs'", specifier = ">=14" },
+    { name = "av", marker = "extra == 'codecs'", specifier = ">=15" },
     { name = "moq-wasm", extras = ["codecs"], marker = "extra == 'pipecat'" },
     { name = "numpy", marker = "extra == 'codecs'", specifier = ">=1.26" },
     { name = "pipecat-ai", marker = "extra == 'pipecat'", specifier = ">=1.13,<2" },
@@ -949,7 +949,7 @@ provides-extras = ["codecs", "pipecat"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "av", specifier = ">=14" },
+    { name = "av", specifier = ">=15" },
     { name = "pdoc", specifier = ">=16" },
     { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8" },
