@@ -144,6 +144,13 @@ export type EncodedVideoStats = EncodedRateStats & {
 };
 
 // @public (undocumented)
+export type EventTimelineOffer = {
+    name: string;
+    eventType: string;
+    priority?: number;
+};
+
+// @public (undocumented)
 export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[];
 
 // @public (undocumented)
@@ -329,6 +336,7 @@ export interface LocalBroadcast {
 // @public (undocumented)
 export type LocalBroadcastOptions = {
     offerChat?: boolean;
+    eventTimelines?: EventTimelineOffer[];
     onError?: (error: unknown) => void;
 };
 

@@ -86,7 +86,13 @@ class FakeMediaBroadcast {
   private readonly declared = Promise.withResolvers<void>()
   readonly declareCalled = this.declared.promise
 
+  readonly eventTimelines: [string, string, number | undefined][] = []
+
   async announce(): Promise<void> {}
+
+  async offerEventTimeline(name: string, eventType: string, priority?: number): Promise<void> {
+    this.eventTimelines.push([name, eventType, priority])
+  }
 
   declareTracks(): Promise<void> {
     this.declared.resolve()
