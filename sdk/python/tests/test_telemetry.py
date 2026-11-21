@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 
 from moq_wasm import TelemetryOptions
-from moq_wasm._telemetry import MAX_RECORDS, ClientTelemetry
+from moq_wasm._telemetry import MAX_QUEUED_TOKENS, MAX_RECORDS, MAX_REJECTED_TOKENS, ClientTelemetry
 from tests.failing_logging import failing_handler
 
 
@@ -73,6 +73,37 @@ def test_a_token_the_server_rejected_is_left_out_of_later_reports():
     assert [report["token"] for _, report in sent.reports] == ["expired", None]
 
 
+def test_a_rejected_token_is_not_kept_once_its_report_was_sent():
+    # Arrange
+    sent = Sent(status=401)
+    telemetry = ClientTelemetry(TelemetryOptions(url="http://observability", page="bot"), sent)
+    telemetry.log(log("first"), "expired-secret")
+
+    # Act
+    telemetry.flush()
+
+    # Assert: only its digest is remembered
+    assert "expired-secret" not in repr(vars(telemetry))
+
+
+def test_only_the_latest_rejected_tokens_are_remembered():
+    # Arrange: one more token rejected than are remembered
+    sent = Sent(status=401)
+    telemetry = ClientTelemetry(TelemetryOptions(url="http://observability", page="bot"), sent)
+    for index in range(MAX_REJECTED_TOKENS + 1):
+        telemetry.log(log("rejected"), f"token-{index}")
+        telemetry.flush()
+    sent.reports.clear()
+
+    # Act
+    telemetry.log(log("again"), "token-0")
+    telemetry.log(log("again"), f"token-{MAX_REJECTED_TOKENS}")
+    telemetry.flush()
+
+    # Assert: the oldest was forgotten and is sent again
+    assert sorted(report["token"] or "" for _, report in sent.reports) == ["", "token-0"]
+
+
 def test_a_report_keeps_the_newest_records_the_server_takes():
     # Arrange
     sent = Sent()
@@ -86,6 +117,25 @@ def test_a_report_keeps_the_newest_records_the_server_takes():
     # Assert
     logs = sent.reports[0][1]["logs"]
     assert (len(logs), logs[0]["message"]) == (MAX_RECORDS, "log 5")
+
+
+def test_the_records_of_the_tokens_queued_first_are_dropped_past_the_queued_tokens_and_logged(caplog):
+    # Arrange: each of more sessions than are queued at once logs twice before a flush
+    sent = Sent()
+    telemetry = ClientTelemetry(TelemetryOptions(url="http://observability", page="bot"), sent)
+    for index in range(MAX_QUEUED_TOKENS + 2):
+        telemetry.log(log("first"), f"token-{index}")
+        telemetry.log(log("second"), f"token-{index}")
+
+    # Act
+    with caplog.at_level("WARNING", logger="moq_wasm"):
+        telemetry.flush()
+
+    # Assert: the two tokens queued first are dropped with their four records
+    assert [report["token"] for _, report in sent.reports] == [f"token-{index}" for index in range(2, MAX_QUEUED_TOKENS + 2)]
+    assert [record.getMessage() for record in caplog.records] == [
+        f"telemetry dropped 4 records queued past {MAX_QUEUED_TOKENS} tokens"
+    ]
 
 
 def test_a_flush_without_records_sends_nothing():

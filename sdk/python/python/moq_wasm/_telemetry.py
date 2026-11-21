@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import threading
@@ -20,6 +21,9 @@ REQUEST_TIMEOUT_SECONDS = 5.0
 # token at most.
 EXIT_REQUEST_TIMEOUT_SECONDS = 2.0
 SERVICE = "python"
+MAX_REJECTED_TOKENS = 64
+# Tokens whose records are queued at once; a record of a new token evicts the token queued first.
+MAX_QUEUED_TOKENS = 64
 
 
 @dataclass(frozen=True)
@@ -65,7 +69,11 @@ class ClientTelemetry:
         self._options = options
         self._send = send
         self._batches: dict[str | None, tuple[list, list]] = {}
-        self._rejected_tokens: set[str] = set()
+        # Records evicted with their token since the last flush; flush logs the count.
+        self._dropped = 0
+        # The SHA-256 digest of each token the server rejected, the oldest first; digests, so no
+        # credential outlives its session.
+        self._rejected_tokens: dict[bytes, None] = {}
         self._lock = threading.Lock()
 
     def log(self, record: dict, token: str | None) -> None:
@@ -80,6 +88,9 @@ class ClientTelemetry:
         logged, not raised."""
         with self._lock:
             batches, self._batches = self._batches, {}
+            dropped, self._dropped = self._dropped, 0
+        if dropped:
+            logger.warning("telemetry dropped %d records queued past %d tokens", dropped, MAX_QUEUED_TOKENS)
         if not batches:
             return
         try:
@@ -95,7 +106,7 @@ class ClientTelemetry:
                 logger.exception("telemetry report dropped")
 
     def _send_batch(self, endpoint: str, batch_token: str | None, logs: list, spans: list, timeout: float) -> None:
-        token = None if batch_token in self._rejected_tokens else batch_token
+        token = None if batch_token is None or _digest(batch_token) in self._rejected_tokens else batch_token
         report = {
             "service": SERVICE,
             "token": token,
@@ -108,7 +119,9 @@ class ClientTelemetry:
         if status == 401 and token is not None:
             # Sent without it from now on, so the server takes the records as anonymous instead
             # of dropping them.
-            self._rejected_tokens.add(token)
+            self._rejected_tokens[_digest(token)] = None
+            if len(self._rejected_tokens) > MAX_REJECTED_TOKENS:
+                del self._rejected_tokens[next(iter(self._rejected_tokens))]
 
     def run(self, stopped: threading.Event) -> None:
         """Flushes every 10 s until `stopped` is set, then once more with the exit timeout. A flush
@@ -127,7 +140,14 @@ class ClientTelemetry:
         if self._options.redact is not None:
             record = {**record, "fields": self._options.redact(record["fields"])}
         with self._lock:
+            if token not in self._batches and len(self._batches) >= MAX_QUEUED_TOKENS:
+                logs, spans = self._batches.pop(next(iter(self._batches)))
+                self._dropped += len(logs) + len(spans)
             records = self._batches.setdefault(token, ([], []))[kind]
             records.append(record)
             if len(records) > MAX_RECORDS:
                 del records[0]
+
+
+def _digest(token: str) -> bytes:
+    return hashlib.sha256(token.encode()).digest()
