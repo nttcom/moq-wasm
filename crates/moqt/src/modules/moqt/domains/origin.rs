@@ -1432,6 +1432,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_group_left_in_forward_state_0_is_reset_and_taken_up_on_a_new_stream() {
+        for version in DRAFTS {
+            // Arrange: the subscriber read the first object of a group that stays open
+            let peers = origin_with_track("origin-forward-off-reset", RETENTION, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
+            let write = |group, payload| origin.write(NAMESPACE, TRACK, plain(group, payload));
+            write(GroupBoundary::Next, b"a").await.unwrap();
+            let mut streams = data_receiver(&peers.server, &accepted).await;
+            let mut left = within(next_subgroup(&mut streams)).await;
+            assert!(matches!(
+                within(left.receive()).await,
+                Ok(Some(Subgroup::Header(_)))
+            ));
+            assert!(matches!(
+                within(left.receive()).await,
+                Ok(Some(Subgroup::Object(_)))
+            ));
+
+            // Act
+            update_forward(&peers, &accepted, false).await;
+            write(GroupBoundary::Within, b"b").await.unwrap();
+            update_forward(&peers, &accepted, true).await;
+            write(GroupBoundary::Within, b"c").await.unwrap();
+            let after_leaving = within(left.receive()).await;
+            let mut taken_up = within(next_subgroup(&mut streams)).await;
+            let header = within(taken_up.receive()).await;
+            let object = within(taken_up.receive()).await;
+
+            // Assert: the left stream is reset rather than continued past the gap
+            assert!(after_leaving.is_err(), "{after_leaving:?}");
+            assert!(matches!(header, Ok(Some(Subgroup::Header(_)))));
+            let Ok(Some(Subgroup::Object(object))) = object else {
+                panic!("expected the object taken up, got {object:?}");
+            };
+            assert_eq!(object.location, location(FIRST_GROUP_ID, 2));
+            assert_eq!(object.payload, Bytes::from_static(b"c"));
+        }
+    }
+
+    #[tokio::test]
     async fn write_caches_before_publish_and_sends_from_the_next_group_after_it() {
         for version in DRAFTS {
             // Arrange
