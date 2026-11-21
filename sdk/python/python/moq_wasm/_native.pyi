@@ -119,6 +119,9 @@ class Session:
         is sent first. Raises RuntimeError when the relay refuses the PUBLISH, or when the track
         already has an object and `datagram` differs from its earlier registration; OverflowError
         for a `priority` outside 0-255."""
+    def end_track(self, namespace: list[str], name: str) -> asyncio.Future[None]:
+        """Ends every subscription to a track `publish_track` registered with PUBLISH_DONE; the
+        track keeps its numbering and cache, so registering it again continues them."""
     def refresh_token(self, token: str, *, app_id: str) -> asyncio.Future[None]:
         """Hands the relay `token`, a later token of the same app, before the current one expires
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it

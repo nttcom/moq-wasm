@@ -142,6 +142,8 @@ class FakeNativeSession:
         self.writers: dict[str, FakeWriter] = {}
         self.publish_options: dict[str, dict] = {}
         self.refreshed: list[str] = []
+        # The namespace and name of each `end_track`.
+        self.ended: list[tuple[list[str], str]] = []
         self._closed = asyncio.get_running_loop().create_future()
         self._namespace_events: asyncio.Queue = asyncio.Queue()
 
@@ -190,6 +192,10 @@ class FakeNativeSession:
     def media_broadcast(self, namespace: list[str]) -> FakeMediaBroadcast:
         self.media_broadcasts.append(FakeMediaBroadcast(self, namespace))
         return self.media_broadcasts[-1]
+
+    async def end_track(self, namespace: list[str], name: str) -> None:
+        self.calls.append(("end_track", name))
+        self.ended.append((list(namespace), name))
 
     async def unannounce(self, namespace: list[str]) -> None:
         self.calls.append(("unannounce", namespace))
