@@ -1231,6 +1231,79 @@ async def test_demand_changes_reach_a_source_published_on_demand():
     await session.close()
 
 
+async def test_a_cancelled_demand_change_leaves_the_next_change_to_the_next_caller():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        abandoned = asyncio.create_task(media.demand_change())
+        await asyncio.sleep(0.01)
+        abandoned.cancel()
+        await asyncio.gather(abandoned, return_exceptions=True)
+
+        # Act
+        native.demands.put_nowait("audio wanted")
+        demand = await within(media.demand_change())
+
+        # Assert
+        assert demand == "audio wanted"
+    await session.close()
+
+
+@pytest.mark.parametrize("request_kind", ["demand_change", "keyframe_request"])
+async def test_an_answer_that_came_as_its_caller_was_cancelled_goes_to_the_next_caller(request_kind):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        abandoned = asyncio.create_task(getattr(media, request_kind)())
+        await asyncio.sleep(0.01)
+
+        # Act: the answer and the cancellation come in the same turn
+        if request_kind == "demand_change":
+            native.demands.put_nowait("audio wanted")
+        else:
+            native.keyframe_requested.set()
+        abandoned.cancel()
+        await asyncio.gather(abandoned, return_exceptions=True)
+        answer = await within(getattr(media, request_kind)())
+
+        # Assert
+        assert answer == ("audio wanted" if request_kind == "demand_change" else None)
+    await session.close()
+
+
+@pytest.mark.parametrize("request_kind", ["demand_change", "keyframe_request"])
+async def test_a_second_caller_while_one_waits_is_refused_and_the_first_gets_the_answer(request_kind):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        first = asyncio.ensure_future(getattr(media, request_kind)())
+        await asyncio.sleep(0.01)
+
+        # Act
+        with pytest.raises(RuntimeError, match="already"):
+            await within(getattr(media, request_kind)())
+        if request_kind == "demand_change":
+            native.demands.put_nowait("audio wanted")
+        else:
+            native.keyframe_requested.set()
+
+        # Assert
+        assert await within(first) == ("audio wanted" if request_kind == "demand_change" else None)
+    await session.close()
+
+
 async def test_a_source_is_published_on_demand_unless_it_opts_out():
     # Arrange
     relay = FakeRelay()
@@ -1501,6 +1574,32 @@ async def test_remove_track_before_publishing_forgets_the_kind_and_after_it_reac
         assert native.renditions[0].calls == []
         with pytest.raises(ValueError, match="screen"):
             await media.remove_track("screen")
+    await session.close()
+
+
+async def test_a_removal_whose_caller_timed_out_runs_to_its_end_and_a_retry_joins_it():
+    # Arrange: the video's removal waits for the relay before its renditions' removals
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video("vp8")
+        media.add_rendition("low", label="low")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        native.remove_gate = asyncio.Event()
+
+        # Act
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(media.remove_track("video"), 0.05)
+        retry = asyncio.create_task(media.remove_track("video"))
+        await asyncio.sleep(0)
+        native.remove_gate.set()
+        await within(retry)
+
+        # Assert: the renditions were removed, and the retry started no second removal
+        assert native.calls[-2:] == [("remove_track", "video"), ("remove_renditions",)]
+        assert native.calls.count(("remove_track", "video")) == 1
     await session.close()
 
 
