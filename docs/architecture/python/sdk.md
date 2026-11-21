@@ -751,7 +751,10 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
 - `keyframe_request()` is awaited rather than registered as a callback, the
   asyncio form of the browser SDK's `on_keyframe_request`. It and
   `demand_change()` raise RuntimeError once the broadcast was left or the
-  session ended, so a loop awaiting them ends.
+  session ended, so a loop awaiting them ends. Each takes one caller at a
+  time, so no two callers take the same answer: a call while another
+  waits raises RuntimeError, and an answer that came as its caller was
+  cancelled goes to the next caller.
 - A push returns whether the native source took the frame: False for one
   dropped, before the broadcast was published, after it was left or once
   the session ended, so a caller such as the pipecat transport does not
@@ -817,7 +820,10 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
 - `await media.remove_track("video" | "audio")` is the browser's
   `removeTrack`: it ends the track with PUBLISH_DONE, the video's renditions
   with it, and sends the catalog without them. The caller stops pushing that
-  kind first; configuring it again and pushing republishes it.
+  kind first; configuring it again and pushing republishes it. The
+  native removal, which removes the renditions after the video, runs to
+  its end even when its caller is cancelled, as by a timeout, and a call
+  while it runs awaits it, so no rendition stays in the catalog.
 
 Encoding stays in Python with PyAV, through `moq_wasm.codecs`.
 

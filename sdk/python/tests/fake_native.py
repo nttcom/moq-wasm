@@ -167,6 +167,7 @@ class FakeMediaSource:
         self.renditions: list[FakeRendition] = []
         self.keyframe_requested = asyncio.Event()
         self.demands: asyncio.Queue = asyncio.Queue()
+        self.remove_gate: asyncio.Event | None = None
 
     def add_rendition(self, name: str, **options) -> FakeRendition:
         self.renditions.append(FakeRendition(name))
@@ -193,15 +194,27 @@ class FakeMediaSource:
         self.calls.append(("push_audio", data))
         return True
 
-    async def keyframe_request(self) -> None:
+    def keyframe_request(self) -> asyncio.Future:
+        return native_future(self._keyframe_request())
+
+    async def _keyframe_request(self) -> None:
         await self.keyframe_requested.wait()
         self.keyframe_requested.clear()
 
-    async def demand_change(self):
-        return await self.demands.get()
+    def demand_change(self) -> asyncio.Future:
+        return native_future(self.demands.get())
 
-    async def remove_track(self, kind: str) -> None:
+    def remove_track(self, kind: str) -> asyncio.Future:
+        """While `remove_gate` is set and not released, the track's removal waits before the
+        renditions' removals, which a cancelled future drops, as the native one does."""
+        return native_future(self._remove_track(kind))
+
+    async def _remove_track(self, kind: str) -> None:
         self.calls.append(("remove_track", kind))
+        if self.remove_gate is not None:
+            await self.remove_gate.wait()
+        if kind == "video":
+            self.calls.append(("remove_renditions",))
 
 
 class FakeMediaBroadcast:

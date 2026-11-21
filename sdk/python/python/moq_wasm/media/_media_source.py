@@ -6,6 +6,7 @@ from typing import TypeVar
 
 from moq_wasm import _native
 from moq_wasm._ended import Ended
+from moq_wasm._once import retrieve
 
 logger = logging.getLogger("moq_wasm")
 
@@ -73,6 +74,14 @@ class MediaSource:
         # what kept the broadcast from being published or stopped publishing the source.
         self._ended = Ended()
         self._session_ended: asyncio.Future[None] | None = None
+        # The native request of each kind whose answer no caller took yet, as one whose caller was
+        # cancelled: the next caller of the kind takes it, so no answer is lost.
+        self._requests: dict[str, asyncio.Future] = {}
+        # The kinds of request a caller awaits: one caller of a kind at a time, so no two take the
+        # same answer.
+        self._awaited: set[str] = set()
+        # The native removal of each kind under way, which a later removal of the kind joins.
+        self._removing: dict[str, asyncio.Future[None]] = {}
         # Set by the broadcast the source is added to: claims the tracks of a rendition, raising
         # RuntimeError while another track has the name of one of them.
         self._claim_tracks: Callable[[list[str]], None] | None = None
@@ -190,12 +199,19 @@ class MediaSource:
         media first; `configure_video` or `configure_audio` and the media pushed after it publish
         the track again. Before the broadcast is published, it forgets the kind's configuration
         (the renditions' too, for the video). Raises ValueError for another kind, and RuntimeError
-        once publishing the source failed."""
+        once publishing the source failed. The native removal runs to its end, the renditions'
+        removals after the video's included, even when its caller is cancelled, as by a timeout;
+        a call while it runs awaits it."""
         if kind not in ("video", "audio"):
             raise ValueError(f"unknown track kind: {kind}")
         self._raise_if_failed()
         if self._source is not None:
-            await self._source.remove_track(kind)
+            removing = self._removing.get(kind)
+            if removing is None or removing.done():
+                removing = self._removing[kind] = asyncio.ensure_future(self._source.remove_track(kind))
+                # Its failure goes to the callers, and to nobody once they were all cancelled.
+                removing.add_done_callback(retrieve)
+            await asyncio.shield(removing)
         elif kind == "video":
             self._video_codec = None
             for rendition in self._renditions:
@@ -207,20 +223,34 @@ class MediaSource:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
         broadcast needs one: encode the next frame as a keyframe then. Waits while the broadcast is
         not published; raises RuntimeError once the broadcast was left or the session ended, and
-        what kept the broadcast from being published or stopped publishing the source."""
-        await self._while_publishing(lambda source: source.keyframe_request())
+        what kept the broadcast from being published or stopped publishing the source. One caller
+        at a time: a call while another waits raises RuntimeError."""
+        await self._while_publishing("keyframe_request", lambda source: source.keyframe_request())
 
     async def demand_change(self) -> _native.Demand:
         """`_native.MediaSource.demand_change`; waits while the broadcast is not published. Raises
         RuntimeError for a source added with `on_demand=False`, and once the broadcast was left or
         the session ended; raises what kept the broadcast from being published or stopped
-        publishing the source."""
+        publishing the source. One caller at a time: a call while another waits raises
+        RuntimeError."""
         if not self._on_demand:
             raise RuntimeError("the source was added with on_demand=False")
-        return await self._while_publishing(lambda source: source.demand_change())
+        return await self._while_publishing("demand_change", lambda source: source.demand_change())
 
-    async def _while_publishing(self, request: Callable[[_native.MediaSource], Awaitable[T]]) -> T:
-        """`request` on the native source once it is built, ended by the source stopping."""
+    async def _while_publishing(self, kind: str, request: Callable[[_native.MediaSource], Awaitable[T]]) -> T:
+        """`request` on the native source once it is built, ended by the source stopping. A request
+        of `kind` a cancelled caller left is awaited instead of a new one."""
+        if kind in self._awaited:
+            raise RuntimeError(f"{kind} is already awaited")
+        self._awaited.add(kind)
+        try:
+            return await self._request_while_publishing(kind, request)
+        finally:
+            self._awaited.discard(kind)
+
+    async def _request_while_publishing(
+        self, kind: str, request: Callable[[_native.MediaSource], Awaitable[T]]
+    ) -> T:
         built = asyncio.ensure_future(self._built.wait())
         try:
             await self._ended.until(built)
@@ -228,11 +258,15 @@ class MediaSource:
             built.cancel()
         if self._ended.ended or self._source is None:
             raise self._stopped_error()
-        answered = asyncio.ensure_future(request(self._source))
+        answered = self._requests.get(kind)
+        if answered is None:
+            answered = self._requests[kind] = asyncio.ensure_future(request(self._source))
         await self._ended.until(answered)
-        if not answered.done():
-            answered.cancel()
+        # Stopping the source cancels the native request, so a cancelled one means it stopped.
+        if not answered.done() or answered.cancelled():
             raise self._stopped_error()
+        if self._requests.get(kind) is answered:
+            del self._requests[kind]
         return answered.result()
 
     def _track_names(self) -> list[str]:
@@ -328,6 +362,10 @@ class MediaSource:
         if self._ended.end(error, failure=failure, raised=raised) and failure:
             for rendition in self._renditions:
                 rendition._ended.end(error, raised=raised)
+        # Cancelling a native request drops its wait, so it takes no later notification.
+        for answered in self._requests.values():
+            answered.cancel()
+        self._requests.clear()
 
 
 class Rendition:
