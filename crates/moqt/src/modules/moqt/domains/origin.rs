@@ -432,9 +432,9 @@ impl Origin {
             let mut track_properties = TrackProperties::default();
             track_properties.set_dynamic_groups(track.new_group_requests.is_some());
             PublishOption {
+                content_exists: content_exists(track.numbering.largest()),
                 forward: track.demand.is_none(),
                 track_properties,
-                ..PublishOption::default()
             }
         };
         let publisher = session.publisher();
@@ -1593,6 +1593,47 @@ mod tests {
                 ]
             );
             assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_reports_the_largest_location_written_before_it() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-largest", RETENTION, version).await;
+            let origin = &peers.origin;
+            for (boundary, payload) in [(GroupBoundary::Next, b"a"), (GroupBoundary::Within, b"b")]
+            {
+                origin
+                    .write(NAMESPACE, TRACK, plain(boundary, payload))
+                    .await
+                    .unwrap();
+            }
+
+            // Act
+            let accepted = publish(&peers).await;
+
+            // Assert
+            assert_eq!(
+                accepted.content_exists(),
+                ContentExists::True {
+                    location: location(FIRST_GROUP_ID, 1)
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_of_an_unwritten_track_reports_no_content() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-empty", RETENTION, version).await;
+
+            // Act
+            let accepted = publish(&peers).await;
+
+            // Assert
+            assert_eq!(accepted.content_exists(), ContentExists::False);
         }
     }
 
