@@ -49,8 +49,14 @@ class Catalog:
 
     @classmethod
     def parse(cls, payload: bytes) -> "Catalog":
-        """Raises ValueError for what `moq_wasm.parse_catalog` refuses."""
-        return cls([CatalogTrack.from_json(track) for track in parse_catalog(payload).get("tracks", [])])
+        """Raises ValueError for what `moq_wasm.parse_catalog` refuses, and for a catalog without
+        the `tracks` array an independent catalog requires (draft-ietf-moq-msf-02 §5.1.4), which
+        `parse_catalog` accepts."""
+        document = parse_catalog(payload)
+        tracks = document.get("tracks")
+        if not isinstance(tracks, list):
+            raise ValueError("MSF catalog has no tracks array")
+        return cls([CatalogTrack.from_json(track) for track in tracks])
 
     def select(
         self,
