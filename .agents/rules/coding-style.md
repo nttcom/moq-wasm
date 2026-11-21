@@ -1,6 +1,6 @@
 # Coding Style Rules
 
-Shared by all agents (Claude Code, Codex).
+Shared by all agents.
 
 ## Implementation Principles
 - Follow YAGNI: implement only what the current requirement needs. Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs — add them when a second concrete use case appears.

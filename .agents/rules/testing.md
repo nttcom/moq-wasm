@@ -1,6 +1,6 @@
 # Testing Rules
 
-Shared by all agents (Claude Code, Codex).
+Shared by all agents.
 
 - Write unit tests inside the target module using `#[cfg(test)] mod tests`.
 - Structure every test using the Arrange / Act / Assert pattern.
