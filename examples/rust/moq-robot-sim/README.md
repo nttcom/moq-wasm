@@ -16,5 +16,10 @@ the same room, and drive with the arrow keys or WASD. Releasing the keys
 stops the actions: after the hold timeout the robot holds and the operator
 stops driving.
 
+With `--policy-episode <task>` it opens an episode in which the policy
+(`examples/rust/moq-robot-policy`) drives whenever no operator does; an
+operator's keys intervene, and the policy takes over again once they are
+released.
+
 It applies each action entry as it arrives, without waiting for the entry's
 time, and has no camera.
