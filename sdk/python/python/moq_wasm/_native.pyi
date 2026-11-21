@@ -116,9 +116,9 @@ class Session:
         object in its own datagram: a lost one is not resent, one larger than the path's datagram
         size (about 1 KB is safe) is dropped, and a subscriber reads it by object, not with
         `groups()`. `priority` is the Publisher Priority: among the session's tracks, a lower value
-        is sent first. Raises RuntimeError when the relay refuses the PUBLISH, or when the track
-        already has an object and `datagram` differs from its earlier registration; OverflowError
-        for a `priority` outside 0-255."""
+        is sent first. Raises `RequestError` when the relay refuses the PUBLISH, RuntimeError when
+        the track already has an object and `datagram` differs from its earlier registration, and
+        OverflowError for a `priority` outside 0-255."""
     def end_track(self, namespace: list[str], name: str) -> asyncio.Future[None]:
         """Ends every subscription to a track `publish_track` registered with PUBLISH_DONE; the
         track keeps its numbering and cache, so registering it again continues them."""
