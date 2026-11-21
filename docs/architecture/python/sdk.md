@@ -1206,7 +1206,7 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   the catalog lists the codec string of the configuration the keyframes
   carry, such as an H.264 SPS. `VideoEncoder.codec_string` names the same
   profile and level, which the encoder picks as x264 does (the lowest that
-  takes its size and framerate) and writes into its SPS.
+  takes its size, framerate and bitrate) and writes into its SPS.
 - The source's methods are the browser SDK's `MediaSource` in snake_case,
   minus what WebCodecs does there:
 

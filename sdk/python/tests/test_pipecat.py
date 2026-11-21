@@ -328,17 +328,18 @@ def test_the_video_encoder_reads_a_picture_in_a_contiguous_buffer_other_than_byt
 
 
 @pytest.mark.parametrize(
-    ("width", "height", "framerate", "codec_string"),
+    ("width", "height", "framerate", "bitrate", "codec_string"),
     [
-        (64, 48, 30, "avc1.42C00A"),
-        (1280, 720, 30, "avc1.42C01F"),
-        (1920, 1080, 30, "avc1.42C028"),
-        (1920, 1080, 60, "avc1.42C02A"),
+        (64, 48, 30, None, "avc1.42C00A"),
+        (1280, 720, 30, None, "avc1.42C01F"),
+        (1920, 1080, 30, None, "avc1.42C028"),
+        (1920, 1080, 30, 30_000_000, "avc1.42C029"),
+        (1920, 1080, 60, None, "avc1.42C02A"),
     ],
 )
-def test_the_h264_encoders_codec_string_names_the_profile_and_level_of_its_sps(width, height, framerate, codec_string):
+def test_the_h264_encoders_codec_string_names_the_profile_and_level_of_its_sps(width, height, framerate, bitrate, codec_string):
     # Arrange
-    encoder = VideoEncoder("H264", width, height, framerate)
+    encoder = VideoEncoder("H264", width, height, framerate, bitrate)
 
     # Act
     keyframe = b"".join(encoder.encode(picture(0), SIZE, "RGB"))
@@ -2401,20 +2402,7 @@ async def test_a_stereo_input_pushes_stereo_audio_of_a_participant(input_kind, s
         pcm = stereo_tone(0.2, 48_000)
     else:
         pcm = sine(0.2, 48_000, frequency=440.0).tobytes()
-    # PyAV encodes them: `OpusEncoder` takes mono PCM only.
-    layout = "stereo" if source_channels == 2 else "mono"
-    encoder = av.CodecContext.create("libopus", "w")
-    encoder.sample_rate = 48_000
-    encoder.layout = layout
-    encoder.format = "s16"
-    encoder.open()
-    fifo = av.AudioFifo()
-    frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout=layout)
-    frame.sample_rate = 48_000
-    fifo.write(frame)
-    packets = []
-    while (chunk := fifo.read(encoder.frame_size)) is not None:
-        packets.extend(bytes(packet) for packet in encoder.encode(chunk))
+    packets = OpusEncoder(channels=source_channels).encode(pcm, 48_000, source_channels)
     native.tracks["audio"] = [[*packets, STAY_OPEN]]
     native.publish([*ROOM, "alice"])
     if input_kind == "transport":
@@ -4541,6 +4529,46 @@ async def test_the_pictures_a_group_holds_back_come_at_its_end_of_group():
     await pictures.aclose()
 
 
+def test_finishing_the_encoder_turns_a_clip_shorter_than_a_packet_into_audio():
+    # Arrange
+    encoder = OpusEncoder()
+    decoder = OpusDecoder(48_000)
+
+    # Act: 20 ms at 16 kHz, held back by the resampler
+    packets = [*encoder.encode(tone(0.02), SAMPLE_RATE), *encoder.finish()]
+
+    # Assert
+    assert len(b"".join(decoder.decode(packet) for packet in packets)) >= 960 * 2
+
+
+def test_finishing_the_encoder_turns_a_clip_the_resampler_holds_entirely_into_audio():
+    # Arrange: 1 ms at 16 kHz, all of it held inside the resampler
+    encoder = OpusEncoder()
+    decoder = OpusDecoder(48_000)
+
+    # Act
+    packets = [*encoder.encode(tone(0.001), SAMPLE_RATE), *encoder.finish()]
+
+    # Assert: the tone (peak 8000) is heard, not silence in its place
+    pcm = np.frombuffer(b"".join(decoder.decode(packet) for packet in packets), np.int16)
+    assert np.abs(pcm).max() > 4000
+
+
+def test_stereo_speech_is_downmixed_into_mono_packets_of_its_duration():
+    # Arrange
+    mono = np.frombuffer(tone(0.2, 48_000), np.int16)
+    stereo = np.repeat(mono, 2).tobytes()
+    encoder = OpusEncoder()
+    decoder = OpusDecoder(48_000)
+
+    # Act
+    packets = encoder.encode(stereo, 48_000, 2)
+
+    # Assert: 200 ms of stereo is ten 20 ms packets, not twenty
+    assert len(packets) == 10
+    assert len(b"".join(decoder.decode(packet) for packet in packets)) == 10 * 960 * 2
+
+
 def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
     # Arrange: 200 ms of speech at 48 kHz
     encoder = OpusEncoder()
@@ -4553,6 +4581,20 @@ def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
     assert len(packets) == 14
 
 
+def test_the_encoder_takes_mono_pcm_at_another_rate_after_stereo_speech():
+    # Arrange: 200 ms of stereo speech at 48 kHz, as pipecat sends before its mono end silence
+    stereo = np.repeat(np.frombuffer(tone(0.2, 48_000), np.int16), 2).tobytes()
+    encoder = OpusEncoder()
+    packets = encoder.encode(stereo, 48_000, 2)
+
+    # Act: 100 ms of mono silence at 16 kHz
+    packets += encoder.encode(bytes(2 * SAMPLE_RATE // 10), SAMPLE_RATE)
+    packets += encoder.finish()
+
+    # Assert: 300 ms, the last packet padded
+    assert len(packets) in (15, 16)
+
+
 @pytest.mark.parametrize("sample_rate", [0, -16_000, 16_000.0])
 def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder_goes_on(sample_rate):
     # Arrange
@@ -4561,10 +4603,10 @@ def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder
         encoder.encode(tone(0.02), sample_rate)
 
     # Act: 200 ms of speech at 16 kHz
-    packets = encoder.encode(tone(0.2), SAMPLE_RATE)
+    packets = [*encoder.encode(tone(0.2), SAMPLE_RATE), *encoder.finish()]
 
-    # Assert: nine 20 ms packets, the rest short of a packet; the refused PCM is taken as none
-    assert len(packets) == 9
+    # Assert: ten 20 ms packets, the refused PCM taken as none
+    assert len(packets) in (10, 11)
 
 
 def test_the_transport_refuses_an_input_audio_filter():
