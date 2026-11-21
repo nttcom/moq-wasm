@@ -393,22 +393,20 @@ class Session:
             await self._end(error)
 
     async def _hand_over_token(self, token: str) -> None:
+        """Raises RuntimeError when the relay refuses the token, which the keeper retries. The
+        native session presents the token on its next connection all the same, until a later one
+        the relay accepts replaces it."""
         assert self._keeper is not None
-        try:
-            await self._native.refresh_token(token, app_id=self._keeper.app_id)
-        except RuntimeError as error:
-            # The relay ends the connection when its token expires, and the native session opens the
-            # next one with this token.
-            logger.warning("the relay refused the refreshed token: %s", error)
+        await self._native.refresh_token(token, app_id=self._keeper.app_id)
 
     async def _end(self, failure: BaseException | None) -> None:
         """Ends the session once, with `failure` or as closed, and waits until the session's own
         tasks finished, other than the one ending it, and the native session closed; a caller
         cancelled meanwhile leaves the close running for the next one to await. A task the shutdown
-        waits for, such as the token refresh that calls `close()` from its cleanup, returns at once
-        instead."""
+        waits for, such as a `refresh_token` call that calls `close()` from its cleanup, returns at
+        once instead."""
         current = asyncio.current_task()
-        if self._closing.started and current in self._joined:
+        if self._closing.started and self._waited_by_shutdown(current):
             return
         if not self._closing.started:
             if failure is None:
@@ -423,11 +421,19 @@ class Session:
                 task.cancel()
             for watch in self._watches:
                 watch._end()
-        await self._closing.run(self._shut_down)
+        await self._closing.run(lambda: self._shut_down(current))
 
-    async def _shut_down(self) -> None:
+    def _waited_by_shutdown(self, task: asyncio.Task | None) -> bool:
+        return task in self._joined or (self._keeper is not None and self._keeper.runs(task))
+
+    async def _shut_down(self, ending: asyncio.Task | None) -> None:
+        """Waits for the session's own tasks other than `ending`, the one that ended the session,
+        then closes the native session."""
         # A cancelled task may still run cleanup.
         await asyncio.gather(*self._joined, return_exceptions=True)
+        if self._keeper is not None:
+            # The calls of `refresh_token`, one abandoned at its deadline included, clean up too.
+            await self._keeper.stop(sparing=ending)
         await self._native.close()
 
 
@@ -498,9 +504,15 @@ def connect(
     answer CLIENT_SETUP once it is open, within 30 s.
 
     `refresh_token`, given with `token`, takes the current token and returns a later one of the
-    same app. The session calls it five minutes before the token's `exp`, retries every 30 s, and
-    ends with `TokenExpired` once the token expired. `versions` lists the drafts to offer, most
-    preferred first; without it draft-18, then draft-14, are offered."""
+    same app. The session calls it five minutes before the token's `exp`, or halfway through a
+    shorter lifetime. A call that raises, takes over 30 s or past the token's expiry together with
+    the relay's answer to its token (even one that caught its timeout and returned), or returns a
+    token of another app, one that does not expire later or one the relay refuses is retried with
+    the current token after 30 s, or half the time left, until the token expired; the session then
+    ends with `TokenExpired`. A call that ends cancelled while the session is not, as one awaiting a
+    shared future another task cancelled, is retried as well. A call is given up at its deadline,
+    however long its cleanup takes. `versions` lists the drafts to offer, most preferred first;
+    without it draft-18, then draft-14, are offered."""
     if refresh_token is not None and token is None:
         raise ValueError("refresh_token needs a token")
     keeper = TokenKeeper(token, refresh_token) if refresh_token is not None and token is not None else None
