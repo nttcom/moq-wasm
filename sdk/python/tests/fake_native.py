@@ -64,8 +64,9 @@ class FakeRendition:
     def configure_video(self, codec: str) -> None:
         self.calls.append(("configure_video", codec))
 
-    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+    def push_video(self, data: bytes, timestamp_micros: int) -> bool:
         self.calls.append(("push_video", data))
+        return True
 
 
 class FakeMediaSource:
@@ -84,15 +85,17 @@ class FakeMediaSource:
     def configure_video(self, codec: str) -> None:
         self.calls.append(("configure_video", codec))
 
-    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+    def push_video(self, data: bytes, timestamp_micros: int) -> bool:
         self.calls.append(("push_video", data))
+        return True
 
     def configure_audio(self, codec: str, sample_rate: int, channels: int, *, description=None) -> None:
         described = () if description is None else (description,)
         self.calls.append(("configure_audio", codec, sample_rate, channels, *described))
 
-    def push_audio(self, data: bytes, timestamp_micros: int, **level) -> None:
+    def push_audio(self, data: bytes, timestamp_micros: int, **level) -> bool:
         self.calls.append(("push_audio", data))
+        return True
 
     async def keyframe_request(self) -> None:
         await self.keyframe_requested.wait()
