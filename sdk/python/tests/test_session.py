@@ -1,13 +1,22 @@
 import asyncio
+import base64
+import hashlib
 import signal
+import ssl
 import uuid
+from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import pytest
 
 import moq_wasm
 from moq_wasm import _native
-from tests.conftest import started_relay
+from tests.conftest import REPO_ROOT, started_relay
 from tests.relay_sessions import TIMEOUT_SECONDS, TRACK, connect, publisher_with_track, room, within
+
+# How long moqt gives a first connection to open its transport (`DIAL_TIMEOUT` of a `wss://` dial)
+# and, once open, to exchange SETUP (`SERVER_SETUP_TIMEOUT`).
+CONNECT_DEADLINE_SECONDS = 30.0
 
 # moqt ends a subscription this long after its PUBLISH_DONE (PUBLISH_DONE_GRACE_PERIOD).
 PUBLISH_DONE_GRACE_SECONDS = 10
@@ -119,6 +128,84 @@ async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_u
     # Assert: a request after the refresh is still authorized under the app's root
     await within(session.announce([app_id, "room", "alice"]))
     await session.close()
+
+
+@asynccontextmanager
+async def silent_relay():
+    """A `wss://` URL whose server completes the TLS and WebSocket handshakes, then never answers."""
+    keys = REPO_ROOT / "services" / "relay" / "keys"
+    tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    tls.load_cert_chain(keys / "cert.pem", keys / "key.pem")
+
+    async def upgrade(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request = (await reader.readuntil(b"\r\n\r\n")).decode()
+        lines = (line.split(": ", 1) for line in request.split("\r\n")[1:] if ": " in line)
+        headers = {name.lower(): value for name, value in lines}
+        key = headers["sec-websocket-key"]
+        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+        protocol = headers["sec-websocket-protocol"].split(",")[0].strip()
+        writer.write(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            + b"Sec-WebSocket-Accept: " + accept + b"\r\nSec-WebSocket-Protocol: " + protocol.encode() + b"\r\n\r\n"
+        )
+        await writer.drain()
+        await reader.read()
+
+    server = await asyncio.start_server(upgrade, "127.0.0.1", 0, ssl=tls)
+    try:
+        yield f"wss://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+    finally:
+        server.close()
+
+
+async def test_a_relay_that_never_sets_the_session_up_fails_the_connection():
+    # Arrange
+    async with silent_relay() as url:
+        # Act / Assert: the server never sends its QMux transport parameters, so one of moqt's 30 s
+        # deadlines, the dial's or QMux's idle timeout, whichever fires first, fails the connect
+        with pytest.raises(RuntimeError, match="timed out|nothing received"):
+            await asyncio.wait_for(
+                moq_wasm.connect(url, verify_certificate=False), CONNECT_DEADLINE_SECONDS + TIMEOUT_SECONDS
+            )
+
+
+@asynccontextmanager
+async def slow_relay(relay_url: str, delay: float):
+    """A `wss://` URL that reaches the relay's WebSocket listener once each connection has waited
+    `delay` seconds, as a relay starting from zero behind a slow link takes long to answer."""
+    relay_port = urlsplit(relay_url).port
+
+    async def forward(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        finally:
+            writer.close()
+
+    async def delay_then_forward(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
+        await asyncio.sleep(delay)
+        relay_reader, relay_writer = await asyncio.open_connection("127.0.0.1", relay_port)
+        await asyncio.gather(forward(client_reader, relay_writer), forward(relay_reader, client_writer))
+
+    server = await asyncio.start_server(delay_then_forward, "127.0.0.1", 0)
+    try:
+        yield f"wss://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+    finally:
+        server.close()
+
+
+async def test_a_wss_relay_that_answers_after_12_s_connects_within_the_connect_deadline(relay_url):
+    # Arrange: a relay that takes over 10 s, well within moqt's 30 s dial deadline
+    async with slow_relay(relay_url, delay=12.0) as url:
+        # Act
+        session = await asyncio.wait_for(
+            moq_wasm.connect(url, verify_certificate=False), CONNECT_DEADLINE_SECONDS + TIMEOUT_SECONDS
+        )
+
+        # Assert
+        await within(session.announce([*room(), "alice"]))
+        await session.close()
 
 
 async def test_a_token_of_another_app_is_refused_as_a_refresh(relay_url, temporary_app_token):

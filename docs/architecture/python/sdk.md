@@ -130,7 +130,12 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   replace its connection, the session ends with `ConnectionLost`, as the
   browser SDK's `MoqSession.closed` resolves. It does not dial again: a bot
   whose session ended ends its room, and the page that asked for the room
-  asks again. A failure to connect raises from `connect`.
+  asks again. A failure to connect raises from `connect`, as does a relay
+  that does not open the transport, or answer CLIENT_SETUP once it is open,
+  within 30 s: moqt's deadlines for a first connection (quinn's idle timeout
+  or the `wss://` dial's, then `SERVER_SETUP_TIMEOUT`), long enough for a
+  relay starting from zero behind a link with a round trip of over half a
+  second. The SDK adds no deadline of its own.
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
   `exp` from the token's claims, calls it five minutes before `exp`, retries
@@ -139,15 +144,42 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   job, as in architecture.md "Authorization tokens". The native session
   also presents the latest token when it reconnects.
 - **Lifetime.** Leaving the `async with` block closes the session; awaiting
-  `connect` instead leaves `close()` to the caller. A session ends with
+  `connect` instead leaves `close()` to the caller. Entering one `connect()`
+  result again while it is entered raises RuntimeError before dialing, since
+  one exit closes one session. Closing cancels the session's own tasks, the
+  token refresh among them, and returns once they finished, a
+  `refresh_token` call's cleanup included, and the native session closed;
+  a `close()` the call makes from its cleanup returns at once instead of
+  waiting for the shutdown that waits for it. A session ends with
   `ConnectionLost`, or with `TokenExpired` when the token expired while
   `refresh_token` kept failing. The failure raises from `async with`, after
   cancelling what runs inside it through `session.run`, which raises
   `SessionClosed` when `close()` ends the session instead. `run` raises the
   failure even when the work returned because of it, as a watch does when
-  the session ends:
+  the session ends, and, called once the session ended, raises what ended
+  it without starting the work, after cancelling a task or future already
+  scheduled and waiting for its cleanup. `run` returns only once the work finished,
+  even when its own caller is cancelled while the work cleans up, so
+  nothing the work owns outlives it. The wait covers the work itself, not
+  what it started: `asyncio.gather`'s future finishes as soon as one child
+  ended cancelled, while the others still clean up, as a broadcast that is
+  still withdrawing its namespace. Several workers therefore run in one
+  coroutine that starts them in an `asyncio.TaskGroup`, which waits for
+  every child's cleanup and raises a child's failure, as a refused
+  request, inside an `ExceptionGroup`: a loop that connects again
+  catches every `Exception` with `except*`.
+  The three subclass `SessionEnded`, which is no
+  `RuntimeError`: a request made after the session ended raises what ended
+  it, so the loops that retry a refused request (`RemoteBroadcast.follow`)
+  end with it:
 
 ```python
+async def work() -> None:
+    async with asyncio.TaskGroup() as workers:
+        workers.create_task(publish())
+        workers.create_task(follow())
+
+
 async with moq_wasm.connect(...) as session:
     await session.run(work())
 ```
