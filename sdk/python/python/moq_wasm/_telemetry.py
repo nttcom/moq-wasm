@@ -38,7 +38,8 @@ class TelemetryOptions:
     """Names the app in each report, at most 128 characters."""
     redact: Callable[[Fields], Fields] | None = None
     """Returns the fields a log or span is sent with, to mask or drop a value such as a
-    `track_namespace` that holds a user id. Messages and span names are sent as they are."""
+    `track_namespace` that holds a user id. Messages and span names are sent as they are, and a
+    value JSON cannot hold, such as a NaN, as its `str`."""
 
 
 def send_report(url: str, body: bytes, timeout: float) -> int | None:
@@ -115,7 +116,9 @@ class ClientTelemetry:
             "logs": logs,
             "spans": spans,
         }
-        status = self._send(endpoint, json.dumps(report, default=str).encode(), timeout)
+        # allow_nan=False raises instead of sending a bare NaN, which makes the server reject the
+        # whole report.
+        status = self._send(endpoint, json.dumps(report, default=str, allow_nan=False).encode(), timeout)
         if status == 401 and token is not None:
             # Sent without it from now on, so the server takes the records as anonymous instead
             # of dropping them.
@@ -137,8 +140,10 @@ class ClientTelemetry:
                 return
 
     def _keep(self, kind: int, record: dict, token: str | None) -> None:
+        fields = record["fields"]
         if self._options.redact is not None:
-            record = {**record, "fields": self._options.redact(record["fields"])}
+            fields = self._options.redact(fields)
+        record = {**record, "fields": {key: json_field(value) for key, value in fields.items()}}
         with self._lock:
             if token not in self._batches and len(self._batches) >= MAX_QUEUED_TOKENS:
                 logs, spans = self._batches.pop(next(iter(self._batches)))
@@ -147,6 +152,16 @@ class ClientTelemetry:
             records.append(record)
             if len(records) > MAX_RECORDS:
                 del records[0]
+
+
+def json_field(value: Any) -> Any:
+    """`value` round-tripped through JSON, so it shares no container with the caller's; an object
+    inside becomes its `str`. Returns `str(value)` when JSON cannot hold it: a NaN or infinity
+    anywhere, a key such as a tuple, or a circular reference."""
+    try:
+        return json.loads(json.dumps(value, default=str, allow_nan=False))
+    except (TypeError, ValueError, RecursionError):
+        return str(value)
 
 
 def _digest(token: str) -> bytes:

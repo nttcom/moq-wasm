@@ -7,14 +7,16 @@ from tests.failing_logging import failing_handler
 
 
 class Sent:
-    """Answers each report with `status` and keeps it."""
+    """Answers each report with `status` and keeps it, parsed and as the bytes sent."""
 
     def __init__(self, status: int = 202):
         self.status = status
         self.reports: list[tuple[str, dict]] = []
+        self.bodies: list[bytes] = []
 
     def __call__(self, url: str, body: bytes, timeout: float) -> int:
         self.reports.append((url, json.loads(body)))
+        self.bodies.append(body)
         return self.status
 
 
@@ -218,3 +220,44 @@ def test_a_field_json_cannot_hold_is_sent_as_its_string():
 
     # Assert
     assert sent.reports[0][1]["logs"][0]["fields"] == {"at": str(object)}
+
+
+def strict_json(body: bytes) -> dict:
+    """Parses `body` refusing NaN and infinity, as the observability server does."""
+
+    def refuse(constant: str):
+        raise ValueError(f"{constant} is not JSON")
+
+    return json.loads(body, parse_constant=refuse)
+
+
+def test_a_non_finite_field_is_sent_as_its_string_in_a_valid_report():
+    # Arrange: a log with a NaN, and a redactor that returns an infinity and a list holding a NaN
+    sent = Sent()
+    redact = lambda fields: {**fields, "jitter": float("inf"), "samples": [1.0, float("nan")]}
+    telemetry = ClientTelemetry(TelemetryOptions(url="http://observability", page="bot", redact=redact), sent)
+    telemetry.log(log("rtt measured", rtt=float("nan"), attempt=2), None)
+
+    # Act
+    telemetry.flush()
+
+    # Assert
+    fields = strict_json(sent.bodies[0])["logs"][0]["fields"]
+    assert fields == {"rtt": "nan", "attempt": 2, "jitter": "inf", "samples": "[1.0, nan]"}
+
+
+def test_a_field_is_sent_as_it_was_when_its_record_was_queued_and_one_with_a_key_json_cannot_hold_as_its_string():
+    # Arrange: a redactor that returns a list it changes later, and a dict with a tuple key
+    sent = Sent()
+    samples = [1.0]
+    redact = lambda fields: {**fields, "samples": samples, "by_pair": {(1, 2): "a"}}
+    telemetry = ClientTelemetry(TelemetryOptions(url="http://observability", page="bot", redact=redact), sent)
+    telemetry.log(log("rtt measured"), None)
+    samples.append(float("nan"))
+
+    # Act
+    telemetry.flush()
+
+    # Assert
+    fields = strict_json(sent.bodies[0])["logs"][0]["fields"]
+    assert fields == {"samples": [1.0], "by_pair": "{(1, 2): 'a'}"}

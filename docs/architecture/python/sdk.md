@@ -234,8 +234,12 @@ SDK's `init({ logLevel, onLog, onSpan })`:
   goes out with a 2 s request timeout (at most 3 s). A token the server
   answered 401 to is left out of later reports; the newest 64 such tokens
   are remembered, each by its SHA-256 digest, so the process keeps no
-  credential of a session that ended. It posts with `urllib` on a thread
-  of its own, so the module gains no HTTP client.
+  credential of a session that ended. Each field, after `redact`, is
+  queued as a JSON round trip, so a list changed later does not change
+  what is sent. A field JSON cannot hold (a NaN or an infinity anywhere, a
+  key such as a tuple) is sent as its `str`, since Python's `json` writes
+  a bare `NaN` and the server rejects the whole report. It posts with
+  `urllib` on a thread of its own, so the module gains no HTTP client.
 - **`report_log`** hands the app's own log to `on_log` and `telemetry`, not
   to `logging`, as the browser's `reportLog` keeps it off the console.
 - The subscriber is process-wide, so only the first `init` takes effect, as
