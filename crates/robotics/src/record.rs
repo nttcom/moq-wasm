@@ -75,6 +75,19 @@ pub enum ControlReason {
     Episode,
 }
 
+impl ControlReason {
+    /// The value as the record writes it, for the `control_reason` log
+    /// field.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Action => "action",
+            Self::Left => "left",
+            Self::Stale => "stale",
+            Self::Episode => "episode",
+        }
+    }
+}
+
 /// An `episode` record's data: the first object of an episode's group
 /// starts it, the last ends it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

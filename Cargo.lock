@@ -3108,10 +3108,15 @@ name = "robotics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "broadcast",
+ "bytes",
+ "moqt",
  "msf",
  "proptest",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

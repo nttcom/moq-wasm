@@ -58,6 +58,16 @@ pub enum HoldReason {
     Session,
 }
 
+impl HoldReason {
+    /// The `hold_reason` log field's value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Stale => "stale",
+            Self::Session => "session",
+        }
+    }
+}
+
 /// Arbitration and the dead-man rule on the robot
 /// (`docs/architecture/robotics/architecture.md`, Driving and holding
 /// still). It has no clock: every call takes `now_ms`, the robot's wall
@@ -273,6 +283,11 @@ impl Arbiter {
         self.hold = Some(reason);
         vec![Output::Hold(reason)]
     }
+}
+
+/// Whether `sender` may drive: `operators/<id>` or `bots/policy`.
+pub(crate) fn is_candidate(sender: &str) -> bool {
+    is_operator(sender) || sender == POLICY
 }
 
 /// `operators/<id>`: one non-empty element after `operators`.

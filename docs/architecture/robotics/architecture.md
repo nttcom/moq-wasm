@@ -94,9 +94,12 @@ Milliseconds are fine enough for control loops up to a few hundred hertz.
 `state`, `control` and `action` are independent of their history,
 so each record is its own group of one object, as §8.4 recommends. A late
 subscriber reads the current value with a joining FETCH of the current group
-and needs no periodic repeat. `episode` is a sequence: each episode is one
-group whose first object opens it and whose later objects append to it
-(§8.4 incremental updates).
+and needs no periodic repeat. Each group travels on a stream of its own, so
+a subscriber may receive the groups out of order; the newest record is the
+one with the largest Group ID, and a reader that acts on the current value
+drops a group older than one it has read. `episode` is a sequence: each
+episode is one group whose first object opens it and whose later objects
+append to it (§8.4 incremental updates).
 
 The cameras use the existing media source (`add_source` in the SDKs), so
 the operator page plays them with `LivePlayer` and the recorder stores them
@@ -148,9 +151,9 @@ without I/O or a clock of its own: each call passes the robot's time, and
 `Robot` feeds it the events it reads from MoQT and acts on what it returns
 (apply an action entry, publish `control`, hold). The application gives
 `Robot` two durations, `max_action_age` (300 ms by default) and
-`hold_timeout` (500 ms by default), and receives the actions to execute.
-The defaults are starting points, to be tuned on the example over a real
-network:
+`hold_timeout` (500 ms by default), and receives the actions to execute and
+the holds as commands (see The robot's runtime). The defaults are starting
+points, to be tuned on the example over a real network:
 
 - **Candidates.** Operators (`operators/<id>`) take precedence over the
   policy (`bots/policy`); any other namespace never drives. An operator's
@@ -171,13 +174,13 @@ network:
   with its PUBLISH_NAMESPACE_DONE, so a publisher that returns may start
   over.
 - **Dead man.** When the driver has applied no action for `hold_timeout`
-  since its last applied one or since it became driver, the robot calls the
-  application's hold handler (hold position, stop motors: the application's
+  since its last applied one or since it became driver, the robot tells the
+  application to hold (hold position, stop motors: the application's
   choice) and publishes `control` with reason `stale`. A stale operator
   stops driving, handing back to the policy during an episode that enables
   it; the policy stays the driver, once stale until its next applied action.
-  When nobody drives any more, the robot holds at once. The hold handler is
-  called once per hold: not again before an action is applied.
+  When nobody drives any more, the robot holds at once. A hold is issued
+  once: not again before an action is applied.
 - **Session loss.** When the robot's session to the relay ends, it holds at
   once, without waiting for `hold_timeout`, even when it already holds
   because the driver went stale, and forgets the drivers, the episode and
@@ -187,6 +190,43 @@ network:
 control tick, `control` on each change, and `episode` on the application's
 start and end calls. It does not run the control loop; the application
 calls it from its own.
+
+#### The robot's runtime
+```rust
+let robot = Robot::run(session, &broadcast, room, ArbiterConfig::default()).await?;
+robot.publish_state(fields).await?;                  // seq and T assigned
+let id = robot.start_episode(task, policy_enabled).await?;
+robot.end_episode(success).await?;
+while let Some(command) = robot.next_command().await { /* Apply { at_ms, values, driver } or Hold(reason) */ }
+```
+
+- `broadcast` is the robot's `<room>/robot` broadcast on `session`'s
+  connection (`RelayConnection::with_client_session`), which the application
+  also feeds its cameras into. `Robot::run` offers `state`, `control` and
+  `episode` on it with their priorities and watches the namespaces and
+  tracks under `<room>` with one SUBSCRIBE_NAMESPACE
+  (`Session::watch_tracks`). A session may hold no other SUBSCRIBE_NAMESPACE
+  overlapping `<room>` (NAMESPACE_PREFIX_OVERLAP, draft-14 §9.28), so the
+  robot does not subscribe per candidate namespace.
+- One task owns the `Arbiter` and feeds it, in one order, the namespace
+  events, the candidates' records, the application's episode calls, a tick
+  every `hold_timeout / 10` (at least every 50 ms), and the end of the
+  session. It turns `Apply` and `Hold` into the commands `next_command`
+  returns, and writes `Control` to the `control` track itself.
+  `publish_state` writes directly, without that task.
+- The relay forwards each PUBLISH under `<room>`. The robot accepts a
+  candidate's `action` with the track's Subscriber Priority and DELIVERY
+  TIMEOUT `max_action_age`, from the group the PUBLISH found (a Standalone
+  FETCH of its Largest Location), and rejects every other track. One reader
+  task per accepted PUBLISH reads it until it ends; a PUBLISH of the track
+  again replaces it, so a candidate may announce its namespace before its
+  track and may end the track and publish it again. The
+  PUBLISH_NAMESPACE_DONE drops the candidate's reader and is
+  `Arbiter::left`.
+- Episode ids count from 1 for each `Robot`; `start_episode` fails while an
+  episode is open, `end_episode` while none is.
+- When the session ends, `next_command` returns `Hold(Session)` and then
+  `None`; the `Robot` is not reused.
 
 ### Priority and delivery
 Lower values go first (draft-14 §7). Control must not wait behind video:
@@ -262,11 +302,12 @@ have it yet; it gains it under this name, with the `priority` and
 sets per track.
 
 ### Telemetry
-`Robot` logs each driver change and each hold at INFO, and the loop latency
-of applied actions as a metric. New log fields, added to the vocabulary in
-`AGENTS.md` before use: `driver` (the namespace driving, relative to the
-room), `hold_reason` (`stale`, `session`), `episode_id`, and
-`loop_latency_ms` (`now − basis` of an applied action).
+`Robot` logs each driver change (with `control_reason`), each hold, and each
+episode's start and end at INFO, and the loop latency of each applied action
+at DEBUG; a metric of it follows with the SDKs. New log fields, added to the
+vocabulary in `AGENTS.md` before use: `driver` (the namespace driving,
+relative to the room), `hold_reason` (`stale`, `session`), `control_reason`,
+`episode_id`, and `loop_latency_ms` (`now − basis` of an applied action).
 
 ## Alternatives
 - **A custom binary packaging instead of JSON event timelines**: smaller
