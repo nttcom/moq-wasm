@@ -1,15 +1,16 @@
 import asyncio
 import gc
 import json
+import math
 import uuid
 import weakref
 
 import pytest
 
 import moq_wasm
-from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast, create_broadcast, watch_broadcasts
+from moq_wasm.media import Catalog, CatalogTrack, EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
-from tests.fake_native import FakeRelay, open_session
+from tests.fake_native import FakeRelay, FakeWriter, open_session, until
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -734,6 +735,119 @@ async def test_an_event_timeline_opens_one_group_with_no_record_and_adds_one_obj
 
     # Assert
     assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True), (b'[{"L":[0,0],"data":"ok"}]', False)]
+    await session.close()
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+async def test_a_record_json_cannot_carry_raises_value_error_without_being_written(value):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        timeline = bot.event_timeline("verdicts")
+        await bot.published()
+
+        # Act / Assert
+        with pytest.raises(ValueError):
+            await within(timeline.append({"T": 1, "data": value}))
+        await within(timeline.append({"T": 2, "data": "ok"}))
+
+    # Assert
+    assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True), (b'[{"T":2,"data":"ok"}]', False)]
+    await session.close()
+
+
+async def test_a_record_appended_as_its_timeline_is_added_to_a_published_broadcast_follows_the_opening():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        await bot.published()
+        timeline = bot.event_timeline("verdicts")
+
+        # Act: the track is registered on its own, after this call started
+        await within(timeline.append({"L": [0, 0], "data": "ok"}))
+
+    # Assert
+    assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True), (b'[{"L":[0,0],"data":"ok"}]', False)]
+    await session.close()
+
+
+async def test_an_event_timeline_on_a_registered_writer_opens_before_its_first_record():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await within(session.publish_track(BOT, "verdicts"))
+
+    # Act
+    EventTimeline(writer)
+    await within(until(lambda: relay.sessions[0].writers["verdicts"].objects))
+
+    # Assert
+    assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True)]
+    await session.close()
+
+
+async def test_an_event_timeline_whose_opening_fails_on_a_registered_writer_closes_the_writer_with_the_failure():
+    # Arrange: the native writer refuses every write
+    relay = FakeRelay()
+    session = await open_session(relay)
+    refused = RuntimeError("write refused")
+    relay.sessions[0].writers.setdefault("verdicts", FakeWriter()).failure = refused
+    writer = await within(session.publish_track(BOT, "verdicts"))
+
+    # Act
+    EventTimeline(writer)
+    await within(until(lambda: writer._ended.ended))
+
+    # Assert
+    with pytest.raises(RuntimeError, match="write refused"):
+        await within(writer.write(b"late"))
+    await session.close()
+
+
+async def test_append_raises_what_failed_the_opening_write():
+    # Arrange: the native writer refuses every write
+    relay = FakeRelay()
+    session = await open_session(relay)
+    refused = RuntimeError("write refused")
+    async with create_broadcast(session, BOT) as bot:
+        await bot.published()
+        native = relay.sessions[0]
+        writer = native.writers.setdefault("verdicts", FakeWriter())
+        writer.failure = refused
+        timeline = bot.event_timeline("verdicts")
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="write refused"):
+            await within(timeline.append({"L": [0, 0], "data": "ok"}))
+    await session.close()
+
+
+async def test_a_timeline_left_while_its_opening_write_is_sent_is_closed_with_its_broadcast():
+    # Arrange: the timeline's opening write is under way as the broadcast is left
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = relay.sessions[0].writers.setdefault("verdicts", FakeWriter())
+    writer.send_gate = asyncio.Event()
+    bot = create_broadcast(session, BOT)
+    await bot.__aenter__()
+    await within(bot.published())
+    timeline = bot.event_timeline("verdicts")
+    while not writer.objects:
+        await asyncio.sleep(0.01)
+    leaving = asyncio.create_task(bot.__aexit__(None, None, None))
+    await asyncio.sleep(0.05)
+
+    # Act
+    writer.send_gate.set()
+    await within(leaving)
+
+    # Assert: nothing is appended after leaving, and the session may publish the track again
+    with pytest.raises(RuntimeError, match="closed"):
+        await within(timeline.append({"L": [0, 0], "data": "late"}))
+    assert writer.objects == [(b"[]", True)]
+    await within(session.publish_track(BOT, "verdicts"))
     await session.close()
 
 

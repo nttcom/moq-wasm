@@ -157,7 +157,7 @@ class TrackWriter:
         # Clear while the track is being registered, so `close()` ends it once registered.
         self._not_registering = asyncio.Event()
         self._not_registering.set()
-        # The opening written ahead of every other write once the track is registered.
+        # The opening `_when_bound` runs once the track is registered.
         self._on_bound: Callable[[], Awaitable[None]] | None = None
         # Called once `close()` finished.
         self._on_closed: list[Callable[[], None]] = []
@@ -316,6 +316,14 @@ class TrackWriter:
         self._registered.set()
         if self._on_bound is not None:
             await self._open(self._on_bound)
+
+    def _when_bound(self, opening: Callable[[], Awaitable[None]]) -> None:
+        """Runs `opening`, a write ahead of every other, once the track is registered, or at once
+        when it is: its failure or cancellation closes the writer, as at its registration."""
+        if not self._registered.is_set():
+            self._on_bound = opening
+            return
+        asyncio.ensure_future(self._open(opening)).add_done_callback(retrieve)
 
     async def _open(self, opening: Callable[[], Awaitable[None]]) -> None:
         try:

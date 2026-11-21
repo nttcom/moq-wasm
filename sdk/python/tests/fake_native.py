@@ -342,5 +342,10 @@ async def called(native: FakeNativeSession, call: tuple) -> None:
         await asyncio.sleep(0.01)
 
 
+async def until(condition) -> None:
+    while not condition():
+        await asyncio.sleep(0.01)
+
+
 async def open_session(relay: FakeRelay, token: str | None = None, refresh: RefreshToken | None = None) -> Session:
     return await _Connecting(relay.dial, token, refresh)
