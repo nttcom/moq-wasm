@@ -21,7 +21,8 @@ use crate::{
 pub enum RenditionKeyframes {
     /// A keyframe takes the group id the source took at its presentation
     /// time, and one the source has not taken stays in the current group: for
-    /// a transcoder asked to keyframe on the source's keyframes.
+    /// a transcoder asked to keyframe on the source's keyframes and fed each
+    /// sample only after it was passed to `BroadcastWriter::push`.
     FollowSource,
     /// A keyframe takes the group id for its presentation time, whether the
     /// source or the rendition reaches that time first, and the rendition may
@@ -216,6 +217,22 @@ mod tests {
             GroupBoundary::At(source)
         );
         assert_eq!(same_frames.boundary(false, 80_000), GroupBoundary::Within);
+    }
+
+    #[tokio::test]
+    async fn a_follow_source_keyframe_takes_the_id_of_a_source_keyframe_still_queued() {
+        // Arrange: nothing awaits, so the publish task never takes the keyframe off the queue
+        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
+        let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+        let mut rendition = rendition(&writer, RenditionKeyframes::FollowSource);
+        writer.push(keyframe_at(40_000)).unwrap();
+
+        // Act
+        let boundary = rendition.boundary(true, 40_000);
+
+        // Assert
+        let source = writer.shared_timing().alignment.aligned(40_000);
+        assert_eq!(boundary, GroupBoundary::At(source.unwrap()));
     }
 
     #[tokio::test]
