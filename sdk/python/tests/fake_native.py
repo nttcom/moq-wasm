@@ -22,6 +22,27 @@ def unsigned_token(app_id: str, expires_at: float | None) -> str:
     return f"{encode({'alg': 'none'})}.{encode(claims)}.signature"
 
 
+def native_future(awaitable) -> asyncio.Future:
+    """`awaitable` as a native request returns it: a future, which is done as soon as it is
+    cancelled, unlike a task."""
+    future = asyncio.get_running_loop().create_future()
+    task = asyncio.ensure_future(awaitable)
+
+    def settle(task: asyncio.Future) -> None:
+        if future.done():
+            return
+        if task.cancelled():
+            future.cancel()
+        elif (error := task.exception()) is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(task.result())
+
+    task.add_done_callback(settle)
+    future.add_done_callback(lambda _: task.cancel())
+    return future
+
+
 class FakeWriter:
     def __init__(self):
         self.objects: list[tuple[bytes, bool]] = []

@@ -1,14 +1,14 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Generator, Hashable
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
 from moq_wasm import _native
 from moq_wasm._ended import copied
 from moq_wasm._errors import SessionEnded
-from moq_wasm._once import Once, wait_through_cancellation
+from moq_wasm._once import Once, retrieve, wait_through_cancellation
 from moq_wasm._subscription import Fetch, Subscription
 from moq_wasm._token import RefreshToken, TokenKeeper, read_claims
 
@@ -176,6 +176,9 @@ class Session:
         self._held_enders: weakref.WeakKeyDictionary[Any, Callable[[Any, BaseException], None]] = (
             weakref.WeakKeyDictionary()
         )
+        # The tasks releasing what a request whose caller was cancelled acquired, with the key of
+        # what they release.
+        self._releases: dict[asyncio.Task, Hashable] = {}
         self._done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._closing: Once[None] = Once()
         # The session's own tasks the shutdown waits for.
@@ -196,7 +199,7 @@ class Session:
         group_order: Literal["ascending", "descending"] = "ascending",
     ) -> Subscription:
         """SUBSCRIBE (`_native.Session.subscribe`): by default only the objects published after
-        it."""
+        it. Cancelled before it returns, it unsubscribes once the relay answered."""
         namespace = list(namespace)
         return await self._subscription(
             namespace,
@@ -222,8 +225,8 @@ class Session:
         delivery_timeout: float | None = None,
         group_order: Literal["ascending", "descending"] = "ascending",
     ) -> Subscription:
-        """Subscribes from the first object of a group (`_native.Session.subscribe_group_start`). It
-        is read by object only."""
+        """Subscribes from the first object of a group (`_native.Session.subscribe_group_start`);
+        cancelled as `subscribe`. It is read by object only."""
         namespace = list(namespace)
         return await self._subscription(
             namespace,
@@ -259,7 +262,8 @@ class Session:
         group_order: Literal["ascending", "descending"] = "ascending",
     ) -> Subscription:
         """The objects of the group the relay holds come first (a joining FETCH), then the live
-        ones (`_native.Session.subscribe_current_group`). It is read by object only."""
+        ones (`_native.Session.subscribe_current_group`); cancelled as `subscribe`. It is read by
+        object only."""
         namespace = list(namespace)
         return await self._subscription(
             namespace,
@@ -284,19 +288,88 @@ class Session:
     ) -> Subscription:
         """`joining` for a subscription whose native reader merges a joining FETCH into its
         objects, which is read by object from the start."""
-        native = await request(self._connected())
+        native = await self._acquire(
+            _subscription_key(namespace, name),
+            lambda: request(self._connected()),
+            lambda subscription: subscription.close(),
+        )
         return Subscription(native, self, read_by="object" if joining else None)
 
     async def watch_namespaces(self, prefix: list[str]) -> NamespaceWatch:
-        """Raises `RequestError` when the relay refuses the SUBSCRIBE_NAMESPACE."""
-        watch = NamespaceWatch(prefix, await self._connected().watch_namespaces(prefix))
+        """Raises `RequestError` when the relay refuses the SUBSCRIBE_NAMESPACE. Cancelled before
+        it returns, it unsubscribes once the relay answered, and a later watch of the prefix waits
+        for that."""
+        prefix = list(prefix)
+        native = await self._acquire(
+            ("prefix", tuple(prefix)),
+            lambda: self._connected().watch_namespaces(prefix),
+            lambda events: events.close(),
+        )
+        watch = NamespaceWatch(prefix, native)
         self._watches.append(watch)
         return watch
 
     async def announce(self, namespace: list[str]) -> Announcement:
-        """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it."""
-        await self._connected().announce(namespace)
+        """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it. Cancelled before it
+        returns, it withdraws the namespace once the relay answered, and a later announcement of the
+        namespace waits for that."""
+        namespace = list(namespace)
+        return await self._announce(namespace, lambda native: native.announce(namespace))
+
+    async def _announce(
+        self, namespace: list[str], request: Callable[[_native.Session], Awaitable[None]]
+    ) -> Announcement:
+        withdrawn = list(namespace)
+        await self._acquire(
+            _namespace_key(namespace),
+            lambda: request(self._connected()),
+            lambda _: self._native.unannounce(withdrawn),
+        )
         return self._announced(namespace)
+
+    async def _acquire(
+        self, key: Hashable, request: Callable[[], Awaitable[T]], release: Callable[[T], Awaitable[None]]
+    ) -> T:
+        """`request()`, a native request whose success leaves something active on the relay, once
+        what an earlier request of `key` left was released. A caller cancelled before it takes the
+        result leaves the request running, and `release` undoes what it acquired, so nothing stays
+        active without an owner."""
+        await self._released(key)
+        acquiring = asyncio.ensure_future(request())
+        # Its failure goes to the caller, and to nobody once the caller and its release are gone.
+        acquiring.add_done_callback(retrieve)
+        try:
+            await asyncio.wait([acquiring])
+        except asyncio.CancelledError:
+            self._release_later(key, self._release(acquiring, release))
+            raise
+        return acquiring.result()
+
+    def _release_later(self, key: Hashable, releasing: Coroutine[Any, Any, None]) -> None:
+        """Runs `releasing`, which undoes what the session acquired for `key` and no caller owns;
+        a later request of `key` waits for it."""
+        task = asyncio.create_task(releasing)
+        self._releases[task] = key
+        task.add_done_callback(self._releases.pop)
+
+    async def _release(self, acquiring: asyncio.Future[T], release: Callable[[T], Awaitable[None]]) -> None:
+        await asyncio.wait([acquiring])
+        # The native session's close ends what it acquired.
+        if acquiring.cancelled() or acquiring.exception() is not None or self._done.done():
+            return
+        try:
+            await release(acquiring.result())
+        except Exception as error:
+            logger.debug("releasing what a cancelled request acquired failed: %r", error)
+
+    async def _released(self, key: Hashable) -> None:
+        """Waits until what the cancelled requests of `key` acquired was released."""
+        if releasing := self._releasing(key):
+            await asyncio.wait(releasing)
+
+    def _releasing(self, key: Hashable) -> set[asyncio.Task]:
+        """The tasks releasing what the cancelled requests of `key` acquired."""
+        return {task for task, released in self._releases.items() if released == key}
 
     async def publish_track(
         self,
@@ -310,7 +383,11 @@ class Session:
     ) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for
         (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
-        a SUBSCRIBE at once; with `publish`, announce first."""
+        a SUBSCRIBE at once; with `publish`, announce first. Cancelled before it returns, it ends the
+        track once registered, and a later `publish_track` of the track waits for that."""
+        self._raise_if_ended()
+        await self._released(_published_track_key(tuple(namespace), name))
+        self._raise_if_ended()
         writer = self._track_writer(
             namespace, name, retention_seconds, publish=publish, datagram=datagram, priority=priority
         )
@@ -338,14 +415,20 @@ class Session:
         )
 
     async def _register(self, writer: TrackWriter) -> None:
+        namespace = list(writer.namespace)
         try:
-            native = await self._connected().publish_track(
-                writer.namespace,
-                writer.name,
-                retention_seconds=writer.retention_seconds,
-                publish=writer.publish,
-                datagram=writer.datagram,
-                priority=writer.priority,
+            # Cancelled, it ends the track once registered, before another writer registers it.
+            native = await self._acquire(
+                _published_track_key(tuple(namespace), writer.name),
+                lambda: self._connected().publish_track(
+                    namespace,
+                    writer.name,
+                    retention_seconds=writer.retention_seconds,
+                    publish=writer.publish,
+                    datagram=writer.datagram,
+                    priority=writer.priority,
+                ),
+                lambda _: self._native.end_track(namespace, writer.name),
             )
         except BaseException:
             writer._abandon()
@@ -365,7 +448,10 @@ class Session:
             await self._native.unannounce(namespace)
 
     def _publishes(self, namespace: list[str]) -> bool:
-        return tuple(namespace) in self._published
+        """Whether the session publishes `namespace` or is still withdrawing it, as the relay may
+        forward the namespace before it answered the PUBLISH_NAMESPACE."""
+        key = tuple(namespace)
+        return key in self._published or _namespace_key(namespace) in self._releases.values()
 
     async def run(self, work: Awaitable[T]) -> T:
         """Awaits `work`, cancelling it when the session ends and waiting for it to finish its
@@ -500,6 +586,18 @@ async def _cancel_work(running: asyncio.Future) -> None:
         await wait_through_cancellation([running])
     if not running.cancelled() and (error := running.exception()) is not None:
         logger.debug("the work run in the session failed while it was cancelled: %r", error)
+
+
+def _namespace_key(namespace: list[str]) -> Hashable:
+    return ("namespace", tuple(namespace))
+
+
+def _subscription_key(namespace: list[str], name: str) -> Hashable:
+    return ("track", tuple(namespace), name)
+
+
+def _published_track_key(namespace: tuple[str, ...], name: str) -> Hashable:
+    return ("published track", namespace, name)
 
 
 class _Connecting:

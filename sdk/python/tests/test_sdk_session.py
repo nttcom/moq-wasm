@@ -10,7 +10,8 @@ from moq_wasm._session import _Connecting
 from moq_wasm import _token
 from moq_wasm._token import TokenKeeper
 
-from tests.fake_native import FakeRelay, open_session, unsigned_token
+from tests.cancellation import cancel_as_it_resumes
+from tests.fake_native import FakeRelay, native_future, open_session, unsigned_token
 
 TIMEOUT_SECONDS = 5
 NAMESPACE = ["anon", "room", "bot"]
@@ -780,3 +781,23 @@ async def test_the_first_connection_failure_raises():
     # Act / Assert
     with pytest.raises(RuntimeError, match="connection refused"):
         await open_session(relay)
+
+
+async def test_a_track_publish_cancelled_as_the_relay_accepted_it_ends_before_the_next_writer_registers():
+    # Arrange: the registration is a native request the caller awaits
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    registering = native.publish_track
+    native.publish_track = lambda namespace, name, **options: native_future(registering(namespace, name, **options))
+    publishing = asyncio.create_task(session.publish_track(NAMESPACE, "status", publish=True))
+    await within(cancel_as_it_resumes(publishing))
+    with pytest.raises(asyncio.CancelledError):
+        await publishing
+
+    # Act
+    await within(session.publish_track(NAMESPACE, "status", publish=True))
+
+    # Assert
+    assert native.calls == [("publish_track", "status"), ("end_track", "status"), ("publish_track", "status")]
+    await session.close()
