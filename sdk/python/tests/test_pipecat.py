@@ -23,13 +23,14 @@ import moq_wasm
 from moq_wasm import codecs
 from moq_wasm import Location, Subscription
 from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder, decode_pictures, follow_pictures
-from moq_wasm.media import RemoteBroadcast
+from moq_wasm.media import RemoteBroadcast, create_broadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
 from moq_wasm.pipecat import _participant, _room
 from moq_wasm.pipecat._participant import ParticipantReceiver, ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
+from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.clocks.system_clock import SystemClock
 from pipecat.frames.frames import (
     CancelFrame,
@@ -39,6 +40,7 @@ from pipecat.frames.frames import (
     StartFrame,
     StopFrame,
     InputTransportMessageFrame,
+    InputTransportStartAudioStreamingFrame,
     OutputAudioRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
@@ -169,6 +171,42 @@ class RecordingSink:
 
 
 AUDIO_CATALOG = catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True})
+
+
+class KeptMedia:
+    """Weak references to every Opus decoder a participant receiver made and every picture it
+    decoded, to count those still kept."""
+
+    def __init__(self):
+        self.decoders: list[weakref.ref] = []
+        self.pictures: list[weakref.ref] = []
+
+    def alive(self) -> tuple[int, int]:
+        """The Opus decoders and the decoded pictures still kept."""
+        gc.collect()
+        return (
+            sum(decoder() is not None for decoder in self.decoders),
+            sum(picture() is not None for picture in self.pictures),
+        )
+
+
+@pytest.fixture
+def kept_media(monkeypatch) -> KeptMedia:
+    kept = KeptMedia()
+
+    class TrackedDecoder(OpusDecoder):
+        def __init__(self, sample_rate: int, channels: int = 1):
+            super().__init__(sample_rate, channels)
+            kept.decoders.append(weakref.ref(self))
+
+    class TrackedPicture(codecs.DecodedPicture):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            kept.pictures.append(weakref.ref(self))
+
+    monkeypatch.setattr(_participant, "OpusDecoder", TrackedDecoder)
+    monkeypatch.setattr(codecs, "DecodedPicture", TrackedPicture)
+    return kept
 
 
 def receive_options(audio_in: bool = False, camera: bool = False, **overrides) -> ReceiveOptions:
@@ -519,6 +557,7 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
     native.tracks["audio"] = [OpusEncoder().encode(tone(0.04), SAMPLE_RATE)]
     sink = RecordingSink()
     room = Room(session, room_options(audio_in=True), sink)
+    await room.start_audio()
     await room.start("input")
 
     # Act
@@ -533,6 +572,50 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
         ("on_track_subscribed", MoqWasmTrack("alice", "audio", "audio")),
     ]
     await room.stop("input")
+    await session.close()
+
+
+@pytest.mark.parametrize(
+    ("subscriptions", "decoded"),
+    [
+        ([[(1, 0, b"a"), (1, 1, b"b"), (0, 0, b"late"), (1, 1, b"again"), (1, 2, b"c")]], [[b"a", b"b", b"c"]]),
+        ([[(0, 0, b"a"), (0, 1, b"b"), (1, 0, b"c")]], [[b"a", b"b", b"c"]]),
+        ([[(0, 0, b"a"), (0, 1, b"b"), (2, 0, b"c")]], [[b"a", b"b"], [b"c"]]),
+        ([[(0, 0, b"a"), (0, 2, b"b")]], [[b"a"], [b"b"]]),
+        ([[(5, 0, b"a")], [(0, 0, b"b")]], [[b"a"], [b"b"]]),
+    ],
+    ids=["older objects dropped", "next group", "missing group", "missing object", "subscribed again"],
+)
+async def test_a_participants_audio_is_decoded_in_order_with_a_fresh_decoder_after_a_gap(monkeypatch, subscriptions, decoded):
+    # Arrange: each decoder records the packets it decodes
+    decoders: list[list[bytes]] = []
+
+    class RecordingDecoder:
+        def __init__(self, sample_rate: int, channels: int = 1):
+            self.packets: list[bytes] = []
+            decoders.append(self.packets)
+
+        def decode(self, packet: bytes) -> bytes:
+            self.packets.append(packet)
+            return bytes(2)
+
+    monkeypatch.setattr(_participant, "OpusDecoder", RecordingDecoder)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [*subscriptions[:-1], [*subscriptions[-1], STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.1)
+
+    # Assert
+    assert [packets for packets in decoders if packets] == decoded
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
     await session.close()
 
 
@@ -1499,6 +1582,84 @@ async def test_a_participant_input_pushes_only_its_participants_audio_and_publis
     await session.close()
 
 
+@pytest.mark.parametrize("input_kind", ["transport", "participant"])
+@pytest.mark.parametrize(
+    "source_channels, frequencies", [(2, (440, 1000)), (1, (440, 440))], ids=["stereo", "mono upmixed"]
+)
+async def test_a_stereo_input_pushes_stereo_audio_of_a_participant(input_kind, source_channels, frequencies):
+    # Arrange: alice publishes a 440 Hz tone on the left and a 1 kHz tone on the right, or a 440 Hz
+    # tone in mono, to an input taking stereo
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    if source_channels == 2:
+        pcm = stereo_tone(0.2, 48_000)
+    else:
+        pcm = sine(0.2, 48_000, frequency=440.0).tobytes()
+    # PyAV encodes them: `OpusEncoder` takes mono PCM only.
+    layout = "stereo" if source_channels == 2 else "mono"
+    encoder = av.CodecContext.create("libopus", "w")
+    encoder.sample_rate = 48_000
+    encoder.layout = layout
+    encoder.format = "s16"
+    encoder.open()
+    fifo = av.AudioFifo()
+    frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout=layout)
+    frame.sample_rate = 48_000
+    fifo.write(frame)
+    packets = []
+    while (chunk := fifo.read(encoder.frame_size)) is not None:
+        packets.extend(bytes(packet) for packet in encoder.encode(chunk))
+    native.tracks["audio"] = [[*packets, STAY_OPEN]]
+    native.publish([*ROOM, "alice"])
+    if input_kind == "transport":
+        params = MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_in_sample_rate=48_000, audio_in_channels=2)
+        audio_input = MoqWasmTransport(session, params).input()
+    else:
+        params = MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=48_000, audio_in_channels=2)
+        audio_input = MoqWasmParticipantInput(RemoteBroadcast(session, [*ROOM, "alice"]), params)
+
+    # Act
+    down, _ = await within(run_test(audio_input, frames_to_send=[SleepFrame(0.5)]))
+
+    # Assert: two interleaved channels, each with its own tone
+    audio = [frame for frame in down if isinstance(frame, UserAudioRawFrame)]
+    left, right = np.frombuffer(b"".join(frame.audio for frame in audio), np.int16).reshape(-1, 2).T
+    assert audio and {frame.num_channels for frame in audio} == {2}
+    assert len(left) >= 0.15 * 48_000
+    assert abs(dominant_frequency(left, 48_000) - frequencies[0]) < 20
+    assert abs(dominant_frequency(right, 48_000) - frequencies[1]) < 20
+    await session.close()
+
+
+@pytest.mark.parametrize("input_kind", ["transport", "participant"])
+async def test_an_input_keeps_the_params_it_was_built_with(input_kind):
+    # Arrange: a mono input whose params the caller turns to stereo once it is built
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    packets = OpusEncoder().encode(sine(0.2, 48_000, frequency=440.0).tobytes(), 48_000)
+    native.tracks["audio"] = [[*packets, STAY_OPEN]]
+    native.publish([*ROOM, "alice"])
+    if input_kind == "transport":
+        params = MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_in_sample_rate=48_000)
+        audio_input = MoqWasmTransport(session, params).input()
+    else:
+        params = MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=48_000)
+        audio_input = MoqWasmParticipantInput(RemoteBroadcast(session, [*ROOM, "alice"]), params)
+    params.audio_in_channels = 2
+
+    # Act
+    down, _ = await within(run_test(audio_input, frames_to_send=[SleepFrame(0.5)]))
+
+    # Assert: the audio is decoded and labelled mono, as when the input was built
+    audio = [frame for frame in down if isinstance(frame, UserAudioRawFrame)]
+    assert audio and {frame.num_channels for frame in audio} == {1}
+    await session.close()
+
+
 @pytest.mark.parametrize("terminal", [EndFrame, CancelFrame])
 async def test_a_participant_input_set_up_in_a_second_pipeline_fails_its_setup_and_receives_nothing(terminal):
     # Arrange: the input ran in a pipeline that an EndFrame or a CancelFrame ended
@@ -1627,6 +1788,101 @@ async def test_a_pipeline_built_again_from_the_transport_after_its_room_was_refu
     assert not [frame for frame in up if isinstance(frame, ErrorFrame)]
     assert all(processor.is_usable for processor in processors)
     assert native.writers["status"].objects == [(b"accepted", True)]
+    await session.close()
+
+
+@pytest.mark.parametrize("asked_for", [False, True])
+async def test_a_participant_input_not_streaming_on_start_pushes_audio_only_once_asked(asked_for):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    speaking = asyncio.Event()
+    native.tracks["audio"] = [[speaking, *OpusEncoder().encode(tone(0.4), SAMPLE_RATE), STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE, audio_in_stream_on_start=False),
+    )
+    frames = [InputTransportStartAudioStreamingFrame()] if asked_for else []
+    asyncio.get_running_loop().call_later(0.1, speaking.set)
+
+    # Act: alice speaks after the pipeline asked for audio, if it did
+    down, _ = await within(run_test(participant_input, frames_to_send=[*frames, SleepFrame(0.3)]))
+
+    # Assert
+    assert any(isinstance(frame, UserAudioRawFrame) for frame in down) == asked_for
+    await session.close()
+
+
+async def test_the_rooms_audio_is_subscribed_to_only_once_streaming_starts_for_present_and_later_participants():
+    # Arrange: alice is in the room
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN], [AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.04), SAMPLE_RATE), STAY_OPEN] for _ in range(2)]
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_in=True), sink)
+    await room.start("input")
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.05)
+    subscribed_before = list(native.subscribed)
+
+    # Act: bob joins once the pipeline asked for audio
+    await room.start_audio()
+    native.publish([*ROOM, "bob"])
+    await asyncio.sleep(0.1)
+
+    # Assert
+    assert subscribed_before == []
+    assert {participant for _, _, participant in sink.audio} == {"alice", "bob"}
+    await room.stop("input")
+    await session.close()
+
+
+@pytest.mark.parametrize("asked_for", [False, True])
+async def test_a_transport_not_streaming_on_start_subscribes_to_audio_only_once_asked(asked_for):
+    # Arrange: the pipeline turns streaming on start off after making the transport; alice is in
+    # the room
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.04), SAMPLE_RATE), STAY_OPEN]]
+    native.publish([*ROOM, "alice"])
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE))
+    transport.input().enable_audio_in_stream_on_start(False)
+    frames = [SleepFrame(0.1), InputTransportStartAudioStreamingFrame()] if asked_for else []
+
+    # Act
+    down, _ = await within(run_test(transport.input(), frames_to_send=[*frames, SleepFrame(0.2)]))
+
+    # Assert
+    assert any(isinstance(frame, UserAudioRawFrame) for frame in down) == asked_for
+    assert bool(native.subscribed) == asked_for
+    await session.close()
+
+
+async def test_a_participant_input_reads_whether_to_stream_audio_on_start_when_it_starts():
+    # Arrange: the pipeline turns streaming on start off after making the input
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.04), SAMPLE_RATE), STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE),
+    )
+    participant_input.enable_audio_in_stream_on_start(False)
+
+    # Act
+    down, _ = await within(run_test(participant_input, frames_to_send=[SleepFrame(0.2)]))
+
+    # Assert
+    assert not any(isinstance(frame, UserAudioRawFrame) for frame in down)
+    assert native.subscribed == []
     await session.close()
 
 
@@ -1987,12 +2243,14 @@ async def test_the_bots_speech_reaches_another_room_through_a_relay(relay_url):
     talking = asyncio.create_task(talk())
 
     # Act
+    await listener.start_audio()
     await listener.start("input")
     await within(listener_sink.received.wait())
 
     # Assert
     assert listener_sink.audio[0][1:] == (SAMPLE_RATE, "speaker")
     talking.cancel()
+    await within(asyncio.gather(talking, return_exceptions=True))
     for each in (listener, speaker):
         await each.stop("input")
     for session in (listener_session, speaker_session):
@@ -2014,6 +2272,96 @@ async def test_writing_speech_waits_while_it_runs_ahead_of_the_clock():
     assert time.monotonic() - started >= 0.35
     await room.stop("output")
     await session.close()
+
+
+def opus_packets() -> list[bytes]:
+    """A second of speech, in 20 ms Opus packets."""
+    return OpusEncoder().encode(tone(1.0), SAMPLE_RATE)
+
+
+async def publish_tracks_until_cancelled(tracks: dict) -> None:
+    """Writes 20 ms of speech to each audio track and a keyframe to each video track of `tracks`,
+    each in a group of its own, every 20 ms, until cancelled."""
+    packets = opus_packets()
+    encoders = {name: VideoEncoder("H264", *SIZE, 30) for name in tracks if name.startswith("camera")}
+    count = 0
+    while True:
+        for name, writer in tracks.items():
+            if name in encoders:
+                encoders[name].request_keyframe()
+                payload = b"".join(encoders[name].encode(picture(count % 200), SIZE, "RGB"))
+            else:
+                payload = packets[count % len(packets)]
+            await writer.write(payload, new_group=True)
+        count += 1
+        await asyncio.sleep(0.02)
+
+
+def track_pair_catalog(pair: str) -> bytes:
+    """A catalog listing alice's audio and camera tracks of `pair`."""
+    audio = {**json.loads(AUDIO_CATALOG)["tracks"][0], "name": f"audio-{pair}"}
+    video = {**json.loads(VIDEO_CATALOG)["tracks"][0], "name": f"camera-{pair}"}
+    return catalog_payload(audio, video)
+
+
+async def test_a_participant_switching_its_tracks_again_and_again_keeps_only_the_current_ones_media_through_a_relay(
+    relay_url, kept_media
+):
+    # Arrange: alice publishes two pairs of audio and camera tracks, and her catalog lists the first
+    room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
+    alice_session = await moq_wasm.connect(relay_url, verify_certificate=False)
+    bot_session = await moq_wasm.connect(relay_url, verify_certificate=False)
+    alice = create_broadcast(alice_session, [*room, "alice"])
+    catalog = alice.publish_track("catalog")
+    tracks = {name: alice.publish_track(name) for name in ("audio-a", "camera-a", "audio-b", "camera-b")}
+    await within(alice.__aenter__())
+    await within(alice.published())
+    await catalog.write(track_pair_catalog("a"), new_group=True)
+    publishing = asyncio.create_task(publish_tracks_until_cancelled(tracks))
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(
+        RemoteBroadcast(bot_session, [*room, "alice"]), receive_options(audio_in=True, camera=True), sink
+    )
+    running = asyncio.create_task(receiver.run())
+
+    async def received_pair(decoders: int) -> None:
+        """Waits until the pair's audio has its decoder and its camera passed two pictures on."""
+        await until(lambda: len(kept_media.decoders) >= decoders)
+        pictures = len(sink.pictures)
+        await until(lambda: len(sink.pictures) >= pictures + 2)
+
+    await received_pair(1)
+
+    # Act: her catalog switches to the other pair seven times
+    for switch in range(1, 8):
+        await catalog.write(track_pair_catalog("ab"[switch % 2]), new_group=True)
+        await received_pair(switch + 1)
+    publishing.cancel()
+    await asyncio.gather(publishing, return_exceptions=True)
+
+    # Assert: the current pair's decoder and last picture only
+    assert kept_media.alive() == (1, 1)
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await within(alice.__aexit__(None, None, None))
+    for session in (bot_session, alice_session):
+        await session.close()
+
+
+def sine(seconds: float, sample_rate: int, start: float = 0.0, frequency: float = 1000.0) -> np.ndarray:
+    """A sine from `start` seconds on, so consecutive pieces continue its phase."""
+    times = start + np.arange(int(seconds * sample_rate)) / sample_rate
+    return (np.sin(2 * np.pi * frequency * times) * 8000).astype(np.int16)
+
+
+def stereo_tone(seconds: float, sample_rate: int) -> bytes:
+    """A 440 Hz tone on the left and a 1 kHz tone on the right, interleaved."""
+    return np.column_stack([sine(seconds, sample_rate, frequency=440.0), sine(seconds, sample_rate)]).tobytes()
+
+
+def dominant_frequency(samples: np.ndarray, sample_rate: int) -> float:
+    spectrum = np.abs(np.fft.rfft(samples.astype(np.float64)))
+    return float(np.fft.rfftfreq(len(samples), 1 / sample_rate)[spectrum.argmax()])
 
 
 @pytest.mark.parametrize("processor", ["input", "output"])
@@ -2994,6 +3342,83 @@ def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder
     assert len(packets) == 9
 
 
+def test_the_transport_refuses_an_input_audio_filter():
+    # Arrange: the transport's input carries every participant's audio through the one filter
+    params = MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_in_filter=RecordingFilter())
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="MoqWasmParticipantInput"):
+        MoqWasmTransport(SimpleNamespace(), params)
+
+
+class RecordingMixer(BaseAudioMixer):
+    """An audio mixer recording whether it mixed audio."""
+
+    def __init__(self):
+        self.mixed = False
+
+    async def start(self, sample_rate: int):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def process_frame(self, frame):
+        pass
+
+    async def mix(self, audio: bytes) -> bytes:
+        self.mixed = True
+        return audio
+
+
+async def test_the_transport_keeps_the_audio_mixers_by_destination_it_was_built_with():
+    # Arrange: a stereo output whose mixer mapping the caller changes once it is built
+    relay = FakeRelay()
+    session = await open_session(relay)
+    kept, replaced = RecordingMixer(), RecordingMixer()
+    params = MoqWasmParams(room=ROOM, audio_out_enabled=True, audio_out_channels=2, audio_out_mixer={None: kept})
+    transport = MoqWasmTransport(session, params)
+    assert isinstance(params.audio_out_mixer, dict)
+    params.audio_out_mixer[None] = replaced
+    speech = OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[speech, SleepFrame(0.3)]))
+
+    # Assert: the output mixed with the mixer it was built with
+    assert kept.mixed and not replaced.mixed
+    await session.close()
+
+
+async def test_the_transport_keeps_the_room_it_was_built_with():
+    # Arrange: a caller that changes the room's list once the transport is built
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(room=list(ROOM))
+    transport = MoqWasmTransport(session, params)
+    params.room[-1] = "elsewhere"
+
+    # Act
+    await within(run_test(transport.input(), frames_to_send=[SleepFrame(0.2)]))
+
+    # Assert: the transport published and followed the room it was built with
+    native = relay.sessions[0]
+    assert ("watch_namespaces", ROOM) in native.calls
+    assert ("announce", [*ROOM, "bot"]) in native.calls
+    await session.close()
+
+
+@pytest.mark.parametrize("input_kind", ["transport", "participant"])
+def test_an_input_refuses_input_audio_of_more_than_two_channels(input_kind):
+    # Act / Assert
+    with pytest.raises(ValueError, match="mono or stereo"):
+        if input_kind == "transport":
+            MoqWasmTransport(SimpleNamespace(), MoqWasmParams(room=ROOM, audio_in_channels=3))
+        else:
+            remote = RemoteBroadcast(SimpleNamespace(), [*ROOM, "alice"])  # type: ignore[arg-type]
+            MoqWasmParticipantInput(remote, MoqWasmInputParams(audio_in_channels=3))
+
+
 def message_payloads(frames) -> list[bytes]:
     return [frame.message.payload for frame in frames if isinstance(frame, InputTransportMessageFrame)]
 
@@ -3027,6 +3452,47 @@ async def test_a_participant_input_a_stop_frame_paused_pushes_no_message_until_t
     await session.close()
 
 
+async def test_a_participant_input_resumed_by_a_pipeline_at_another_rate_pushes_audio_at_that_rate():
+    # Arrange: alice's speech, two packets in a first pipeline at 16 kHz that a StopFrame stops,
+    # and two once a pipeline at 24 kHz resumed the input
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    resumed = asyncio.Event()
+    packets = OpusEncoder().encode(tone(0.08), SAMPLE_RATE)
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[*packets[:2], resumed, *packets[2:4], STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]), MoqWasmInputParams(audio_in_enabled=True)
+    )
+    first_run, _ = await within(
+        run_test(
+            participant_input,
+            frames_to_send=[SleepFrame(0.3), StopFrame()],
+            send_end_frame=False,
+            pipeline_params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE),
+        )
+    )
+
+    # Act
+    asyncio.get_running_loop().call_later(0.1, resumed.set)
+    second_run, _ = await within(
+        run_test(
+            participant_input,
+            frames_to_send=[SleepFrame(0.4)],
+            pipeline_params=PipelineParams(audio_in_sample_rate=24_000),
+        )
+    )
+
+    # Assert: each run's audio came at its pipeline's rate
+    def audio(frames) -> list[UserAudioRawFrame]:
+        return [frame for frame in frames if isinstance(frame, UserAudioRawFrame)]
+
+    assert audio(first_run) and {frame.sample_rate for frame in audio(first_run)} == {SAMPLE_RATE}
+    assert audio(second_run) and {frame.sample_rate for frame in audio(second_run)} == {24_000}
+    await session.close()
+
+
 class RecordingFilter(BaseAudioFilter):
     """An audio filter recording its starts, with their sample rate, its stops, and that it
     filtered audio in between."""
@@ -3047,6 +3513,49 @@ class RecordingFilter(BaseAudioFilter):
         if self.calls[-1] != ("filter",):
             self.calls.append(("filter",))
         return audio
+
+
+class BufferingFilter(BaseAudioFilter):
+    """An audio filter returning nothing for one chunk and two chunks for the next."""
+
+    def __init__(self):
+        self._held = b""
+
+    async def start(self, sample_rate: int):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def process_frame(self, frame):
+        pass
+
+    async def filter(self, audio: bytes) -> bytes:
+        if not self._held:
+            self._held = audio
+            return b""
+        filtered, self._held = self._held + audio, b""
+        return filtered
+
+
+async def test_a_participant_input_counts_the_samples_its_audio_filter_returned():
+    # Arrange: alice speaks to an input whose filter buffers every other chunk
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.2), SAMPLE_RATE), STAY_OPEN]]
+    params = MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE, audio_in_filter=BufferingFilter())
+    participant_input = MoqWasmParticipantInput(RemoteBroadcast(session, [*ROOM, "alice"]), params)
+
+    # Act
+    down, _ = await within(run_test(participant_input, frames_to_send=[SleepFrame(0.5)]))
+
+    # Assert: each frame counts the samples it carries, two chunks' worth
+    audio = [frame for frame in down if isinstance(frame, UserAudioRawFrame)]
+    assert audio
+    assert [frame.num_frames for frame in audio] == [len(frame.audio) // 2 for frame in audio]
+    await session.close()
 
 
 @pytest.mark.parametrize("processor", ["input", "output"])

@@ -52,6 +52,8 @@ class ReceiveOptions:
     data_tracks: list[str] = field(default_factory=list)
     # Whether video sources not in `video_sources` may be asked for later.
     video_in: bool = False
+    # The channels of the PCM the audio is decoded to, mono or stereo.
+    audio_in_channels: int = 1
 
     @property
     def receives_media(self) -> bool:
@@ -81,13 +83,18 @@ class ParticipantSink(Protocol):
 
 class ParticipantReceiver:
     """Receives one participant's broadcast into a sink: the audio and video tracks picked from each
-    catalog, the data tracks the options name, and the pictures answering image requests."""
+    catalog, the data tracks the options name, and the pictures answering image requests. With
+    `stream_audio` False, the audio track is neither subscribed to nor decoded until
+    `start_audio`."""
 
-    def __init__(self, remote: RemoteBroadcast, options: ReceiveOptions, sink: ParticipantSink):
+    def __init__(
+        self, remote: RemoteBroadcast, options: ReceiveOptions, sink: ParticipantSink, *, stream_audio: bool = True
+    ):
         self.participant_id = remote.namespace[-1]
         self._remote = remote
         self._options = options
         self._sink = sink
+        self._stream_audio = stream_audio
         self._sources = dict(options.video_sources)
         self._samplers: dict[str, _Sampler] = {}
         # What identifies the track each key ("audio", "video:<source>") receives
@@ -160,6 +167,14 @@ class ParticipantReceiver:
             if self._catalog is not None:
                 await self._pick_tracks(self._catalog)
 
+    async def start_audio(self) -> None:
+        """Receives the participant's audio from now on, when the options receive audio."""
+        if self._stream_audio:
+            return
+        self._stream_audio = True
+        if self._catalog is not None:
+            await self._pick_tracks(self._catalog)
+
     async def capture(self, source: str, framerate: float | None) -> None:
         """Receives `source` at `framerate` pictures a second, or for image requests only when it is
         None; for a source already received, changes its framerate."""
@@ -192,7 +207,7 @@ class ParticipantReceiver:
         async with self._picking:
             if catalog is not self._catalog:
                 return
-            if self._options.audio_in:
+            if self._options.audio_in and self._stream_audio:
                 audio = catalog.select(role="audio", packaging="loc", codec="opus", prefer="lowest_bitrate")
                 await self._receive("audio", "audio", audio, self._receive_audio)
             for source in list(self._sources):
@@ -330,10 +345,31 @@ class ParticipantReceiver:
         return subscribed
 
     async def _receive_audio(self, track: CatalogTrack) -> None:
-        sample_rate = self._sink.audio_in_sample_rate()
-        decoder = OpusDecoder(sample_rate)
-        async with aclosing(self._follow(track.name, track.namespace, "audio")) as objects:
+        """Decodes the track's objects in order: one older than the newest decoded, as of a group
+        whose stream was delayed, would play after newer audio and is dropped. The decoder starts
+        afresh at each subscription and after missing objects, since its state is of audio that
+        does not continue there, and at the sink's sample rate whenever it changes, as when the
+        pipeline that resumes a stopped input runs at another rate."""
+        sample_rate = 0
+        decoder: OpusDecoder | None = None
+        # The location of the newest object decoded on the current subscription.
+        newest: tuple[int, int] | None = None
+
+        def subscribed() -> None:
+            nonlocal newest
+            newest = None
+
+        async with aclosing(self._follow(track.name, track.namespace, "audio", subscribed)) as objects:
             async for audio_object in objects:
+                location = (audio_object.group_id, audio_object.object_id)
+                if newest is not None and location <= newest:
+                    continue
+                following = None if newest is None else ((newest[0], newest[1] + 1), (newest[0] + 1, 0))
+                rate = self._sink.audio_in_sample_rate()
+                if decoder is None or following is None or location not in following or rate != sample_rate:
+                    sample_rate = rate
+                    decoder = OpusDecoder(sample_rate, self._options.audio_in_channels)
+                newest = location
                 pcm = decoder.decode(audio_object.payload)
                 if pcm:
                     await self._sink.push_audio(pcm, sample_rate, self.participant_id)
