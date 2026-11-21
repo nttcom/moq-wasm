@@ -42,6 +42,73 @@ asyncio.run(main())
 
 Run `python hello.py`. It prints `hello` and closes both sessions.
 
+## Keep a service connected
+
+A session replaces a lost connection by itself for up to 60 s, carrying its
+subscriptions and published tracks over. When it cannot, or when its token
+expires, it ends, and the work running under `session.run` is cancelled. All
+the ways a session ends subclass `moq_wasm.SessionEnded`:
+
+| Exception | When |
+| --- | --- |
+| `ConnectionLost` | the relay connection could not be replaced, as when the token expired without `refresh_token`; `close_info` says how it closed |
+| `TokenExpired` | `refresh_token` kept failing until the token expired |
+| `SessionClosed` | `close()` was called |
+
+A refused request raises `moq_wasm.RequestError` (a `RuntimeError`) with the
+draft's `message_type`, `code` and `reason`; failing to connect raises
+`RuntimeError`. A long-running service connects again itself. Its workers
+run in an `asyncio.TaskGroup`, which raises a worker's failure inside an
+`ExceptionGroup`, so the loop catches with `except*`. It catches every
+`Exception`, as a supervisor cannot list every transient failure of its
+token endpoint and workers (a `TimeoutError` among them), while
+`KeyboardInterrupt` and cancellation, which are no `Exception`, still end it:
+
+```python
+import asyncio
+import logging
+
+import moq_wasm
+
+
+async def publish(session: moq_wasm.Session) -> None:
+    ...  # publish a broadcast
+
+
+async def follow(session: moq_wasm.Session) -> None:
+    ...  # subscribe, follow broadcasts
+
+
+async def serve(session: moq_wasm.Session) -> None:
+    # Several workers run in a TaskGroup, not asyncio.gather: `session.run` waits for
+    # `serve` to clean up, and a TaskGroup waits for every worker's cleanup.
+    async with asyncio.TaskGroup() as workers:
+        workers.create_task(publish(session))
+        workers.create_task(follow(session))
+
+
+async def fetch_token(current: str | None = None) -> str:
+    ...  # a token of your app from your app server; `current` is the one it replaces
+
+
+async def main():
+    moq_wasm.init(log_level="info")  # the native module's logs go to `logging`
+    while True:
+        try:
+            token = await asyncio.wait_for(fetch_token(), 30)
+            async with moq_wasm.connect(RELAY, token=token, refresh_token=fetch_token) as session:
+                await session.run(serve(session))
+            return
+        except* Exception as errors:
+            logging.warning("relay session ended", exc_info=errors)
+        await asyncio.sleep(2)
+```
+
+`refresh_token` is called five minutes before the token's `exp` (halfway
+through a shorter lifetime) and retried until the token expires; `connect`
+reads `app_id` and `exp` from the token without verifying it, and refuses a
+refreshed token of another app.
+
 ## Media and bots
 
 - [Media API](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/media.html) — follow room broadcasts or publish encoded audio and video.
