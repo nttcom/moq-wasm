@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from moq_wasm import _native
+from moq_wasm._ended import Ended
 
 logger = logging.getLogger("moq_wasm")
 
@@ -41,8 +42,8 @@ class MediaSource:
         self._audio_config: tuple[str, int, int, bytes | None] | None = None
         self._renditions: list[Rendition] = []
         self._built = asyncio.Event()
-        # Set once the broadcast was left; the session ending stops the source too.
-        self._stopped = asyncio.Event()
+        # Ended once the broadcast was left; the session ending stops the source too.
+        self._ended = Ended()
         self._session_ended: asyncio.Future[None] | None = None
 
     def configure_video(self, codec: str) -> None:
@@ -135,22 +136,24 @@ class MediaSource:
 
     async def _while_publishing(self, request: Callable[[_native.MediaSource], Awaitable[T]]) -> T:
         """`request` on the native source once it is built, ended by the source stopping."""
-        stopped = asyncio.ensure_future(self._stopped.wait())
         built = asyncio.ensure_future(self._built.wait())
         try:
-            await asyncio.wait([built, stopped], return_when=asyncio.FIRST_COMPLETED)
-            if self._source is None:
-                raise RuntimeError("the media source stopped publishing")
-            answered = asyncio.ensure_future(request(self._source))
-            ending = [stopped] if self._session_ended is None else [stopped, self._session_ended]
-            await asyncio.wait([answered, *ending], return_when=asyncio.FIRST_COMPLETED)
-            if not answered.done():
-                answered.cancel()
-                raise RuntimeError("the media source stopped publishing")
-            return answered.result()
+            await self._ended.until(built)
+        finally:
+            built.cancel()
+        if self._ended.ended or self._source is None:
+            raise self._stopped_error()
+        answered = asyncio.ensure_future(request(self._source))
+        stopped = asyncio.ensure_future(self._ended.until(answered))
+        ending = [] if self._session_ended is None else [self._session_ended]
+        try:
+            await asyncio.wait([stopped, *ending], return_when=asyncio.FIRST_COMPLETED)
         finally:
             stopped.cancel()
-            built.cancel()
+        if not answered.done():
+            answered.cancel()
+            raise self._stopped_error()
+        return answered.result()
 
     def _build(self, broadcast: _native.MediaBroadcast, session_ended: asyncio.Future[None]) -> None:
         source = broadcast.add_source(
@@ -173,12 +176,15 @@ class MediaSource:
             rendition._build(source)
         self._built.set()
 
+    def _stopped_error(self) -> BaseException:
+        return self._ended.error() if self._ended.ended else RuntimeError("the media source stopped publishing")
+
     def _detach(self) -> None:
+        self._ended.end(RuntimeError("the media source stopped publishing"), failure=False)
         self._source = None
         for rendition in self._renditions:
             rendition._rendition = None
         self._built.clear()
-        self._stopped.set()
 
 
 class Rendition:
