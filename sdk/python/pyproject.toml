@@ -26,12 +26,16 @@ codecs = ["av>=15", "numpy>=1.26"]
 pipecat = ["moq-wasm[codecs]", "pipecat-ai>=1.13,<2"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "pipecat-ai>=1.13", "av>=15", "pdoc>=16"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pipecat-ai>=1.13", "av>=15", "pdoc>=16", "pyright>=1.1.414"]
 
 [tool.maturin]
 python-source = "python"
 module-name = "moq_wasm._native"
 exclude = ["**/__pycache__/**"]
+
+[tool.pyright]
+include = ["python/moq_wasm"]
+pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
