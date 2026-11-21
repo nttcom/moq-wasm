@@ -795,7 +795,47 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   that does not decode, its decoder refusing three of its objects in a row
   or the group ending without a picture after a refusal, raises the
   decoder's error, so the transport fails the track instead of waiting on
-  a broken stream; a group joined midway decodes to nothing.
+  a broken stream; a group joined midway decodes to nothing. A
+  group's decoder takes the LOC Video Config property
+  (draft-ietf-moq-loc-04 §2.3.2.1) as its extradata, so length-prefixed
+  H.264 with its avcC record decodes too: the one its first object carries,
+  or else the one the group before it decoded with last, and a later
+  keyframe of the group carrying another one starts a new decoder with it.
+  A group without one of its own that opens before the group before it, as
+  the groups' streams race, holds its objects until that group arrives or
+  closes, so a configuration change in the late group reaches it. Taken
+  from a group still open, the configuration is provisional for the
+  group's first objects: a later keyframe of the open group changing it,
+  delayed as the streams race, decodes those objects again with the new
+  one and gives their pictures again, since a followed track skips the End
+  of Group that would tell when the open group's configuration is final,
+  and holding every group until then would delay its pictures. A group
+  that decoded too many objects to decode them again keeps the old one, but
+  the configuration it passes on is tracked apart from its decoder, so the
+  groups after it that inherit it take the new one, as they do when the
+  group before it, taken as lost, arrives late with a configuration of its
+  own. A held
+  object carrying a Video Config of its own starts the group at it. The
+  objects a group holds are bounded (`MAX_HELD_OBJECTS`, `MAX_HELD_BYTES`):
+  once it holds that many, a later group opens, it ends or the objects end,
+  the group before it is taken as lost and the group decodes with the
+  Video Config of the newest earlier group that had one, so a lost group
+  does not stop the pictures of the groups after it. Each such group
+  records which group's own configuration it took, so a group between the
+  two arriving late passes its own on to it and to the groups after it,
+  across the groups still missing, up to the next group with one of its
+  own, even one equal to the configuration that group had inherited, which
+  makes it their supplier from then on. A Video Config the reader knows
+  beforehand, such as the track's catalog initialization data, is given
+  as `config`: the groups that have neither one of their own nor an
+  earlier group with one decode with it, so a subscriber that joined past
+  the only object carrying one still decodes a length-prefixed track.
+  When the lost group
+  had changed the configuration, the pictures come out wrong or the
+  decoder refuses them, and a group joined at its keyframe that the
+  decoder refuses fails the track as above. A track whose
+  objects carried no Video Config yet (parameter sets in band) and the
+  first group a subscription receives decode without waiting.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
