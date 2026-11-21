@@ -2,6 +2,7 @@
 carries no codec of its own (docs/architecture/python/sdk.md "No codec in the wheel")."""
 
 import asyncio
+import operator
 import time
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
@@ -52,13 +53,20 @@ class OpusEncoder:
 
     def encode(self, pcm: bytes, sample_rate: int) -> list[bytes]:
         """Returns the packets `pcm`, mono 16-bit PCM at `sample_rate`, completes; the samples short
-        of a packet wait for the next call. The rate may change from one call to the next."""
+        of a packet wait for the next call. The rate may change from one call to the next. Raises
+        ValueError, taking none of `pcm`, for a `sample_rate` that is not a positive integer."""
+        try:
+            rate = operator.index(sample_rate)
+        except TypeError:
+            rate = 0
+        if rate <= 0:
+            raise ValueError(f"the sample rate must be a positive integer: {sample_rate!r}")
         frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout="mono")
-        frame.sample_rate = sample_rate
-        if sample_rate != self._input_rate:
+        frame.sample_rate = rate
+        if rate != self._input_rate:
             self._write(self._resampler.resample(None))
             self._resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
-            self._input_rate = sample_rate
+            self._input_rate = rate
         self._write(self._resampler.resample(frame))
         packets = []
         while (chunk := self._fifo.read(self.frame_samples)) is not None:

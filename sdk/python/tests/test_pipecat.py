@@ -138,6 +138,20 @@ def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
     assert len(packets) == 14
 
 
+@pytest.mark.parametrize("sample_rate", [0, -16_000, 16_000.0])
+def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder_goes_on(sample_rate):
+    # Arrange
+    encoder = OpusEncoder()
+    with pytest.raises(ValueError, match="sample rate"):
+        encoder.encode(tone(0.02), sample_rate)
+
+    # Act: 200 ms of speech at 16 kHz
+    packets = encoder.encode(tone(0.2), SAMPLE_RATE)
+
+    # Assert: nine 20 ms packets, the rest short of a packet; the refused PCM is taken as none
+    assert len(packets) == 9
+
+
 @pytest.mark.parametrize("codec", ["H264", "VP8"])
 def test_the_video_encoder_opens_with_a_keyframe_and_makes_one_on_request(codec):
     # Arrange
