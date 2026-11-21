@@ -14,7 +14,7 @@ Shared by all agents (Claude Code, Codex).
 - When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
 
 ## Lower Layers
-A lower layer is one of the crates other code builds on: `moqt`, `broadcast`, `msf`, `mediapack`, and the SDKs `sdk/js` and `sdk/python`.
+A lower layer is one of the crates other code builds on: `moqt`, `broadcast`, `msf`, `mediapack`, and the SDKs `sdk/js`, `sdk/python` and `sdk/rust`.
 - Fix a bug whose cause lies in a lower layer there, not in the caller. A workaround becomes load-bearing and hides the bug from the next caller.
 - When the cleanest design of the task needs something a lower layer does not offer, propose adding it there instead of bending the caller's design around the gap, such as picking a namespace layout only because an SDK fixes one, even when bending the caller would be the smaller change. State the API (signature and default behaviour) and what the caller gains, and wait for approval. An API the task needs is a current requirement under YAGNI; options beyond what the task uses still wait for a second use case.
 - Open the lower-layer change as its own PR first and stack the caller's change on top, as with a refactor and its fix.
@@ -50,7 +50,7 @@ A lower layer is one of the crates other code builds on: `moqt`, `broadcast`, `m
 - The struct's constructor `run()` spawns the task and returns `Self`.
 - If the task needs to receive commands, store an `mpsc::Sender` alongside the `JoinHandle` (actor pattern).
 - Place each task file in the directory whose responsibility the task fulfills, not necessarily where it is spawned.
-  - Example: `crates/moqt/src/modules/moqt/runtime/tasks/control_message_receive_task.rs`
+  - Example: `crates/moqt/src/modules/moqt/runtime/tasks/uni_stream_receive_task.rs`
 
 ## Async Primitives
 - In async code, use `tokio` equivalents over `std` for synchronization, file I/O, and time operations.

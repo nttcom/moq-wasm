@@ -21,10 +21,17 @@ case "$rel" in
   examples/browser/*.js | examples/browser/*.jsx | examples/browser/*.ts | examples/browser/*.tsx | \
   examples/browser/*.json | examples/browser/*.css | examples/browser/*.md | \
   sdk/js/js/*.js | sdk/js/js/*.ts | sdk/js/js/*.json | sdk/js/js/*.css | sdk/js/js/*.md)
-    prettier="$root/examples/browser/node_modules/.bin/prettier"
+    prettier="$root/node_modules/.bin/prettier"
+    [ -x "$prettier" ] || prettier="$root/examples/browser/node_modules/.bin/prettier"
     [ -x "$prettier" ] || exit 0
     (cd "$root" && "$prettier" --write --log-level warn \
       --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore "$rel") >&2 || true
+    ;;
+  services/console/web/*.js | services/console/web/*.jsx | services/console/web/*.ts | services/console/web/*.tsx | \
+  services/console/web/*.json | services/console/web/*.css | services/console/web/*.html | services/console/web/*.md)
+    prettier="$root/services/console/web/node_modules/.bin/prettier"
+    [ -x "$prettier" ] || exit 0
+    (cd "$root/services/console/web" && "$prettier" --write --log-level warn "${rel#services/console/web/}") >&2 || true
     ;;
 esac
 

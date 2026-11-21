@@ -15,8 +15,8 @@ description: Create a pull request for the current branch. Use when the user ask
 6. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
 7. Push the branch: `git push -u origin <branch>`.
 8. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
-9. Create the PR with `gh pr create --base master --title <title> --body <body>`.
-   - If a PR already exists for the branch, push the new commits and update the existing PR with `gh pr edit` instead of creating a duplicate.
+9. Create the PR (base `master`, with the drafted title and body). Use the environment's PR tools (e.g. `pull_request_create` / `pull_request_update`) when available; otherwise use `gh pr create --base master --title <title> --body <body>`.
+   - If a PR already exists for the branch, push the new commits and update the existing PR instead of creating a duplicate.
 10. Report the PR URL.
 
 ## Plugins
@@ -28,11 +28,14 @@ Two steps run skills from third-party plugins rather than rules written here:
 | [ponytail](https://github.com/DietrichGebert/ponytail) | `ponytail-review` |
 | [i-have-adhd](https://github.com/ayghri/i-have-adhd) | `i-have-adhd` |
 
-`.claude/settings.json` declares both, so Claude Code offers to install them when the repository is opened. It also sets `PONYTAIL_DEFAULT_MODE=off`, which keeps ponytail's always-on mode out of sessions here; only its skills load. If a skill is missing, stop and ask the user to install the plugin; do not improvise the review.
+`.claude/settings.json` declares both, so Claude Code offers to install them when the repository is opened. It also sets `PONYTAIL_DEFAULT_MODE=off`, which keeps ponytail's always-on mode out of sessions here; only its skills load. In environments without Claude Code's Skill tool (such as Codex or T3 Code), read the installed `SKILL.md` directly from disk as described below. If a skill file cannot be found anywhere on disk, stop and ask the user to install the plugin; do not improvise the review.
 
 ## Ponytail Review
 
-Invoke the `ponytail-review` skill on `git diff origin/master...HEAD`. It lists cuts and does not apply them. Run it every time a PR is requested, including via the desktop "Create PR" command and when the user has waived QA.
+Run `ponytail-review` on `git diff origin/master...HEAD`. It lists cuts and does not apply them. Run it every time a PR is requested, including via the desktop "Create PR" command and when the user has waived QA.
+
+- In Claude Code, invoke the `ponytail-review` skill.
+- Otherwise, read the first existing file among `~/.agents/skills/ponytail-review/SKILL.md` and `skills/ponytail-review/SKILL.md` under the latest `installPath` of `ponytail@ponytail` in `~/.claude/plugins/installed_plugins.json`, and follow its instructions directly.
 
 Apply every cut except those that remove something the user asked for by name (an API, an option, a test). A finding that exposes a bug, such as duplicated logic that has diverged, is fixed in its own `fix` commit rather than folded into the cut.
 
@@ -44,8 +47,10 @@ Pass every comment and doc comment the diff adds, each with the code around it, 
 
 Run the checks for what the diff touches, every time, whether the files were changed with Edit, Write or a shell command. The PostToolUse hook in `.claude/settings.json` formats only files written with Edit and Write.
 
-- Rust: `cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
-- Files prettier checks (under `examples/browser/` or `sdk/js/js/`): the `Lint (JavaScript)` command in `AGENTS.md`. Run `npm ci` first in this checkout, so prettier is the version its lock file pins rather than one left in another checkout.
+- Rust: `Lint (Rust)` in `AGENTS.md`. When touching crates the wasm module builds from (`sdk/js`, `crates/moqt`, `crates/broadcast`, `crates/telemetry`, `crates/telemetry-report`, `crates/mediapack`, `crates/msf`), also run `Lint (Rust, wasm32)` in `AGENTS.md`.
+- Browser SDK and examples (`sdk/js/js/` or `examples/browser/`): run `npm ci` first in this checkout so prettier is the version its lock file pins, then run `Lint (JavaScript)` in `AGENTS.md`. When touching `sdk/js/` or `examples/browser/` code, also run `Wasm / JS SDK` in `AGENTS.md`, `npm run lint -w moq-wasm && npm run lint -w browser-examples`, `npm run lint:promises -w moq-wasm`, `npm run api:check -w moq-wasm`, and `npm run check:pack -w moq-wasm`.
+- Console web (`services/console/web/`): `Console web` in `AGENTS.md`.
+- Python (`sdk/python/` or `examples/python/`): `Test (Python)` in `AGENTS.md` for each affected directory.
 
 Fix a failure with the formatter or by hand, never by loosening the check.
 
@@ -69,7 +74,7 @@ Section rules:
 - `## 関連タスク` — link issues as `#<IssueNumber>`. This repository is public OSS, so never paste internal tracker URLs.
 - `## やらないこと` — state what was deliberately left out, so reviewers do not look for it.
 - `## 影響範囲` — name the affected crates and whether the change is breaking for dependents. `moqt` is the central crate, so changes there affect the whole workspace.
-  - For a `fix` PR, also state the versions the bug affects: the first release that contains it (`git tag --contains <commit that introduced the bug> --list 'js-sdk-v*' --sort=v:refname | head -1`, with `'python-sdk-v*'` for a bug in the Python SDK and `'rust-sdk-v*'` for one in the Rust SDK, or `未リリース` when no tag contains it), and the MoQT draft version (`draft-14`, `draft-18`) when the bug occurs on only one of them.
+  - For a `fix` PR that affects an SDK user, also state the first release that contains the bug (`git tag --contains <commit that introduced the bug> --list 'js-sdk-v*' --sort=v:refname | head -1`, with `'python-sdk-v*'` for the Python SDK and `'rust-sdk-v*'` for the Rust SDK, or `未リリース` when no tag contains it). State the MoQT draft version (`draft-14`, `draft-18`) when a bug occurs on only one of them.
 - `## テスト` — the commands actually run and their results. If a check was skipped, say so.
 - `## リリースノート` — present only when the change is visible to a user of the browser SDK (`moq-wasm`): its API, its behaviour, or a bug they could hit. One or more English bullets in the style of `sdk/js/js/CHANGELOG.md`, written to be copied there as they are; start a breaking change with `Breaking:` and show the migration. The `release-sdk` skill collects these sections when it releases. The rest of the body stays Japanese, and the three-line limit does not apply to this section.
 - `## リリースノート（Python）` — the same for a user of the Python SDK (`moq-wasm` in `sdk/python`), in the style of `sdk/python/CHANGELOG.md`; the `release-python-sdk` skill collects these sections.
@@ -112,7 +117,7 @@ Whole sections are in scope: the review may propose deleting one, not just short
 
 ### i-have-adhd
 
-`i-have-adhd` sets `disable-model-invocation: true`, so the Skill tool cannot load it. Have the subagent read the skill file from the installed plugin instead: take `installPath` of `i-have-adhd@i-have-adhd` from `~/.claude/plugins/installed_plugins.json` and open `skills/i-have-adhd/SKILL.md` under it.
+`i-have-adhd` sets `disable-model-invocation: true`, so the Skill tool cannot load it. Have the subagent read the first existing file among `~/.agents/skills/i-have-adhd/SKILL.md` and `skills/i-have-adhd/SKILL.md` under the latest `installPath` of `i-have-adhd@i-have-adhd` in `~/.claude/plugins/installed_plugins.json`.
 
 Apply its rules to the body as if it were a single response to the reviewer. Rules about turn-to-turn state, time estimates, and closers have no PR equivalent; skip them.
 

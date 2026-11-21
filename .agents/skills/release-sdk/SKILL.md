@@ -13,7 +13,7 @@ The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` 
 2. List the PRs merged since then that change what the SDK is built from:
    `git log --format='%s' <tag>..origin/master -- sdk/js crates/moqt crates/broadcast crates/msf crates/mediapack crates/telemetry crates/telemetry-report`.
    Each squash-merged subject ends in `(#<number>)`.
-3. Read each PR's body with `gh pr view <number> --json title,body` and take its `## リリースノート` section.
+3. Read each PR's title and body (using the environment's PR read tool when available, otherwise `gh pr view <number> --json title,body`) and take its `## リリースノート` section.
 4. Show the user the PRs without that section whose entry is not already under `## Unreleased` in `sdk/js/js/CHANGELOG.md`, with their titles, and ask which of them a user of the SDK would notice. Write an entry for those the user names, following the `## リリースノート` rule of the `create-pull-request` skill.
 5. Pick the version: a minor bump (`0.x` → `0.(x+1).0`) when an entry starts with `Breaking:`, a patch bump otherwise. Tell the user which and why.
 6. On a branch `chore/wasm-release-<version>` from `origin/master`:

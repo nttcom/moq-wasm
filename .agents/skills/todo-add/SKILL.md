@@ -7,4 +7,4 @@ Record the finding; do not fix it in the current task.
 
 1. Read `docs/todos/README.md`.
 2. Search `docs/todos/` and its git log. If a TODO already covers the finding, extend it instead.
-3. Write the file, shaped by i-have-adhd. The Skill tool cannot load it: read `skills/i-have-adhd/SKILL.md` under the `installPath` of `i-have-adhd@i-have-adhd` in `~/.claude/plugins/installed_plugins.json`.
+3. Write the file, shaped by i-have-adhd. The Skill tool cannot load it: read the first existing file among `~/.agents/skills/i-have-adhd/SKILL.md` and `skills/i-have-adhd/SKILL.md` under the latest `installPath` of `i-have-adhd@i-have-adhd` in `~/.claude/plugins/installed_plugins.json`.
