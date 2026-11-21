@@ -79,7 +79,7 @@ class NamespaceWatch(AsyncIterator[NamespaceEvent]):
             self._next = asyncio.ensure_future(anext(self._events))
         ended = asyncio.ensure_future(self._ended.wait())
         try:
-            await asyncio.wait([self._next, ended], return_when=asyncio.FIRST_COMPLETED)
+            await wait([self._next, ended], return_when=asyncio.FIRST_COMPLETED)
         finally:
             ended.cancel()
         if self._ended.is_set():
