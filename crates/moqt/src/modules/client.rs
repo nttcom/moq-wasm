@@ -8,6 +8,7 @@ mod routes;
 pub(crate) mod session;
 pub(crate) mod subscription;
 pub(crate) mod track_follower;
+pub(crate) mod track_watch;
 pub(crate) mod track_writer;
 
 /// The `/`-joined form `moqt::Session` takes.

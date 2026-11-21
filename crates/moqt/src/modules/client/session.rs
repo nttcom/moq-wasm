@@ -16,6 +16,7 @@ use crate::{
             routes::Routes,
             subscription::{Reading, Subscription},
             track_follower::TrackFollower,
+            track_watch::TrackWatch,
             track_writer::TrackWriter,
         },
         executor,
@@ -85,7 +86,7 @@ impl Default for GroupStartOptions {
 }
 
 impl GroupStartOptions {
-    fn subscribe_option(self) -> SubscribeOption {
+    pub(super) fn subscribe_option(self) -> SubscribeOption {
         SubscribeOption {
             subscriber_priority: self.priority,
             delivery_timeout: self
@@ -308,7 +309,9 @@ impl Session {
     }
 
     /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
-    /// `prefix`.
+    /// `prefix`. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one whose
+    /// prefix overlaps another `watch_namespaces`, `watch_tracks` or
+    /// `follow_track` of this session is (NAMESPACE_PREFIX_OVERLAP).
     pub async fn watch_namespaces(
         &self,
         prefix: &[impl AsRef<str>],
@@ -329,10 +332,41 @@ impl Session {
         Ok(NamespaceWatch::new(self.session.clone(), prefix, events))
     }
 
+    /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
+    /// `prefix` and their tracks: the watch reports each namespace and hands
+    /// over each PUBLISH under it, which nothing else on the session then
+    /// sees. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one whose
+    /// prefix overlaps another `watch_namespaces`, `watch_tracks` or
+    /// `follow_track` of this session is (NAMESPACE_PREFIX_OVERLAP).
+    pub async fn watch_tracks(
+        &self,
+        prefix: &[impl AsRef<str>],
+    ) -> Result<TrackWatch, RequestError> {
+        let elements = prefix
+            .iter()
+            .map(|element| element.as_ref().to_string())
+            .collect();
+        // Watched before the request: the peer publishes the namespaces and
+        // tracks it knows right away.
+        let watch = TrackWatch::new(self.session.clone(), self.routes.clone(), elements);
+        self.session
+            .subscriber()
+            .subscribe_namespace(
+                join_namespace(prefix),
+                NamespaceInterest::NamespacesAndTracks,
+            )
+            .await
+            .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
+        Ok(watch)
+    }
+
     /// Follows `track` in `namespace` as peers publish it one after another,
     /// through a SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespace and
     /// its tracks; see `TrackFollower`. Fails when the SUBSCRIBE_NAMESPACE
-    /// is rejected.
+    /// is rejected, as one whose namespace overlaps another
+    /// `watch_namespaces`, `watch_tracks` or `follow_track` of this session
+    /// is (NAMESPACE_PREFIX_OVERLAP): one session follows one track per
+    /// namespace.
     pub async fn follow_track(
         &self,
         namespace: &[impl AsRef<str>],
