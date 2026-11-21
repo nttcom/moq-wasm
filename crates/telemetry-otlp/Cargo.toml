@@ -5,21 +5,20 @@ edition = "2024"
 description = "Shared tracing setup for the workspace binaries: stdout, OTLP traces, logs and metrics, and W3C trace context"
 
 [dependencies]
-anyhow = "1.0.102"
-http = "1.5.0"
-opentelemetry = { version = "0.33.1", features = ["trace", "logs", "metrics"] }
-opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio", "logs", "metrics"] }
-opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs", "metrics"] }
-opentelemetry-appender-tracing = "0.33.1"
+anyhow = { workspace = true }
+http = { workspace = true }
+opentelemetry = { workspace = true, features = ["trace", "logs", "metrics"] }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio", "logs", "metrics"] }
+opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs", "metrics"] }
+opentelemetry-appender-tracing = { workspace = true }
 # Makes rustls clients offer the post-quantum X25519MLKEM768 key share first.
-rustls = { version = "0.23.45", default-features = false, features = ["prefer-post-quantum"] }
-telemetry = { path = "../telemetry" }
-tracing = "0.1.44"
-tracing-opentelemetry = "0.34.0"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+rustls = { workspace = true, features = ["prefer-post-quantum"] }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true, default-features = true, features = ["env-filter"] }
 
 [features]
 testing = []
 
 [dev-dependencies]
-opentelemetry_sdk = { version = "0.33.1", features = ["testing"] }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }

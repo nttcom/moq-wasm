@@ -197,7 +197,7 @@ impl RelayServer {
         &self,
         relay_id: String,
         event_logger: telemetry_otlp::EventLogger,
-        process_gauges: telemetry_otlp::ProcessGauges,
+        process_gauges: crate::ProcessGauges,
     ) -> StatsExportTask {
         StatsExportTask::run(
             self.runtime.stats_collector(relay_id),
