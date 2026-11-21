@@ -584,10 +584,9 @@ async fn first_translatable_catalog(
 }
 
 fn channel_count(channel_config: Option<&str>) -> u32 {
-    match channel_config {
-        Some("mono") | None => 1,
-        Some(other) => other.trim_end_matches("ch").parse().unwrap_or(1),
-    }
+    channel_config
+        .and_then(msf::channel_count)
+        .map_or(1, u32::from)
 }
 
 #[cfg(test)]
@@ -629,9 +628,10 @@ mod tests {
     }
 
     #[test]
-    fn channel_count_reads_the_browser_publisher_notation() {
+    fn channel_count_reads_every_notation_of_the_draft() {
         // Act / Assert
         assert_eq!(channel_count(Some("mono")), 1);
+        assert_eq!(channel_count(Some("stereo")), 2);
         assert_eq!(channel_count(Some("2ch")), 2);
         assert_eq!(channel_count(Some("2")), 2);
         assert_eq!(channel_count(None), 1);
