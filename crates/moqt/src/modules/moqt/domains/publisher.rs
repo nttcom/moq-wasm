@@ -1,3 +1,4 @@
+use crate::modules::extensions::mutex::lock;
 use crate::modules::telemetry::current_trace_context;
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ use crate::{
             request_failure::record_outcome,
             send_targets::SendTargets,
             session_context::{
-                CarriedPublishedNamespace, Publication, PublicationTarget, SessionContext,
+                Publication, PublicationTarget, PublishedNamespaceRecord, SessionContext,
             },
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
@@ -89,20 +90,22 @@ impl Publisher {
                 }
             }
         };
+        let request_id = logical_id(connection.generation, pending.request_id);
+        lock(&self.session.published_namespaces).insert(request_id, namespace.clone());
         if let Some(carried) = &carried {
-            let request_id = logical_id(connection.generation, pending.request_id);
             carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
-            pending.carried = Some(CarriedPublishedNamespace {
-                session: self.session.clone(),
-                request_id,
-            });
         }
+        pending.record = Some(PublishedNamespaceRecord {
+            session: self.session.clone(),
+            request_id,
+        });
         Ok((connection, pending))
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
+        lock(&self.session.published_namespaces).retain(|_, published| *published != namespace);
         if let Some(carried) = self.session.read_carried().await {
             carried.update(|carried| {
                 carried
@@ -325,7 +328,7 @@ pub(crate) async fn send_publish_namespace(
         request_id,
         track_namespace: namespace,
         pending,
-        carried: None,
+        record: None,
     })
 }
 
@@ -507,6 +510,66 @@ mod tests {
         assert!(matches!(published, Err(RequestFailure::TrackNotUnderstood)));
         let event = tokio::time::timeout(Duration::from_millis(200), server.receive_event()).await;
         assert!(event.is_err(), "no PUBLISH may reach the peer: {event:?}");
+    }
+
+    #[tokio::test]
+    async fn a_namespace_is_published_from_its_request_until_its_withdrawal() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("publishes-namespace", version).await;
+            let publisher = client.publisher();
+            let request =
+                tokio::spawn(
+                    async move { publisher.publish_namespace("live/room".to_string()).await },
+                );
+            let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+                panic!("expected PUBLISH_NAMESPACE from the client");
+            };
+
+            // Act
+            let while_unanswered = client.publishes_namespace("live/room");
+            handler.ok().await.unwrap();
+            within(request).await.unwrap().unwrap();
+            let while_accepted = client.publishes_namespace("live/room");
+            client
+                .publisher()
+                .publish_namespace_done("live/room".to_string())
+                .await
+                .unwrap();
+
+            // Assert: a namespace is matched whole, not as a prefix
+            assert!(while_unanswered, "{version:?}");
+            assert!(while_accepted, "{version:?}");
+            assert!(!client.publishes_namespace("live"), "{version:?}");
+            assert!(!client.publishes_namespace("live/room"), "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_namespace_is_not_published() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("refused-namespace", version).await;
+            let publisher = client.publisher();
+            let request =
+                tokio::spawn(
+                    async move { publisher.publish_namespace("live/room".to_string()).await },
+                );
+            let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+                panic!("expected PUBLISH_NAMESPACE from the client");
+            };
+
+            // Act
+            handler
+                .error(RequestErrorCode::Unauthorized, "not allowed".to_string())
+                .await
+                .unwrap();
+            let result = within(request).await.unwrap();
+
+            // Assert
+            assert!(result.is_err(), "{version:?}");
+            assert!(!client.publishes_namespace("live/room"), "{version:?}");
+        }
     }
 
     #[tokio::test]

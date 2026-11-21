@@ -2,7 +2,7 @@ use crate::{
     RequestFailure,
     modules::moqt::{
         control_plane::enums::{RequestId, ResponseMessage},
-        domains::{elapsed_ms, session_context::CarriedPublishedNamespace},
+        domains::{elapsed_ms, session_context::PublishedNamespaceRecord},
         version::PendingResponse,
     },
 };
@@ -12,15 +12,14 @@ pub struct PendingPublishNamespace {
     pub(super) request_id: RequestId,
     pub(super) track_namespace: String,
     pub(super) pending: PendingResponse,
-    /// `None` unless `announce` sent the request in a session that follows
-    /// GOAWAY. A migration's own PUBLISH_NAMESPACE must stay `None`: the
-    /// migration holds the write lock that `forget` would wait for.
-    pub(super) carried: Option<CarriedPublishedNamespace>,
+    /// `None` for a migration's own PUBLISH_NAMESPACE: the migration holds the
+    /// write lock that `forget` would wait for.
+    pub(super) record: Option<PublishedNamespaceRecord>,
 }
 
 impl PendingPublishNamespace {
     pub async fn accepted(mut self) -> Result<(), RequestFailure> {
-        let carried = self.carried.take();
+        let record = self.record.take();
         let result = self.answer().await;
         // A lost connection (`SessionClosed`, `Send`) leaves the record: a
         // migration sends it again.
@@ -30,10 +29,10 @@ impl PendingPublishNamespace {
                 | RequestFailure::Timeout
                 | RequestFailure::ProtocolViolation(_),
             ),
-            Some(carried),
-        ) = (&result, carried)
+            Some(record),
+        ) = (&result, record)
         {
-            carried.forget().await;
+            record.forget().await;
         }
         result
     }
