@@ -24,6 +24,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, F
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.utils.deprecation import warn_deprecated
 
 from moq_wasm._once import Once
 from moq_wasm._session import Session
@@ -50,9 +51,10 @@ class MoqWasmInputParams(TransportParams):
 
     A video source names a track of each participant's catalog: `"camera"` is the track
     `video_in_track` picks (by default the decodable LOC video track with the lowest bitrate); any
-    other source is the video track of that name. As in pipecat, `video_in_enabled` receives the
-    sources `video_in_sources` lists as each participant joins, and others only when asked for, by
-    `MoqWasmTransport.capture_participant_video` or a `UserImageRequestFrame`.
+    other source is the video track of that name, when it is LOC and decodable. As in pipecat,
+    `video_in_enabled` receives the sources `video_in_sources` lists as each participant joins, and
+    others only when asked for, by `MoqWasmTransport.capture_participant_video` or a
+    `UserImageRequestFrame`.
 
     `audio_in_channels` (1, the default, or 2) is the channel count the participants' audio is
     pushed in. pipecat's stock VAD and turn analyzers (Silero, Smart Turn) read the PCM as mono, so
@@ -67,7 +69,9 @@ class MoqWasmInputParams(TransportParams):
     frames the analyzers read at the pipeline's rate.
 
     Parameters:
-        video_in_track: Picks the `"camera"` video track of a participant's catalog.
+        video_in_track: Picks the `"camera"` video track of a participant's catalog. What it
+            raises is reported to `on_error` (as an `ErrorFrame` by `MoqWasmParticipantInput`),
+            and the camera track received before stays.
         data_in_tracks: Tracks of each participant whose objects are pushed as
             `InputTransportMessageFrame`s carrying a `MoqWasmTrackMessage`.
     """
@@ -191,7 +195,10 @@ class _ReceivingInput(_OneRun, BaseInputTransport):
             )
         )
 
-    async def push_picture(self, picture: ReceivedPicture) -> None:
+    async def push_picture(self, picture: ReceivedPicture) -> bool:
+        # What `push_video_frame` checks: a paused input, or one without video, drops the picture.
+        if not self._params.video_in_enabled or self._paused:
+            return False
         request = picture.request
         frame = UserImageRawFrame(
             image=picture.rgb,
@@ -205,6 +212,7 @@ class _ReceivingInput(_OneRun, BaseInputTransport):
         frame.transport_source = picture.video_source
         frame.metadata["location"] = picture.location
         await self.push_video_frame(frame)
+        return True
 
     async def push_message(self, message: MoqWasmTrackMessage) -> None:
         # As `push_video_frame` does: a paused input drops the message.
@@ -213,7 +221,20 @@ class _ReceivingInput(_OneRun, BaseInputTransport):
         await self.push_frame(InputTransportMessageFrame(message=message))
 
     async def answer_image_requests(self, requests: list[UserImageRequestFrame], error: str) -> None:
-        await self._answer_image_requests(requests, error)
+        """Answers each request with `error`. A `result_callback` that raises is logged and the
+        other requests are answered still, so what gives the answers goes on, as a failed track
+        that is reported and received again. That includes a CancelledError the callback raised
+        itself, as by awaiting a future another task cancelled; a cancellation of the task giving
+        the answers still ends it."""
+        for request in requests:
+            try:
+                await self._answer_image_requests([request], error)
+            except (Exception, asyncio.CancelledError) as failure:
+                answering = asyncio.current_task()
+                if isinstance(failure, asyncio.CancelledError) and (answering is None or answering.cancelling()):
+                    raise
+                logger.exception("the result_callback of an image request of %s failed", request.user_id)
+
 
     async def request_image(self, request: UserImageRequestFrame) -> None:
         raise NotImplementedError
@@ -593,14 +614,26 @@ class MoqWasmTransport(BaseTransport):
         on_request_only: bool = False,
     ):
         """Receives a video source of a participant in the room at `framerate` pictures a second, or
-        every picture when it is None, or only for image requests with `on_request_only`."""
-        rate = None if on_request_only else (framerate or float("inf"))
+        every picture when it is None, or only for image requests with `on_request_only`. As in
+        pipecat, a `framerate` of 0 means `on_request_only`, and is deprecated."""
+        if framerate == 0 and not on_request_only:
+            warn_deprecated(
+                "`MoqWasmTransport.capture_participant_video(framerate=0)` is deprecated since 1.13.0 and "
+                "will be removed in 2.0.0. Use `on_request_only=True` instead.",
+                stacklevel=2,
+            )
+        # The room takes None for request-only pictures and infinity for every picture.
+        if on_request_only or framerate == 0:
+            rate = None
+        else:
+            rate = float("inf") if framerate is None else framerate
         await self._room.capture(participant_id, video_source, rate)
 
     async def release_participant_video(self, participant_id: str, video_source: str = CAMERA_SOURCE):
         """Stops receiving a video source of a participant, for a publisher that serves one profile to
-        all its subscribers, such as onvif-ingest; the image requests waiting on it get an error. Not
-        part of pipecat's API."""
+        all its subscribers, such as onvif-ingest; the image requests waiting on it get an error.
+        Returns once the source's track is unsubscribed, also when called again after a cancelled
+        release. Not part of pipecat's API."""
         await self._room.release(participant_id, video_source)
 
     def input(self) -> MoqWasmInputTransport:
@@ -626,8 +659,8 @@ class MoqWasmTransport(BaseTransport):
     async def push_audio(self, pcm: bytes, sample_rate: int, participant_id: str) -> None:
         await self._receiving_input().push_audio(pcm, sample_rate, participant_id)
 
-    async def push_picture(self, picture: ReceivedPicture) -> None:
-        await self._receiving_input().push_picture(picture)
+    async def push_picture(self, picture: ReceivedPicture) -> bool:
+        return await self._receiving_input().push_picture(picture)
 
     async def push_message(self, message: MoqWasmTrackMessage) -> None:
         await self._receiving_input().push_message(message)

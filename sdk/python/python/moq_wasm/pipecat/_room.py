@@ -266,6 +266,9 @@ class Room:
             await receiver.release(source)
 
     async def request_image(self, request: UserImageRequestFrame) -> None:
+        """`ParticipantReceiver.request_image` for the participant `request` names. A request for
+        a participant not in the room is answered with an error at once, and the call returns once
+        its `result_callback` did."""
         receiver = self._receivers.get(request.user_id)
         if receiver is None:
             await self._sink.answer_image_requests([request], f"no participant {request.user_id}")
