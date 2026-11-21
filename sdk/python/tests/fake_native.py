@@ -138,22 +138,31 @@ def _last_location(items: list) -> Location | None:
 
 
 class FakeRendition:
+    """Its pushes raise `failure` once it is set, as a native rendition whose publishing stopped."""
+
     def __init__(self, name: str):
         self.name = name
         self.calls: list[tuple] = []
+        self.failure: Exception | None = None
 
     def configure_video(self, codec: str) -> None:
         self.calls.append(("configure_video", codec))
 
     def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        if self.failure is not None:
+            raise self.failure
         self.calls.append(("push_video", data))
         return True
 
 
 class FakeMediaSource:
+    """Its pushes and `configure_audio` raise `failure` once it is set, as a native source whose
+    publishing stopped."""
+
     def __init__(self, video: str, audio: str):
         self.video = video
         self.audio = audio
+        self.failure: Exception | None = None
         self.calls: list[tuple] = []
         self.renditions: list[FakeRendition] = []
         self.keyframe_requested = asyncio.Event()
@@ -167,14 +176,20 @@ class FakeMediaSource:
         self.calls.append(("configure_video", codec))
 
     def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        if self.failure is not None:
+            raise self.failure
         self.calls.append(("push_video", data))
         return True
 
     def configure_audio(self, codec: str, sample_rate: int, channels: int, *, description=None) -> None:
+        if self.failure is not None:
+            raise self.failure
         described = () if description is None else (description,)
         self.calls.append(("configure_audio", codec, sample_rate, channels, *described))
 
     def push_audio(self, data: bytes, timestamp_micros: int, **level) -> bool:
+        if self.failure is not None:
+            raise self.failure
         self.calls.append(("push_audio", data))
         return True
 

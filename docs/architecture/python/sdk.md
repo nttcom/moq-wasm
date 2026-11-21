@@ -277,12 +277,13 @@ when the session ends while the write waits for the one before, and passes
 nothing to the native origin, which would cache it. A writer ends for good
 at the first of its `close()`, the session ending, the failure of its
 registration and the refusal of its broadcast's namespace, and a media
-source at the first of leaving its broadcast, the session ending and that
-refusal: each keeps that one outcome (`moq_wasm._ended.Ended`), which
-every method of the handle consults, so its writes raise what came first
-and its waits wake on it. Each raise is a copy of that outcome of the same
-type, message and attributes (a `RequestError`'s `code`, a
-`ConnectionLost`'s `close_info`), caused by it, as is what a request made
+source at the first of leaving its broadcast, the session ending, that
+refusal and a failure of its native publishing: each keeps that one
+outcome (`moq_wasm._ended.Ended`), which every method of the handle
+consults, so its writes raise what came first and its waits wake on it.
+Each raise is a copy of that outcome of the same type, message and
+attributes (a `RequestError`'s `code`, a `ConnectionLost`'s `close_info`),
+caused by it, as is what a request made
 after the session ended raises: raising the one object again would grow
 its traceback with every failed write. It has `next_subscriber`, which
 takes one caller at a time and keeps a subscriber that came as its caller
@@ -467,8 +468,9 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   failure at once, and every track of the broadcast, one registered before
   the refusal included, raises it from its writes, as the relay takes
   nothing of a namespace it refused; their `next_subscriber()` returns
-  False. Leaving a block that exited normally
-  raises the failure unless one of those, or `published()`, raised it to
+  False, and the media sources' and renditions' pushes and configurations
+  and `remove_track` raise RuntimeError from it. Leaving a block that
+  exited normally raises the failure unless one of those, or `published()`, raised it to
   the caller before, so a refused broadcast does not look as if it ran. A
   track added later is registered on its own, and
   what is written to it before that is dropped; once its registration
@@ -687,6 +689,7 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
     media = bot.add_media_source(video="video", audio="audio", label="bot")
     media.configure_video("avc1.42e01f")
     media.configure_audio("opus", sample_rate=48000, channels=1)
+    await bot.published()  # frames pushed before the namespace is published are dropped
     media.push_video(annexb, timestamp_micros)  # one access unit; a keyframe opens a group
     media.push_audio(packet, timestamp_micros)
     await media.keyframe_request()  # a subscriber asked for a new group
@@ -742,6 +745,32 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   asyncio form of the browser SDK's `on_keyframe_request`. It and
   `demand_change()` raise RuntimeError once the broadcast was left or the
   session ended, so a loop awaiting them ends.
+- A push returns whether the native source took the frame: False for one
+  dropped, before the broadcast was published, after it was left or once
+  the session ended, so a caller such as the pipecat transport does not
+  take it as sent. Published means the relay accepted the namespace: the
+  native source is built, and takes the configurations its catalog lists,
+  as the namespace is requested, but a push reaches it only once the
+  relay answered, since the media of a namespace the relay refuses would
+  be lost; once the session ended, a push is dropped before it reaches
+  the native source, which may still queue it with nothing left to send
+  it. A video push, the source's or a rendition's, is False for a frame
+  without a picture, as an H.264 access unit without NAL units, which the
+  demuxer reads into no sample and nothing publishes, or an H.264 or H.265
+  access unit without a slice (an access unit delimiter or parameter sets
+  alone), whose sample the bindings drop after the demuxer kept its
+  parameter sets for the keyframes after it. A push is also False for a
+  frame the queue drops while the relay does not keep up: the source's
+  publish queue and a rendition's queue are bounded, and drop video up to
+  the next keyframe that fits, which `keyframe_request()` asks for. A
+  frame or configuration the native source refuses as the session ends is
+  dropped with a warning. One it refuses while the session is live
+  means its publishing failed for good: the push or configuration raises
+  that RuntimeError, and so do later pushes and configurations,
+  `add_rendition`, the source's renditions' configurations and pushes,
+  `remove_track()`, `keyframe_request()` and `demand_change()`, so the
+  application, and the pipecat transport's writes, see it instead of a
+  source that looks healthy.
 - `configure_video` takes the codec of a codec string, its first element;
   the catalog lists the codec string of the configuration the keyframes
   carry, such as an H.264 SPS. `VideoEncoder.codec_string` names the same

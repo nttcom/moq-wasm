@@ -276,9 +276,12 @@ class LocalBroadcast:
                 await self._session._register(self._pending.pop(0))
             self._batching = False
             if self._media_sources:
-                return await self._session._announce(
+                announcement = await self._session._announce(
                     self.namespace, lambda native: self._build_media(native).announce(), owns=False
                 )
+                for source in self._media_sources:
+                    source._announced.set()
+                return announcement
             return await self._session._announce(
                 self.namespace, lambda native: native.announce(self.namespace), owns=False
             )
