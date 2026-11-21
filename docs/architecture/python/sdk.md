@@ -139,10 +139,11 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   job, as in architecture.md "Authorization tokens". The native session
   also presents the latest token when it reconnects.
 - **Lifetime.** Leaving the `async with` block closes the session; awaiting
-  `connect` instead leaves `close()` to the caller. Closing cancels the
-  session's own tasks, the token refresh among them, and returns once they
-  finished, a `refresh_token` call's cleanup included, and the native
-  session closed;
+  `connect` instead leaves `close()` to the caller. Entering one `connect()`
+  result again while it is entered raises RuntimeError before dialing, since
+  one exit closes one session. Closing cancels the session's own tasks, the
+  token refresh among them, and returns once they finished, a
+  `refresh_token` call's cleanup included, and the native session closed;
   a `close()` the call makes from its cleanup returns at once instead of
   waiting for the shutdown that waits for it. A session ends with
   `ConnectionLost`, or with `TokenExpired` when the token expired while

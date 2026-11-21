@@ -301,6 +301,21 @@ async def test_leaving_async_with_closes_the_connection_and_later_requests_fail(
         await session.announce(NAMESPACE)
 
 
+async def test_entering_a_connection_while_it_is_entered_raises_without_connecting():
+    # Arrange
+    relay = FakeRelay()
+    connecting = _Connecting(relay.dial, None, None)
+
+    async with connecting:
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="already entered"):
+            async with connecting:
+                pass
+
+        # Assert
+        assert len(relay.sessions) == 1
+
+
 async def test_every_close_waits_until_the_native_session_closed_even_after_one_was_cancelled():
     # Arrange: the native close waits on a gate
     relay = FakeRelay()
