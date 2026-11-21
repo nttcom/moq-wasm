@@ -237,17 +237,24 @@ impl Session {
         })
     }
 
+    #[pyo3(signature = (
+        namespace, name, *, priority = None, delivery_timeout = None, group_order = "ascending"
+    ))]
     fn subscribe_current_group<'py>(
         &self,
         py: Python<'py>,
         namespace: Vec<String>,
         name: String,
+        priority: Option<u8>,
+        delivery_timeout: Option<f64>,
+        group_order: &str,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let options = group_start_options(priority, delivery_timeout, group_order)?;
         let session = self.session.clone();
         let scope = self.scope;
         self.scope.future_into_py(py, async move {
             let subscription = session
-                .subscribe_current_group(&namespace, &name, GroupStartOptions::default())
+                .subscribe_current_group(&namespace, &name, options)
                 .await
                 .map_err(request_error)?;
             Ok(Subscription::new(subscription, scope))

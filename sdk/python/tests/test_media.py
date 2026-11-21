@@ -213,6 +213,56 @@ async def test_follow_sends_a_two_second_delivery_timeout_unless_told_otherwise(
     await session.close()
 
 
+def records_payload(*records: dict) -> bytes:
+    return json.dumps(list(records)).encode()
+
+
+async def test_event_timeline_yields_each_record_once_across_subscriptions_and_skips_a_malformed_object():
+    # Arrange: the second SUBSCRIBE's joining FETCH brings the two objects read before again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    first, second, third = ({"T": t, "data": t} for t in (1, 2, 3))
+    native.tracks["chat"] = [
+        [records_payload(first), b"not json"],
+        [records_payload(first), b"not json", records_payload(second, third)],
+    ]
+    timeline = RemoteBroadcast(session, [*ROOM, "alice"]).event_timeline("chat")
+
+    # Act
+    records = [await within(anext(timeline)) for _ in range(3)]
+
+    # Assert
+    assert records == [first, second, third]
+    await timeline.aclose()
+    await session.close()
+
+
+async def test_event_timeline_sends_its_priority_and_no_delivery_timeout_unless_told_otherwise():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[records_payload({"T": 1, "data": "hi"})]]
+    native.tracks["intent"] = [[records_payload({"T": 1, "data": {"take": True}})]]
+    broadcast = RemoteBroadcast(session, [*ROOM, "alice"])
+    chat = broadcast.event_timeline("chat")
+    intent = broadcast.event_timeline("intent", priority=0, delivery_timeout=0.3)
+
+    # Act
+    await within(anext(chat))
+    await within(anext(intent))
+
+    # Assert
+    assert [(options["priority"], options["delivery_timeout"]) for options in native.subscribe_options] == [
+        (None, None),
+        (0, 0.3),
+    ]
+    await chat.aclose()
+    await intent.aclose()
+    await session.close()
+
+
 async def test_a_watcher_reads_the_catalog_of_a_broadcast_through_a_relay(relay_url):
     # Arrange
     room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
