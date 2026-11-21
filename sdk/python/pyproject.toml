@@ -22,7 +22,8 @@ Issues = "https://github.com/nttcom/moq-wasm/issues"
 [project.optional-dependencies]
 # moq_wasm.codecs comes from PyAV, outside the wheel (docs/architecture/python/sdk.md).
 codecs = ["av>=14", "numpy>=1.26"]
-pipecat = ["moq-wasm[codecs]", "pipecat-ai>=1.13"]
+# The transport subclasses pipecat's input and output transports and uses their protected members.
+pipecat = ["moq-wasm[codecs]", "pipecat-ai>=1.13,<2"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "pipecat-ai>=1.13", "av>=14", "pdoc>=16"]
