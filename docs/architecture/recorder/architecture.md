@@ -45,7 +45,10 @@ both tracks into one init segment and one fragment stream.
    `Subscriber::subscribe_current_group`: the SUBSCRIBE and joining FETCH
    (offset 0) draft-ietf-moq-msf-02 §5 asks for, read through one
    `TrackReader` that yields the current group before the live objects, or
-   only the live objects when the publisher has sent none yet.
+   only the live objects when the publisher has sent none yet. Each object is
+   read with `msf::Catalog::parse`, which refuses a version this build does not
+   read, a delta update and a catalog the draft calls invalid (§5.1.1, §5.1.6,
+   §5.2).
    `track_selection::select_tracks` picks the LOC track named by
    `--video-track` and `--audio-track`. Without a name it takes the tracks
    of one source (see "Sources") by their catalog role and quality fields
