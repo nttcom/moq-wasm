@@ -1,3 +1,4 @@
+mod demand_changes;
 mod rendition_task;
 
 use std::{fmt, future::Future, sync::Arc};
@@ -8,7 +9,6 @@ use mediapack::{
     aac::AudioSpecificConfig,
     loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
 };
-use moqt::publish::TrackDemand;
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::{
@@ -17,6 +17,7 @@ use crate::{
     rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack},
     writer::BroadcastWriter,
 };
+pub use demand_changes::DemandChanges;
 use rendition_task::{RenditionCommand, RenditionTask};
 
 /// What a media source publishes its video and audio as.
@@ -31,7 +32,7 @@ pub struct MediaSourceConfig {
     pub video_framerate: Option<u32>,
     pub cmaf: bool,
     /// Publishes the video, its renditions and the audio on demand
-    /// (draft-18 §10.10), reported through `MediaSource::take_demand_receiver`.
+    /// (draft-18 §10.10), reported through `MediaSource::demand_changes`.
     pub on_demand: bool,
 }
 
@@ -73,15 +74,20 @@ pub struct MediaSource {
     /// configuration changes and a sample.
     video: Option<LocDemuxer>,
     keyframe_requests: Arc<Notify>,
-    demand_receiver: Option<mpsc::UnboundedReceiver<TrackDemand>>,
+    demand_changes: Option<DemandChanges>,
     renditions: Vec<mpsc::Sender<RenditionCommand>>,
 }
 
 impl MediaSource {
     pub fn new(broadcast: Broadcast, config: MediaSourceConfig) -> Self {
         let keyframe_requests = Arc::new(Notify::new());
-        let (demand_sender, demand_receiver) =
-            config.on_demand.then(mpsc::unbounded_channel).unzip();
+        let (demand_sender, demand_changes) = config
+            .on_demand
+            .then(|| {
+                let (demand_sender, demand_receiver) = mpsc::unbounded_channel();
+                (demand_sender, DemandChanges::run(demand_receiver))
+            })
+            .unzip();
         let tracks = SourceTracks {
             switching_set: config.video.clone(),
             video: config.video,
@@ -98,7 +104,7 @@ impl MediaSource {
             writer: BroadcastWriter::run(broadcast, tracks),
             video: None,
             keyframe_requests,
-            demand_receiver,
+            demand_changes,
             renditions: Vec::new(),
         }
     }
@@ -237,11 +243,10 @@ impl MediaSource {
         self.keyframe_requests.clone()
     }
 
-    /// Each change of whether a subscriber takes one of the source's tracks,
-    /// CMAF siblings included; `None` without `on_demand` or once taken. The
-    /// channel closes once every track of the source is gone.
-    pub fn take_demand_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<TrackDemand>> {
-        self.demand_receiver.take()
+    /// The changes of whether a subscriber takes one of the source's tracks,
+    /// CMAF siblings included; `None` without `on_demand`.
+    pub fn demand_changes(&self) -> Option<DemandChanges> {
+        self.demand_changes.clone()
     }
 
     fn push(&mut self, event: MediaEvent) -> Result<PushOutcome, MediaSourceError> {
@@ -412,17 +417,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_demand_receiver_is_taken_once() {
+    async fn only_a_source_on_demand_has_demand_changes() {
         // Arrange
-        let mut source = source();
+        let on_demand = source_on(RelayConnection::new(None), true);
+        let always_sent = source_on(RelayConnection::new(None), false);
 
         // Act
-        let first = source.take_demand_receiver();
-        let second = source.take_demand_receiver();
+        let on_demand_changes = on_demand.demand_changes();
+        let always_sent_changes = always_sent.demand_changes();
 
         // Assert
-        assert!(first.is_some());
-        assert!(second.is_none());
+        assert!(on_demand_changes.is_some());
+        assert!(always_sent_changes.is_none());
     }
 
     #[tokio::test]

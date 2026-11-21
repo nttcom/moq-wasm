@@ -15,7 +15,7 @@ mod writer;
 
 pub use broadcast::{Broadcast, SourceTracks, VIDEO_TRACK_NAME, VideoTrackInfo};
 pub use media_source::{
-    MediaRendition, MediaSource, MediaSourceConfig, MediaSourceError, TrackKind,
+    DemandChanges, MediaRendition, MediaSource, MediaSourceConfig, MediaSourceError, TrackKind,
 };
 pub use publish_queue::PushOutcome;
 pub use reader::BroadcastReader;

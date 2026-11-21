@@ -513,7 +513,9 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   siblings and the audio are published on demand, as every browser source
   is, and `await media.demand_change()` returns each change as a
   `Demand(track_name, wanted)` (the browser's `on_demand_change`); the
-  caller can stop encoding a track nobody takes. `on_demand=False` keeps a
+  caller can stop encoding a track nobody takes. A change replaces the
+  unread one of its track, so a caller that reads late holds one change per
+  track rather than every transition. `on_demand=False` keeps a
   source's tracks sent with no subscriber, for a track that should stay in
   the relay's cache, FETCHable, while nobody takes it.
 - `await media.remove_track("video" | "audio")` is the browser's

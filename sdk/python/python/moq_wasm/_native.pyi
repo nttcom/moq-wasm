@@ -302,8 +302,9 @@ class MediaSource:
     async def demand_change(self) -> Demand:
         """The next change of whether a subscriber takes one of the source's tracks, the video's and
         renditions' CMAF siblings included: reported once when a track is published, then at each
-        change. The caller need not encode a track nobody takes. Raises RuntimeError for a source
-        added with `on_demand=False`, and once every track of the source is gone."""
+        change. A change replaces its track's unread one, so a caller that reads late gets each
+        track's latest. The caller need not encode a track nobody takes. Raises RuntimeError for a
+        source added with `on_demand=False`, and once every track of the source is gone."""
 
 class Demand:
     track_name: str
