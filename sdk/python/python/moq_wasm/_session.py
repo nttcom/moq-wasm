@@ -47,15 +47,17 @@ class NamespaceEvent:
 
 
 class NamespaceWatch(AsyncIterator[NamespaceEvent]):
-    """The namespaces published and withdrawn under a prefix, until the session ends. One read at
-    a time: a read while another waits raises RuntimeError."""
+    """The namespaces published and withdrawn under a prefix, until `close()` or the session
+    ends. One read at a time: a read while another waits raises RuntimeError."""
 
-    def __init__(self, prefix: list[str], events: _native.NamespaceWatch):
+    def __init__(self, session: "Session", prefix: list[str], events: _native.NamespaceWatch):
         self.prefix = prefix
+        self._session = session
         self._events = events
         self._ended = asyncio.Event()
         self._next: asyncio.Future | None = None
         self._reading = False
+        self._closing: Once[None] = Once()
 
     def __aiter__(self) -> "NamespaceWatch":
         return self
@@ -90,9 +92,17 @@ class NamespaceWatch(AsyncIterator[NamespaceEvent]):
             raise
         return NamespaceEvent(native_event.namespace, native_event.active)
 
-    def close(self) -> None:
-        """Ends the iteration. The relay keeps the SUBSCRIBE_NAMESPACE until the session ends."""
-        self._end()
+    async def close(self) -> None:
+        """UNSUBSCRIBE_NAMESPACE, so the session may watch the prefix again; ends the iteration.
+        Every call returns once the UNSUBSCRIBE_NAMESPACE was sent, even after one was cancelled."""
+        if not self._closing.started:
+            self._end()
+            self._session._watches.discard(self)
+        await self._closing.run(self._unsubscribe)
+
+    async def _unsubscribe(self) -> None:
+        if not self._session._done.done():
+            await self._events.close()
 
     def _end(self) -> None:
         self._ended.set()
@@ -187,7 +197,7 @@ class Session:
         self._native = native
         self._keeper = keeper
         self._published: set[tuple[str, ...]] = set()
-        self._watches: list[NamespaceWatch] = []
+        self._watches: set[NamespaceWatch] = set()
         # What `_end` calls with each handle the session holds only weakly, as the reads of a
         # subscription, and with what ended the session: kept only while something else holds the
         # handle, so a subscription nobody reads any more is not kept alive.
@@ -323,8 +333,8 @@ class Session:
             lambda: self._connected().watch_namespaces(prefix),
             lambda events: events.close(),
         )
-        watch = NamespaceWatch(prefix, native)
-        self._watches.append(watch)
+        watch = NamespaceWatch(self, prefix, native)
+        self._watches.add(watch)
         return watch
 
     async def announce(self, namespace: list[str]) -> Announcement:

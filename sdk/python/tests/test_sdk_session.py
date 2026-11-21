@@ -791,6 +791,36 @@ async def test_closing_a_subscription_sends_the_unsubscribe_at_once_and_a_cancel
     await session.close()
 
 
+async def test_every_close_of_a_watch_waits_for_the_unsubscribe_even_after_one_was_cancelled():
+    # Arrange: the UNSUBSCRIBE_NAMESPACE waits on a gate
+    relay = FakeRelay()
+    session = await open_session(relay)
+    watch = await session.watch_namespaces(NAMESPACE[:-1])
+    gate, unsubscribed = asyncio.Event(), asyncio.Event()
+
+    async def gated_close() -> None:
+        await gate.wait()
+        unsubscribed.set()
+
+    watch._events.close = gated_close
+    first = asyncio.create_task(watch.close())
+    await asyncio.sleep(0)
+    first.cancel()
+    await asyncio.gather(first, return_exceptions=True)
+
+    # Act
+    second = asyncio.create_task(watch.close())
+    await asyncio.sleep(0.01)
+    waited = not second.done()
+    gate.set()
+    await within(second)
+
+    # Assert
+    assert waited
+    assert unsubscribed.is_set()
+    await session.close()
+
+
 async def test_the_first_connection_failure_raises():
     # Arrange
     relay = FakeRelay()
