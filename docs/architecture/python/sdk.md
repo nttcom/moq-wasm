@@ -718,7 +718,10 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   order: a writer, source or rendition named as one of
   them raises RuntimeError, before anything is published, until the
   broadcast was left, so a raw writer cannot reach the catalog's
-  subscribers or end their subscription.
+  subscribers or end their subscription. A source's `video` and `audio`
+  and a rendition's `name` are read-only, as a writer's `name` is, so
+  renaming one after its tracks were claimed cannot move it onto a track
+  another owner publishes.
 - A broadcast with a media source is published by the media broadcast's
   `announce` instead of `Session.announce`, so the namespace is published
   once. Leaving the block withdraws the namespace and closes the media
@@ -728,7 +731,13 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   then drops every writer of the broadcast, the last holders of its
   `RelayConnection`, whose catalog refresh would otherwise keep resending
   the old catalog into a later broadcast of the same namespace.
-- A media broadcast that fails while it is being built, after a source
+- A source's options are checked as they are given: a bitrate, framerate,
+  sample rate or channel count the native broadcast would refuse, such as
+  a negative one, raises ValueError from `add_media_source`,
+  `add_rendition` or `configure_audio`, and an option of a type it would
+  refuse, such as a float framerate, a name that is no string or a `cmaf`
+  that is no bool, raises TypeError, before anything native is built.
+  A media broadcast that fails while it is being built, after a source
   built before may have published the namespace with its catalog, is
   closed, then withdrawn (PUBLISH_NAMESPACE_DONE), and a later publication
   of the namespace waits for that. A built source publishes on its own,

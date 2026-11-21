@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import operator
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -36,8 +37,17 @@ class MediaSource:
         cmaf: bool = False,
         on_demand: bool = True,
     ):
-        self.video = video
-        self.audio = audio
+        # Checked here, so a broadcast with a source the native broadcast would refuse fails before
+        # anything native is built.
+        _check_type("video", video, str)
+        _check_type("audio", audio, str)
+        _check_type("label", label, str)
+        _check_optional_unsigned("video_bitrate", video_bitrate, 64)
+        _check_optional_unsigned("video_framerate", video_framerate, 32)
+        _check_type("cmaf", cmaf, bool)
+        _check_type("on_demand", on_demand, bool)
+        self._video = video
+        self._audio = audio
         self._label = label
         self._video_bitrate = video_bitrate
         self._video_framerate = video_framerate
@@ -59,6 +69,16 @@ class MediaSource:
         # RuntimeError while another track has the name of one of them.
         self._claim_tracks: Callable[[list[str]], None] | None = None
 
+    @property
+    def video(self) -> str:
+        """The video track's name; read-only, as the broadcast claimed the source's tracks by it."""
+        return self._video
+
+    @property
+    def audio(self) -> str:
+        """The audio track's name; read-only, as `video` is."""
+        return self._audio
+
     def configure_video(self, codec: str) -> None:
         """`codec` is a WebCodecs codec string: `avc1.*` (Annex B), `hvc1.*` (Annex B), `vp8`,
         `vp09.*` or `av01.*`. Raises ValueError for another codec."""
@@ -73,9 +93,15 @@ class MediaSource:
         """Another encoding of the video, in the track `<video>_<name>`, and with `cmaf` its
         `_cmaf` sibling (`_native.MediaSource.add_rendition`): feed it frames of the same pictures,
         with a keyframe on the same pictures as the video's. `bitrate` (bits per second) and
-        `framerate` go into the catalog. Raises RuntimeError while another track of the broadcast,
-        or once it was entered of the session, has the name of one of its tracks, and ValueError
-        for a track the session registered in datagrams or with another retention than 60 s."""
+        `framerate` go into the catalog. Raises ValueError for a negative `bitrate` or `framerate`,
+        or one too large, TypeError for an option of another type, such as a float `framerate`,
+        and RuntimeError while another track of the broadcast, or once it was entered of the
+        session, has the name of one of its tracks; ValueError as well for a track the session
+        registered in datagrams or with another retention than 60 s."""
+        _check_type("name", name, str)
+        _check_type("label", label, str)
+        _check_optional_unsigned("bitrate", bitrate, 64)
+        _check_optional_unsigned("framerate", framerate, 32)
         if self._claim_tracks is not None:
             self._claim_tracks(self._with_cmaf(f"{self.video}_{name}"))
         rendition = Rendition(name, {"label": label, "bitrate": bitrate, "framerate": framerate})
@@ -96,7 +122,11 @@ class MediaSource:
         self, codec: str, sample_rate: int, channels: int, *, description: bytes | None = None
     ) -> None:
         """`"opus"`, or an AAC `"mp4a.40.*"` whose `description` is the AudioSpecificConfig;
-        raises ValueError for another codec or an AAC without it."""
+        raises ValueError for another codec, an AAC without it, and a negative `sample_rate` or
+        `channels`, or one too large, and TypeError for one that is no integer, as None. A refused
+        configuration changes nothing."""
+        _check_unsigned("sample_rate", sample_rate, 32)
+        _check_unsigned("channels", channels, 8)
         if codec != "opus" and not codec.startswith("mp4a.40."):
             raise ValueError(f"unsupported audio codec: {codec}")
         if codec != "opus":
@@ -264,10 +294,15 @@ class Rendition:
     published, or after it ended, are dropped."""
 
     def __init__(self, name: str, options: dict):
-        self.name = name
+        self._name = name
         self._options = options
         self._rendition: _native.Rendition | None = None
         self._video_codec: str | None = None
+
+    @property
+    def name(self) -> str:
+        """Read-only, as the broadcast claimed the rendition's tracks by it."""
+        return self._name
 
     def configure_video(self, codec: str) -> None:
         """As `MediaSource.configure_video`; it may differ from the video's codec."""
@@ -289,6 +324,30 @@ class Rendition:
         if self._video_codec is not None:
             rendition.configure_video(self._video_codec)
         self._rendition = rendition
+
+
+def _check_optional_unsigned(what: str, value: int | None, bits: int) -> None:
+    """As `_check_unsigned`, for an option the native source takes as absent when it is None."""
+    if value is not None:
+        _check_unsigned(what, value, bits)
+
+
+def _check_unsigned(what: str, value: int, bits: int) -> None:
+    """The native source takes `value` as an unsigned integer of `bits` bits: raises TypeError for
+    what is no integer, as a float or None, and ValueError for one out of range."""
+    try:
+        # What the native source does to take it.
+        number = operator.index(value)
+    except TypeError:
+        raise TypeError(f"{what} must be an integer: {value!r}") from None
+    if not 0 <= number < 1 << bits:
+        raise ValueError(f"{what} must be between 0 and {(1 << bits) - 1}: {value}")
+
+
+def _check_type(what: str, value: object, kind: type) -> None:
+    """The native source takes `value` only as a `kind`."""
+    if not isinstance(value, kind):
+        raise TypeError(f"{what} must be a {kind.__name__}: {value!r}")
 
 
 def _check_video_codec(codec: str) -> None:
