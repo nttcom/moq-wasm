@@ -138,26 +138,36 @@ def _last_location(items: list) -> Location | None:
 
 
 class FakeRendition:
+    """Its pushes raise `failure` once it is set, as a native rendition whose publishing stopped."""
+
     def __init__(self, name: str):
         self.name = name
         self.calls: list[tuple] = []
+        self.failure: Exception | None = None
 
     def configure_video(self, codec: str) -> None:
         self.calls.append(("configure_video", codec))
 
     def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        if self.failure is not None:
+            raise self.failure
         self.calls.append(("push_video", data))
         return True
 
 
 class FakeMediaSource:
+    """Its pushes and `configure_audio` raise `failure` once it is set, as a native source whose
+    publishing stopped."""
+
     def __init__(self, video: str, audio: str):
         self.video = video
         self.audio = audio
+        self.failure: Exception | None = None
         self.calls: list[tuple] = []
         self.renditions: list[FakeRendition] = []
         self.keyframe_requested = asyncio.Event()
         self.demands: asyncio.Queue = asyncio.Queue()
+        self.remove_gate: asyncio.Event | None = None
 
     def add_rendition(self, name: str, **options) -> FakeRendition:
         self.renditions.append(FakeRendition(name))
@@ -167,26 +177,44 @@ class FakeMediaSource:
         self.calls.append(("configure_video", codec))
 
     def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        if self.failure is not None:
+            raise self.failure
         self.calls.append(("push_video", data))
         return True
 
     def configure_audio(self, codec: str, sample_rate: int, channels: int, *, description=None) -> None:
+        if self.failure is not None:
+            raise self.failure
         described = () if description is None else (description,)
         self.calls.append(("configure_audio", codec, sample_rate, channels, *described))
 
     def push_audio(self, data: bytes, timestamp_micros: int, **level) -> bool:
+        if self.failure is not None:
+            raise self.failure
         self.calls.append(("push_audio", data))
         return True
 
-    async def keyframe_request(self) -> None:
+    def keyframe_request(self) -> asyncio.Future:
+        return native_future(self._keyframe_request())
+
+    async def _keyframe_request(self) -> None:
         await self.keyframe_requested.wait()
         self.keyframe_requested.clear()
 
-    async def demand_change(self):
-        return await self.demands.get()
+    def demand_change(self) -> asyncio.Future:
+        return native_future(self.demands.get())
 
-    async def remove_track(self, kind: str) -> None:
+    def remove_track(self, kind: str) -> asyncio.Future:
+        """While `remove_gate` is set and not released, the track's removal waits before the
+        renditions' removals, which a cancelled future drops, as the native one does."""
+        return native_future(self._remove_track(kind))
+
+    async def _remove_track(self, kind: str) -> None:
         self.calls.append(("remove_track", kind))
+        if self.remove_gate is not None:
+            await self.remove_gate.wait()
+        if kind == "video":
+            self.calls.append(("remove_renditions",))
 
 
 class FakeMediaBroadcast:
