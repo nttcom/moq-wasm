@@ -5,13 +5,13 @@ edition = "2024"
 description = "The JWT a MoQT client presents in CLIENT_SETUP: its claims, HS256 signing and verification"
 
 [dependencies]
-anyhow = "1.0.102"
-base64 = "0.23.1"
-aws-lc-rs = "1.18.2"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
-clap = { version = "4.6.1", features = ["derive"], optional = true }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+aws-lc-rs = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true, features = ["derive"], optional = true }
 
 [features]
 cli = ["dep:clap"]

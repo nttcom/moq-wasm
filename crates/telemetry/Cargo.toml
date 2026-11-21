@@ -5,6 +5,6 @@ edition = "2024"
 description = "The telemetry records the observability server reads: the relay stats snapshot"
 
 [dependencies]
-anyhow = "1.0.102"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1"
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

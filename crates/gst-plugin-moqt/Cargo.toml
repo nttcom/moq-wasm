@@ -11,11 +11,11 @@ name = "gstmoqt"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-anyhow = "1"
-bytes = "1"
-gstreamer = "0.25"
+anyhow = { workspace = true }
+bytes = { workspace = true }
+gstreamer = { workspace = true }
 broadcast = { path = "../broadcast" }
 mediapack = { path = "../mediapack" }
-tokio = { version = "1", features = ["rt-multi-thread"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, default-features = true, features = ["env-filter"] }
