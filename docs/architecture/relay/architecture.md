@@ -1213,7 +1213,9 @@ instead, and the runner answers it with PUBLISH_DONE carrying that status and th
 of streams it opened, after its senders stopped (§9.12: no state is destroyed without
 PUBLISH_DONE). While an upstream SUBSCRIBE to another publisher is still unanswered, the
 track and its registrations stay, and the reason is sent only if that SUBSCRIBE brings no
-producer. A malformed track ends the runner the same way with MALFORMED_TRACK. A
+producer. The track is `Creating` again meanwhile, so a SUBSCRIBE that finds it waits for
+that answer like one for a track being created, and is refused if no producer comes. A
+malformed track ends the runner the same way with MALFORMED_TRACK. A
 subscription with an End Group ends the runner once its range is delivered (see
 `EgressScheduler`): it sends PUBLISH_DONE SUBSCRIPTION_ENDED after every stream it opened
 was closed or reset (§9.12), and the task then sends

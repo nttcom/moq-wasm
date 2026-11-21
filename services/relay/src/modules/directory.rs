@@ -2646,9 +2646,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscribe_finding_a_track_kept_for_a_subscribe_in_flight_waits_for_its_answer() {
+        // Arrange: the last producer left while an upstream SUBSCRIBE is unanswered
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let table = Arc::new(table);
+        let entry = table.track_entry(&track_key).unwrap();
+        register_downstream(
+            &table,
+            2,
+            100,
+            SessionPeer::Client,
+            downstream_subscription(track_key.clone(), None),
+            delivery_control(true),
+        )
+        .unwrap();
+        table.add_pending_producers(&entry, 1);
+        table.remove_session(PUBLISHER_SESSION);
+
+        // Act
+        let TrackLookup::Creating(creation, _reservation) =
+            table.track_or_begin_creation(&track_key, SessionPeer::Client)
+        else {
+            panic!("a track without a producer is being created");
+        };
+        let while_unanswered = creation.borrow().clone();
+        table.add_upstream_subscription_to_track(
+            &entry,
+            SECOND_PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+
+        // Assert
+        assert_eq!(while_unanswered, CreationState::Creating);
+        assert_eq!(*creation.borrow(), CreationState::Created);
+    }
+
+    #[tokio::test]
     async fn a_track_kept_for_a_subscribe_in_flight_ends_when_no_publisher_answers() {
         // Arrange
         let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let table = Arc::new(table);
         let entry = table.track_entry(&track_key).unwrap();
         let mut runner_stop_receiver = register_downstream(
             &table,
@@ -2663,16 +2700,25 @@ mod tests {
         table.add_pending_producers(&entry, 1);
         table.remove_session(PUBLISHER_SESSION);
         let kept = runner_stop_receiver.try_recv() == Err(TryRecvError::Empty);
+        let TrackLookup::Creating(creation, _reservation) =
+            table.track_or_begin_creation(&track_key, SessionPeer::Client)
+        else {
+            panic!("a track without a producer is being created");
+        };
 
         // Act
-        let ended = table.pending_producer_ended(&entry, None);
+        let ended = table.pending_producer_ended(&entry, Some(creation_failure("refused")));
 
-        // Assert: the subscriber hears the end of the publisher that left
+        // Assert: its subscriber hears the publisher's end and the waiting SUBSCRIBE is refused
         assert!(kept);
         assert!(ended);
         assert_eq!(
             runner_stop_receiver.try_recv(),
             Ok(PublishDoneReason::publisher_session_closed())
+        );
+        assert_eq!(
+            *creation.borrow(),
+            CreationState::Failed(creation_failure("refused"))
         );
         assert!(!table.upstream_tracks.contains_key(&track_key));
     }
