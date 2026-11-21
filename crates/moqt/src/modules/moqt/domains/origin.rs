@@ -1406,6 +1406,20 @@ mod tests {
         }
     }
 
+    async fn receive_subgroup_with_object(
+        streams: &mut DataReceiver,
+    ) -> (StreamDataReceiver, Object) {
+        let mut subgroup = within(next_subgroup(streams)).await;
+        assert!(matches!(
+            within(subgroup.receive()).await,
+            Ok(Some(Subgroup::Header(_)))
+        ));
+        let Ok(Some(Subgroup::Object(object))) = within(subgroup.receive()).await else {
+            panic!("expected an object on the subgroup stream");
+        };
+        (subgroup, object)
+    }
+
     #[tokio::test]
     async fn a_subscription_back_in_forward_state_1_takes_its_group_up_past_what_it_missed() {
         for version in DRAFTS {
@@ -1413,21 +1427,33 @@ mod tests {
             let peers = origin_with_track("origin-forward-off", RETENTION, version).await;
             let origin = &peers.origin;
             let accepted = publish(&peers).await;
+            let mut streams = data_receiver(&peers.server, &accepted).await;
             let write = |group, payload| origin.write(NAMESPACE, TRACK, plain(group, payload));
             let first = write(GroupBoundary::Next, b"a").await.unwrap();
+            let (mut first_stream, received_a) = receive_subgroup_with_object(&mut streams).await;
 
             // Act
             update_forward(&peers, &accepted, false).await;
             let in_forward_state_0 = write(GroupBoundary::Within, b"b").await.unwrap();
             update_forward(&peers, &accepted, true).await;
             let same_group = write(GroupBoundary::Within, b"c").await.unwrap();
+            let old_stream_after = within(first_stream.receive()).await;
+            let (_rejoined_stream, received_c) = receive_subgroup_with_object(&mut streams).await;
             let next_group = write(GroupBoundary::Next, b"d").await.unwrap();
+            let (_next_stream, received_d) = receive_subgroup_with_object(&mut streams).await;
 
             // Assert
             assert_eq!(first, sent(FIRST_GROUP_ID, 0, true));
             assert_eq!(in_forward_state_0, WriteOutcome::NotSent);
             assert_eq!(same_group, sent(FIRST_GROUP_ID, 2, false));
             assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert_eq!(received_a.location, location(FIRST_GROUP_ID, 0));
+            assert_eq!(received_a.payload, Bytes::from_static(b"a"));
+            assert!(old_stream_after.is_err());
+            assert_eq!(received_c.location, location(FIRST_GROUP_ID, 2));
+            assert_eq!(received_c.payload, Bytes::from_static(b"c"));
+            assert_eq!(received_d.location, location(FIRST_GROUP_ID + 1, 0));
+            assert_eq!(received_d.payload, Bytes::from_static(b"d"));
         }
     }
 
