@@ -78,7 +78,7 @@ The layer that closes these gaps depends on `moqt`, `broadcast` and `msf`.
 
 ```toml
 [dependencies]
-moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.1.0" }
+moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.0.1" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -371,7 +371,7 @@ One step per PR, each stacked on the one before.
 6. **docs(examples): a Rust example.** `examples/rust/moq-broadcast`.
 7. **ci: release.** `rust-sdk-release.yml`, the `release-rust-sdk` skill,
    `CHANGELOG.md`, the Rust reference on GitHub Pages. Then
-   `rust-sdk-v0.1.0`.
+   `rust-sdk-v0.0.1`.
 
 The services in this repository keep `moqt` and `broadcast`. Moving one onto
 the SDK is a change of its own, for when it would delete code.

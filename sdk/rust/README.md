@@ -12,7 +12,7 @@ Depend on a release tag:
 
 ```toml
 [dependencies]
-moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.1.0" }
+moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.0.1" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

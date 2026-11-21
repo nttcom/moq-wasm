@@ -10,6 +10,7 @@ on:
       # The SDK docs render these READMEs.
       - "!sdk/js/js/README.md"
       - "!sdk/python/README.md"
+      - "!sdk/rust/README.md"
 
 permissions:
   contents: read
@@ -73,7 +74,7 @@ jobs:
         run: npm run wasm
         working-directory: examples/browser
 
-      # TypeDoc reads the wasm package's types; pdoc imports the Python SDK, building its native module.
+      # TypeDoc reads the wasm package's types; pdoc imports the Python SDK, building its native module; cargo doc documents the Rust SDK.
       - name: Generate SDK docs
         run: npm run docs
         working-directory: examples/browser
