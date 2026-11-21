@@ -175,8 +175,9 @@ class FakeNativeSession:
         self.subscribe_options.append(options)
         return self._subscription(name)
 
-    async def subscribe_current_group(self, namespace: list[str], name: str) -> FakeSubscription:
+    async def subscribe_current_group(self, namespace: list[str], name: str, **options) -> FakeSubscription:
         self.calls.append(("subscribe_current_group", name))
+        self.subscribe_options.append(options)
         return self._subscription(name)
 
     def _subscription(self, name: str) -> FakeSubscription:

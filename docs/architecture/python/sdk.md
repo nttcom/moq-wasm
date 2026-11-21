@@ -286,6 +286,13 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   - `follow(name)` yields the track's objects, and subscribes again a second
     after the track ends or its SUBSCRIBE fails; the handler's cancellation
     ends it.
+  - `event_timeline(name)` yields the records of a draft-ietf-moq-msf-02 §8
+    event timeline track, starting with those of the group the relay holds
+    (a joining FETCH), and subscribes again as `follow` does without
+    yielding a record twice. It takes the SUBSCRIBE's `priority` and
+    `delivery_timeout`; unlike `follow`, which drops what would arrive more
+    than 2 s late as a player does, it has no timeout by default, since a
+    chat or an episode track needs every record.
 - **`Catalog`** is a typed draft-ietf-moq-msf-02 catalog (`tracks` of
   `CatalogTrack` with `name`, `namespace`, `role`, `packaging`, `codec`,
   `bitrate`, `width`, `height`, `framerate`, `samplerate`, and every field in

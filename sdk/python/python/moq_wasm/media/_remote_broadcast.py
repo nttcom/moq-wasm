@@ -1,10 +1,12 @@
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 from moq_wasm._native import Object
 from moq_wasm._session import Session
 from moq_wasm.media._catalog import CATALOG_TRACK_NAME, Catalog
+from moq_wasm.media._event_timeline import EventRecord
 
 logger = logging.getLogger("moq_wasm")
 
@@ -14,7 +16,7 @@ DEFAULT_DELIVERY_TIMEOUT_SECONDS = 2.0
 
 class RemoteBroadcast:
     """A namespace another publisher publishes. Its handler in `watch_broadcasts` is cancelled when
-    the namespace is withdrawn, which ends `catalogs()` and `follow()`."""
+    the namespace is withdrawn, which ends `catalogs()`, `follow()` and `event_timeline()`."""
 
     def __init__(self, session: Session, namespace: list[str]):
         self.namespace = namespace
@@ -56,6 +58,50 @@ class RemoteBroadcast:
             except RuntimeError as error:
                 logger.info("track %s of %s ended: %s", name, self.namespace, error)
             await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
+
+
+    async def event_timeline(
+        self, name: str, *, priority: int | None = None, delivery_timeout: float | None = None
+    ) -> AsyncIterator[EventRecord]:
+        """The records of a draft-ietf-moq-msf-02 §8 event timeline track, starting with those of
+        the group the relay holds (a joining FETCH), and subscribing again as `follow` does; the
+        records read before a SUBSCRIBE are not read again. An object that is not a JSON list of
+        records is logged and skipped. `priority` is the Subscriber Priority (128 when None) and
+        `delivery_timeout` the DELIVERY TIMEOUT in seconds, none by default: a chat or an episode
+        needs every record. Never ends by itself."""
+        read_up_to = None
+        while True:
+            try:
+                subscription = await self._session.subscribe_current_group(
+                    self.namespace, name, priority=priority, delivery_timeout=delivery_timeout
+                )
+                resumed_after = read_up_to
+                try:
+                    async for track_object in subscription:
+                        location = (track_object.group_id, track_object.object_id)
+                        if not track_object.payload or (resumed_after is not None and location <= resumed_after):
+                            continue
+                        read_up_to = max(location, read_up_to or location)
+                        for record in _decode_records(track_object.payload, name, self.namespace):
+                            yield record
+                finally:
+                    await _unsubscribe(subscription)
+                logger.info("track %s of %s ended", name, self.namespace)
+            except RuntimeError as error:
+                logger.info("track %s of %s ended: %s", name, self.namespace, error)
+            await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
+
+
+def _decode_records(payload: bytes, name: str, namespace: list[str]) -> list[EventRecord]:
+    try:
+        records = json.loads(payload)
+    except ValueError as error:
+        logger.warning("event timeline object of %s in %s ignored: %s", name, namespace, error)
+        return []
+    if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
+        logger.warning("event timeline object of %s in %s ignored: not a list of records", name, namespace)
+        return []
+    return records
 
 
 async def _unsubscribe(subscription) -> None:
