@@ -79,8 +79,17 @@ class Session:
         when the response stream does not arrive."""
     async def track_status(self, namespace: list[str], name: str) -> Location | None:
         """TRACK_STATUS: the track's largest location, or None while it has none."""
-    async def subscribe_current_group(self, namespace: list[str], name: str) -> Subscription:
-        """The objects of the group the relay holds come first (a joining FETCH), then the live ones."""
+    async def subscribe_current_group(
+        self,
+        namespace: list[str],
+        name: str,
+        *,
+        priority: int | None = None,
+        delivery_timeout: float | None = None,
+        group_order: Literal["ascending", "descending"] = "ascending",
+    ) -> Subscription:
+        """The objects of the group the relay holds come first (a joining FETCH), then the live ones.
+        The options are as in `subscribe`."""
     async def announce(self, namespace: list[str]) -> None: ...
     def media_broadcast(self, namespace: list[str]) -> MediaBroadcast:
         """A broadcast of encoded media in `namespace`; its `announce` publishes the namespace

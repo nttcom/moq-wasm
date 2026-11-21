@@ -219,10 +219,24 @@ class Session:
         """TRACK_STATUS (`_native.Session.track_status`)."""
         return await self._connected().track_status(namespace, name)
 
-    async def subscribe_current_group(self, namespace: list[str], name: str) -> _native.Subscription:
+    async def subscribe_current_group(
+        self,
+        namespace: list[str],
+        name: str,
+        *,
+        priority: int | None = None,
+        delivery_timeout: float | None = None,
+        group_order: Literal["ascending", "descending"] = "ascending",
+    ) -> _native.Subscription:
         """The objects of the group the relay holds come first (a joining FETCH), then the live
-        ones."""
-        return await self._connected().subscribe_current_group(namespace, name)
+        ones (`_native.Session.subscribe_current_group`)."""
+        return await self._connected().subscribe_current_group(
+            namespace,
+            name,
+            priority=priority,
+            delivery_timeout=delivery_timeout,
+            group_order=group_order,
+        )
 
     async def watch_namespaces(self, prefix: list[str]) -> NamespaceWatch:
         """Raises `RequestError` when the relay refuses the SUBSCRIBE_NAMESPACE."""
