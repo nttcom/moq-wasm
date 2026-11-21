@@ -54,7 +54,8 @@ import moq_wasm
 
 session = await moq_wasm.connect("https://relay.example:4433", verify_certificate=True)
 
-# Namespaces under a prefix, as they are published and withdrawn.
+# Namespaces under a prefix, as they are published and withdrawn. The loop
+# runs until the session ends, so it takes a task of its own.
 async for event in await session.watch_namespaces(["anon", "room"]):
     event.namespace  # ["anon", "room", "alice"]
     event.active     # False after PUBLISH_NAMESPACE_DONE
