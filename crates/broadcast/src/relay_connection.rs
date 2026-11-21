@@ -583,6 +583,10 @@ impl ConnectedRelay {
         self.catalog.send(&namespace_path).await
     }
 
+    pub(crate) async fn end_catalog(&self, namespace: &[String]) -> Result<()> {
+        self.catalog.end(&namespace.join("/")).await
+    }
+
     pub(crate) async fn remove_track(&self, namespace: &[String], track_name: &str) -> Result<()> {
         let namespace_path = namespace.join("/");
         let dropped = {
@@ -1307,6 +1311,38 @@ mod tests {
         relay
             .wait_for_request(&format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"))
             .await;
+    }
+
+    #[tokio::test]
+    async fn end_catalog_ends_the_catalog_track_and_stops_resending_it() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("end-catalog");
+        let (connection, broadcast) = connected_broadcast(&relay).await;
+        relay.received_catalogs().await;
+        let connected = connection.connected().await.unwrap().unwrap();
+
+        // Act: end the catalog, then take what a refresh tick and a GOAWAY move would resend,
+        // and send the namespace as a refresh that took it before the end
+        broadcast.end_catalog().await.unwrap();
+        relay
+            .wait_for_request(&format!("PUBLISH_DONE live/cam/{CATALOG_TRACK_NAME}"))
+            .await;
+        let (to_refresh, to_resend_on_move) = {
+            let mut state = connected.state.lock().await;
+            (state.take_catalogs_to_refresh(), state.sent_catalogs())
+        };
+        connected.catalog.send("live/cam").await.unwrap();
+        let after_end = relay.received_requests();
+
+        // Assert: a send that took the namespace before the end publishes nothing again
+        assert!(to_refresh.is_empty(), "{to_refresh:?}");
+        assert!(to_resend_on_move.is_empty(), "{to_resend_on_move:?}");
+        assert!(
+            !after_end
+                .iter()
+                .any(|request| request.starts_with("PUBLISH ")),
+            "{after_end:?}"
+        );
     }
 
     #[tokio::test]

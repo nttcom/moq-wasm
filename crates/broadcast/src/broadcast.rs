@@ -215,6 +215,17 @@ impl Broadcast {
         };
         relay.remove_track(&self.namespace, track_name).await
     }
+
+    /// Ends the catalog track with PUBLISH_DONE and stops resending it
+    /// (draft-ietf-moq-msf-02 §11.4). Call after ending the sources
+    /// (`MediaSource::end`, `remove_track`): a source that updates the catalog
+    /// afterwards publishes it again. Fails when the relay session has ended.
+    pub async fn end_catalog(&self) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay.end_catalog(&self.namespace).await
+    }
 }
 
 /// The tracks one `BroadcastWriter` writes its source into. The chat belongs

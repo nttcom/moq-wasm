@@ -50,7 +50,8 @@ impl CatalogTrack {
     /// SUBSCRIBE, so the uplink carries them only while someone watches them.
     ///
     /// Sends do not overlap, so a snapshot built earlier cannot be written
-    /// last.
+    /// last. Sends nothing for a namespace whose catalog `end` forgot, as for
+    /// a refresh that took the namespace before the end.
     pub(super) async fn send(&self, namespace_path: &str) -> Result<()> {
         let _sending = self.sending.lock().await;
         let catalog = {
@@ -58,12 +59,10 @@ impl CatalogTrack {
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            let metadata = guard
-                .catalogs
-                .get(namespace_path)
-                .cloned()
-                .unwrap_or_default();
-            build_catalog(namespace_path, &metadata)?
+            let Some(metadata) = guard.catalogs.get(namespace_path) else {
+                return Ok(());
+            };
+            build_catalog(namespace_path, metadata)?
         };
         let published_tracks = catalog
             .tracks
@@ -104,6 +103,27 @@ impl CatalogTrack {
             }
             WriteOutcome::NotSent => {}
         }
+        Ok(())
+    }
+
+    /// Forgets the namespace's catalog, so it is neither refreshed nor
+    /// subscribable any more, then ends the catalog track with PUBLISH_DONE.
+    /// Updating the catalog again publishes it again.
+    pub(super) async fn end(&self, namespace_path: &str) -> Result<()> {
+        let _sending = self.sending.lock().await;
+        {
+            let mut guard = self.state.lock().await;
+            if guard.disconnected {
+                bail!("MoQ publisher disconnected");
+            }
+            guard.catalogs.remove(namespace_path);
+            guard.catalog_sent_since_tick.remove(namespace_path);
+        }
+        self.origin
+            .end_track(namespace_path, CATALOG_TRACK_NAME)
+            .await?;
+        self.ledger.finish(CATALOG_TRACK_NAME);
+        tracing::info!(track_namespace = %namespace_path, track_name = CATALOG_TRACK_NAME, "track removed");
         Ok(())
     }
 

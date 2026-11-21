@@ -23,6 +23,8 @@ pub(super) enum RenditionCommand {
     /// `Broadcast::remove_track` for the rendition's track, taken after the
     /// events sent before it.
     Remove(oneshot::Sender<anyhow::Result<()>>),
+    /// `Remove`, after which the task stops, so later events fail.
+    End(oneshot::Sender<anyhow::Result<()>>),
 }
 
 /// Pushes a rendition's events into its track in the order they come, until
@@ -65,6 +67,12 @@ impl RenditionTask {
                         }
                         RenditionCommand::Remove(done_sender) => {
                             let _ = done_sender.send(broadcast.remove_track(&track_name).await);
+                        }
+                        RenditionCommand::End(done_sender) => {
+                            // Closed before answering, so a push after the end fails at once.
+                            command_receiver.close();
+                            let _ = done_sender.send(broadcast.remove_track(&track_name).await);
+                            return;
                         }
                     }
                 }
