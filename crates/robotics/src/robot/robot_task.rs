@@ -20,12 +20,11 @@ use tokio::{
 use super::{
     Command,
     driver_track_task::{DriverRecord, DriverTrack, DriverTrackTask},
-    now_ms, write_record,
 };
 use crate::{
     arbiter::{Arbiter, ArbiterConfig, Output, is_candidate},
     record::{ControlReason, Episode},
-    tracks::TrackKind,
+    tracks::{TrackKind, now_ms, write_record},
 };
 
 /// The dead man is checked at least this often.
