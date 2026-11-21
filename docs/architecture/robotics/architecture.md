@@ -277,31 +277,33 @@ and is written in Python on the `lerobot` package, the format's reference
 writer. MCAP export, for viewing in Foxglove, follows as a later step.
 
 ### Policy bot
-The bot type `policy` is a Python bot started by `bot-dispatcher`. It
-subscribes to the robot's cameras, `state` and `episode`, pairs each
-frame with the newest `state` before it,
+The policy publishes `<room>/bots/policy` with `robotics::Driver`, which
+lists `action` in its catalog and sends each chunk as a group of its own. It
+subscribes to the robot's `state` (and, for a real model, its cameras),
 runs the model the deployment configures, and publishes `action` chunks with
 the `basis` of the observation it used. Which model, and whether inference
-runs in the bot or in a separate server, is the deployment's choice; the
-example ships a trivial policy.
+runs in the bot or in a separate server, is the deployment's choice. The
+example, `examples/rust/moq-robot-policy`, drives the simulated robot to a
+point and runs on its own; starting it from `bot-dispatcher` as the type
+`policy` needs a Rust client of the bot protocol (its token and heartbeats),
+which the Python bots have in `moq-bot-job`.
 
 ### SDKs
-`robotics` holds the record types, `Robot` and the track setup
+`robotics` holds the record types, `Robot`, `Driver` and the track setup
 helpers. Each SDK wraps it without reimplementing it:
 
 | Side | SDK | Uses |
 | --- | --- | --- |
-| robot | Rust (`moq_wasm::robotics`), Python | `Robot` |
-| operator | browser | record types, action writer |
-| policy bot, exporter | Python | record types, action writer |
+| robot | Rust (`moq_wasm::robotics::run_robot`) | `Robot` |
+| operator | browser | `createBroadcast` with `eventTimelines`, records written as JSON |
+| policy bot | Rust (`moq_wasm::robotics::offer_actions`) | `Driver`, `State` |
 
-The Rust SDK adds the module with the same shape as the Python one
+A Python robot or policy gets the module once one needs it
 (docs/architecture/moq-wasm/sdk.md).
 
 The records are read through `RemoteBroadcast.event_timeline(name)` of each
 SDK's media layer, which starts from the record the relay holds (a joining
-FETCH) and subscribes again when the track ends. The Python SDK does not
-have it yet; it gains it under this name, with the `priority` and
+FETCH) and subscribes again when the track ends, with the `priority` and
 `delivery_timeout` of a SUBSCRIBE, which the table in Priority and delivery
 sets per track.
 
@@ -350,8 +352,12 @@ Each step is its own pull request, stacked:
    a point driven by velocity) and an operator page
    (`examples/browser/examples/robot-teleop`, keyboard actions), with an E2E
    test through the relay. Cameras come with a robot that has one.
-6. `recorder`: archive every broadcast's event timelines in a room.
-7. `bot-dispatcher`: the `policy` bot type and an example policy bot.
+6. `recorder`: archive every broadcast's event timelines in a room, the
+   policy bot's included; the operator page lists its `action` in its
+   catalog.
+7. `robotics::Driver` and an example policy bot, with the E2E driving the
+   robot by the policy and an operator's intervention. The `bot-dispatcher`
+   type `policy` follows with a Rust client of the bot protocol.
 8. Later: the LeRobot exporter, MCAP export, and a ROS 2 bridge (its own
    design).
 
