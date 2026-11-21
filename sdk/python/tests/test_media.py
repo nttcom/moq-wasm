@@ -218,7 +218,7 @@ def records_payload(*records: dict) -> bytes:
 
 
 async def test_event_timeline_yields_each_record_once_across_subscriptions_and_skips_a_malformed_object():
-    # Arrange: the second SUBSCRIBE's joining FETCH brings the two records read before again
+    # Arrange: the second SUBSCRIBE's joining FETCH brings the two objects read before again
     relay = FakeRelay()
     session = await open_session(relay)
     native = relay.sessions[0]
