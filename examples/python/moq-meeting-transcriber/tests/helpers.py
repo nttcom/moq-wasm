@@ -1,6 +1,7 @@
 import json
+from typing import cast
 
-from moq_wasm import TrackWriter
+from moq_wasm import Session, TrackWriter
 from moq_wasm.media import EventTimeline
 
 
@@ -14,7 +15,9 @@ class RecordingPublication:
 
 async def recorded_timeline() -> tuple[EventTimeline, RecordingPublication]:
     """A timeline on a registered track writing to a `RecordingPublication`."""
-    writer = TrackWriter(["test"], "transcript", retention_seconds=60)
+    # The writer reaches its session only to close the track or wait for a subscriber, which
+    # these tests do not.
+    writer = TrackWriter(cast(Session, None), ["test"], "transcript", retention_seconds=60)
     timeline = EventTimeline(writer)
     publication = RecordingPublication()
     await writer._bind(publication)

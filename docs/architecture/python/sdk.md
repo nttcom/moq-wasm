@@ -227,12 +227,23 @@ async with moq_wasm.connect(...) as session:
 The request methods keep the bindings' shape, which follows the browser
 SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 `priority`, `delivery_timeout` in seconds and `group_order`),
-`subscribe_current_group`, `subscribe_group_start`, `fetch` (between two
+`subscribe_current_group` and `subscribe_group_start` (with the same
+`priority`, `delivery_timeout` and `group_order`), `fetch` (between two
 `Location`s), `track_status`, `watch_namespaces`, `publish_track` (with
-`retention_seconds`, `publish` and `datagram`) and `announce`. The native
-origin keeps the delivery a track sent its objects with: registering it
-again with the other `datagram` switches a track that has no object yet and
-raises ValueError, from the native call, for one that has. A
+`retention_seconds`, `publish`, `datagram` and `priority`, the Publisher
+Priority, 128 by default: among the session's tracks, a lower value is sent
+first) and `announce`. The native origin keeps a track, with the retention
+of its first registration in the session, for the session's life:
+`publish_track` of a closed track with that `retention_seconds` continues
+it, and one with another raises ValueError before any native call, since
+the native origin could not apply it. The native origin also keeps the
+delivery a track sent its objects with: registering it again with the other
+`datagram` switches a track that has no object yet and raises ValueError,
+from the native call, for one that has. The session records the registration
+once the native origin registered the track: when it succeeded and when only
+its PUBLISH was refused; a registration the native
+call refuses for its arguments, as an invalid `retention_seconds` or the
+other delivery, records nothing. A
 `subscribe*`, `watch_namespaces`, `publish_track` or `announce` cancelled
 before it returns, as by a timeout, keeps its native request running: once
 the relay accepts it, the session unsubscribes, ends the track (PUBLISH_DONE)
@@ -240,8 +251,54 @@ or withdraws it, so nothing stays active without an owner, and a later
 watch of the prefix, writer of the track or announcement of the namespace
 waits for that. A
 `TrackWriter` has `write` and `write_group`, which return the group id an
-object went into when a subscriber took it, and `next_subscriber`; its
-objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
+object went into when a subscriber took it and are sent one at a time, in
+the order they were made; a send that started runs to its end even when
+its caller is cancelled, as by a timeout, and the next write waits for it.
+A write after the session ended raises what ended it, also
+when the session ends while the write waits for the one before, and passes
+nothing to the native origin, which would cache it. A writer ends for good
+at the first of its `close()`, the session ending and the failure of its
+registration: it keeps that one outcome (`moq_wasm._ended.Ended`), which
+every method of the writer consults, so its writes raise what came first
+and its waits wake on it. Each raise is a copy of that outcome of the same
+type, message and attributes (a `RequestError`'s `code`, a
+`ConnectionLost`'s `close_info`), caused by it, as is what a request made
+after the session ended raises: raising the one object again would grow
+its traceback with every failed write. It has `next_subscriber`, which
+takes one caller at a time and keeps a subscriber that came as its caller
+was cancelled for the next call,
+`registered`, which raises what failed the track's registration (a
+registration cancelled, as by leaving its broadcast, raises RuntimeError
+there and from the writes: the cancellation is the cancelled task's own,
+and no handle ends with one), and
+`close`, which ends its subscriptions with PUBLISH_DONE and makes later
+writes raise RuntimeError at once, a write waiting behind a stalled send
+included; every call returns once the PUBLISH_DONE was sent,
+even after one was cancelled. It is final: a registration and a send under
+way are waited for and its track ended, `registered()` raises and
+`next_subscriber()` returns False, a waiting one included. A track has one
+writer in a session: `publish_track`, the broadcast's included, raises
+RuntimeError while another writer of the session publishes the track,
+until that one's `close()` finished or its registration failed, so
+closing an old writer cannot end its replacement's subscriptions. A
+writer whose `publish_track` was cancelled keeps the track until the end
+of what the relay registered was sent: a later `publish_track` of the
+track waits for it, so that PUBLISH_DONE cannot end its replacement's
+subscriptions. Its
+objects carry no extension headers. Leaving a
+`LocalBroadcast` closes its writers, so a handle kept past the broadcast
+cannot write into a later broadcast of the same namespace. A namespace has
+one owner in a session: `announce` raises RuntimeError while another
+announcement of the session publishes it, until that one finished
+withdrawing it (its `close()` finished). An
+`Announcement` withdraws only the publication it made, and its `close()`
+sends the PUBLISH_NAMESPACE_DONE even when cancelled. The session, its
+announcements, writers and watches copy the namespace lists
+they are given, and the `namespace` of an announcement or a writer
+returns a new list each time, and a writer's `name` is
+read-only, so a caller changing a list or a name cannot make them withdraw
+or end another namespace or track. A `Subscription` iterates its objects,
+or its subgroup streams
 through `groups()`, whose every call returns the same iterator, whichever
 is read first: reading the other raises RuntimeError at once, even while
 the first read still waits, as one a timeout cancelled does. One from
