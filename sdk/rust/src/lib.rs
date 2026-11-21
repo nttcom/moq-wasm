@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 pub mod media;
+pub mod robotics;
 mod session;
 #[cfg(test)]
 mod test_support;

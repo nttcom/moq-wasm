@@ -120,6 +120,38 @@ media::watch_broadcasts(session, &["anon", "room"], WatchOptions::default(), |re
 [`examples/rust/moq-broadcast`](../../examples/rust/moq-broadcast/README.md)
 runs both sides against a relay.
 
+## A robot
+
+`robotics::run_robot` runs the robot side of a robot room
+(`docs/architecture/robotics/architecture.md` in this repository) on the
+broadcast `<room>/robot`: it publishes `state`, `control` and `episode`,
+reads the `action` track of each operator (`<room>/operators/<id>`) and of
+the policy (`<room>/bots/policy`), and hands the control loop one command
+at a time. It holds when nobody drives, the driver's actions stop, or the
+session ends.
+
+```rust,no_run
+use moq_wasm::{media, robotics::{self, ArbiterConfig, Command}};
+
+# fn apply(_: u64, _: &[f64]) {}
+# fn hold() {}
+# async fn run(session: &moq_wasm::Session) -> anyhow::Result<()> {
+let broadcast = media::create_broadcast(session, &["anon", "lab", "robot"])
+    .announce()
+    .await?;
+let mut robot = robotics::run_robot(session, &broadcast, ArbiterConfig::default()).await?;
+let episode = robot.start_episode("put the cup on the tray".to_string(), false).await?;
+while let Some(command) = robot.next_command().await {
+    match command {
+        Command::Apply { at_ms, values, .. } => apply(at_ms, &values),
+        Command::Hold(_) => hold(),
+    }
+}
+# let _ = episode;
+# Ok(())
+# }
+```
+
 ## Tokens and the end of a session
 
 A relay that verifies tokens takes a JWT in `ConnectOptions::token`. Give
