@@ -63,7 +63,8 @@ class Room:
                 await session.close()
 
     async def _transcribe(self, session: moq_wasm.Session) -> None:
-        """Returns once the room has had no participant for the grace period."""
+        """Returns once the room has had no participant, nor the words of one who left still to
+        transcribe, for the grace period."""
         async with create_broadcast(session, [*self._namespace, *BOT_NAMESPACE]) as bot:
             timeline = bot.event_timeline(TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
             status_track = bot.publish_track(status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
@@ -87,20 +88,72 @@ class Room:
             ready.cancel()
         logger.info(f"room {self._key}: {self._recognizer.name} is ready")
         await status.write_status(status_track, self._recognizer.name, status.READY)
-        await watch_broadcasts(
-            session,
-            self._namespace,
-            partial(self._run_participant, timeline),
-            filter=lambda namespace: participant_name(namespace, self._namespace) is not None,
-            empty_timeout=self._grace_seconds,
+        stopping = asyncio.Event()
+        # The participants in the room, and the pipelines of those who left, still transcribing what
+        # they said.
+        present: set[asyncio.Task] = set()
+        departed: set[asyncio.Task] = set()
+        joined = asyncio.Event()
+        watching = asyncio.ensure_future(
+            watch_broadcasts(
+                session,
+                self._namespace,
+                partial(self._run_participant, timeline, stopping, present, departed, joined),
+                filter=lambda namespace: participant_name(namespace, self._namespace) is not None,
+            )
         )
+        emptied = asyncio.ensure_future(self._until_empty(present, departed, joined))
+        try:
+            done, _ = await asyncio.wait([watching, emptied], return_when=asyncio.FIRST_COMPLETED)
+            if watching in done:
+                watching.result()
+        finally:
+            # Set before the participants are cancelled, so that none of them, nor those who
+            # already left, waits for the recognizer to transcribe what they said.
+            stopping.set()
+            emptied.cancel()
+            watching.cancel()
+            await asyncio.wait([watching])
+            if departed:
+                await asyncio.wait(departed)
 
-    async def _run_participant(self, timeline: EventTimeline, broadcast: RemoteBroadcast) -> None:
+    async def _until_empty(
+        self, present: set[asyncio.Task], departed: set[asyncio.Task], joined: asyncio.Event
+    ) -> None:
+        """Returns once the room has had nobody in it, nor the words of one who left still to
+        transcribe, for the grace period, from the start or since the last of them ended. A join
+        starts the period over."""
+        while True:
+            joined.clear()
+            busy = present | departed
+            join = asyncio.ensure_future(joined.wait())
+            try:
+                timeout = None if busy else self._grace_seconds
+                done, _ = await asyncio.wait([*busy, join], timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                join.cancel()
+            if not done:
+                return
+
+    async def _run_participant(
+        self,
+        timeline: EventTimeline,
+        stopping: asyncio.Event,
+        present: set[asyncio.Task],
+        departed: set[asyncio.Task],
+        joined: asyncio.Event,
+        broadcast: RemoteBroadcast,
+    ) -> None:
         name = broadcast.namespace[-1]
         logger.info(f"room {self._key}: {name} joined")
+        participant = asyncio.current_task()
+        assert participant is not None
+        present.add(participant)
+        joined.set()
         try:
-            await Participant(broadcast, self._recognizer, timeline).run()
+            await Participant(broadcast, self._recognizer, timeline).run(stopping, departed)
         except RuntimeError as error:
             logger.info(f"room {self._key}: {name}'s catalog ended: {error}")
         finally:
+            present.discard(participant)
             logger.info(f"room {self._key}: {name} left")

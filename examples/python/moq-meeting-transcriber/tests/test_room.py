@@ -4,9 +4,22 @@ import pytest
 
 from moq_meeting_transcriber import room as room_module
 from moq_meeting_transcriber.room import BOT_NAMESPACE, Room, participant_name
-from tests.helpers import NamedRecognizer, RecordingPublication, SessionRefusingNamespaces, recorded_timeline
+from tests.helpers import (
+    HeldRecognizer,
+    NamedRecognizer,
+    NamespaceEvents,
+    RecordingPublication,
+    SessionRefusingNamespaces,
+    called_within,
+    hear_utterances,
+    recorded_timeline,
+    texts,
+    until_transcribed,
+)
 
 ROOM = ["app-1", "team a"]
+ALICE = [*ROOM, "alice"]
+BOB = [*ROOM, "bob"]
 
 
 def test_one_element_under_the_room_is_a_participant():
@@ -85,3 +98,110 @@ async def test_a_recognizer_that_answers_at_once_gets_no_notice():
 
     # Assert
     assert transcript.writes == []
+
+
+async def speak_while_the_recognizer_is_busy(
+    monkeypatch, recognizer: HeldRecognizer, grace_seconds: float, *, leave: bool, utterances: int = 1
+):
+    """Follows a room alice joins, and leaves if `leave`, while the recognizer works on the first of
+    her `utterances`."""
+    hear_utterances(monkeypatch, utterances)
+    session = NamespaceEvents()
+    room = Room(refuse_connection, ROOM, recognizer, grace_seconds)
+    following, transcript, _ = await follow_participants(room, session)
+    session.publish(ALICE)
+    await asyncio.wait_for(recognizer.called.wait(), 5)
+    if leave:
+        session.withdraw(ALICE)
+        await asyncio.sleep(0.1)
+    return following, transcript, session
+
+
+@pytest.mark.parametrize("leave", [False, True])
+async def test_a_room_that_stops_drops_what_was_said_without_waiting_for_the_recognizer(monkeypatch, leave):
+    # Arrange
+    recognizer = HeldRecognizer("こんにちは")
+    following, transcript, _ = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 60, leave=leave)
+
+    # Act
+    following.cancel()
+    done, _ = await asyncio.wait([following], timeout=5)
+    recognizer.release.set()
+    await asyncio.wait([following])
+
+    # Assert
+    assert done == {following}
+    assert following.cancelled()
+    assert texts(transcript) == []
+
+
+@pytest.mark.parametrize("leave", [False, True])
+async def test_a_room_that_stops_starts_no_recognition_of_the_utterances_still_queued(monkeypatch, leave):
+    # Arrange: the second and third utterances wait while the recognizer works on the first
+    recognizer = HeldRecognizer("一", "二", "三")
+    following, _, _ = await speak_while_the_recognizer_is_busy(
+        monkeypatch, recognizer, 60, leave=leave, utterances=3
+    )
+
+    # Act
+    following.cancel()
+    await asyncio.wait([following], timeout=5)
+
+    # Assert
+    assert following.cancelled()
+    assert recognizer.calls == 1
+
+
+async def test_a_room_that_empties_still_transcribes_what_a_participant_who_left_said(monkeypatch):
+    # Arrange
+    recognizer = HeldRecognizer("こんにちは")
+    following, transcript, _ = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 0.1, leave=True)
+
+    # Act: the grace period ends while the recognizer is still busy
+    await asyncio.sleep(0.3)
+    recognizer.release.set()
+
+    # Assert
+    await asyncio.wait_for(following, 5)
+    assert texts(transcript) == ["こんにちは"]
+
+
+async def test_a_participant_who_joins_after_the_grace_period_while_what_was_said_is_transcribed_is_heard(
+    monkeypatch,
+):
+    # Arrange: alice leaves while the recognizer works on her utterance, and the grace period passes
+    recognizer = HeldRecognizer("一", "二")
+    following, transcript, session = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 0.1, leave=True)
+    await asyncio.sleep(0.3)
+
+    # Act: bob joins and speaks before her utterance is transcribed
+    session.publish(BOB)
+    heard_while_busy = await called_within(recognizer, 2, 1.0)
+    recognizer.release.set()
+    await until_transcribed(transcript, 2)
+    stayed = not following.done()
+    session.withdraw(BOB)
+
+    # Assert: the room stays while bob is in it, and ends once he left
+    assert heard_while_busy
+    assert stayed
+    await asyncio.wait_for(following, 5)
+    assert sorted(texts(transcript)) == ["一", "二"]
+
+
+async def test_a_participant_who_rejoins_is_heard_while_what_they_said_before_is_transcribed(monkeypatch):
+    # Arrange: alice leaves while the recognizer works on her utterance
+    recognizer = HeldRecognizer("一", "二")
+    following, transcript, session = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 60, leave=True)
+
+    # Act: she rejoins under the same name and speaks before that utterance is transcribed
+    session.publish(ALICE)
+    heard_while_busy = await called_within(recognizer, 2, 1.0)
+    recognizer.release.set()
+    await until_transcribed(transcript, 2)
+    following.cancel()
+    await asyncio.wait([following])
+
+    # Assert
+    assert heard_while_busy
+    assert sorted(texts(transcript)) == ["一", "二"]

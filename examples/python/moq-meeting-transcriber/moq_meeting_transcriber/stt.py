@@ -63,9 +63,10 @@ class UtteranceTranscriptionFrame(TranscriptionFrame):
 
 
 class UtteranceSTTService(SegmentedSTTService):
-    """Hands each utterance of one participant to the room's recognizer and dates it."""
+    """Hands each utterance of one participant to the room's recognizer and dates it. Once `dropped`
+    is set, the utterance being recognized and those still queued end without text."""
 
-    def __init__(self, recognizer: Recognizer, speaker: str):
+    def __init__(self, recognizer: Recognizer, speaker: str, dropped: asyncio.Event):
         super().__init__(
             sample_rate=SAMPLE_RATE,
             trailing_silence_secs=TRAILING_SILENCE_SECONDS,
@@ -73,6 +74,7 @@ class UtteranceSTTService(SegmentedSTTService):
         )
         self._recognizer = recognizer
         self._speaker = speaker
+        self._dropped = dropped
         # One entry per queued segment: segments are transcribed in order, after the stop that closed them.
         self._stopped_at: deque[float] = deque()
 
@@ -88,7 +90,7 @@ class UtteranceSTTService(SegmentedSTTService):
     async def run_stt(self, audio: bytes):
         stopped_at = self._stopped_at.popleft()
         speech_seconds = len(audio) / (2 * SAMPLE_RATE) - TRAILING_SILENCE_SECONDS
-        text = (await self._recognizer.recognize(audio + self._take_queued_segments())).strip()
+        text = await self._recognize(audio)
         if text:
             yield UtteranceTranscriptionFrame(
                 text,
@@ -98,16 +100,20 @@ class UtteranceSTTService(SegmentedSTTService):
                 started_at_ms=int((stopped_at - speech_seconds) * 1000),
             )
 
-    def _take_queued_segments(self) -> bytes:
-        """The segments that closed while the recognizer was busy. Whisper takes about as long for
-        one segment as for several, so transcribing them in one call keeps the queue from growing."""
-        queued = []
-        while not self._segment_queue.empty():
-            segment = self._segment_queue.get_nowait()
-            if segment is None:
-                # None is always last in the queue and stops SegmentedSTTService's task, so put it back for that task.
-                self._segment_queue.put_nowait(None)
-                break
-            queued.append(segment)
-            self._stopped_at.popleft()
-        return b"".join(queued)
+    async def _recognize(self, audio: bytes) -> str:
+        # A graceful stop of the pipeline waits for every queued utterance, and a CancelFrame queued
+        # after it waits too, so dropping the utterances is what ends such a stop at once.
+        # Checked before the recognizer is called: an in-process model's thread runs on once its
+        # call is cancelled, and the lock it took is then released for the next call.
+        if self._dropped.is_set():
+            return ""
+        recognition = asyncio.ensure_future(self._recognizer.recognize(audio))
+        dropped = asyncio.ensure_future(self._dropped.wait())
+        try:
+            await asyncio.wait([recognition, dropped], return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            recognition.cancel()
+            dropped.cancel()
+        if self._dropped.is_set():
+            return ""
+        return recognition.result().strip()
