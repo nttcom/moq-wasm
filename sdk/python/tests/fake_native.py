@@ -168,6 +168,8 @@ class FakeMediaSource:
         self.renditions: list[FakeRendition] = []
         self.keyframe_requested = asyncio.Event()
         self.demands: asyncio.Queue = asyncio.Queue()
+        self.audio_timestamps: list[int] = []
+        self.video_timestamps: list[int] = []
         self.remove_gate: asyncio.Event | None = None
 
     def add_rendition(self, name: str, **options) -> FakeRendition:
@@ -181,6 +183,7 @@ class FakeMediaSource:
         if self.failure is not None:
             raise self.failure
         self.calls.append(("push_video", data))
+        self.video_timestamps.append(timestamp_micros)
         return True
 
     def configure_audio(self, codec: str, sample_rate: int, channels: int, *, description=None) -> None:
@@ -193,6 +196,7 @@ class FakeMediaSource:
         if self.failure is not None:
             raise self.failure
         self.calls.append(("push_audio", data))
+        self.audio_timestamps.append(timestamp_micros)
         return True
 
     def keyframe_request(self) -> asyncio.Future:

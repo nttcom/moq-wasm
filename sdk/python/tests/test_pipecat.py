@@ -105,6 +105,34 @@ def video_object(group_id: int, object_id: int, payload: bytes, *, status: int |
     )
 
 
+async def start_alone(processor: BaseInputTransport | BaseOutputTransport) -> None:
+    """Sets `processor` up and starts it as a pipeline does, with no pipeline around it to stop
+    it."""
+    setup = FrameProcessorSetup(clock=SystemClock(), task_manager=TaskManager(), pipeline_worker=SimpleNamespace())
+    await processor.setup(setup)
+    await processor.start(StartFrame())
+
+
+class FrameRecorder(FrameProcessor):
+    """Records the frames a processor driven alone pushes to it."""
+
+    def __init__(self):
+        super().__init__()
+        self.frames: list[Frame] = []
+
+    async def queue_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM, callback=None):
+        self.frames.append(frame)
+
+
+def link_recorders(processor: FrameProcessor) -> tuple[FrameRecorder, FrameRecorder]:
+    """Links recorders before and after `processor`, for the frames it pushes upstream and
+    downstream."""
+    upstream, downstream = FrameRecorder(), FrameRecorder()
+    upstream.link(processor)
+    processor.link(downstream)
+    return upstream, downstream
+
+
 def catalog_payload(*tracks: dict) -> bytes:
     return json.dumps({"version": "draft-02", "tracks": list(tracks)}).encode()
 
@@ -117,7 +145,6 @@ class RecordingSink:
         self.unanswered: list[tuple[UserImageRequestFrame, str]] = []
         self.events: list[tuple] = []
         self.received = asyncio.Event()
-        self.reported_error = asyncio.Event()
 
     def audio_in_sample_rate(self) -> int:
         return SAMPLE_RATE
@@ -139,8 +166,6 @@ class RecordingSink:
 
     async def event(self, name: str, *args: object) -> None:
         self.events.append((name, *args))
-        if name == "on_error":
-            self.reported_error.set()
 
 
 AUDIO_CATALOG = catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True})
@@ -935,6 +960,298 @@ async def test_stopping_a_room_whose_start_failed_waits_until_it_withdrew_its_br
     await session.close()
 
 
+async def test_a_room_that_cannot_open_leaves_both_processors_unusable_and_ends_the_pipeline():
+    # Arrange: the relay refuses the room's SUBSCRIBE_NAMESPACE
+    relay = FakeRelay()
+    session = await open_session(relay)
+    relay.sessions[0].refuse_watch = True
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_out_enabled=True))
+    processors = (transport.input(), transport.output())
+    worker = PipelineWorker(
+        Pipeline(list(processors)),
+        cancel_on_idle_timeout=False,
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
+    )
+    runner = WorkerRunner(handle_sigint=False)
+
+    # Act
+    await runner.add_workers(worker)
+    await within(runner.run())
+
+    # Assert
+    assert not any(processor.is_usable for processor in processors)
+    await session.close()
+
+
+async def test_an_output_whose_room_never_opened_passes_on_the_frames_it_has_no_media_sender_for():
+    # Arrange: the relay refuses the room's SUBSCRIBE_NAMESPACE, and the output keeps running, as
+    # pipecat's default ProcessorUnusablePolicy.CONTINUE keeps it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    relay.sessions[0].refuse_watch = True
+    output = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_out_enabled=True)).output()
+    _, downstream = link_recorders(output)
+    await within(start_alone(output))
+    frames = [OutputAudioRawFrame(audio=tone(0.04), sample_rate=SAMPLE_RATE, num_channels=1), TTSStoppedFrame(), StopFrame()]
+
+    # Act
+    for frame in frames:
+        await within(output.process_frame(frame, FrameDirection.DOWNSTREAM))
+
+    # Assert: the StopFrame went on, so the pipeline stops; the speech, not written, did not
+    assert not output.is_usable
+    assert [type(frame) for frame in downstream.frames] == [TTSStoppedFrame, StopFrame]
+    await within(output.cleanup())
+    await session.close()
+
+
+async def test_cleaning_up_the_transports_processors_withdraws_the_room_that_no_end_frame_stopped():
+    # Arrange: both processors started, and neither an EndFrame nor a CancelFrame reaches them
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True, audio_out_enabled=True))
+    for processor in (transport.input(), transport.output()):
+        await within(start_alone(processor))
+
+    # Act: the pipeline tears down; the second cleanup of the input changes nothing
+    await within(transport.input().cleanup())
+    await within(transport.output().cleanup())
+    await within(transport.input().cleanup())
+
+    # Assert
+    assert native.calls.count(("unannounce", [*ROOM, "bot"])) == 1
+    assert ("unsubscribe_namespace", ROOM) in native.calls
+    await session.close()
+
+
+async def test_cleaning_up_an_input_whose_stop_was_cancelled_returns_once_the_room_is_withdrawn():
+    # Arrange: the transport's input alone uses the room, and the relay holds the answer to the
+    # room watch's UNSUBSCRIBE_NAMESPACE back as the EndFrame stops the input
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True))
+    room_input = transport.input()
+    await within(start_alone(room_input))
+    native.watch_close_gate = asyncio.Event()
+    stopping = asyncio.create_task(room_input.stop(EndFrame()))
+    await asyncio.sleep(0.05)
+
+    # Act: pipecat's cleanup cancels the stop, then cleans the input up; the relay answers meanwhile
+    stopping.cancel()
+    cleaning = asyncio.create_task(room_input.cleanup())
+    await asyncio.sleep(0.05)
+    cleaned_while_withdrawing = cleaning.done()
+    native.watch_close_gate.set()
+    await within(asyncio.gather(stopping, cleaning, return_exceptions=True))
+
+    # Assert
+    assert not cleaned_while_withdrawing
+    assert native.calls.count(("unannounce", [*ROOM, "bot"])) == 1
+    await session.close()
+
+
+class FailingFilter(BaseAudioFilter):
+    """An audio filter whose `stop`, which pipecat's `cleanup` calls, raises."""
+
+    async def start(self, sample_rate: int):
+        pass
+
+    async def stop(self):
+        raise OSError("the filter's device is gone")
+
+    async def process_frame(self, frame):
+        pass
+
+    async def filter(self, audio: bytes) -> bytes:
+        return audio
+
+
+async def test_cleaning_up_an_output_whose_audio_filter_fails_to_stop_withdraws_the_room():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    params = MoqWasmParams(room=ROOM, audio_out_enabled=True, audio_out_filter=FailingFilter())
+    started = MoqWasmTransport(session, params).output()
+    await within(start_alone(started))
+
+    # Act
+    with pytest.raises(OSError):
+        await within(started.cleanup())
+
+    # Assert
+    assert ("unannounce", [*ROOM, "bot"]) in native.calls
+    await session.close()
+
+
+async def test_cleaning_up_a_participant_input_whose_audio_filter_fails_to_stop_unsubscribes_its_tracks():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE, audio_in_filter=FailingFilter()),
+    )
+    await within(start_alone(participant_input))
+    while len(native.subscriptions) < 2:
+        await asyncio.sleep(0.01)
+
+    # Act
+    with pytest.raises(OSError):
+        await within(participant_input.cleanup())
+
+    # Assert: the catalog and the audio track
+    assert [subscription.closed for subscription in native.subscriptions] == [True, True]
+    await session.close()
+
+
+async def test_cleaning_up_a_participant_input_that_no_end_frame_stopped_unsubscribes_its_tracks():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE),
+    )
+    await within(start_alone(participant_input))
+    while len(native.subscriptions) < 2:
+        await asyncio.sleep(0.01)
+
+    # Act
+    await within(participant_input.cleanup())
+
+    # Assert: the catalog and the audio track
+    assert [subscription.closed for subscription in native.subscriptions] == [True, True]
+    await session.close()
+
+
+async def test_a_cleaned_up_participant_input_keeps_no_catalog_subscription(monkeypatch):
+    # Arrange: alice's audio is received; each read of her catalogs is followed by a weak reference
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    catalogs: list[weakref.ref] = []
+    read_catalogs = RemoteBroadcast.catalogs
+
+    def tracked_catalogs(remote: RemoteBroadcast):
+        read = read_catalogs(remote)
+        catalogs.append(weakref.ref(read))
+        return read
+
+    monkeypatch.setattr(RemoteBroadcast, "catalogs", tracked_catalogs)
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE),
+    )
+    await within(start_alone(participant_input))
+    while len(native.subscriptions) < 2:
+        await asyncio.sleep(0.01)
+
+    # Act
+    await within(participant_input.cleanup())
+    gc.collect()
+
+    # Assert: the application still holds the input
+    assert len(catalogs) == 1
+    assert catalogs[0]() is None
+    await session.close()
+
+
+async def test_a_cleaned_up_participant_input_keeps_neither_the_broadcast_nor_its_catalog(monkeypatch):
+    # Arrange: alice's audio is received; her broadcast and each catalog read are followed by a weak
+    # reference
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    catalogs: list[weakref.ref] = []
+    read_catalogs = RemoteBroadcast.catalogs
+
+    async def tracked_catalogs(remote: RemoteBroadcast):
+        async with contextlib.aclosing(read_catalogs(remote)) as read:
+            async for catalog in read:
+                catalogs.append(weakref.ref(catalog))
+                yield catalog
+
+    monkeypatch.setattr(RemoteBroadcast, "catalogs", tracked_catalogs)
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    broadcast = weakref.ref(remote)
+    participant_input = MoqWasmParticipantInput(
+        remote, MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE, video_in_enabled=True)
+    )
+    del remote
+    answers: list[dict] = []
+
+    async def answered(result: dict) -> None:
+        answers.append(result)
+
+    await within(start_alone(participant_input))
+    await until(lambda: len(native.subscriptions) == 2)
+
+    # Act
+    await within(participant_input.cleanup())
+    gc.collect()
+    await within(participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=answered)))
+
+    # Assert: the application still holds the input, which answers a request with alice's departure
+    assert broadcast() is None
+    assert len(catalogs) == 1
+    assert catalogs[0]() is None
+    assert answers == [{"error": "alice left"}]
+    await session.close()
+
+
+async def test_a_participant_input_whose_stop_was_cancelled_answers_its_image_requests_before_its_cleanup_returns():
+    # Arrange: alice's audio is received, a request waits for a camera her catalog has no track
+    # for, and the relay holds the answer to her audio's UNSUBSCRIBE back as the EndFrame stops the
+    # input
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["audio"] = asyncio.Event()
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE, video_in_enabled=True),
+    )
+    answers: list[dict] = []
+
+    async def answered(result: dict) -> None:
+        answers.append(result)
+
+    await within(start_alone(participant_input))
+    await until(lambda: len(native.subscriptions) == 2)
+    await within(participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=answered)))
+    stopping = asyncio.create_task(participant_input.stop(EndFrame()))
+    await until(lambda: native.subscriptions[1].unsubscribing)
+
+    # Act: pipecat's cleanup cancels the stop, then cleans the input up; the relay answers meanwhile
+    stopping.cancel()
+    cleaning = asyncio.create_task(participant_input.cleanup())
+    await asyncio.sleep(0.05)
+    cleaned_while_unsubscribing = cleaning.done()
+    unsubscribing.set()
+    await within(asyncio.gather(stopping, cleaning, return_exceptions=True))
+
+    # Assert
+    assert not cleaned_while_unsubscribing
+    assert answers == [{"error": "alice left"}]
+    assert [subscription.closed for subscription in native.subscriptions] == [True, True]
+    await session.close()
+
+
 async def test_the_transport_registers_the_events_of_moq_transport():
     # Arrange
     relay = FakeRelay()
@@ -973,6 +1290,137 @@ async def test_a_participant_input_pushes_only_its_participants_audio_and_publis
     assert subscribed == [MoqWasmTrack("alice", "audio", "audio")]
     assert not native.media_broadcasts
     assert not [call for call in native.calls if call[0] in ("announce", "watch_namespaces", "publish_track")]
+    await session.close()
+
+
+@pytest.mark.parametrize("terminal", [EndFrame, CancelFrame])
+async def test_a_participant_input_set_up_in_a_second_pipeline_fails_its_setup_and_receives_nothing(terminal):
+    # Arrange: the input ran in a pipeline that an EndFrame or a CancelFrame ended
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN] for _ in range(2)]
+    native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.04), SAMPLE_RATE), STAY_OPEN] for _ in range(2)]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE),
+    )
+    await within(run_test(participant_input, frames_to_send=[SleepFrame(0.2), terminal()], send_end_frame=False))
+    worker = PipelineWorker(
+        Pipeline([participant_input]),
+        cancel_on_idle_timeout=False,
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
+    )
+    errors: list[ErrorFrame] = []
+    worker.event_handler("on_pipeline_error")(lambda _, frame: errors.append(frame))
+    runner = WorkerRunner(handle_sigint=False)
+
+    # Act: a CancelFrame left pipecat's processor dropping every frame, so this pipeline cannot
+    # start
+    await runner.add_workers(worker)
+    await within(runner.run())
+
+    # Assert: the setup failed and the policy ended the pipeline
+    assert len(errors) == 1 and "ran in a pipeline already" in errors[0].error
+    assert not participant_input.is_usable
+    assert [name for _, name in native.subscribed] == ["audio"]
+    await session.close()
+
+
+async def test_a_pipeline_built_again_from_the_transport_after_a_cancel_frame_opens_the_room_again():
+    # Arrange: the transport's processors ran in a pipeline that a CancelFrame ended
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True, data_out_tracks={"status": 60}))
+    first = (transport.input(), transport.output())
+    await within(run_test(Pipeline(list(first)), frames_to_send=[SleepFrame(0.1), CancelFrame()], send_end_frame=False))
+    message = OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"again"))
+
+    # Act
+    second = (transport.input(), transport.output())
+    await within(run_test(Pipeline(list(second)), frames_to_send=[SleepFrame(0.1), message, SleepFrame(0.1)]))
+
+    # Assert: the second pipeline took new processors, which opened the room again
+    assert all(new is not old for new, old in zip(second, first))
+    assert native.writers["status"].objects == [(b"again", True)]
+    assert native.calls.count(("watch_namespaces", ROOM)) == 2
+    assert native.calls.count(("unannounce", [*ROOM, "bot"])) == 2
+    await session.close()
+
+
+async def test_an_output_run_again_after_a_stop_frame_ends_the_media_senders_of_its_first_run():
+    # Arrange: a StopFrame stopped the output's first pipeline, which keeps it running
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    output = transport.output()
+    await within(run_test(output, frames_to_send=[SleepFrame(0.1), StopFrame()], send_end_frame=False))
+    first_audio_task = output._media_senders[None]._audio_task
+    speech = OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act: the transport gives the same output to the next pipeline, which an EndFrame ends
+    again = transport.output()
+    await within(run_test(again, frames_to_send=[speech, SleepFrame(0.3)]))
+
+    # Assert: the first run's audio task ended, and the second run wrote the speech
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert again is output
+    assert first_audio_task is not None and first_audio_task.done()
+    assert source.audio_timestamps
+    await session.close()
+
+
+async def test_a_participant_input_run_again_after_a_stop_frame_keeps_one_subscription_to_each_track():
+    # Arrange: a StopFrame stopped the input's first pipeline, which keeps it running
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["prompt"] = [[b"first", STAY_OPEN] for _ in range(2)]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]), MoqWasmInputParams(data_in_tracks=["prompt"])
+    )
+    await within(run_test(participant_input, frames_to_send=[SleepFrame(0.1), StopFrame()], send_end_frame=False))
+
+    # Act: the next pipeline runs the same input, and an EndFrame ends it
+    await within(run_test(participant_input, frames_to_send=[SleepFrame(0.1)]))
+
+    # Assert: the track was subscribed to once, and that subscription ended with the input
+    assert [name for _, name in native.subscribed] == ["prompt"]
+    assert all(subscription.closed for subscription in native.subscriptions)
+    await session.close()
+
+
+async def test_a_pipeline_built_again_from_the_transport_after_its_room_was_refused_is_usable():
+    # Arrange: the relay refused the room's SUBSCRIBE_NAMESPACE, which cancelled the first pipeline
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.refuse_watch = True
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True, data_out_tracks={"status": 60}))
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(
+        PipelineWorker(
+            Pipeline([transport.input(), transport.output()]),
+            cancel_on_idle_timeout=False,
+            processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
+        )
+    )
+    await within(runner.run())
+    native.refuse_watch = False
+    message = OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"accepted"))
+
+    # Act
+    processors = (transport.input(), transport.output())
+    _, up = await within(run_test(Pipeline(list(processors)), frames_to_send=[SleepFrame(0.1), message, SleepFrame(0.1)]))
+
+    # Assert
+    assert not [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert all(processor.is_usable for processor in processors)
+    assert native.writers["status"].objects == [(b"accepted", True)]
     await session.close()
 
 
@@ -1030,6 +1478,7 @@ async def test_an_image_request_is_answered_by_the_next_picture_of_a_source_rece
     # Assert: only the requested picture passes, the first one decoded
     assert [(p.request, p.location.object_id) for p in sink.pictures] == [(request, 0)]
     running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
     await session.close()
 
 
@@ -1053,6 +1502,7 @@ async def test_an_image_request_for_a_source_not_received_starts_receiving_that_
     assert sink.pictures[0].video_source == "video"
     assert ("on_track_subscribed", MoqWasmTrack("alice", "video", "video")) in sink.events
     running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
     await session.close()
 
 
@@ -1134,6 +1584,7 @@ async def test_a_captured_source_passes_pictures_until_it_is_released():
     assert sink.unanswered == [(waiting, "video of alice released")]
     assert native.subscriptions[-1].closed
     running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
     await session.close()
 
 
@@ -1178,6 +1629,7 @@ async def test_a_data_track_reaches_the_sink_as_messages_with_their_location():
         ("alice", "prompt", b"second", 1),
     ]
     running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
     await session.close()
 
 
@@ -1355,6 +1807,69 @@ async def test_writing_speech_waits_while_it_runs_ahead_of_the_clock():
     # Assert: half a second of speech is written ahead by at most 100 ms
     assert time.monotonic() - started >= 0.35
     await room.stop("output")
+    await session.close()
+
+
+@pytest.mark.parametrize("processor", ["input", "output"])
+@pytest.mark.parametrize("terminal", [EndFrame, CancelFrame])
+async def test_a_room_that_fails_to_be_withdrawn_is_reported_and_the_terminal_frame_still_goes_on(processor, terminal):
+    # Arrange: the relay refuses to withdraw the transport's broadcast
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+
+    async def refuse_unannounce(namespace: list[str]) -> None:
+        raise RuntimeError("withdrawal refused")
+
+    native.unannounce = refuse_unannounce
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM))
+    started = transport.input() if processor == "input" else transport.output()
+    upstream, downstream = link_recorders(started)
+    await within(start_alone(started))
+    frame = terminal()
+
+    # Act
+    await within(started.process_frame(frame, FrameDirection.DOWNSTREAM))
+
+    # Assert: the frame went on, so the pipeline ends, and the failure went upstream
+    errors = [error for error in upstream.frames if isinstance(error, ErrorFrame)]
+    assert frame in downstream.frames
+    assert len(errors) == 1 and "cannot leave the room" in errors[0].error and "withdrawal refused" in errors[0].error
+    assert started.is_usable
+    await session.close()
+
+
+async def test_an_input_only_worker_reports_the_room_it_fails_to_withdraw_at_an_end_frame():
+    # Arrange: the relay refuses to withdraw the broadcast of a transport whose only processor is
+    # its input
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+
+    async def refuse_unannounce(namespace: list[str]) -> None:
+        raise RuntimeError("withdrawal refused")
+
+    native.unannounce = refuse_unannounce
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_in_enabled=True))
+    worker = PipelineWorker(Pipeline([transport.input()]), cancel_on_idle_timeout=False)
+    errors: list[ErrorFrame] = []
+
+    @worker.event_handler("on_pipeline_error")
+    async def on_pipeline_error(worker: PipelineWorker, frame: ErrorFrame) -> None:
+        errors.append(frame)
+
+    @worker.event_handler("on_pipeline_started")
+    async def on_pipeline_started(worker: PipelineWorker, frame: StartFrame) -> None:
+        await worker.queue_frame(EndFrame())
+
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+
+    # Act
+    await within(runner.run())
+
+    # Assert
+    assert [error.error for error in errors] == ["cannot leave the room: withdrawal refused"]
     await session.close()
 
 
@@ -2204,6 +2719,9 @@ async def test_a_request_waiting_on_a_track_that_does_not_decode_gets_its_failur
     # Assert
     assert sink.unanswered == [(request, "receiving video of alice failed")]
     assert [event[0] for event in sink.events].count("on_error") == 1
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
 
 
 async def test_pictures_of_groups_whose_objects_interleave_are_all_decoded():
@@ -2268,3 +2786,104 @@ def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder
 
     # Assert: nine 20 ms packets, the rest short of a packet; the refused PCM is taken as none
     assert len(packets) == 9
+
+
+def message_payloads(frames) -> list[bytes]:
+    return [frame.message.payload for frame in frames if isinstance(frame, InputTransportMessageFrame)]
+
+
+async def test_a_participant_input_a_stop_frame_paused_pushes_no_message_until_the_next_pipeline_resumes_it():
+    # Arrange: alice's prompt track sends a message in the first run, one while a StopFrame paused
+    # the input, and one once the next pipeline resumed it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    paused, resumed = asyncio.Event(), asyncio.Event()
+    native.tracks["prompt"] = [[b"first", paused, b"paused", resumed, b"resumed", STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]), MoqWasmInputParams(data_in_tracks=["prompt"])
+    )
+    first_run, _ = await within(
+        run_test(participant_input, frames_to_send=[SleepFrame(0.1), StopFrame()], send_end_frame=False)
+    )
+    _, while_paused = link_recorders(participant_input)
+    paused.set()
+    await asyncio.sleep(0.1)
+
+    # Act: the next pipeline resumes the input, which an EndFrame ends
+    asyncio.get_running_loop().call_later(0.1, resumed.set)
+    second_run, _ = await within(run_test(participant_input, frames_to_send=[SleepFrame(0.3)]))
+
+    # Assert
+    assert message_payloads(first_run) == [b"first"]
+    assert message_payloads(while_paused.frames) == []
+    assert message_payloads(second_run) == [b"resumed"]
+    await session.close()
+
+
+class RecordingFilter(BaseAudioFilter):
+    """An audio filter recording its starts, with their sample rate, its stops, and that it
+    filtered audio in between."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    async def start(self, sample_rate: int):
+        self.calls.append(("start", sample_rate))
+
+    async def stop(self):
+        self.calls.append(("stop",))
+
+    async def process_frame(self, frame):
+        pass
+
+    async def filter(self, audio: bytes) -> bytes:
+        if self.calls[-1] != ("filter",):
+            self.calls.append(("filter",))
+        return audio
+
+
+@pytest.mark.parametrize("processor", ["input", "output"])
+async def test_a_processor_stopped_resumed_and_ended_stops_its_audio_filter_after_each_start(processor):
+    # Arrange: speech in a first pipeline at 16 kHz that a StopFrame stops, and in the pipeline at
+    # 24 kHz that resumes the processor and ends
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    audio_filter = RecordingFilter()
+    resumed = asyncio.Event()
+    if processor == "input":
+        packets = OpusEncoder().encode(tone(0.08), SAMPLE_RATE)
+        native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+        native.tracks["audio"] = [[*packets[:2], resumed, *packets[2:4], STAY_OPEN]]
+        started = MoqWasmParticipantInput(
+            RemoteBroadcast(session, [*ROOM, "alice"]),
+            MoqWasmInputParams(audio_in_enabled=True, audio_in_filter=audio_filter),
+        )
+        speech = []
+    else:
+        params = MoqWasmParams(room=ROOM, audio_out_enabled=True, audio_out_end_silence_secs=0, audio_out_filter=audio_filter)
+        started = MoqWasmTransport(session, params).output()
+        speech = [OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)]
+    await within(
+        run_test(
+            started,
+            frames_to_send=[*speech, SleepFrame(0.3), StopFrame()],
+            send_end_frame=False,
+            pipeline_params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE, audio_out_sample_rate=SAMPLE_RATE),
+        )
+    )
+
+    # Act
+    asyncio.get_running_loop().call_later(0.1, resumed.set)
+    await within(
+        run_test(
+            started,
+            frames_to_send=[*speech, SleepFrame(0.4)],
+            pipeline_params=PipelineParams(audio_in_sample_rate=24_000, audio_out_sample_rate=24_000),
+        )
+    )
+
+    # Assert: the filter filtered each run's speech at that run's rate, and was stopped after each
+    assert audio_filter.calls == [("start", SAMPLE_RATE), ("filter",), ("stop",), ("start", 24_000), ("filter",), ("stop",)]
+    await session.close()

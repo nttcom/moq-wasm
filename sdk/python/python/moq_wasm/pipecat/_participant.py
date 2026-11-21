@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 from pipecat.frames.frames import UserImageRequestFrame
 
 from moq_wasm._native import Location
+from moq_wasm._once import retrieve, wait_through_cancellation
 from moq_wasm.codecs import DecodedPicture, OpusDecoder, VideoDecoder, follow_pictures
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 from moq_wasm.media._remote_broadcast import RESUBSCRIBE_DELAY_SECONDS
@@ -91,8 +92,12 @@ class ParticipantReceiver:
 
     async def run(self) -> None:
         """Receives until cancelled, as `watch_broadcasts` does when the participant leaves, then
-        answers the image requests still waiting with an error. Reads the catalog again a second after
-        it ends or its SUBSCRIBE fails, as when the publisher has not written it yet."""
+        returns once every track it subscribed to is unsubscribed, answering the image requests
+        still waiting with an error. Ending otherwise, as once the session ended, it returns the
+        same way. The teardown runs in a task of its own, which cancelling this call, as a stop
+        does after the session's end started the teardown, does not cut short: this call returns,
+        or raises the cancellation, once it finished. Reads the catalog again a second after it
+        ends or its SUBSCRIBE fails, as when the publisher has not written it yet."""
         data = [asyncio.create_task(self._receive_data(track)) for track in self._options.data_tracks]
         try:
             # When only data tracks are read, the participant may publish no catalog, so none is asked for.
@@ -110,12 +115,25 @@ class ParticipantReceiver:
                 await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
         finally:
             self._closed = True
-            for task in data:
-                task.cancel()
-            for _, task in self._receiving.values():
-                task.cancel()
-            requests = [request for sampler in self._samplers.values() for request in sampler.take_requests()]
-            await self._sink.answer_image_requests(requests, self._left())
+            tearing_down = asyncio.create_task(self._tear_down(data))
+            # Its failure is this call's, and nobody's once this call was cancelled.
+            tearing_down.add_done_callback(retrieve)
+            await wait_through_cancellation([tearing_down])
+            tearing_down.result()
+
+    async def _tear_down(self, data: list[asyncio.Task]) -> None:
+        tasks = [*data, *(task for _, task in self._receiving.values())]
+        for task in tasks:
+            task.cancel()
+        # A picture task hands back the request it was answering as it ends.
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # A cancelled task's traceback keeps its locals, as its decoder, last picture or last
+        # object: a receiver the application still holds once it left keeps none of them.
+        self._receiving.clear()
+        data.clear()
+        tasks.clear()
+        requests = [request for sampler in self._samplers.values() for request in sampler.take_requests()]
+        await self._sink.answer_image_requests(requests, self._left())
 
     async def request_image(self, request: UserImageRequestFrame) -> None:
         """Answers `request` with the next picture of its video source; a source not yet received
@@ -154,7 +172,7 @@ class ParticipantReceiver:
             await self._sink.answer_image_requests(sampler.take_requests(), f"{source} of {self.participant_id} released")
 
     def _left(self) -> str:
-        return f"{self.participant_id} left"
+        return departure_error(self.participant_id)
 
     async def _pick_tracks(self, catalog: Catalog) -> None:
         # A request for a new source picks its track from the catalog it knows while run() may pick
@@ -186,6 +204,12 @@ class ParticipantReceiver:
         track: CatalogTrack | None,
         follow: Callable[[CatalogTrack], Awaitable[None]],
     ) -> None:
+        """Receives `track` for `key` with `follow`, replacing the track received for it, unless
+        `track` is that one. Does nothing once the participant left, so a track picked during
+        `run()`'s teardown, as for a source captured then, starts no task the teardown does not
+        wait for."""
+        if self._closed:
+            return
         current = self._receiving.get(key)
         if current is not None and track is not None and current[0] == track.name:
             return
@@ -296,6 +320,11 @@ class _Sampler:
         if self._interval is not None:
             self._next_at = now + self._interval
         return True, request
+
+
+def departure_error(participant_id: str) -> str:
+    """The error answering the image requests of a participant who left."""
+    return f"{participant_id} left"
 
 
 def _decodable(track: CatalogTrack) -> bool:
