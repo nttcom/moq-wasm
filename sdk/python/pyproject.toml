@@ -35,6 +35,7 @@ exclude = ["**/__pycache__/**"]
 
 [tool.pyright]
 include = ["python/moq_wasm"]
+extraPaths = ["python"]
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
