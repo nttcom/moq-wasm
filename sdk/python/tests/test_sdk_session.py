@@ -519,6 +519,28 @@ async def test_a_handover_the_event_loop_stalled_past_the_expiry_before_it_start
     assert relay.sessions[0].refreshed == []
 
 
+async def test_a_refresh_that_returns_no_str_is_reported_as_a_type_error_naming_what_it_returned(caplog):
+    # Arrange: the refresh returns the issuer's answer instead of the token in it
+    class IssuedToken:
+        token = unsigned_token("temp-app", time.time() + 3600)
+
+    first = unsigned_token("temp-app", time.time() + 0.3)
+
+    async def refresh(token: str) -> str:
+        return IssuedToken()  # type: ignore[return-value]
+
+    relay = FakeRelay()
+    session = await open_session(relay, first, refresh)
+
+    # Act
+    with caplog.at_level("WARNING", logger="moq_wasm"), pytest.raises(TokenExpired):
+        await within(session.closed())
+
+    # Assert
+    assert "TypeError('refresh_token returned IssuedToken, not a str')" in caplog.text
+    assert relay.sessions[0].refreshed == []
+
+
 async def test_run_cancels_the_work_and_raises_once_the_token_expired():
     # Arrange: every refresh fails until the token expires
     token = unsigned_token("temp-app", time.time() + 0.3)
