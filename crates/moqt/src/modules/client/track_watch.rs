@@ -59,8 +59,7 @@ impl TrackWatch {
         }
     }
 
-    /// The next namespace published or withdrawn, or track published; `None`
-    /// once the session ends or `close` is called.
+    /// `None` once the session ends or `close` is called.
     pub async fn next(&self) -> Option<WatchEvent> {
         let mut closed = self.closed.subscribe();
         let mut events = self.events.lock().await;
@@ -114,10 +113,10 @@ impl PublishRequest {
         &self.handler.track_name
     }
 
-    /// PUBLISH_OK with Largest Object, read from the first object of the
-    /// group the largest object is in: the PUBLISH's Largest Location is
-    /// fetched with a Standalone FETCH and its objects come before the live
-    /// ones. Fails when the PUBLISH_OK cannot be sent.
+    /// PUBLISH_OK with Largest Object. The subscription starts at the first
+    /// object of the group of the PUBLISH's Largest Location, fetched with a
+    /// Standalone FETCH before the live objects. Fails when the PUBLISH_OK
+    /// cannot be sent.
     pub async fn accept_current_group(
         mut self,
         options: GroupStartOptions,
@@ -220,8 +219,6 @@ mod tests {
     const ALICE: &[&str] = &["room", "alice"];
     const TRACK: &str = "action";
 
-    /// Registers `track` in `namespace` and writes one group into it, before
-    /// anyone subscribed.
     async fn track_with_one_group(
         publisher: &ClientSession,
         namespace: &[&str],
@@ -242,8 +239,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Sends the PUBLISH of `track` in `namespace`; `false` once it is
-    /// rejected.
+    /// Sends the PUBLISH of `track` in `namespace`; `false` when it is rejected.
     async fn publish(publisher: &ClientSession, namespace: &[&str], track: &str) -> bool {
         publisher
             .origin()
@@ -367,7 +363,7 @@ mod tests {
             namespace
         });
 
-        // Assert: the session rejected the PUBLISH under no watch itself
+        // Assert: the session itself rejected the PUBLISH outside the prefix
         assert!(!outside);
         assert_eq!(handed_over, ["room", "alice"]);
     }

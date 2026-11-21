@@ -332,8 +332,10 @@ impl Session {
 
     /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
     /// `prefix` and their tracks: the watch reports each namespace and hands
-    /// over each PUBLISH, which nothing else on the session then sees. A
-    /// session may not watch overlapping prefixes (NAMESPACE_PREFIX_OVERLAP).
+    /// over each PUBLISH under it, which nothing else on the session then
+    /// sees. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one
+    /// overlapping a prefix this session already watches is
+    /// (NAMESPACE_PREFIX_OVERLAP).
     pub async fn watch_tracks(
         &self,
         prefix: &[impl AsRef<str>],
