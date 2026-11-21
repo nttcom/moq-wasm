@@ -124,6 +124,25 @@ class FakeMediaBroadcast:
         self._session.calls.append(("media_close", self._namespace))
 
 
+class FakeNamespaceWatch:
+    """The namespace events `FakeNativeSession.publish` sends, until `close`."""
+
+    def __init__(self, session: "FakeNativeSession", prefix: list[str]):
+        self._session = session
+        self._prefix = prefix
+
+    def __aiter__(self) -> "FakeNamespaceWatch":
+        return self
+
+    async def __anext__(self):
+        return await self._session._namespace_events.get()
+
+    async def close(self) -> None:
+        self._session.calls.append(("unsubscribe_namespace", self._prefix))
+        if self._session.watch_close_gate is not None:
+            await self._session.watch_close_gate.wait()
+
+
 class FakeNativeSession:
     """One native session. `calls` lists its requests in order; `drop()` ends it as one that gave up
     replacing its connection.
@@ -135,6 +154,8 @@ class FakeNativeSession:
         self.tracks: dict[str, list[list[bytes]]] = {}
         # While set and not released, PUBLISH_NAMESPACE waits for the relay's answer.
         self.announce_gate: asyncio.Event | None = None
+        # While set and not released, closing a namespace watch waits for the relay's answer.
+        self.watch_close_gate: asyncio.Event | None = None
         self.subscriptions: list[FakeSubscription] = []
         self.media_broadcasts: list[FakeMediaBroadcast] = []
         self.calls: list[tuple] = []
@@ -166,11 +187,7 @@ class FakeNativeSession:
 
     async def watch_namespaces(self, prefix: list[str]):
         self.calls.append(("watch_namespaces", prefix))
-        return self._events()
-
-    async def _events(self):
-        while True:
-            yield await self._namespace_events.get()
+        return FakeNamespaceWatch(self, prefix)
 
     async def subscribe(self, namespace: list[str], name: str, **options) -> FakeSubscription:
         self.calls.append(("subscribe", name))
