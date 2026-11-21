@@ -81,6 +81,9 @@ class Room:
         # Bumped by each interruption; a write started before it stops.
         self._audio_generation = 0
         self._video_clock = _MediaClock()
+        # Held from the start of a picture's encode until its thread finishes, which a cancelled
+        # write does not wait for: the encoder's codec context takes one picture at a time.
+        self._encoding = asyncio.Lock()
         self._users: set[object] = set()
         # Opens the room once for both processors; None while the room is stopped.
         self._opening: asyncio.Task[_OpenedRoom] | None = None
@@ -298,7 +301,10 @@ class Room:
             opened.opus_holds_interruptible = None
 
     async def write_picture(self, image: bytes, size: tuple[int, int], color_format: str) -> bool:
-        """Encodes the picture in a thread and pushes it. Raises what failed the encode, as for a
+        """Encodes the picture in a thread and pushes it as the encode finishes, before the next
+        picture's encode starts. A write cancelled before then drops the picture, and the next
+        picture is encoded as a keyframe, since a subscriber's decoder misses the dropped one; a
+        write cancelled after then has pushed its picture. Raises what failed the encode, as for a
         picture in a color format the encoder does not take, and what failed publishing the media
         source, as `_push_media` does. Returns whether the room wrote the picture: False when it is
         not open, publishes no video or publishing its media source failed, and when the media
@@ -306,11 +312,41 @@ class Room:
         opened = self._opened
         if opened is None or opened.video is None or not opened.takes_media():
             return False
-        packets = await asyncio.to_thread(opened.video.encode, image, size, color_format)
-        for packet in packets:
-            if not self._push_media(opened, lambda media: media.push_video(packet, self._video_clock.next(1))):
-                return False
-        return True
+        video = opened.video
+        await self._encoding.acquire()
+        dropped = False
+        pushed = True
+        failure: RuntimeError | None = None
+
+        def finished(encoded: asyncio.Future[list[bytes]]) -> None:
+            # Decides once, under the lock, whether the picture is pushed or replaced by a keyframe.
+            nonlocal failure, pushed
+            try:
+                if encoded.cancelled() or encoded.exception() is not None or dropped:
+                    if dropped:
+                        video.request_keyframe()
+                    return
+                for packet in encoded.result():
+                    timestamp = self._video_clock.next(1)
+                    if not self._push_media(opened, lambda media: media.push_video(packet, timestamp)):
+                        pushed = False
+                        return
+            except RuntimeError as error:
+                failure = error
+            finally:
+                self._encoding.release()
+
+        encoding = asyncio.ensure_future(asyncio.to_thread(video.encode, image, size, color_format))
+        encoding.add_done_callback(finished)
+        try:
+            await asyncio.shield(encoding)
+        except asyncio.CancelledError:
+            dropped = True
+            raise
+        # `finished` ran before this resumed: it was added to `encoding` before the shield was.
+        if failure is not None:
+            raise failure
+        return pushed
 
     @staticmethod
     def _push_media(opened: "_OpenedRoom", push: Callable[[MediaSource], bool]) -> bool:
