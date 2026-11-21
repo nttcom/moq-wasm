@@ -29,10 +29,10 @@ pub async fn run_robot(
     Robot::run(session.client().clone(), broadcast, room, config).await
 }
 
-/// Starts driving a robot room from `broadcast`, a driver's announced
-/// broadcast (`<room>/operators/<id>` or `<room>/bots/policy`): lists its
-/// `action` track in the catalog. Keep `broadcast` alive while sending.
-/// Fails when the track cannot be offered.
+/// Offers `action` on `broadcast`, a driver's announced broadcast
+/// (`<room>/operators/<id>` or `<room>/bots/policy`), and returns its
+/// `Driver`. Keep `broadcast` alive while sending. Fails when the track
+/// cannot be offered.
 pub async fn offer_actions(broadcast: &LocalBroadcast) -> anyhow::Result<Driver> {
     Driver::offer(broadcast.broadcast()).await
 }

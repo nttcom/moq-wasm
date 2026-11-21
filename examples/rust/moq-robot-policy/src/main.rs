@@ -11,8 +11,8 @@ use moq_wasm::{
 const DT_MS: u64 = 50;
 /// The fastest the policy drives along each axis, in units per second.
 const MAX_SPEED: f64 = 0.5;
-/// The robot's `state` priority and the action age it accepts
-/// (docs/architecture/robotics/architecture.md, Priority and delivery).
+// The robot's `state` priority and the action age it accepts
+// (docs/architecture/robotics/architecture.md, Priority and delivery).
 const STATE_PRIORITY: u8 = 32;
 const MAX_ACTION_AGE: Duration = Duration::from_millis(300);
 const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
@@ -47,8 +47,6 @@ fn parse_point(text: &str) -> Result<(f64, f64), String> {
     Ok((parse(x)?, parse(y)?))
 }
 
-/// The velocity toward `target` from `(x, y)`, proportional to the distance
-/// and at most `MAX_SPEED` along each axis.
 fn velocity_toward(target: (f64, f64), x: f64, y: f64) -> [f64; 2] {
     let speed = |distance: f64| (2.0 * distance).clamp(-MAX_SPEED, MAX_SPEED);
     [speed(target.0 - x), speed(target.1 - y)]
@@ -96,8 +94,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Answers each `state` of the robot with an action toward `target`,
-/// subscribing again a second after the robot leaves or before it comes.
 async fn drive(
     session: &moq_wasm::Session,
     robot: &[&str],

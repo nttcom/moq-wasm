@@ -86,7 +86,7 @@ pub(crate) async fn write_record<D: Serialize>(
     Ok(())
 }
 
-/// The robot's wall clock in milliseconds since the Unix epoch.
+/// This host's wall clock in milliseconds since the Unix epoch.
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -11,7 +11,6 @@ async function robotX(page: Page): Promise<number> {
   return match ? Number(match[1]) : Number.NaN
 }
 
-/// Opens the operator page connected to `roomName`, once it shows the robot; returns this page's operator.
 async function connect(page: Page, roomName: string): Promise<string> {
   await page.goto(`${ROBOT_TELEOP_INDEX_PATH}?${new URLSearchParams({ moqtUrl })}`)
   await page.getByTestId('robot-teleop-room').fill(roomName)
