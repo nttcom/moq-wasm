@@ -342,9 +342,10 @@ Each step is its own pull request, stacked:
    `episode` publishing).
 4. The Rust SDK's `moq_wasm::robotics`; the Python SDK's module follows
    when a Python robot needs it.
-5. Example: a simulated robot on the Rust SDK and an operator page in
-   `examples/browser` (cameras, keyboard or gamepad actions), with an E2E
-   test.
+5. Example: a simulated robot on the Rust SDK (`examples/rust/moq-robot-sim`,
+   a point driven by velocity) and an operator page
+   (`examples/browser/examples/robot-teleop`, keyboard actions), with an E2E
+   test through the relay. Cameras come with a robot that has one.
 6. `recorder`: archive every broadcast's event timelines in a room.
 7. `bot-dispatcher`: the `policy` bot type and an example policy bot.
 8. Later: the LeRobot exporter, MCAP export, and a ROS 2 bridge (its own
