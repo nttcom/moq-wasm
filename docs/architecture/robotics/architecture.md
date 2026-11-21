@@ -260,8 +260,8 @@ TIMEOUT.
 
 ### Recording and datasets
 The recorder's room archive (`format: "moq"`) stores catalogs, LOC cameras
-and the event timelines each catalog lists, on one recording clock. So every
-broadcast of the room lists its tracks in its catalog: the robot's `state`,
+and the event timelines each catalog lists, on one recording clock. Every broadcast
+of the room therefore lists its tracks in its catalog: the robot's `state`,
 `control` and `episode` (`Robot` offers them), each operator's `action` (the
 browser SDK's `createBroadcast` with `eventTimelines`) and the policy's
 `action`. The recorder records `<room>/bots/policy` as it records a

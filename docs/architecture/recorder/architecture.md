@@ -407,7 +407,8 @@ timeline tracks the catalog lists, a meeting's `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
 an otherwise empty room alive. A robot room's `<room>/bots/policy` is recorded
 as a participant is, for the `action` timeline its catalog lists, and does not
-keep the room alive either (docs/architecture/robotics/architecture.md). The publishers' media timelines are not
+keep the room alive either (docs/architecture/robotics/architecture.md).
+The publishers' media timelines are not
 recorded: the replay builds each from the stored media (see below). Each
 track has immutable payload chunks and JSON indexes, including canonical
 object fields, subgroup headers, FIN events and LOC Timestamps. The archive
