@@ -843,12 +843,13 @@ point; its API and its mapping to the JavaScript and Python SDKs are in
 
 | File | Role |
 | --- | --- |
-| `session.rs` | `Session`: `new(moqt::Session)` (a connected session; the bindings build their endpoints themselves) or `connect(url, &ClientConfig)`, and the requests: `subscribe`, `subscribe_current_group`, `subscribe_group_start`, `fetch`, `track_status`, `watch_namespaces`, `follow_track`, `announce`, `publish_track`, `closed`, `close`. Namespaces are element lists, joined with `/` here |
+| `session.rs` | `Session`: `new(moqt::Session)` (a connected session; the bindings build their endpoints themselves) or `connect(url, &ClientConfig)`, and the requests: `subscribe`, `subscribe_current_group`, `subscribe_group_start`, `fetch`, `track_status`, `watch_namespaces`, `watch_tracks`, `follow_track`, `announce`, `publish_track`, `closed`, `close`. Namespaces are element lists, joined with `/` here |
 | `routes.rs` | `Routes`: the event routing below and the tables it fills |
 | `event_loop_task.rs` | `EventLoopTask`: runs `Routes::route` on `executor::spawn`; dropping it (with the `Session`) or `close` stops it |
 | `event_handler.rs` | `EventHandler`, the `handle(event) -> Option<event>` shape `Origin`, `NamespaceWatchers` and `broadcast::RelayConnection` share, and `HandlerId` |
 | `subscription.rs`, `fetch.rs`, `namespace_watch.rs`, `announcement.rs`, `track_writer.rs` | What the requests return; each holds the `Arc<moqt::Session>` (and `Routes` where it reads them) |
 | `track_follower.rs` | `TrackFollower`, what `follow_track` returns: a track that peers publish one after another (a browser viewer's input track). An `EventHandler` takes the track's PUBLISH, the namespace's `NamespaceWatchers` entry its PUBLISH_NAMESPACE, and `FollowTask` subscribes to or accepts one publisher at a time, reports `FollowEvent::PublisherLeft` when that one's subscription ends, and lets a publisher that announced meanwhile take over |
+| `track_watch.rs` | `TrackWatch`, what `watch_tracks` returns: one SUBSCRIBE_NAMESPACE with tracks (draft-14 §9.28) whose namespaces and PUBLISHes come in one stream, in the order the peer sent them. An `EventHandler` reports PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE under the prefix and hands them on for the namespace watchers to acknowledge, and takes each PUBLISH under it as a `PublishRequest`, which the caller rejects or accepts from the current group (`accept_current_group`: PUBLISH_OK with Largest Object and a Standalone FETCH of the PUBLISH's Largest Location) |
 | `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code; `FetchError`: a rejected FETCH, or a response stream that did not arrive (`fetch` returns once the stream has) |
 
 Each event goes, in order, to the handlers `add_handler` added (in the order

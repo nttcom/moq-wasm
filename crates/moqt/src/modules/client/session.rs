@@ -16,6 +16,7 @@ use crate::{
             routes::Routes,
             subscription::{Reading, Subscription},
             track_follower::TrackFollower,
+            track_watch::TrackWatch,
             track_writer::TrackWriter,
         },
         executor,
@@ -85,7 +86,7 @@ impl Default for GroupStartOptions {
 }
 
 impl GroupStartOptions {
-    fn subscribe_option(self) -> SubscribeOption {
+    pub(super) fn subscribe_option(self) -> SubscribeOption {
         SubscribeOption {
             subscriber_priority: self.priority,
             delivery_timeout: self
@@ -327,6 +328,32 @@ impl Session {
             .await
             .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         Ok(NamespaceWatch::new(self.session.clone(), prefix, events))
+    }
+
+    /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
+    /// `prefix` and their tracks: the watch reports each namespace and hands
+    /// over each PUBLISH, which nothing else on the session then sees. A
+    /// session may not watch overlapping prefixes (NAMESPACE_PREFIX_OVERLAP).
+    pub async fn watch_tracks(
+        &self,
+        prefix: &[impl AsRef<str>],
+    ) -> Result<TrackWatch, RequestError> {
+        let elements = prefix
+            .iter()
+            .map(|element| element.as_ref().to_string())
+            .collect();
+        // Watched before the request: the peer publishes the namespaces and
+        // tracks it knows right away.
+        let watch = TrackWatch::new(self.session.clone(), self.routes.clone(), elements);
+        self.session
+            .subscriber()
+            .subscribe_namespace(
+                join_namespace(prefix),
+                NamespaceInterest::NamespacesAndTracks,
+            )
+            .await
+            .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
+        Ok(watch)
     }
 
     /// Follows `track` in `namespace` as peers publish it one after another,
