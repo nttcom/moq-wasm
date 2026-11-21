@@ -264,12 +264,16 @@ authorization only (local development and the E2E tests), accepts every
 request for the app its room starts with, reads no registry, and answers a
 bot's token call with `null`, so the bot joins with no token.
 
+At startup, outside that mode, the service reads the registry once and fails
+rather than listening with one it cannot read; a rotated registry is read again
+on each token signature.
+
 ## Modules
 
 | Module | Responsibility |
 | --- | --- |
 | `bot_types.rs` | `BotTypes`: the types file, each type's `JobLauncher`, arguments, grace period, longest run and `max_running`. |
-| `launch_auth.rs` | `LaunchAuth`: sends the bearer token to the VTS and requires a launch token of at most 5 minutes, not a relay's, whose `bots` claim covers the room. |
+| `launch_auth.rs` | `LaunchAuth`: verifies the bearer token through `auth_token::VtsClient` and requires a launch token of at most 5 minutes, not a relay's, whose `bots` claim covers the room. |
 | `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
 | `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |
 | `bots.rs` | `Bots`: start (room holder, `max_running`, launch), the room's latest bot of a type, stop, and the bot's own token and heartbeat calls, authenticated by its key or its Google ID token (`google_cloud::IdTokenVerifier`). |
