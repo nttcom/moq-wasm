@@ -8,7 +8,7 @@ from moq_wasm import _native
 from moq_wasm._ended import copied
 from moq_wasm._errors import SessionEnded
 from moq_wasm._once import Once, wait_through_cancellation
-from moq_wasm._token import RefreshToken, TokenKeeper
+from moq_wasm._token import RefreshToken, TokenKeeper, read_claims
 from moq_wasm._wait import wait
 
 logger = logging.getLogger("moq_wasm")
@@ -450,12 +450,15 @@ async def _cancel_work(running: asyncio.Future) -> None:
 class _Connecting:
     """What `connect` returns: awaited, the open `Session`; used with `async with`, a session closed
     on exit, which re-raises what ended the session. Entering it while it is entered raises
-    RuntimeError without connecting, since one exit closes one session."""
+    RuntimeError without connecting, since one exit closes one session. Each session it opens
+    refreshes its own token, starting from the newest one the session opened before it holds."""
 
-    def __init__(self, dial: Dial, keeper: TokenKeeper | None, token: str | None):
+    def __init__(self, dial: Dial, token: str | None, refresh: RefreshToken | None = None):
         self._dial = dial
-        self._keeper = keeper
         self._token = token
+        self._refresh = refresh
+        # The keeper of the session opened last, whose token the next session starts from.
+        self._latest: TokenKeeper | None = None
         self._session: Session | None = None
         # From the start of `__aenter__` until its failure or the end of `__aexit__`.
         self._entered = False
@@ -464,8 +467,14 @@ class _Connecting:
         return self._start().__await__()
 
     async def _start(self) -> Session:
-        token = self._keeper.token if self._keeper is not None else self._token
-        return Session(await self._dial(token), self._keeper)
+        token = self._latest.token if self._latest is not None else self._token
+        # One keeper per session: two sessions sharing one would each take the token the other
+        # refreshed as not later than the current one, and end with TokenExpired.
+        keeper = TokenKeeper(token, self._refresh) if self._refresh is not None and token is not None else None
+        session = Session(await self._dial(token), keeper)
+        if keeper is not None:
+            self._latest = keeper
+        return session
 
     async def __aenter__(self) -> Session:
         if self._entered:
@@ -515,11 +524,13 @@ def connect(
     without it draft-18, then draft-14, are offered."""
     if refresh_token is not None and token is None:
         raise ValueError("refresh_token needs a token")
-    keeper = TokenKeeper(token, refresh_token) if refresh_token is not None and token is not None else None
+    if refresh_token is not None and token is not None:
+        # Raises ValueError for what is not a token before anything is dialed.
+        read_claims(token)
 
     async def dial(current_token: str | None) -> _native.Session:
         return await _native.connect(
             url, verify_certificate=verify_certificate, token=current_token, versions=versions
         )
 
-    return _Connecting(dial, keeper, token)
+    return _Connecting(dial, token, refresh_token)

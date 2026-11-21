@@ -141,12 +141,34 @@ async def test_a_refreshed_token_is_handed_to_the_relay():
         return later
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act / Assert
     while relay.sessions[0].refreshed != [later]:
         await within(asyncio.sleep(0.01))
     await session.close()
+
+
+async def test_two_sessions_awaited_from_one_connection_each_refresh_their_own_token():
+    # Arrange: both sessions start with a token due for refresh halfway through its 0.4 s
+    first = unsigned_token("temp-app", time.time() + 0.4)
+    later = unsigned_token("temp-app", time.time() + 3600)
+
+    async def refresh(token: str) -> str:
+        return later
+
+    relay = FakeRelay()
+    connecting = _Connecting(relay.dial, first, refresh)
+
+    # Act
+    sessions = [await connecting, await connecting]
+    await eventually(lambda: [native.refreshed for native in relay.sessions] == [[later], [later]])
+    await asyncio.sleep(0.4)
+
+    # Assert: neither took the token the other refreshed as its own, so neither expired
+    assert [session._done.done() for session in sessions] == [False, False]
+    for session in sessions:
+        await session.close()
 
 
 async def test_a_short_lived_token_is_refreshed_halfway_through_its_lifetime():
@@ -161,7 +183,7 @@ async def test_a_short_lived_token_is_refreshed_halfway_through_its_lifetime():
 
     started_at = time.time()
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act
     await eventually(lambda: relay.sessions[0].refreshed == [later])
@@ -185,7 +207,7 @@ async def test_a_failed_refresh_is_retried_until_the_token_actually_expires(monk
         return answer
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act
     await eventually(lambda: relay.sessions[0].refreshed == [later])
@@ -209,7 +231,7 @@ async def test_a_refreshed_token_the_relay_refuses_is_refreshed_again_from_the_a
         return answers.pop(0)
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     keeper = session._keeper
     assert keeper is not None
     native = relay.sessions[0]
@@ -246,7 +268,7 @@ async def test_a_refreshed_token_that_is_not_later_or_of_another_app_is_not_hand
         return other
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act
     with pytest.raises(TokenExpired):
@@ -272,7 +294,7 @@ async def test_close_returns_after_the_refresh_callback_it_cancelled_cleaned_up(
         return token
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     await within(refreshing.wait())
 
     # Act
@@ -297,7 +319,7 @@ async def test_close_returns_when_the_refresh_callback_it_cancelled_raises_from_
         return token
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     await within(refreshing.wait())
 
     # Act / Assert
@@ -321,7 +343,7 @@ async def test_close_returns_when_the_refresh_callback_it_cancelled_closes_the_s
         return token
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     await within(refreshing.wait())
 
     # Act / Assert
@@ -345,7 +367,7 @@ async def test_close_returns_when_the_refresh_callback_it_cancelled_returns_a_to
         return later
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     await within(refreshing.wait())
 
     # Act
@@ -368,7 +390,7 @@ async def test_a_token_the_refresh_returns_after_catching_its_timeout_is_not_han
         return later
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act / Assert
     with pytest.raises(TokenExpired):
@@ -390,7 +412,7 @@ async def test_a_refresh_whose_shared_future_someone_else_cancelled_is_retried(m
         return answers.pop(0)
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     await eventually(lambda: len(answers) == 1)
 
     # Act: its other holder cancels it
@@ -417,7 +439,7 @@ async def test_the_token_expires_on_time_while_the_refresh_it_gave_up_on_still_c
         return token
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act / Assert: the session ends at the token's expiry, not once the cleanup ended
     with pytest.raises(TokenExpired):
@@ -436,7 +458,7 @@ async def test_a_handover_the_relay_does_not_answer_before_the_token_expires_end
         return later
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     async def unanswered(token: str, *, app_id: str) -> None:
         await asyncio.Event().wait()
@@ -458,7 +480,7 @@ async def test_a_refresh_that_returns_after_the_event_loop_stalled_past_the_expi
         return later
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
 
     # Act / Assert
     with pytest.raises(TokenExpired):
@@ -487,7 +509,7 @@ async def test_a_handover_the_event_loop_stalled_past_the_expiry_before_it_start
                 time.sleep(0.3)
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(first, refresh), first)
+    session = await open_session(relay, first, refresh)
     assert session._keeper is not None
     session._keeper._calls = StallingAtTheHandover()
 
@@ -505,7 +527,7 @@ async def test_run_cancels_the_work_and_raises_once_the_token_expired():
         raise RuntimeError("temporary-apps service unavailable")
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(token, refresh), token)
+    session = await open_session(relay, token, refresh)
     work = asyncio.get_running_loop().create_future()
 
     # Act / Assert
@@ -522,7 +544,7 @@ async def test_run_raises_the_expiry_even_when_the_work_returned_because_of_it()
         raise RuntimeError("temporary-apps service unavailable")
 
     relay = FakeRelay()
-    session = await open_session(relay, TokenKeeper(token, refresh), token)
+    session = await open_session(relay, token, refresh)
 
     async def watch_until_it_ends() -> None:
         async for _ in await session.watch_namespaces(["anon", "room"]):
@@ -604,7 +626,7 @@ async def test_leaving_async_with_closes_the_connection_and_later_requests_fail(
     relay = FakeRelay()
 
     # Act
-    async with _Connecting(relay.dial, None, None) as session:
+    async with _Connecting(relay.dial, None) as session:
         pass
 
     # Assert
@@ -616,7 +638,7 @@ async def test_leaving_async_with_closes_the_connection_and_later_requests_fail(
 async def test_entering_a_connection_while_it_is_entered_raises_without_connecting():
     # Arrange
     relay = FakeRelay()
-    connecting = _Connecting(relay.dial, None, None)
+    connecting = _Connecting(relay.dial, None)
 
     async with connecting:
         # Act / Assert
