@@ -26,39 +26,12 @@ Library components (draft-governed):
 | `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC properties to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-04.txt` (`loc` module only) |
 | `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`, and the reader that turns a broadcast back into media events for `live-egress`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
 
-Application and integration components (draft reference is normally not required):
-
-| Component | Description |
-| --- | --- |
-| `sdk/js` | Browser SDK `moq-wasm`: WebAssembly bindings to `moqt` (crate `wasm`) and the TypeScript package around them in `js/` |
-| `sdk/rust` | Rust SDK `moq-wasm`: `moqt::client` re-exported with token refresh and the end of a session, the broadcasts it publishes (tracks, event timelines and encoded media, built on `broadcast`) and those it follows through their MSF catalog, for applications outside this repository |
-| `sdk/python` | Python SDK `moq-wasm`: PyO3 bindings to `moqt` (`moq_wasm._native`) and the Python package around them, used by the Python bots |
-| `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
-| `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
-| `services/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
-| `services/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
-| `services/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
-| `services/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
-| `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
-| `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
-| `crates/job-launcher` | Starts a job without waiting for it: a child process locally or a Cloud Run Job execution with overridden arguments, used by `recorder` and `bot-dispatcher` |
-| `crates/http-server` | The HTTP/1 accept loop and the JSON, bearer token, query string and any-origin CORS helpers shared by the services' HTTP servers (`console`, `vts`, `temporary-apps`, `bot-dispatcher`, `observability`, `live-translate`, `recorder`) |
-| `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
-| `crates/google-cloud` | The Google Cloud calls the services make as the workload's service account: its access token from the metadata server, cached until it expires, its ID token, and the Cloud Storage requests conditional on an object's generation; used by `app-registry`, `recorder`, `job-launcher`, `bot-dispatcher` and `live-translate` |
-| `crates/telemetry-otlp` | Shared `tracing` setup for the workspace binaries: stdout and OTLP traces, logs and metrics, and W3C trace context |
-| `crates/telemetry-report` | `telemetry`'s client log and span records built from `tracing`, for the clients without an OpenTelemetry SDK: the wasm module, the Python module and `moq-cli` |
-| `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
-| `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
-| `services/temporary-apps` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under, and calls `bot-dispatcher` as their app server |
-| `services/bot-dispatcher` | Bot service: starts, stops and reports the bots of a room (`recorder`, the AI bots) for an app's server, and signs the tokens the bots join with |
-| `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
-| `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate`, or under the temporary app a streamer hands it the token of, with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
-| `examples/` | Usage examples and test clients |
+All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are application and integration components (see each crate's `Cargo.toml` `description` and `docs/architecture/<package name>/`); draft lookup is normally not required for them.
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
 ### Architecture Documents
-- Architecture documents live at `docs/architecture/${package_name}/architecture.md`.
+- Architecture documents live under `docs/architecture/${package_name}/` (typically `architecture.md`; the SDKs use `browser-sdk.md` or `sdk.md`).
 - Before making structural changes to a component (module layout, layering, task/channel topology), read its architecture document first.
 - When a change alters the design intent, module boundaries, runtime flow, or key invariants described in an architecture document, update that document in the same change.
 
@@ -78,20 +51,16 @@ Application and integration components (draft reference is normally not required
 ## 5. Commands
 - Build: `cargo build`
 - Test: `cargo test`
-- Lint (Rust): `cargo clippy && cargo fmt --check`
+- Lint (Rust): `cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo fmt --all -- --check`
+- Lint (Rust, wasm32): `cargo clippy -p wasm -p moqt -p broadcast -p telemetry -p telemetry-report -p mediapack -p msf --target wasm32-unknown-unknown -- -D warnings`
 - Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "sdk/js/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore`
 - Test (browser unit): `npm test --workspaces`
-- Wasm: `npm --prefix sdk/js/js run wasm`
-- Console web: `npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
+- Test (Python): `cd sdk/python && uv run pytest` (and `uv run pytest` in `examples/python/<project>`)
+- Wasm / JS SDK: `npm run wasm -w moq-wasm && npm run build -w moq-wasm`
+- Console web: `npm --prefix services/console/web run format:check && npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`
 - Mutation test (the lines a branch changes): `git diff origin/master... > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff -p <package_name>`
-- E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
-- E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
-- E2E Test (datagram): `node tests/browser-e2e/run-datagram-e2e.mjs`
-- E2E Test (whiteboard): `node tests/browser-e2e/run-whiteboard-e2e.mjs`
-- E2E Test (auth): `./tests/auth-e2e/run.sh`
-- E2E Test (console): `node tests/browser-e2e/run-console-e2e.mjs`
-- E2E Test (live-translate): `node tests/browser-e2e/run-live-translate-e2e.mjs`
+- E2E tests: see `tests/README.md` (`./tests/<suite>/run.sh` for relay/service suites, `node tests/browser-e2e/run-*-e2e.mjs` for browser suites)
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
@@ -152,7 +121,7 @@ A span that lives longer than the request that starts it (a track, a session) ro
 - Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
-  - Scope: use the component name (`moqt`, `relay`, `wasm`, `broadcast`, `live-ingest`, `live-egress`, `onvif`, `msf`, `mediapack`)
+  - Scope: use the component or crate name (e.g. `moqt`, `relay`, `wasm`, `python`, `moq-wasm`, `broadcast`, `live-ingest`, `live-egress`, `onvif-ingest`, `msf`, `mediapack`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.
