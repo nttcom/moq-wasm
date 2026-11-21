@@ -1,13 +1,21 @@
 import asyncio
+import contextvars
+import gc
 import json
+import threading
 import time
 import uuid
+import weakref
+from fractions import Fraction
 from types import SimpleNamespace
 
+import av
 import numpy as np
 import pytest
 
 import moq_wasm
+from moq_wasm import codecs
+from moq_wasm import Location, Subscription
 from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder, decode_pictures
 from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
@@ -26,7 +34,7 @@ from pipecat.transports.base_transport import VideoInSourceParams
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.tests.utils import SleepFrame, run_test
 
-from tests.fake_native import STAY_OPEN, FakeRelay, open_session
+from tests.fake_native import STAY_OPEN, FakeRelay, FakeSubscription, open_session, until
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -47,6 +55,20 @@ def tone(seconds: float, sample_rate: int = SAMPLE_RATE) -> bytes:
 
 def picture(value: int) -> bytes:
     return bytes([value]) * (SIZE[0] * SIZE[1] * 3)
+
+
+# The Object Status of an object that ends its group (draft-ietf-moq-transport-14 §10.2.1.1).
+END_OF_GROUP = 3
+
+
+def video_object(group_id: int, object_id: int, payload: bytes, *, status: int | None = None, extension_headers=()):
+    return SimpleNamespace(
+        group_id=group_id,
+        object_id=object_id,
+        payload=payload,
+        status=status,
+        extension_headers=list(extension_headers),
+    )
 
 
 def catalog_payload(*tracks: dict) -> bytes:
@@ -183,7 +205,7 @@ def test_the_video_encoder_reads_a_picture_in_each_color_format_it_takes(color_f
 
     # Assert: the picture decodes blue
     decoder = VideoDecoder("avc1.42e01f")
-    decoded = [picture for packet in packets if (picture := decoder.decode(packet)) is not None]
+    decoded = [picture for packet in packets for picture, _ in decoder.decode(packet)] + [p for p, _ in decoder.flush()]
     red, green, blue_level = decoded[0].to_ndarray(format="rgb24").reshape(-1, 3).mean(axis=0)
     assert blue_level > 200 and red < 60 and green < 60
 
@@ -263,9 +285,9 @@ async def test_decoded_pictures_carry_the_location_of_their_object_and_are_thinn
 
     async def objects():
         for object_id, payload in enumerate(first):
-            yield SimpleNamespace(group_id=0, object_id=object_id, payload=payload)
+            yield video_object(0, object_id, payload)
         for object_id, payload in list(enumerate(second))[1:]:
-            yield SimpleNamespace(group_id=1, object_id=object_id, payload=payload)
+            yield video_object(1, object_id, payload)
 
     # Act
     every = [decoded async for decoded in decode_pictures(objects(), "avc1.42e01f")]
@@ -275,6 +297,65 @@ async def test_decoded_pictures_carry_the_location_of_their_object_and_are_thinn
     assert [(d.location.group_id, d.location.object_id) for d in every] == [(0, 0), (0, 1), (0, 2)]
     assert [(d.location.group_id, d.location.object_id) for d in thinned] == [(0, 0)]
     assert every[0].picture.width == SIZE[0]
+
+
+def nal_units(annex_b: bytes) -> list[bytes]:
+    """The NAL units of an H.264 access unit in Annex B."""
+    return [unit.rstrip(b"\x00") for unit in annex_b.split(b"\x00\x00\x01") if unit.rstrip(b"\x00")]
+
+
+def length_prefixed(annex_b: bytes) -> tuple[bytes, bytes, bytes]:
+    """An H.264 access unit's SPS, PPS and its other NAL units, each after a 4-byte length."""
+    units = nal_units(annex_b)
+    sps = next((unit for unit in units if unit[0] & 0x1F == 7), b"")
+    pps = next((unit for unit in units if unit[0] & 0x1F == 8), b"")
+    rest = b"".join(len(unit).to_bytes(4, "big") + unit for unit in units if unit[0] & 0x1F not in (7, 8))
+    return sps, pps, rest
+
+
+def b_frame_groups(groups: int, pictures_per_group: int) -> list[list[tuple[bytes, int]]]:
+    """H.264 groups with B-frames, each object as (payload, the value of the picture it carries)."""
+    encoder = av.CodecContext.create("libx264", "w")
+    encoder.width, encoder.height, encoder.pix_fmt = *SIZE, "yuv420p"
+    encoder.time_base = Fraction(1, 30)
+    encoder.options = {
+        "preset": "ultrafast",
+        "x264-params": f"bframes=2:b-adapt=0:keyint={pictures_per_group}:min-keyint={pictures_per_group}:scenecut=0:repeat-headers=1",
+    }
+    encoder.open()
+    packets = []
+    for index in range(groups * pictures_per_group):
+        frame = av.VideoFrame.from_ndarray(np.frombuffer(picture(index * 10 % 250), np.uint8).reshape(SIZE[1], SIZE[0], 3), format="rgb24")
+        frame = frame.reformat(format="yuv420p")
+        frame.pts = index
+        packets.extend(encoder.encode(frame))
+    packets.extend(encoder.encode(None))
+    split: list[list[tuple[bytes, int]]] = []
+    for packet in packets:
+        if packet.is_keyframe:
+            split.append([])
+        split[-1].append((bytes(packet), packet.pts * 10 % 250))
+    return split
+
+
+async def test_every_picture_of_groups_with_b_frames_is_decoded_with_the_location_it_came_in():
+    # Arrange: each group ends with its End of Group
+    groups = b_frame_groups(2, 6)
+
+    async def objects():
+        for group_id, group in enumerate(groups):
+            for object_id, (payload, _) in enumerate(group):
+                yield video_object(group_id, object_id, payload)
+            yield video_object(group_id, len(group), b"", status=END_OF_GROUP)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.64001f")]
+
+    # Assert: in presentation order, each picture at the object that carried it (lossy, to the 10)
+    values = [round(d.picture.to_ndarray(format="rgb24").mean() / 10) * 10 for d in decoded]
+    assert values == [index * 10 for index in range(12)]
+    carried = {value: (group_id, object_id) for group_id, group in enumerate(groups) for object_id, (_, value) in enumerate(group)}
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [carried[value] for value in values]
 
 
 def test_a_video_codec_other_than_h264_and_vp8_is_refused():
@@ -801,3 +882,306 @@ async def test_writing_speech_waits_while_it_runs_ahead_of_the_clock():
     assert time.monotonic() - started >= 0.35
     await room.stop("output")
     await session.close()
+
+
+async def test_a_decode_read_that_timed_out_leaves_the_decoding_to_the_next_read():
+    # Arrange: the group's second object is held back until the gate opens, read from a subscription,
+    # whose reads a timeout does not end
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    payloads = [b"".join(encoder.encode(picture(value), SIZE, "RGB")) for value in (0, 10, 20)]
+    gate = asyncio.Event()
+    objects = [video_object(0, 0, payloads[0]), gate, video_object(0, 1, payloads[1]), video_object(0, 2, payloads[2])]
+    session = await open_session(FakeRelay())
+    pictures = decode_pictures(Subscription(FakeSubscription(objects), session), "avc1.42e01f")
+    first = await within(anext(pictures))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(pictures), 0.05)
+
+    # Act
+    gate.set()
+    rest = [await within(anext(pictures)) for _ in range(2)]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in (first, *rest)] == [(0, 0), (0, 1), (0, 2)]
+    await pictures.aclose()
+    await session.close()
+
+
+async def test_decode_pictures_reads_the_objects_in_the_readers_own_task_and_context():
+    # Arrange: the objects' generator sets a context variable and a timeout across its yields
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    payloads = [b"".join(encoder.encode(picture(value), SIZE, "RGB")) for value in (0, 10, 20)]
+    variable: contextvars.ContextVar[str] = contextvars.ContextVar("variable")
+
+    async def objects():
+        token = variable.set("objects")
+        async with asyncio.timeout(TIMEOUT_SECONDS):
+            for object_id, payload in enumerate(payloads):
+                yield video_object(0, object_id, payload)
+        variable.reset(token)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(0, 0), (0, 1), (0, 2)]
+
+
+async def test_closing_a_decoding_leaves_its_objects_to_the_caller():
+    # Arrange: a read of the decoding waits on the caller's objects, whose second one is held back
+    # until the gate opens
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    payloads = [b"".join(encoder.encode(picture(value), SIZE, "RGB")) for value in (0, 10, 20)]
+    gate = asyncio.Event()
+
+    async def objects():
+        yield video_object(0, 0, payloads[0])
+        await gate.wait()
+        yield video_object(0, 1, payloads[1])
+        yield video_object(0, 2, payloads[2])
+
+    source = objects()
+    pictures = decode_pictures(source, "avc1.42e01f")
+    await within(anext(pictures))
+    reading = asyncio.ensure_future(anext(pictures))
+    await asyncio.sleep(0.01)
+
+    # Act
+    await within(pictures.aclose())
+    gate.set()
+
+    # Assert: the read in flight ends, and the caller reads its objects on
+    with pytest.raises(StopAsyncIteration):
+        await within(reading)
+    assert (await within(anext(source))).object_id == 2
+
+
+async def test_a_decoding_closed_while_an_object_without_a_picture_is_decoded_reads_no_more_objects(monkeypatch):
+    # Arrange: the worker decodes the first object, which gives no picture, until the gate opens
+    gate = threading.Event()
+    entered = threading.Event()
+
+    def take(self, video_object) -> list:
+        entered.set()
+        gate.wait(TIMEOUT_SECONDS)
+        return []
+
+    monkeypatch.setattr(codecs._PictureDecoder, "take", take)
+    reads = 0
+
+    async def objects():
+        nonlocal reads
+        for object_id in range(2):
+            reads += 1
+            yield video_object(0, object_id, b"")
+
+    pictures = decode_pictures(objects(), "avc1.42e01f")
+    reading = asyncio.ensure_future(anext(pictures))
+    await within(asyncio.to_thread(entered.wait, TIMEOUT_SECONDS))
+
+    # Act
+    await within(pictures.aclose())
+    gate.set()
+
+    # Assert
+    with pytest.raises(StopAsyncIteration):
+        await within(reading)
+    assert reads == 1
+
+
+@pytest.fixture
+def video_decoders(monkeypatch) -> list[weakref.ref]:
+    """Weak references to every `VideoDecoder` `moq_wasm.codecs` makes in the test."""
+    decoders = []
+
+    class TrackedDecoder(VideoDecoder):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            decoders.append(weakref.ref(self))
+
+    monkeypatch.setattr(codecs, "VideoDecoder", TrackedDecoder)
+    return decoders
+
+
+async def test_a_closed_decoding_keeps_no_decoder_once_the_decode_in_flight_finished(monkeypatch, video_decoders):
+    # Arrange: a group left open, whose second object the worker decodes until the gate opens, as
+    # the decoding is closed
+    gate = threading.Event()
+    entered = threading.Event()
+    take = codecs._PictureDecoder.take
+
+    def gated(self, video_object) -> list:
+        if video_object.object_id == 1:
+            entered.set()
+            gate.wait(TIMEOUT_SECONDS)
+        return take(self, video_object)
+
+    monkeypatch.setattr(codecs._PictureDecoder, "take", gated)
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    payloads = [b"".join(encoder.encode(picture(value), SIZE, "RGB")) for value in (0, 10, 20)]
+
+    async def objects():
+        for object_id, payload in enumerate(payloads):
+            yield video_object(0, object_id, payload)
+
+    source = objects()
+    pictures = decode_pictures(source, "avc1.42e01f")
+    await within(anext(pictures))
+    reading = asyncio.ensure_future(anext(pictures))
+    await within(asyncio.to_thread(entered.wait, TIMEOUT_SECONDS))
+
+    # Act
+    await within(pictures.aclose())
+    gate.set()
+    with pytest.raises(StopAsyncIteration):
+        await within(reading)
+    gc.collect()
+
+    # Assert: the decoder is freed, while the caller still holds the closed decoding, and the
+    # caller reads its objects on
+    assert [decoder for decoder in video_decoders if decoder() is not None] == []
+    assert (await within(anext(source))).object_id == 2
+
+
+async def test_a_closed_decoding_whose_read_waits_on_the_objects_keeps_no_decoder(video_decoders):
+    # Arrange: a group left open by its keyframe, then an object that does not exist, which gives
+    # no picture, so the read waits on the caller's next object until the gate opens
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    keyframe = b"".join(encoder.encode(picture(0), SIZE, "RGB"))
+    gate = asyncio.Event()
+    waiting = asyncio.Event()
+
+    async def objects():
+        yield video_object(0, 0, keyframe)
+        # The Object Status of an object that does not exist (draft-ietf-moq-transport-14 §10.2.1.1).
+        yield video_object(0, 1, b"", status=1)
+        waiting.set()
+        await gate.wait()
+        yield video_object(0, 2, keyframe)
+
+    pictures = decode_pictures(objects(), "avc1.42e01f")
+    await within(anext(pictures))
+    reading = asyncio.ensure_future(anext(pictures))
+    await within(waiting.wait())
+
+    # Act
+    await within(pictures.aclose())
+    gc.collect()
+
+    # Assert: the decoder is freed while the read still waits on the objects
+    assert [decoder for decoder in video_decoders if decoder() is not None] == []
+    gate.set()
+    with pytest.raises(StopAsyncIteration):
+        await within(reading)
+
+
+class TrackedLocation:
+    """Stands in for an object's `Location`, which takes no weak reference, to count those kept."""
+
+
+@pytest.mark.parametrize("kind", ["refused", "invisible"])
+def test_a_decoder_keeps_no_location_of_an_object_that_makes_no_picture(kind):
+    # Arrange: length-prefixed H.264 without its Video Config, which the decoder refuses, or VP8
+    # frames after a keyframe that are not shown, which make no picture
+    if kind == "refused":
+        decoder = VideoDecoder("avc1.42e01f")
+        annex_b = b"".join(VideoEncoder("H264", *SIZE, 30).encode(picture(0), SIZE, "RGB"))
+        payloads = [length_prefixed(annex_b)[2]] * 32
+    else:
+        decoder = VideoDecoder("vp8")
+        keyframe, *payloads = invisible_vp8_frames(32)
+        decoder.decode(keyframe, Location(0, 0))
+    locations = [TrackedLocation() for _ in payloads]
+    kept = [weakref.ref(location) for location in locations]
+
+    # Act
+    pictures = [decoded for payload, location in zip(payloads, locations) for decoded in decoder.decode(payload, location)]
+    pictures.extend(decoder.flush())
+    del locations
+    gc.collect()
+
+    # Assert: FFmpeg keeps only the properties of the last packet it was given and of the reference
+    # frames the codec keeps, three for VP8
+    assert pictures == []
+    assert sum(location() is not None for location in kept) <= 4
+
+
+def invisible_vp8_frames(count: int) -> list[bytes]:
+    """A VP8 keyframe, then `count` inter frames whose show_frame flag is cleared (RFC 6386 §9.1)."""
+    encoder = VideoEncoder("VP8", *SIZE, 30)
+    frames = [b"".join(encoder.encode(picture(value * 7 % 256), SIZE, "RGB")) for value in range(count + 1)]
+    return [frames[0], *(bytes([frame[0] & ~0x10]) + frame[1:] for frame in frames[1:])]
+
+
+async def test_each_subscription_to_a_video_track_is_decoded_afresh():
+    # Arrange: the first subscription brings five groups with B-frames and ends, as when alice's
+    # page leaves; the page taking over restarts its groups at 0
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    groups = b_frame_groups(5, 6)
+    first = [(group_id, object_id, payload) for group_id, group in enumerate(groups) for object_id, (payload, _) in enumerate(group)]
+    second = [(0, object_id, payload) for object_id, (payload, _) in enumerate(groups[0])]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [first, [*second, STAY_OPEN]]
+    sink = RecordingSink()
+    by_subscription: dict[int, list] = {}
+
+    async def push_picture(picture) -> bool:
+        subscriptions = sum(1 for _, name in native.subscribed if name == "video")
+        by_subscription.setdefault(subscriptions, []).append(picture)
+        return True
+
+    sink.push_picture = push_picture
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await within(until(lambda: len(by_subscription.get(2, [])) >= 4))
+
+    # Assert: the pictures the decoders held back came as the first subscription ended, and the
+    # second's group 0 was not taken as the first's
+    assert len(by_subscription[1]) == 30
+    assert {picture.location.group_id for picture in by_subscription[2]} == {0}
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def test_pictures_of_groups_whose_objects_interleave_are_all_decoded():
+    # Arrange: the objects of two groups arrive in turn, as their streams do
+    groups = b_frame_groups(2, 6)
+
+    async def objects():
+        for object_id in range(6):
+            for group_id, group in enumerate(groups):
+                yield video_object(group_id, object_id, group[object_id][0])
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.64001f")]
+
+    # Assert
+    values = [round(d.picture.to_ndarray(format="rgb24").mean() / 10) * 10 for d in decoded]
+    assert sorted(values) == [index * 10 for index in range(12)]
+
+
+async def test_the_pictures_a_group_holds_back_come_at_its_end_of_group():
+    # Arrange: the track stays open after the group, as a followed track does
+    (group,) = b_frame_groups(1, 6)
+
+    async def objects():
+        for object_id, (payload, _) in enumerate(group):
+            yield video_object(0, object_id, payload)
+        yield video_object(0, len(group), b"", status=END_OF_GROUP)
+        await asyncio.Event().wait()
+
+    pictures = decode_pictures(objects(), "avc1.64001f")
+
+    # Act
+    decoded = [await within(anext(pictures)) for _ in range(6)]
+
+    # Assert
+    values = [round(d.picture.to_ndarray(format="rgb24").mean() / 10) * 10 for d in decoded]
+    assert values == [index * 10 for index in range(6)]
+    await pictures.aclose()

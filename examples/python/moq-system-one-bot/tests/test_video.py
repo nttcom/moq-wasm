@@ -14,7 +14,7 @@ def jpeg_size(jpeg: bytes) -> tuple[int, int]:
 
 def test_decoded_picture_becomes_a_jpeg_of_its_own_size():
     # Arrange
-    picture = VideoDecoder("avc1").decode(h264_group(1)[0])
+    [(picture, _)] = VideoDecoder("avc1").decode(h264_group(1)[0])
 
     # Act
     jpeg = picture_to_jpeg(picture)
@@ -26,7 +26,7 @@ def test_decoded_picture_becomes_a_jpeg_of_its_own_size():
 
 def test_decoded_picture_becomes_a_jpeg_scaled_to_the_given_width():
     # Arrange
-    picture = VideoDecoder("avc1").decode(h264_group(1, width=1920, height=1080)[0])
+    [(picture, _)] = VideoDecoder("avc1").decode(h264_group(1, width=1920, height=1080)[0])
 
     # Act
     jpeg = picture_to_jpeg(picture, width=640)

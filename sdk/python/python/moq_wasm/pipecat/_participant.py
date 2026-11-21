@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 from pipecat.frames.frames import UserImageRequestFrame
 
 from moq_wasm._native import Location
-from moq_wasm.codecs import OpusDecoder, VideoDecoder, decode_pictures
+from moq_wasm.codecs import DecodedPicture, OpusDecoder, VideoDecoder, decode_pictures
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 from moq_wasm.media._remote_broadcast import RESUBSCRIBE_DELAY_SECONDS
 
@@ -228,25 +228,32 @@ class ParticipantReceiver:
                     await self._sink.push_audio(pcm, sample_rate, self.participant_id)
 
     async def _receive_video(self, source: str, track: CatalogTrack) -> None:
+        """Decodes each subscription to the track afresh, as of a publisher that took over and
+        starts its groups at 0 again."""
         sampler = self._sampler(source)
-        async with aclosing(self._remote.follow(track.name)) as objects:
-            async for decoded in decode_pictures(objects, track.codec or ""):
-                due, request = sampler.sample(decoded.decoded_at)
-                if not due:
-                    continue
-                picture = decoded.picture
-                try:
-                    rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
-                    size = (picture.width, picture.height)
-                    await self._sink.push_picture(
-                        ReceivedPicture(self.participant_id, source, rgb, size, decoded.location, request)
-                    )
-                except BaseException:
-                    # The track is replaced or fails before the picture answered the request; the
-                    # next picture of the source answers it instead.
-                    if request is not None:
-                        sampler.return_request(request)
-                    raise
+        async with aclosing(self._remote.subscriptions(track.name)) as subscriptions:
+            async for objects in subscriptions:
+                async with aclosing(objects), aclosing(decode_pictures(objects, track.codec or "")) as pictures:
+                    async for decoded in pictures:
+                        await self._pass_picture(source, sampler, decoded)
+
+    async def _pass_picture(self, source: str, sampler: "_Sampler", decoded: DecodedPicture) -> None:
+        due, request = sampler.sample(decoded.decoded_at)
+        if not due:
+            return
+        picture = decoded.picture
+        try:
+            rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
+            size = (picture.width, picture.height)
+            await self._sink.push_picture(
+                ReceivedPicture(self.participant_id, source, rgb, size, decoded.location, request)
+            )
+        except BaseException:
+            # The track is replaced or fails before the picture answered the request; the next
+            # picture of the source answers it instead.
+            if request is not None:
+                sampler.return_request(request)
+            raise
 
     async def _receive_data(self, track_name: str) -> None:
         await self._sink.event("on_track_subscribed", MoqWasmTrack(self.participant_id, track_name, "data"))
