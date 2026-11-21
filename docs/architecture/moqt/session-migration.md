@@ -164,9 +164,11 @@ A session that follows GOAWAY also replaces a connection that ended without
 one, through the same migration to its current URL. It reconnects when the
 network or the server ended the connection without a termination code, and
 when the server closed it with EXPIRED_AUTH_TOKEN while
-`ClientConfig::authorization_token` is a provider, which hands the new
-connection a fresh token. A close this side made, and any other termination
-code, ends the session as before.
+`ClientConfig::authorization_token` is a provider that hands out a token other
+than the one just refused: a provider repeating it, as a token file nobody
+refreshed does, would only be refused again, and the session ends instead. A
+close this side made, and any other termination code, ends the session as
+before.
 
 Attempts start 0.5 s after the loss and double their delay up to 10 s, for at
 most 60 s, about as long as a relay keeps a track in its cache. A server that

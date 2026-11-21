@@ -75,6 +75,11 @@ pub(crate) trait ClientEndpoint: MaybeSend + MaybeSync {
 
     /// Opens another connection of a session that follows GOAWAY, on the same
     /// endpoint and transport as the first.
+    /// Whether the token provider would send a token other than the one the
+    /// connection being replaced sent, which a reconnect for an expired token
+    /// needs.
+    fn yields_new_token(self: Arc<Self>) -> BoxFuture<bool>;
+
     fn connect(
         self: Arc<Self>,
         url: String,
@@ -91,6 +96,15 @@ impl<T: TransportProtocol> ClientEndpoint for SessionCreator<T> {
         self.authorization_token
             .as_ref()
             .is_some_and(AuthorizationTokenSource::is_provider)
+    }
+
+    fn yields_new_token(self: Arc<Self>) -> BoxFuture<bool> {
+        Box::pin(async move {
+            match &self.authorization_token {
+                Some(source) => source.yields_new_token().await,
+                None => false,
+            }
+        })
     }
 
     fn connect(

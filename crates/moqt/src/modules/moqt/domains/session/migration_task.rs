@@ -177,7 +177,7 @@ impl Router {
                         current_closed = true;
                         if migration.is_none() {
                             let close = current.connection.transport.closed().await;
-                            if !self.reconnects(&current.connection, &close) {
+                            if !self.reconnects(&current.connection, &close).await {
                                 self.finish(&current).await;
                                 return;
                             }
@@ -270,7 +270,7 @@ impl Router {
         }
     }
 
-    fn reconnects(&self, connection: &Connection, close: &TransportClose) -> bool {
+    async fn reconnects(&self, connection: &Connection, close: &TransportClose) -> bool {
         if connection.closed_locally() {
             return false;
         }
@@ -283,6 +283,7 @@ impl Router {
                             .control
                             .version()
                             .termination_code(TerminationErrorCode::ExpiredAuthToken)
+                    && self.reconnect.clone().yields_new_token().await
             }
         }
     }
@@ -2445,7 +2446,9 @@ mod tests {
         let delivered = next_payload(&mut reader).await;
 
         // Assert
-        assert_eq!(tokens, [AuthorizationToken::use_value_utf8("token-1")]);
+        // token-0 opened the first connection, token-1 was minted to tell that
+        // a new one exists, and token-2 went into the second CLIENT_SETUP.
+        assert_eq!(tokens, [AuthorizationToken::use_value_utf8("token-2")]);
         assert_eq!(filter_type, FilterType::NextGroupStart);
         assert_eq!(delivered, payload(5, b"b5-0"));
         assert_eq!(client.connection_generation(), 1);
@@ -2488,6 +2491,27 @@ mod tests {
         let reconnected = tokio::time::timeout(NO_EVENT_TIMEOUT, sessions.recv()).await;
 
         // Assert
+        assert!(close.expect("session closed").code.is_some());
+        assert!(reconnected.is_err(), "the session must not reconnect");
+    }
+
+    #[tokio::test]
+    async fn a_close_for_an_expired_token_ends_a_session_whose_provider_repeats_the_token() {
+        // Arrange: a token file nobody refreshed
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-same-token");
+        let client = connect_with(
+            port,
+            AuthorizationTokenSource::provider(|| async { Ok("jwt".to_string()) }),
+        )
+        .await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed()).await;
+        let reconnected = tokio::time::timeout(NO_EVENT_TIMEOUT, sessions.recv()).await;
+
+        // Assert: the same token the server just refused would only be refused again
         assert!(close.expect("session closed").code.is_some());
         assert!(reconnected.is_err(), "the session must not reconnect");
     }

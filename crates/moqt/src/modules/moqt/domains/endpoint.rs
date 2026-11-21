@@ -32,7 +32,12 @@ pub struct AuthorizationTokenSource(TokenSource);
 #[derive(Clone)]
 enum TokenSource {
     Fixed(String),
-    Provider(Arc<TokenProvider>),
+    Provider {
+        provider: Arc<TokenProvider>,
+        /// The token `provider` last gave, so a reconnect for an expired token
+        /// can tell whether it would send a token the server refused.
+        last: Arc<tokio::sync::Mutex<Option<String>>>,
+    },
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -52,7 +57,10 @@ impl AuthorizationTokenSource {
     {
         let provider: Arc<TokenProvider> =
             Arc::new(move || -> BoxFuture<anyhow::Result<String>> { Box::pin(provider()) });
-        Self(TokenSource::Provider(provider))
+        Self(TokenSource::Provider {
+            provider,
+            last: Arc::new(tokio::sync::Mutex::new(None)),
+        })
     }
 
     /// Reads `current` on every CLIENT_SETUP, so a connection opened after
@@ -65,14 +73,29 @@ impl AuthorizationTokenSource {
     }
 
     pub(crate) fn is_provider(&self) -> bool {
-        matches!(self.0, TokenSource::Provider(_))
+        matches!(self.0, TokenSource::Provider { .. })
     }
 
     pub(crate) async fn token(&self) -> anyhow::Result<String> {
         match &self.0 {
             TokenSource::Fixed(token) => Ok(token.clone()),
-            TokenSource::Provider(provider) => provider().await,
+            TokenSource::Provider { provider, last } => {
+                let token = provider().await?;
+                *last.lock().await = Some(token.clone());
+                Ok(token)
+            }
         }
+    }
+
+    /// Whether `provider` would send a token other than the one the connection
+    /// being replaced sent; a reconnect for an expired token gains nothing
+    /// otherwise. `false` when `provider` fails.
+    pub(crate) async fn yields_new_token(&self) -> bool {
+        let TokenSource::Provider { provider, last } = &self.0 else {
+            return false;
+        };
+        let last = last.lock().await.clone();
+        provider().await.is_ok_and(|token| Some(token) != last)
     }
 }
 
