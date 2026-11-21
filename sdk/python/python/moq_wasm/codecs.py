@@ -29,6 +29,9 @@ END_OF_GROUP_STATUS = 3
 MAX_OPEN_GROUPS = 4
 # How many complete groups `decode_pictures` remembers, to skip their late objects.
 FINISHED_GROUPS_KEPT = 16
+# How many objects in a row `decode_pictures` lets the decoder of a group joined at its keyframe
+# refuse before it takes the track as undecodable.
+MAX_REFUSED_OBJECTS = 3
 
 # A video codec string's first element, as the catalog writes it, to the PyAV decoder.
 VIDEO_DECODERS = {"avc1": "h264", "avc3": "h264", "hvc1": "hevc", "hev1": "hevc", "vp8": "vp8", "vp09": "vp9", "av01": "av1"}
@@ -138,6 +141,40 @@ class VideoDecoder:
         return [(picture, cast(Location | None, picture.opaque)) for picture in pictures if picture.pts is not None]
 
 
+class _Group:
+    """The decoding of one group of a video track. A group joined at its keyframe, its object 0,
+    should decode: the decoder refusing `MAX_REFUSED_OBJECTS` of its objects in a row, or the group
+    ending without a picture after it refused one, raises the decoder's error. A group joined
+    midway decodes to nothing, which is expected."""
+
+    def __init__(self, codec: str, from_keyframe: bool):
+        self._decoder = VideoDecoder(codec)
+        self._from_keyframe = from_keyframe
+        self._refused_in_a_row = 0
+        self._refusal: FFmpegError | None = None
+        self._pictured = False
+
+    def decode(self, payload: bytes, location: Location) -> list[tuple[av.VideoFrame, Location | None]]:
+        """The pictures the object completes."""
+        try:
+            pictures = self._decoder._decode(payload, location)
+        except FFmpegError as error:
+            self._refused_in_a_row += 1
+            self._refusal = error
+            if self._from_keyframe and self._refused_in_a_row >= MAX_REFUSED_OBJECTS:
+                raise
+            return []
+        self._refused_in_a_row = 0
+        self._pictured = self._pictured or bool(pictures)
+        return pictures
+
+    def flush(self) -> list[tuple[av.VideoFrame, Location | None]]:
+        pictures = self._decoder.flush()
+        if self._from_keyframe and not (self._pictured or pictures) and self._refusal is not None:
+            raise self._refusal
+        return pictures
+
+
 @dataclass(frozen=True)
 class DecodedPicture:
     picture: av.VideoFrame
@@ -159,8 +196,12 @@ def decode_pictures(
     own, since it starts at a keyframe and the objects of groups in flight may interleave; a group
     joined midway decodes to nothing. A group's decoder is flushed at its End of Group status
     object, when `MAX_OPEN_GROUPS` newer groups opened since (the objects of that group arriving
-    later are skipped), and at the end of `objects`. Raises ValueError at once when no decoder
-    takes `codec`.
+    later are skipped), and at the end of `objects`.
+
+    Raises ValueError at once when no decoder takes `codec`; its reads raise the decoder's
+    `av.error.FFmpegError` when a group joined at its keyframe does not decode: the decoder refused
+    `MAX_REFUSED_OBJECTS` of its objects in a row, or the group ended without a picture after it
+    refused one.
 
     `objects` stays the caller's: each read advances it in the reader's own task and context, and
     neither closing nor dropping the decoding cancels or closes it. A read cancelled, as by
@@ -248,7 +289,7 @@ class _PictureDecoder:
         self._interval = interval
         self._next_picture_at = 0.0
         # Each group's decoding, in the order the groups opened.
-        self._groups: dict[int, VideoDecoder] = {}
+        self._groups: dict[int, _Group] = {}
         self._finished: deque[int] = deque(maxlen=FINISHED_GROUPS_KEPT)
 
     def take(self, video_object: Object) -> list[DecodedPicture]:
@@ -264,7 +305,7 @@ class _PictureDecoder:
         if group is None:
             if len(groups) >= MAX_OPEN_GROUPS:
                 pictures.extend(self._finish(next(iter(groups))))
-            group = groups[group_id] = VideoDecoder(self._codec)
+            group = groups[group_id] = _Group(self._codec, video_object.object_id == 0)
         location = Location(group_id, video_object.object_id)
         return pictures + self._sampled(group.decode(video_object.payload, location))
 
