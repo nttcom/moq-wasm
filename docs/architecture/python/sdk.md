@@ -119,8 +119,9 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
 - **Reconnection is the native session's.** The native session (the `moqt`
   crate, shared with the browser SDK) follows GOAWAY, and replaces a
   connection that ended without a termination code (a network outage, a
-  relay killed and restarted) or with EXPIRED_AUTH_TOKEN, retrying from
-  0.5 s, doubling up to 10 s, for at most 60 s
+  relay killed and restarted) or, for a session given `refresh_token`, with
+  EXPIRED_AUTH_TOKEN, retrying from 0.5 s, doubling up to 10 s, for at most
+  60 s
   ([moqt/session-migration.md](../moqt/session-migration.md) "Reconnecting
   after a lost connection"). It sends the namespace subscriptions,
   namespaces and subscriptions again on the new connection; each
@@ -128,7 +129,9 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   published in between are not filled in. The origin, and so the tracks the
   session publishes and their cache, stay. When the native session cannot
   replace its connection, the session ends with `ConnectionLost`, as the
-  browser SDK's `MoqSession.closed` resolves. It does not dial again: a bot
+  browser SDK's `MoqSession.closed` resolves; without `refresh_token`, that
+  is when the relay closes it at the token's `exp`, since no later token can
+  come. It does not dial again: a bot
   whose session ended ends its room, and the page that asked for the room
   asks again. A failure to connect raises from `connect`, as does a relay
   that does not open the transport, or answer CLIENT_SETUP once it is open,

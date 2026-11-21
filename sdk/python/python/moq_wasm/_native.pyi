@@ -11,10 +11,13 @@ def connect(
     *,
     verify_certificate: bool = True,
     token: str | None = None,
+    refreshes_token: bool = False,
     versions: list[str] | None = None,
 ) -> asyncio.Future[Session]:
     """`moqt://` connects over raw QUIC, `https://` over WebTransport, presenting `token` (a JWT) in
-    CLIENT_SETUP. The session follows the relay's GOAWAY with the latest token it was given.
+    CLIENT_SETUP. The session follows the relay's GOAWAY with the latest token it was given. With
+    `refreshes_token` it also reconnects when the relay closes it for an expired token; without it,
+    that close ends the session and `Session.refresh_token` raises RuntimeError.
     `versions` lists the drafts to offer, most preferred first, each `"draft-14"` or `"draft-18"`;
     without it draft-18, then draft-14, are offered. An unknown name raises `ValueError`, and an empty
     list fails the connect."""
@@ -125,8 +128,9 @@ class Session:
     def refresh_token(self, token: str, *, app_id: str) -> asyncio.Future[None]:
         """Hands the relay `token`, a later token of the same app, before the current one expires
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it
-        opens from now on. Raises RuntimeError for a session connected without a token or a token the
-        relay refuses; the relay then keeps the connection's token until it expires."""
+        opens from now on. Raises RuntimeError for a session connected without a token or without
+        `refreshes_token`, or a token the relay refuses; the relay then keeps the connection's token
+        until it expires."""
     def closed(self) -> asyncio.Future[CloseInfo]:
         """How the session's last connection closed, once it has."""
     def close(self) -> asyncio.Future[None]: ...
