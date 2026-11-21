@@ -211,7 +211,10 @@ mod tests {
     use super::*;
     use crate::{
         client::{PublishTrackOptions, Session as ClientSession},
-        modules::test_support::{connected_client_sessions, within},
+        modules::test_support::{
+            connected_client_sessions, next_event, rejection, spawn_connected_native_sessions,
+            within,
+        },
         object::ExtensionHeaders,
     };
 
@@ -239,13 +242,16 @@ mod tests {
             .unwrap();
     }
 
-    /// Sends the PUBLISH of `track` in `namespace`; `false` when it is rejected.
-    async fn publish(publisher: &ClientSession, namespace: &[&str], track: &str) -> bool {
+    /// Sends the PUBLISH of `track` in `namespace`.
+    async fn publish(
+        publisher: &ClientSession,
+        namespace: &[&str],
+        track: &str,
+    ) -> anyhow::Result<()> {
         publisher
             .origin()
             .publish(publisher.moqt_session(), &namespace.join("/"), track)
             .await
-            .is_ok()
     }
 
     async fn next_track(watch: &TrackWatch) -> PublishRequest {
@@ -287,7 +293,7 @@ mod tests {
         let object = within(subscription.next()).await.unwrap();
 
         // Assert
-        assert!(published);
+        assert!(published.is_ok());
         assert_eq!(
             (namespace, track),
             (
@@ -343,7 +349,7 @@ mod tests {
         });
 
         // Assert
-        assert!(!published);
+        assert_eq!(rejection(published).code, RequestErrorCode::Uninterested);
     }
 
     #[tokio::test]
@@ -364,7 +370,53 @@ mod tests {
         });
 
         // Assert: the session itself rejected the PUBLISH outside the prefix
-        assert!(!outside);
+        assert_eq!(rejection(outside).code, RequestErrorCode::Uninterested);
         assert_eq!(handed_over, ["room", "alice"]);
+    }
+
+    #[tokio::test]
+    async fn closing_a_track_watch_ends_next_and_unsubscribes() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("watch-tracks-close").await;
+        let session = ClientSession::new(client);
+        let (watch, ()) = within(async {
+            tokio::join!(session.watch_tracks(ROOM), async {
+                let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+                    panic!("expected SUBSCRIBE_NAMESPACE");
+                };
+                handler.ok().await.unwrap();
+            })
+        })
+        .await;
+        let watch = watch.unwrap();
+
+        // Act
+        let (event, closed) = within(async { tokio::join!(watch.next(), watch.close()) }).await;
+        let unsubscribed = next_event(&server).await;
+
+        // Assert
+        closed.unwrap();
+        assert!(event.is_none());
+        assert!(watch.next().await.is_none());
+        let SessionEvent::UnsubscribeNamespace(handler) = unsubscribed else {
+            panic!("expected UNSUBSCRIBE_NAMESPACE, got {unsubscribed:?}");
+        };
+        assert_eq!(handler.track_namespace_prefix(), "room");
+    }
+
+    #[tokio::test]
+    async fn a_closed_track_watch_does_not_take_later_publishes() {
+        // Arrange
+        let (session, publisher) = connected_client_sessions("watch-tracks-closed-publish").await;
+        let watch = within(session.watch_tracks(ROOM)).await.unwrap();
+        track_with_one_group(&publisher, ALICE, TRACK, b"go").await;
+        within(watch.close()).await.unwrap();
+
+        // Act
+        let published = within(publish(&publisher, ALICE, TRACK)).await;
+
+        // Assert: `watch` stays alive across `publish` so an untaken close would stall it
+        assert_eq!(rejection(published).code, RequestErrorCode::Uninterested);
+        drop(watch);
     }
 }
