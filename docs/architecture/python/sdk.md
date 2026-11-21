@@ -728,7 +728,13 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   included, so the pipeline still stops, but not the audio and pictures it
   did not write. `on_connected` and `on_disconnected` mark those
   two moments; `on_track_subscribed` takes a `MoqWasmTrack` (participant id,
-  track name, `audio` or `video`).
+  track name, `audio`, `video` or `data`) once the relay accepted its
+  SUBSCRIBE, and again after each resubscription. An audio or video track
+  that failed, as on an object PyAV cannot decode, fires `on_error` and,
+  while the participant's catalog still picks it, is received again with a
+  fresh decoder a second later, the delay doubling with each failure in a
+  row up to 30 seconds, so one bad packet does not silence a participant
+  until its next catalog.
 - **Peers.** Every broadcast one level under `room` is a participant, its last
   namespace element the participant id, followed with `watch_broadcasts`.
   `MOQTransport` follows one peer; a room is what the transcriber, chat
@@ -743,7 +749,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   is pushed as `UserAudioRawFrame` with the participant id as `user_id`. The
   lowest bitrate is the profile the room's viewers already take, so it starts
   no extra encoder in the participant's browser. The track is unsubscribed
-  when its audio stops being in the catalog.
+  when its audio stops being in the catalog; a track a newer catalog
+  replaces, audio or video, is unsubscribed before its replacement is
+  subscribed to, and a participant who leaves ends once all its tracks are.
 - **Video in.** pipecat's video sources name tracks of a participant's
   catalog. `"camera"` is the LOC video track with the lowest bitrate that
   PyAV decodes, or the one `video_in_track` picks; any other source is the
@@ -889,10 +897,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   ends. A group joined at its keyframe
   that does not decode, its decoder refusing three of its objects in a row
   or the group ending without a picture after a refusal, raises the
-  decoder's error, so the transport fails the track instead of waiting on
-  a broken stream; a group joined midway decodes to nothing. An H.264 or
-  H.265 object of a group without a Video Config is read as Annex B when
-  it starts with a 4-byte or 3-byte start
+  decoder's error, so the transport receives the track again with a fresh
+  decoder instead of waiting on a broken stream; a group joined midway
+  decodes to nothing. An H.264 or H.265 object of a group without a Video
+  Config is read as Annex B when it starts with a 4-byte or 3-byte start
   code, and else as 4-byte length prefixes (draft-ietf-moq-loc-04
   §2.1.3–2.1.4). A start code followed by bytes that 4-byte length
   prefixes would also cover exactly, as a 3-byte one followed by the first
