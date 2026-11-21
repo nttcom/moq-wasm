@@ -932,6 +932,12 @@ state name the connection:
   the record through an inner mutex, so concurrent requests do not wait for
   each other's answers. A migration holds the write lock while it sends them
   again, so none is missed.
+- `published_namespaces` — every session's namespaces this side sent
+  PUBLISH_NAMESPACE for, until PUBLISH_NAMESPACE_DONE or a refusal, keyed by
+  request as in `carried` but outside its lock, so a session that does not
+  follow GOAWAY keeps them too. `Session::publishes_namespace` reads it, so a
+  client can tell its own namespace among those a relay echoes to its
+  SUBSCRIBE_NAMESPACE (draft-14 §6.1).
 - `publications` — for a session that follows GOAWAY, the tracks PUBLISHed
   on it with every connection each is on (`SendTargets::Publication`); a
   track served for a SUBSCRIBE goes to the connection the SUBSCRIBE arrived

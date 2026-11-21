@@ -51,6 +51,10 @@ pub(crate) struct SessionContext {
     /// every carried request again, so none is skipped. Requests edit the record
     /// through the inner mutex, so they do not wait for one another's answers.
     pub(crate) carried: Option<tokio::sync::RwLock<std::sync::Mutex<CarriedRequests>>>,
+    /// The namespaces this side sent PUBLISH_NAMESPACE for and has not
+    /// withdrawn, keyed as `CarriedRequests::published_namespaces`; kept
+    /// whether or not the session follows GOAWAY.
+    published_namespaces: std::sync::Mutex<BTreeMap<u64, String>>,
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read
     /// for every subgroup sent, so not behind `carried`.
@@ -141,15 +145,16 @@ impl CarriedGuard<'_> {
     }
 }
 
-/// The `published_namespaces` record one PUBLISH_NAMESPACE added, which
+/// The `published_namespaces` records one PUBLISH_NAMESPACE added, which
 /// `forget` removes.
-pub(crate) struct CarriedPublishedNamespace {
+pub(crate) struct PublishedNamespaceRecord {
     pub(crate) session: Arc<SessionContext>,
     pub(crate) request_id: u64,
 }
 
-impl CarriedPublishedNamespace {
+impl PublishedNamespaceRecord {
     pub(crate) async fn forget(self) {
+        lock(&self.session.published_namespaces).remove(&self.request_id);
         if let Some(carried) = self.session.read_carried().await {
             carried.update(|carried| carried.published_namespaces.remove(&self.request_id));
         }
@@ -207,6 +212,7 @@ impl SessionContext {
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
             ledgers: std::sync::Mutex::default(),
             carried: follows_go_away.then(tokio::sync::RwLock::default),
+            published_namespaces: std::sync::Mutex::default(),
             publications: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
             moves: watch::channel(false).0,
@@ -243,6 +249,20 @@ impl SessionContext {
 
     pub(crate) fn follows_go_away(&self) -> bool {
         self.carried.is_some()
+    }
+
+    pub(crate) fn record_published_namespace(&self, request_id: u64, namespace: String) {
+        lock(&self.published_namespaces).insert(request_id, namespace);
+    }
+
+    pub(crate) fn withdraw_published_namespace(&self, namespace: &str) {
+        lock(&self.published_namespaces).retain(|_, published| published != namespace);
+    }
+
+    pub(crate) fn publishes_namespace(&self, namespace: &str) -> bool {
+        lock(&self.published_namespaces)
+            .values()
+            .any(|published| published == namespace)
     }
 
     pub(crate) async fn read_carried(&self) -> Option<CarriedGuard<'_>> {
