@@ -44,21 +44,32 @@ class OpusEncoder:
         self._encoder.format = "s16"
         self._encoder.bit_rate = OPUS_BITRATE
         self._encoder.open()
+        # A resampler takes the rate of its first frame only, so each input rate gets one of its own.
         self._resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
+        self._input_rate: int | None = None
         self._fifo = av.AudioFifo()
         self.frame_samples = self._encoder.frame_size
 
     def encode(self, pcm: bytes, sample_rate: int) -> list[bytes]:
+        """Returns the packets `pcm`, mono 16-bit PCM at `sample_rate`, completes; the samples short
+        of a packet wait for the next call. The rate may change from one call to the next."""
         frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = sample_rate
-        for resampled in self._resampler.resample(frame):
-            resampled.pts = None
-            self._fifo.write(resampled)
+        if sample_rate != self._input_rate:
+            self._write(self._resampler.resample(None))
+            self._resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
+            self._input_rate = sample_rate
+        self._write(self._resampler.resample(frame))
         packets = []
         while (chunk := self._fifo.read(self.frame_samples)) is not None:
             chunk.pts = None
             packets.extend(bytes(packet) for packet in self._encoder.encode(chunk))
         return packets
+
+    def _write(self, resampled: list[av.AudioFrame]) -> None:
+        for frame in resampled:
+            frame.pts = None
+            self._fifo.write(frame)
 
 
 class VideoDecoder:

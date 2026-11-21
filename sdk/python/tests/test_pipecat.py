@@ -126,6 +126,18 @@ def test_opus_encoded_speech_decodes_back_to_pcm():
     assert 0 < len(pcm) <= len(packets) * SAMPLE_RATE // 50 * 2
 
 
+def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
+    # Arrange: 200 ms of speech at 48 kHz
+    encoder = OpusEncoder()
+    packets = encoder.encode(tone(0.2, 48_000), 48_000)
+
+    # Act: 100 ms of silence at 16 kHz
+    packets += encoder.encode(bytes(2 * SAMPLE_RATE // 10), SAMPLE_RATE)
+
+    # Assert: 300 ms, less the samples short of a packet
+    assert len(packets) == 14
+
+
 @pytest.mark.parametrize("codec", ["H264", "VP8"])
 def test_the_video_encoder_opens_with_a_keyframe_and_makes_one_on_request(codec):
     # Arrange
