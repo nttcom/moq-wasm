@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import time
 from collections.abc import Callable
 
@@ -700,6 +701,75 @@ async def test_every_close_waits_until_the_native_session_closed_even_after_one_
     # Assert
     assert waited
     assert native._closed.done()
+
+
+async def test_a_second_read_of_a_subscription_while_one_waits_is_refused_and_the_first_gets_the_object():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    gate = asyncio.Event()
+    relay.sessions[0].tracks["chat"] = [[gate, b"hello"]]
+    subscription = await session.subscribe(NAMESPACE, "chat")
+    first = asyncio.ensure_future(anext(subscription))
+    await asyncio.sleep(0)
+
+    # Act
+    with pytest.raises(RuntimeError, match="already"):
+        await within(anext(subscription))
+    gate.set()
+
+    # Assert
+    assert (await within(first)).payload == b"hello"
+    await session.close()
+
+
+async def test_a_subscription_dropped_after_a_timed_out_read_cancels_the_read_it_left():
+    # Arrange: a read timed out, leaving its native read waiting
+    relay = FakeRelay()
+    session = await open_session(relay)
+    relay.sessions[0].tracks["chat"] = [[asyncio.Event()]]
+    subscription = await session.subscribe(NAMESPACE, "chat")
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(subscription), 0.05)
+    left = subscription._objects._pending
+    assert left is not None
+
+    # Act
+    del subscription
+    gc.collect()
+
+    # Assert
+    await eventually(left.done)
+    assert left.cancelled()
+    await session.close()
+
+
+async def test_closing_a_subscription_sends_the_unsubscribe_at_once_and_a_cancelled_close_leaves_it_going():
+    # Arrange: the relay holds the UNSUBSCRIBE back until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"hello"]]
+    gate = native.unsubscribe_gates["chat"] = asyncio.Event()
+    subscription = await session.subscribe(NAMESPACE, "chat")
+    notified: list[asyncio.Future] = []
+
+    # Act: started without being awaited, as `closing = sub.close(); await sub.done()` does
+    closing = subscription.close()
+    closing.add_done_callback(notified.append)
+    await asyncio.sleep(0)
+    sent_at_once = native.subscriptions[0].unsubscribing
+    closing.cancel()
+    closing_again = subscription.close()
+    gate.set()
+    await within(closing_again)
+
+    # Assert
+    assert isinstance(closing, asyncio.Future)
+    assert sent_at_once
+    assert native.subscriptions[0].closed
+    assert notified == [closing]
+    await session.close()
 
 
 async def test_the_first_connection_failure_raises():
