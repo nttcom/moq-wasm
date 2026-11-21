@@ -655,8 +655,9 @@ the token as its AUTHORIZATION TOKEN (see the relay architecture document,
 "Token refresh"). The app id is the namespace's first element. moq-cli does
 the same; neither shares the code because draft-14 has no refresh message and
 the convention is the relay's. The TRACK_STATUS goes to the current connection, so it
-follows a migration; the session to the new relay is opened with the token
-the recorder started with.
+follows a migration; the session to the new relay is opened with the token in
+force then, because the connection's `AuthorizationTokenSource` reads the same
+cell the task updates before it refreshes the live session.
 
 ## Limits
 - `--from-cache` reaches only as far back as the relay's and the

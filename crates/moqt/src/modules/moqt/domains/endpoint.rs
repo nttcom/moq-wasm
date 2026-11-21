@@ -55,6 +55,15 @@ impl AuthorizationTokenSource {
         Self(TokenSource::Provider(provider))
     }
 
+    /// Reads `current` on every CLIENT_SETUP, so a connection opened after
+    /// GOAWAY sends the token the caller last stored here.
+    pub fn shared(current: Arc<tokio::sync::Mutex<String>>) -> Self {
+        Self::provider(move || {
+            let current = Arc::clone(&current);
+            async move { Ok(current.lock().await.clone()) }
+        })
+    }
+
     pub(crate) fn is_provider(&self) -> bool {
         matches!(self.0, TokenSource::Provider(_))
     }

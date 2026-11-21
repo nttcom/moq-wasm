@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use moqt::Session;
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 use crate::{bot_dispatcher_client::BotDispatcherClient, state_sync_task::now_ms};
 
@@ -55,17 +56,20 @@ pub(crate) struct TokenRefreshTask {
 }
 
 impl TokenRefreshTask {
+    /// `current` is the token in force, which the session's
+    /// `AuthorizationTokenSource` sends on a connection opened after this one.
     pub(crate) fn run(
         session: Arc<Session>,
         renewal: TokenRenewal,
         app_id: String,
-        mut current_token: String,
+        current: Arc<Mutex<String>>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(POLL_INTERVAL);
             loop {
                 interval.tick().await;
-                let token = match renewal.next(&current_token).await {
+                let in_force = current.lock().await.clone();
+                let token = match renewal.next(&in_force).await {
                     Ok(Some(token)) => token,
                     Ok(None) => continue,
                     Err(error) => {
@@ -81,10 +85,12 @@ impl TokenRefreshTask {
                     .refresh_authorization_token(app_id.clone(), &token)
                     .await
                 {
-                    Ok(_) => tracing::info!("authorization token refreshed"),
+                    Ok(_) => {
+                        tracing::info!("authorization token refreshed");
+                        *current.lock().await = token;
+                    }
                     Err(error) => tracing::warn!(%error, "authorization token refresh rejected"),
                 }
-                current_token = token;
             }
         });
         Self { join_handle }

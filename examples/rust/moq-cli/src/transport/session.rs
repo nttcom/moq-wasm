@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use moqt::{CertificateVerification, ClientConfig, Endpoint, QUIC, Session};
+use moqt::{
+    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
+};
+use tokio::sync::Mutex;
 use tracing::info;
 
 use super::{auth_token_file::current_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
@@ -21,11 +24,16 @@ impl RelayConnection {
 
 pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConnection> {
     let auth_token = current_auth_token(relay).await?;
+    let current = auth_token.clone().map(|token| Arc::new(Mutex::new(token)));
+    let authorization_token = match (&relay.auth_token_file, &current) {
+        (Some(_), Some(current)) => Some(AuthorizationTokenSource::shared(Arc::clone(current))),
+        _ => auth_token.map(Into::into),
+    };
     let config = ClientConfig {
         certificate_verification: CertificateVerification::native_roots_or_disabled(
             !relay.insecure,
         ),
-        authorization_token: auth_token.clone().map(Into::into),
+        authorization_token,
         versions: relay.offered_versions(),
         ..ClientConfig::default()
     };
@@ -33,12 +41,12 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
     info!(relay = %relay.url, "connecting to relay");
     let connecting = endpoint.connect(relay.url.as_str()).await?;
     let session = Arc::new(connecting.await?);
-    let auth_token_refresh = match (&relay.auth_token_file, auth_token) {
-        (Some(path), Some(token)) => Some(AuthTokenRefreshTask::run(
+    let auth_token_refresh = match (&relay.auth_token_file, current) {
+        (Some(path), Some(current)) => Some(AuthTokenRefreshTask::run(
             session.clone(),
             path.clone(),
             app_id.to_string(),
-            token,
+            current,
         )),
         _ => None,
     };
