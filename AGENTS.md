@@ -31,7 +31,7 @@ Application and integration components (draft reference is normally not required
 | Component | Description |
 | --- | --- |
 | `sdk/js` | Browser SDK `moq-wasm`: WebAssembly bindings to `moqt` (crate `wasm`) and the TypeScript package around them in `js/` |
-| `sdk/rust` | Rust SDK `moq-wasm`: `moqt::client` re-exported with token refresh and the end of a session, and broadcasts of tracks, event timelines and encoded media built on `broadcast`, for applications outside this repository |
+| `sdk/rust` | Rust SDK `moq-wasm`: `moqt::client` re-exported with token refresh and the end of a session, the broadcasts it publishes (tracks, event timelines and encoded media, built on `broadcast`) and those it follows through their MSF catalog, for applications outside this repository |
 | `sdk/python` | Python SDK `moq-wasm`: PyO3 bindings to `moqt` (`moq_wasm._native`) and the Python package around them, used by the Python bots |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |

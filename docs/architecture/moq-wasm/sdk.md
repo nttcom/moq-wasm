@@ -186,8 +186,8 @@ camera.configure_video("avc1.42e01f")?;
 camera.push_video(annexb_access_unit, timestamp_micros)?; // a keyframe opens a group
 
 media::watch_broadcasts(&session, &["anon", "operators"], WatchOptions::default(), |remote| async move {
-    let mut catalogs = remote.catalogs();
-    while let Some(catalog) = catalogs.next().await {
+    let mut catalogs = remote.catalogs().await?;
+    while let Some(catalog) = catalogs.next().await? {
         let track = catalog.select(&TrackQuery { role: Some("audio"), ..Default::default() });
         // …
     }
@@ -235,13 +235,21 @@ broadcast.close().await?;
   `WatchOptions::filter` accepts, aborts it when the broadcast is withdrawn
   and runs it again when it is published anew. A handler's `Err` is logged.
   With `WatchOptions::empty_timeout`, it returns once no broadcast has been
-  published for that long. It skips the broadcasts this session publishes.
-- **`RemoteBroadcast`** is one published namespace. `catalogs()` yields a
-  `Catalog` each time the publisher changes it, starting from the one the
+  published for that long. It skips the broadcasts this session publishes,
+  which a relay echoes to its SUBSCRIBE_NAMESPACE (draft-14 §6.1), through
+  `moqt::Session::publishes_namespace`: a namespace is published through
+  `announce` or through `broadcast`'s `RelayConnection`, so only the moqt
+  session sees both.
+- **`RemoteBroadcast`** is one published namespace. `catalogs().await`
+  subscribes, and its `Catalogs` yields a `Catalog` each time the publisher
+  changes it, starting from the one the
   relay holds (a joining FETCH), and skips one that does not parse, logging
   it. `follow(name, FollowOptions)` yields the track's objects from the
   largest object on, and subscribes again a second after the track ends or
-  its SUBSCRIBE fails.
+  its SUBSCRIBE fails. It sends a plain SUBSCRIBE, not
+  `moqt::client::Session::follow_track`: that sends a SUBSCRIBE_NAMESPACE of
+  its own, which overlaps the one `watch_broadcasts` holds and is refused
+  (draft-14 §9.28).
   `event_timeline(name, EventTimelineOptions)` yields the records of an
   event timeline track, starting with those the relay still keeps (a
   joining FETCH), and subscribes again as `follow` does. Both options set
@@ -252,10 +260,14 @@ broadcast.close().await?;
   while `event_timeline` has no timeout, since a chat or an episode track
   needs every record. Each is its own type so that its `Default` is its
   default. All three are read with `next().await`, as
-  `moqt::client::Subscription` is.
+  `moqt::client::Subscription` is; `follow`'s `FollowedTrack` and
+  `event_timeline`'s `RemoteEventTimeline` never end by themselves, and an
+  event timeline subscribed again skips the objects it already read.
+  Dropping any of them unsubscribes.
 - **`Catalog`** is `msf`'s parsed catalog with `select(&TrackQuery)`, which
   picks a track by `role`, `packaging`, `codec` (`"avc1"` matches
-  `avc1.42e01f`) and a preference (`LowestBitrate`, `HighestBitrate`).
+  `avc1.42e01f`) and a `BitratePreference` (`Lowest`, `Highest`). Its
+  tracks are `msf::Track`, re-exported as `CatalogTrack`.
 
 Left out until an application asks: reading a broadcast back into media
 events (`broadcast::BroadcastReader`, what `live-egress` uses), the CMAF
