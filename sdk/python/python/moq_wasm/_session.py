@@ -112,16 +112,16 @@ class NamespaceWatch(AsyncIterator[NamespaceEvent]):
 
 class TrackWriter:
     """A track the session publishes. What is written before the track is registered is dropped.
-    The writer ends for good at the first of its `close()`, the session ending, the failure of
-    its registration and the failure or cancellation of the opening written once it is
-    registered, as an event timeline's, which closes it: from then on, writing raises what ended
-    it (RuntimeError after `close()`), at once and before any native call, so nothing reaches
-    the native origin's cache any more, a write waiting for its turn included. Writes are sent
-    one at a time, in the order they were made; a send that started runs to its end even when
-    its caller is cancelled, as by a timeout, and the next write waits for it. `close()` is
-    final: it waits for a registration and a send under way and ends its track. A track has one
-    writer in a session, from its creation until its `close()` finished or its registration
-    failed. Objects carry no extension headers (LOC properties)."""
+    The writer ends for good at the first of its `close()`, the session ending, the failure of its
+    registration, the failure to publish the namespace of the broadcast it belongs to and the
+    failure or cancellation of the opening written once it is registered, as an event timeline's,
+    which closes it: from then on, writing raises what ended it (RuntimeError after `close()`), at
+    once and before any native call, so nothing reaches the native origin's cache any more, a write
+    waiting for its turn included. Writes are sent one at a time, in the order they were made; a
+    send that started runs to its end even when its caller is cancelled, as by a timeout, and the
+    next write waits for it. `close()` is final: it waits for a registration and a send under way
+    and ends its track. A track has one writer in a session, from its creation until its `close()`
+    finished or its registration failed. Objects carry no extension headers (LOC properties)."""
 
     def __init__(
         self,
@@ -156,8 +156,10 @@ class TrackWriter:
         # Clear while the track is being registered, so `close()` ends it once registered.
         self._not_registering = asyncio.Event()
         self._not_registering.set()
-        # The opening written ahead of every other write once the track is registered.
+        # The opening `_when_bound` runs once the track is registered.
         self._on_bound: Callable[[], Awaitable[None]] | None = None
+        # Called once `close()` finished.
+        self._on_closed: list[Callable[[], None]] = []
         # The turns of the writes, in the order they came: the first one's holds it, through its
         # native send, and the others wait for theirs.
         self._turns: deque[asyncio.Future[None]] = deque()
@@ -298,6 +300,8 @@ class TrackWriter:
                 await self._session._native.end_track(list(self._namespace), self._name)
         finally:
             self._session._release_track(self)
+            for closed in self._on_closed:
+                closed()
 
     def _raise_if_ended(self) -> None:
         if self._ended.ended:
@@ -311,6 +315,14 @@ class TrackWriter:
         self._registered.set()
         if self._on_bound is not None:
             await self._open(self._on_bound)
+
+    def _when_bound(self, opening: Callable[[], Awaitable[None]]) -> None:
+        """Runs `opening`, a write ahead of every other, once the track is registered, or at once
+        when it is: its failure or cancellation closes the writer, as at its registration."""
+        if not self._registered.is_set():
+            self._on_bound = opening
+            return
+        asyncio.ensure_future(self._open(opening)).add_done_callback(retrieve)
 
     async def _open(self, opening: Callable[[], Awaitable[None]]) -> None:
         try:
@@ -391,9 +403,9 @@ class Session:
         self._watches: set[NamespaceWatch] = set()
         # What `_end` calls with what ended the session: each ends a handle of the session.
         self._enders: set[Callable[[BaseException], None]] = set()
-        # What `_end` calls with each handle the session holds only weakly, as the reads of a
-        # subscription, and with what ended the session: kept only while something else holds the
-        # handle, so a subscription nobody reads any more is not kept alive.
+        # What `_end` calls with each handle that no part of the session owns yet, as one declared
+        # on a broadcast before it was entered, and with what ended the session: kept only while
+        # something else holds the handle, so a broadcast never entered is not kept alive.
         self._held_enders: weakref.WeakKeyDictionary[Any, Callable[[Any, BaseException], None]] = (
             weakref.WeakKeyDictionary()
         )
@@ -626,12 +638,14 @@ class Session:
         among the session's tracks, a lower value is sent first. Raises what ended the session once
         it ended, RuntimeError while another writer of the session publishes the track, until its
         `close()` finished, ValueError when `retention_seconds` is not the one the track was
-        registered with first in the session, which it keeps, when the track has an object and
-        `datagram` is not the delivery it sent it with, which it keeps, and for an invalid
-        `retention_seconds`, which registers nothing, and OverflowError for a `priority` outside
-        0-255. Cancelled before it returns, it ends the track once registered, and keeps the track
-        its own until then: a later `publish_track` of the track waits for that, and another writer
-        of the track is refused meanwhile."""
+        registered with first in the session, which it keeps (the newest object for a media
+        broadcast's catalog or 60 s for its other tracks, for a track a media broadcast published),
+        when the track has an object and `datagram` is not the delivery it sent it with, which it
+        keeps, and for an invalid `retention_seconds`, which registers nothing, and OverflowError
+        for a `priority` outside 0-255. Cancelled before it returns, it ends the track once
+        registered, and keeps the track its own until then: a later `publish_track` of the track
+        waits for that, and another owner of the track, such as a broadcast, is refused
+        meanwhile."""
         self._raise_if_ended()
         await self._released(_published_track_key(tuple(namespace), name))
         self._raise_if_ended()
@@ -746,6 +760,33 @@ class Session:
             raise
         self._registrations[key] = registration
         return registered
+
+    def _record_media_tracks(self, namespace: tuple[str, ...], retentions: dict[str, float]) -> None:
+        """Records the tracks of a media broadcast, which the native media broadcast may register
+        at any time from now on, on subgroup streams, each with the retention it gives it."""
+        for name, retention_seconds in retentions.items():
+            self._registrations.setdefault((namespace, name), _Registration(False, retention_seconds))
+
+    def _refuse_other_registrations(self, namespace: tuple[str, ...], retentions: dict[str, float]) -> None:
+        """Raises ValueError when the session registered one of a media broadcast's tracks, each
+        with the retention `retentions` gives it, in datagrams or with another retention, which the
+        native origin keeps: a media broadcast would send that track in datagrams too, which its
+        subscribers cannot read by group, or keep another span of its objects for late
+        subscribers."""
+        for name, retention_seconds in retentions.items():
+            registration = self._registrations.get((namespace, name))
+            if registration is None:
+                continue
+            if registration.datagram:
+                raise ValueError(
+                    f"track {name} of {list(namespace)} sends its objects in datagrams, which a media "
+                    "broadcast's track cannot: give the media track another name"
+                )
+            if registration.retention_seconds != retention_seconds:
+                raise ValueError(
+                    f"track {name} of {list(namespace)} keeps its objects for {registration.retention_seconds} s, "
+                    f"a media broadcast's for {retention_seconds} s: give the media track another name"
+                )
 
     def _announced(self, namespace: list[str], *, owns: bool) -> Announcement:
         announcement = Announcement(self, namespace, owns=owns)

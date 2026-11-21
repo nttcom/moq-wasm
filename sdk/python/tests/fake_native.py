@@ -203,6 +203,10 @@ class FakeMediaBroadcast:
 
     async def announce(self) -> None:
         self._session.calls.append(("media_announce", self._namespace))
+        if self._session.media_announce_gate is not None:
+            await self._session.media_announce_gate.wait()
+        if self._session.media_announce_failure is not None:
+            raise self._session.media_announce_failure
 
     async def close(self) -> None:
         self._session.calls.append(("media_close", self._namespace))
@@ -238,6 +242,10 @@ class FakeNativeSession:
         self.tracks: dict[str, list[list[bytes]]] = {}
         # While set and not released, PUBLISH_NAMESPACE waits for the relay's answer.
         self.announce_gate: asyncio.Event | None = None
+        # While set and not released, a media broadcast's PUBLISH_NAMESPACE waits for the relay's
+        # answer, which refuses it with `media_announce_failure` once that is set.
+        self.media_announce_gate: asyncio.Event | None = None
+        self.media_announce_failure: Exception | None = None
         # For each track name, the gate UNSUBSCRIBE waits on for the relay's answer until released.
         self.unsubscribe_gates: dict[str, asyncio.Event] = {}
         # While set and not released, closing a namespace watch waits for the relay's answer.
@@ -301,7 +309,7 @@ class FakeNativeSession:
         self.ended.append((list(namespace), name))
 
     async def unannounce(self, namespace: list[str]) -> None:
-        self.calls.append(("unannounce", namespace))
+        self.calls.append(("unannounce", list(namespace)))
 
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         self.refreshed.append(token)
@@ -327,6 +335,16 @@ class FakeRelay:
         session = FakeNativeSession(token)
         self.sessions.append(session)
         return session
+
+
+async def called(native: FakeNativeSession, call: tuple) -> None:
+    while call not in native.calls:
+        await asyncio.sleep(0.01)
+
+
+async def until(condition) -> None:
+    while not condition():
+        await asyncio.sleep(0.01)
 
 
 async def open_session(relay: FakeRelay, token: str | None = None, refresh: RefreshToken | None = None) -> Session:
