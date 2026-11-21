@@ -1445,7 +1445,7 @@ async def test_each_subscription_to_a_video_track_is_decoded_afresh():
 
     # Act
     running = asyncio.create_task(receiver.run())
-    await within(until(lambda: len(by_subscription.get(2, [])) >= 4))
+    await until(lambda: len(by_subscription.get(2, [])) >= 4)
 
     # Assert: the pictures the decoders held back came as the first subscription ended, and the
     # second's group 0 was not taken as the first's
@@ -2479,6 +2479,31 @@ async def test_the_transport_registers_the_events_of_moq_transport():
     for event in ("on_connected", "on_disconnected", "on_client_connected", "on_client_disconnected", "on_track_subscribed", "on_error"):
         transport.event_handler(event)(lambda *args: None)
     assert transport.input() is transport.input()
+    await session.close()
+
+
+async def test_the_transport_gives_the_id_of_a_client_its_on_client_connected_passed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_out_enabled=True))
+    connected = asyncio.Event()
+    client_ids = []
+
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, client):
+        client_ids.append(transport.get_client_id(client))
+        connected.set()
+
+    await within(start_alone(transport.output()))
+
+    # Act
+    relay.sessions[0].publish([*ROOM, "alice"])
+    await within(connected.wait())
+
+    # Assert
+    assert client_ids == ["alice"]
+    await transport.output().cleanup()
     await session.close()
 
 
