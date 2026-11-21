@@ -22,6 +22,6 @@ The release flow itself is described in `docs/architecture/python/sdk.md` ("Pack
    - Run `uv lock` in every directory whose `uv.lock` names the package (`git grep -l 'name = "moq-wasm"' -- '*uv.lock'`), and check the diff only changes the `moq-wasm` version. The workflow's `uv sync --locked` fails on a stale `sdk/python/uv.lock`.
    - Check `node sdk/js/js/scripts/release-notes.mjs sdk/python/CHANGELOG.md <version>` prints the section.
    - Commit as `chore(python): release moq-wasm (Python) <version>`.
-7. Open the release PR with the `create-pull-request` skill, titled `chore(python): moq-wasm (Python) <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート` or `## リリースノート（Python）` section.
+7. Open the release PR with the `create-pull-request` skill, titled `chore(python): moq-wasm (Python) <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート`, `## リリースノート（Python）` or `## リリースノート（Rust）` section.
 8. After the user merges it, confirm with them, then tag the merge commit and push the tag: `git tag python-sdk-v<version> <merge commit>` and `git push origin python-sdk-v<version>`. Check the commit's `sdk/python/pyproject.toml` names `<version>` first; the workflow stops otherwise.
 9. Wait for the `Python SDK release` workflow (`gh run list --workflow python-release.yml`), then report the GitHub Release URL and its three wheels (`moq_wasm-<version>-cp311-abi3-{manylinux_2_28_x86_64,manylinux_2_28_aarch64,macosx_11_0_arm64}.whl`).

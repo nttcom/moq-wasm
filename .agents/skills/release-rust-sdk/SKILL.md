@@ -5,7 +5,7 @@ description: Release the Rust SDK (moq-wasm, sdk/rust). Use when the user asks t
 
 # Release the Rust SDK
 
-The release flow itself is described in `docs/architecture/moq-wasm/sdk.md` ("Release"). Users depend on the tag, so the release has no build artifacts.
+The release flow itself is described in `docs/architecture/moq-wasm/sdk.md` ("Release").
 
 ## Steps
 
@@ -19,7 +19,7 @@ The release flow itself is described in `docs/architecture/moq-wasm/sdk.md` ("Re
 6. On a branch `chore/rust-release-<version>` from `origin/master`:
    - Add `## <version>` under `# Changelog` in `sdk/rust/CHANGELOG.md` with the entries, `Breaking:` ones first. Fold in any entries left under `## Unreleased` and remove that heading.
    - Set `version` under `[package]` in `sdk/rust/Cargo.toml`, run `cargo check -p moq-wasm` so `Cargo.lock` follows, and check the lock's diff only changes the `moq-wasm` version.
-   - Replace the previous tag in the install snippet of `sdk/rust/README.md` with `rust-sdk-v<version>`.
+   - Replace the previous tag in the install snippets of `sdk/rust/README.md` and `docs/architecture/moq-wasm/sdk.md` with `rust-sdk-v<version>`.
    - Check `node sdk/js/js/scripts/release-notes.mjs sdk/rust/CHANGELOG.md <version>` prints the section.
    - Commit as `chore(moq-wasm): release moq-wasm (Rust) <version>`.
 7. Open the release PR with the `create-pull-request` skill, titled `chore(moq-wasm): moq-wasm (Rust) <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート`, `## リリースノート（Python）` or `## リリースノート（Rust）` section.

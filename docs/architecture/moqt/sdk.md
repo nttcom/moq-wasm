@@ -8,7 +8,7 @@
 
 Rust について、決定事項の 2 と 3、tag の表の Rust の行、移行計画の手順 9 と 10 は
 `docs/architecture/moq-wasm/sdk.md` に置き換えた。Rust の SDK は `moqt::client` を
-re-export する crate `moq-wasm`（`crates/moq-wasm`）で、tag は `rust-sdk-v*` である。
+re-export する crate `moq-wasm`（`sdk/rust`）で、tag は `rust-sdk-v*` である。
 
 ## 目標
 ブラウザ SDK（`docs/architecture/wasm/browser-sdk.md`）と同じことを、Python と Rust

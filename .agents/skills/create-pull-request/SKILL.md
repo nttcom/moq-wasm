@@ -72,7 +72,8 @@ Section rules:
   - For a `fix` PR, also state the versions the bug affects: the first release that contains it (`git tag --contains <commit that introduced the bug> --list 'js-sdk-v*' --sort=v:refname | head -1`, with `'python-sdk-v*'` for a bug in the Python SDK and `'rust-sdk-v*'` for one in the Rust SDK, or `未リリース` when no tag contains it), and the MoQT draft version (`draft-14`, `draft-18`) when the bug occurs on only one of them.
 - `## テスト` — the commands actually run and their results. If a check was skipped, say so.
 - `## リリースノート` — present only when the change is visible to a user of the browser SDK (`moq-wasm`): its API, its behaviour, or a bug they could hit. One or more English bullets in the style of `sdk/js/js/CHANGELOG.md`, written to be copied there as they are; start a breaking change with `Breaking:` and show the migration. The `release-sdk` skill collects these sections when it releases. The rest of the body stays Japanese, and the three-line limit does not apply to this section.
-- `## リリースノート（Python）` — the same for a user of the Python SDK (`moq-wasm` in `sdk/python`), in the style of `sdk/python/CHANGELOG.md`; the `release-python-sdk` skill collects these sections. - `## リリースノート（Rust）` — the same for a user of the Rust SDK (`moq-wasm` in `sdk/rust`), in the style of `sdk/rust/CHANGELOG.md`; the `release-rust-sdk` skill collects these sections.
+- `## リリースノート（Python）` — the same for a user of the Python SDK (`moq-wasm` in `sdk/python`), in the style of `sdk/python/CHANGELOG.md`; the `release-python-sdk` skill collects these sections.
+- `## リリースノート（Rust）` — the same for a user of the Rust SDK (`moq-wasm` in `sdk/rust`), in the style of `sdk/rust/CHANGELOG.md`; the `release-rust-sdk` skill collects these sections.
 
 A change the users of several SDKs notice, such as one in `moqt`, gets a section for each, written for that SDK's API.
 
