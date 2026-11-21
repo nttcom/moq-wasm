@@ -8,12 +8,12 @@ T = TypeVar("T")
 
 
 class Following(AsyncIterator[T]):
-    """What `RemoteBroadcast` follows: its catalogs, a track's objects or its subscriptions. Each
-    read advances it in the reader's own task, awaiting its sources directly, and keeps its state
-    between reads, so a read cancelled, as by `asyncio.wait_for` timing out, leaves the next read
-    to go on where it stopped: what the SDK awaits, a `moq_wasm.Subscription`'s read or a
-    SUBSCRIBE, stays in flight for it. One read at a time: a read while another waits raises
-    RuntimeError at once.
+    """What `RemoteBroadcast` follows: its catalogs, a track's objects or its subscriptions; and the
+    pictures `moq_wasm.codecs` decodes. Each read advances it in the reader's own task, awaiting
+    its sources directly, and keeps its state between reads, so a read cancelled, as by
+    `asyncio.wait_for` timing out, leaves the next read to go on where it stopped: what the SDK
+    awaits, a `moq_wasm.Subscription`'s read or a SUBSCRIBE, stays in flight for it. One read at a
+    time: a read while another waits raises RuntimeError at once.
 
     `aclose()` unsubscribes, waiting until the UNSUBSCRIBE was sent, after the relay answered a
     SUBSCRIBE still in flight, even when its caller is cancelled meanwhile, then raises the
@@ -25,6 +25,10 @@ class Following(AsyncIterator[T]):
     before the read raises; a read cancelled meanwhile leaves that to the next read. Read it in
     `contextlib.aclosing` to unsubscribe as soon as the reading stops: one dropped without
     `aclose()` unsubscribes only once it is garbage collected."""
+
+    # Whether `aclose()` from another task cancels the read in flight: false for an iteration whose
+    # reads await a source of the caller's, which the cancellation would reach.
+    _interrupts = True
 
     def __init__(self, what: str):
         self._what = what
@@ -102,7 +106,7 @@ class Following(AsyncIterator[T]):
         """Starts the close unless it started, cancelling an advance in flight in another task;
         returns a future of the caller's own that resolves once it finished."""
         advancing = self._advancing
-        if not self._closing.started and advancing is not None:
+        if not self._closing.started and self._interrupts and advancing is not None:
             if advancing is not asyncio.current_task():
                 self._interrupting = True
                 advancing.cancel()
@@ -117,7 +121,8 @@ class Following(AsyncIterator[T]):
         return reader.uncancel() == 0
 
     async def _close(self) -> None:
-        await self._idle.wait()
+        if self._interrupts:
+            await self._idle.wait()
         await self._release()
 
     async def _next(self) -> T:

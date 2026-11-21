@@ -1071,7 +1071,7 @@ async def test_an_h264_access_unit_without_a_slice_is_not_taken_and_its_paramete
     # sets the earlier unit brought
     assert taken == [False, False, True, True]
     decoded = VideoDecoder(encoder.codec_string).decode(received.payload)
-    assert decoded is not None and (decoded.width, decoded.height) == SIZE
+    assert [(picture.width, picture.height) for picture, _ in decoded] == [SIZE]
     await subscriber.close()
     await publisher.close()
 
