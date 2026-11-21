@@ -25,6 +25,7 @@ Library components (draft-governed):
 | `crates/msf` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-02.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
 | `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC properties to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-04.txt` (`loc` module only) |
 | `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`, and the reader that turns a broadcast back into media events for `live-egress`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
+| `crates/robotics` | Robot teleoperation, cloud policies and data collection over MoQT: the records of the robot's `state`, `control` and `episode` tracks and the drivers' `action` tracks and their catalog entries and priorities | `docs/spec/draft-ietf-moq-msf-02.txt` (§8 Event Timeline) |
 
 All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are application and integration components (see each crate's `Cargo.toml` `description` and `docs/architecture/<package name>/`); draft lookup is normally not required for them.
 
