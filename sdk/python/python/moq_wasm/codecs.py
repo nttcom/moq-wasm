@@ -24,6 +24,7 @@ from moq_wasm.media._remote_broadcast import DEFAULT_DELIVERY_TIMEOUT_SECONDS, _
 logger = logging.getLogger("moq_wasm")
 
 OPUS_SAMPLE_RATE = 48_000
+PCM_LAYOUTS = {1: "mono", 2: "stereo"}
 OPUS_BITRATE = 32_000
 
 # The Object Status of an object that ends its group (draft-ietf-moq-transport-14 §10.2.1.1).
@@ -99,18 +100,30 @@ def _family_decoder_name(family: str) -> str | None:
 
 
 class OpusDecoder:
-    """Turns the Opus packets of a LOC audio track into mono 16-bit PCM at `sample_rate`."""
+    """Turns the Opus packets of a LOC audio track into 16-bit PCM at `sample_rate` with `channels`
+    interleaved channels, mono or stereo, mixed from the track's own. Raises ValueError for another
+    channel count."""
 
-    def __init__(self, sample_rate: int):
-        self._decoder = av.CodecContext.create("opus", "r")
-        self._resampler = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
+    def __init__(self, sample_rate: int, channels: int = 1):
+        self._channels = channels
+        # `kind` types the context as audio, which PyAV 15 does not for
+        # `CodecContext.create("opus")`.
+        self._decoder = av.Codec("opus", "r").create("audio")
+        self._resampler = av.AudioResampler(format="s16", layout=_pcm_layout(channels), rate=sample_rate)
 
     def decode(self, packet: bytes) -> bytes:
         return b"".join(
-            bytes(resampled.planes[0])[: resampled.samples * 2]
+            bytes(resampled.planes[0])[: resampled.samples * self._channels * 2]
             for decoded in self._decoder.decode(av.Packet(packet))
             for resampled in self._resampler.resample(decoded)
         )
+
+
+def _pcm_layout(num_channels: int) -> str:
+    layout = PCM_LAYOUTS.get(num_channels)
+    if layout is None:
+        raise ValueError(f"cannot take {num_channels} channels: give mono or stereo PCM")
+    return layout
 
 
 class OpusEncoder:
