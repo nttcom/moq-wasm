@@ -5,6 +5,7 @@ import base64
 import json
 from types import SimpleNamespace
 
+from moq_wasm import Location
 from moq_wasm._session import Session, _Connecting
 from moq_wasm._token import RefreshToken
 
@@ -30,15 +31,22 @@ class FakeWriter:
 
 
 class FakeSubscription:
-    """Yields `payloads` as objects of group 0, then ends as a track its publisher ended; with
-    `STAY_OPEN` last, waits for more instead, as a live track does."""
+    """Yields `payloads` as objects of group 0, or of the group a `(group_id, payload)` pair names,
+    or with the location a `(group_id, object_id, payload)` triple names, or a `SimpleNamespace`
+    object as it is, then ends as a track its publisher ended; with `STAY_OPEN` last, waits for
+    more instead, as a live track does. An `asyncio.Event` among them holds the objects after it
+    back until it is set. `largest` is the Largest Location its SUBSCRIBE_OK reported: that of the
+    last of the first `replayed` objects, as of a joining FETCH, or None without any."""
 
-    def __init__(self, payloads: list):
+    def __init__(self, payloads: list, unsubscribe_gate: asyncio.Event | None = None, *, replayed: int = 0):
+        self._unsubscribe_gate = unsubscribe_gate
+        self.largest = _last_location(payloads[:replayed])
         self._stay_open = bool(payloads) and payloads[-1] is STAY_OPEN
         payloads = payloads[:-1] if self._stay_open else payloads
-        self._objects = iter(
-            SimpleNamespace(group_id=0, object_id=index, payload=payload) for index, payload in enumerate(payloads)
-        )
+        self._items = iter(payloads)
+        self._next_object_id = 0
+        # Set once UNSUBSCRIBE is sent, and `closed` once the relay answered it.
+        self.unsubscribing = False
         self.closed = False
 
     def __aiter__(self) -> "FakeSubscription":
@@ -46,14 +54,50 @@ class FakeSubscription:
 
     async def __anext__(self):
         try:
-            return next(self._objects)
+            item = next(self._items)
+            while isinstance(item, asyncio.Event):
+                await item.wait()
+                item = next(self._items)
+            if isinstance(item, SimpleNamespace):
+                return item
+            if isinstance(item, tuple) and len(item) == 3:
+                group_id, object_id, payload = item
+            else:
+                group_id, payload = item if isinstance(item, tuple) else (0, item)
+                object_id = self._next_object_id
+                self._next_object_id += 1
+            return SimpleNamespace(
+                group_id=group_id,
+                object_id=object_id,
+                status=None,
+                payload=payload,
+                extension_headers=[],
+            )
         except StopIteration:
             if self._stay_open:
                 await asyncio.Event().wait()
             raise StopAsyncIteration from None
 
     async def close(self) -> None:
+        self.unsubscribing = True
+        if self._unsubscribe_gate is not None:
+            await self._unsubscribe_gate.wait()
         self.closed = True
+
+
+def _last_location(items: list) -> Location | None:
+    """The location `FakeSubscription` gives the last object among `items`."""
+    location = None
+    next_object_id = 0
+    for item in items:
+        if isinstance(item, SimpleNamespace):
+            location = (item.group_id, item.object_id)
+        elif isinstance(item, tuple) and len(item) == 3:
+            location = item[:2]
+        elif not isinstance(item, asyncio.Event) and item is not STAY_OPEN:
+            location = (item[0] if isinstance(item, tuple) else 0, next_object_id)
+            next_object_id += 1
+    return None if location is None else Location(*location)
 
 
 class FakeRendition:
@@ -157,6 +201,8 @@ class FakeNativeSession:
         self.tracks: dict[str, list[list[bytes]]] = {}
         # While set and not released, PUBLISH_NAMESPACE waits for the relay's answer.
         self.announce_gate: asyncio.Event | None = None
+        # For each track name, the gate UNSUBSCRIBE waits on for the relay's answer until released.
+        self.unsubscribe_gates: dict[str, asyncio.Event] = {}
         # While set and not released, closing a namespace watch waits for the relay's answer.
         self.watch_close_gate: asyncio.Event | None = None
         self.subscriptions: list[FakeSubscription] = []
@@ -205,7 +251,7 @@ class FakeNativeSession:
     def _subscription(self, name: str) -> FakeSubscription:
         if not self.tracks.get(name):
             raise RuntimeError("TrackDoesNotExist")
-        subscription = FakeSubscription(self.tracks[name].pop(0))
+        subscription = FakeSubscription(self.tracks[name].pop(0), self.unsubscribe_gates.get(name))
         self.subscriptions.append(subscription)
         return subscription
 
