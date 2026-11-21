@@ -3,7 +3,7 @@ import copy
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from PIL import Image
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
@@ -1501,6 +1501,10 @@ class MoqWasmTransport(BaseTransport):
         Returns once the source's track is unsubscribed, also when called again after a cancelled
         release. Not part of pipecat's API."""
         await self._room.release(participant_id, video_source)
+
+    def get_client_id(self, client: Any) -> str:
+        """The participant id `on_client_connected` passed as `client`."""
+        return client
 
     def input(self) -> MoqWasmInputTransport:
         """The input of the pipeline being built: the same one until it ran, then a new one."""

@@ -2482,6 +2482,31 @@ async def test_the_transport_registers_the_events_of_moq_transport():
     await session.close()
 
 
+async def test_the_transport_gives_the_id_of_a_client_its_on_client_connected_passed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, audio_out_enabled=True))
+    connected = asyncio.Event()
+    client_ids = []
+
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, client):
+        client_ids.append(transport.get_client_id(client))
+        connected.set()
+
+    await within(start_alone(transport.output()))
+
+    # Act
+    relay.sessions[0].publish([*ROOM, "alice"])
+    await within(connected.wait())
+
+    # Assert
+    assert client_ids == ["alice"]
+    await transport.output().cleanup()
+    await session.close()
+
+
 async def test_a_participant_input_pushes_only_its_participants_audio_and_publishes_nothing():
     # Arrange
     relay = FakeRelay()
