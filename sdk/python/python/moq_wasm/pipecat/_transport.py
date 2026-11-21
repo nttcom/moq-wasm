@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 from collections.abc import Callable, Mapping
 from typing import TypeVar
@@ -14,8 +15,11 @@ from pipecat.frames.frames import (
     OutputImageRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
+    OutputTransportReadyFrame,
     SpriteFrame,
     StartFrame,
+    StopFrame,
+    TTSStoppedFrame,
     UserAudioRawFrame,
     UserImageRawFrame,
     UserImageRequestFrame,
@@ -28,6 +32,7 @@ from pipecat.utils.deprecation import warn_deprecated
 
 from moq_wasm._once import Once
 from moq_wasm._session import Session
+from moq_wasm.codecs import _PcmResampler
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 from moq_wasm.pipecat._participant import (
     CAMERA_SOURCE,
@@ -43,6 +48,7 @@ DEFAULT_VIDEO_OUT_CODEC = "H264"
 
 logger = logging.getLogger("moq_wasm")
 
+FrameT = TypeVar("FrameT", bound=Frame)
 ParamsT = TypeVar("ParamsT", bound=TransportParams)
 
 
@@ -457,22 +463,53 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
     """Publishes `OutputAudioRawFrame` as Opus and `OutputImageRawFrame` as `video_out_codec` in the
     transport's broadcast, with its MSF catalog, and writes the `MoqWasmTrackObject` or
     `MoqWasmEventRecord` an `OutputTransportMessageFrame` carries. It serves one pipeline run: the
-    next pipeline takes a new output from `MoqWasmTransport.output`."""
+    next pipeline takes a new output from `MoqWasmTransport.output`. Once publishing its media
+    failed, which it does for good, an output that writes no data track or event timeline can do
+    nothing more: the failure is pushed as an `ErrorFrame` treated as permanent, as a room that
+    cannot open is."""
 
     def __init__(self, room: Room, params: MoqWasmParams, **kwargs):
         super().__init__(params, **kwargs)
         self._room = room
+        # Whether media is all the output writes, so that it can do nothing once publishing it
+        # failed.
+        self._media_only = not (params.data_out_tracks or params.event_timelines_out)
+        # Set up with the output's sample rate, which pipecat sets in `setup`.
+        self._audio_in: _AudioNormalizer | None = None
 
     def _audio_filter(self) -> BaseAudioFilter | None:
         return self._params.audio_out_filter
+
+    async def setup(self, setup: FrameProcessorSetup):
+        await super().setup(setup)
+        self._audio_in = _AudioNormalizer(self.sample_rate, self._params.audio_out_channels)
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
         if self.ran:
             return
         await self._end_stopped_senders()
+        # A sample rate under 100 Hz has no sample in 10 ms: an audio sender would cut empty chunks
+        # forever, so the output can write nothing.
+        if self._params.audio_out_enabled and self.audio_chunk_size <= 0:
+            error = ValueError(f"{self.sample_rate} Hz audio has no sample in 10 ms")
+            await self.push_error(f"cannot write audio: {error}", error, force_treat_as_permanent=True)
+            return
         if await _open_room(self, self._room):
             await self.set_transport_ready(frame)
+
+    async def set_transport_ready(self, frame: StartFrame):
+        # pipecat's, with the output's own media sender; the transport refuses output destinations,
+        # so the default one is all it starts.
+        self._media_senders[None] = sender = _MediaSender(
+            self,
+            destination=None,
+            sample_rate=self.sample_rate,
+            audio_chunk_size=self.audio_chunk_size,
+            params=self._params,
+        )
+        await sender.start(frame)
+        await self.push_frame(OutputTransportReadyFrame(), FrameDirection.UPSTREAM)
 
     async def _end_stopped_senders(self) -> None:
         """Ends the media senders a `StopFrame` left running: pipecat keeps a stopped processor
@@ -484,8 +521,19 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
             await sender.cleanup()
 
     async def stop(self, frame: EndFrame):
+        # pipecat writes the audio queued before the EndFrame, in chunks of `audio_out_10ms_chunks`;
+        # the speech's last chunk, short of one, is queued ahead of it, padded with silence, as
+        # pipecat does at a TTSStoppedFrame. The audio task writes the speech's last packet after
+        # it.
         try:
-            await super().stop(frame)
+            try:
+                if self._params.audio_out_enabled:
+                    for sender in self._media_senders.values():
+                        await sender._enqueue_flushed_audio_buffer()
+            finally:
+                await super().stop(frame)
+        except Exception as error:
+            await self._report_write_failure(f"cannot write the end of the speech: {error}", error)
         finally:
             await _leave_room(self, self._room)
 
@@ -503,6 +551,68 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
         finally:
             await self._room.stop(self)
 
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        # The output publishes one broadcast, pipecat's default destination: a frame for another
+        # destination, as for another transport's output in the same pipeline, goes on as it came,
+        # leaving the output's resampler, senders and room alone. It goes on before pipecat's
+        # processor handles a CancelFrame or an InterruptionFrame, and past the end of the speech
+        # `push_frame` writes at a TTSStoppedFrame or a StopFrame, which are the pipeline's only
+        # without a destination.
+        if frame.transport_destination is not None:
+            await super().push_frame(frame, direction)
+            return
+        audio_in = self._audio_in if self._params.audio_out_enabled else None
+        # Before pipecat drains its queue: the chunk being written stops at its next packet.
+        if isinstance(frame, InterruptionFrame):
+            self._room.interrupt_audio()
+            if audio_in is not None:
+                audio_in.interrupt()
+        # pipecat's media sender cuts the audio of consecutive frames into chunks, each labelled
+        # with the output's sample rate and the channel count of the frame that completed it, and
+        # its own resampler takes one input rate and mono only: each frame is queued at the output's
+        # rate and channel count, and one that cannot be is dropped here.
+        elif direction == FrameDirection.DOWNSTREAM and audio_in is not None and isinstance(frame, OutputAudioRawFrame):
+            try:
+                frame = audio_in.normalized(frame)
+            except ValueError as error:
+                await FrameProcessor.process_frame(self, frame, direction)
+                await self.push_error(f"cannot write audio: {error}", error)
+                return
+        # The end of the speech, which makes pipecat write its last chunk. pipecat queues that
+        # chunk, short of `audio_out_10ms_chunks`, only at a TTSStoppedFrame, and the output's
+        # `stop` does at an EndFrame; the senders a StopFrame leaves are replaced at the next
+        # StartFrame, which would drop it.
+        elif (
+            direction == FrameDirection.DOWNSTREAM
+            and audio_in is not None
+            and isinstance(frame, (TTSStoppedFrame, EndFrame, StopFrame))
+        ):
+            await self._queue_end_of_speech(audio_in, direction, last_chunk=isinstance(frame, StopFrame))
+        await super().process_frame(frame, direction)
+
+    async def _queue_end_of_speech(self, audio_in: "_AudioNormalizer", direction: FrameDirection, *, last_chunk: bool):
+        """Queues what the resampler holds of the speech ahead of the frame being processed and,
+        with `last_chunk`, pipecat's last chunk of it, short of `audio_out_10ms_chunks`, padded with
+        silence. A failure is pushed as an ErrorFrame, and the frame goes on all the same, so an
+        EndFrame still stops the output and ends the pipeline."""
+        try:
+            tail = audio_in.flush()
+            if tail is not None:
+                await super().process_frame(tail, direction)
+            if last_chunk:
+                for sender in self._media_senders.values():
+                    await sender._enqueue_flushed_audio_buffer()
+        except Exception as error:
+            await self.push_error(f"cannot write the end of the speech: {error}", error)
+
+    async def _finish_speech(self) -> None:
+        """Writes the speech's last packet, which the encoder holds; a failure is pushed upstream as
+        a failed audio write is."""
+        try:
+            self._room.finish_audio()
+        except Exception as error:
+            await self._report_write_failure(f"cannot write the end of the speech: {error}", error)
+
     async def _handle_frame(self, frame: Frame):
         # pipecat drops a frame for which it has no media sender, and an output whose room never
         # opened has none, which pipecat's default ProcessorUnusablePolicy.CONTINUE keeps running:
@@ -515,13 +625,42 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
             return
         await super()._handle_frame(frame)
 
+    async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        # pipecat's media sender pushes a TTSStoppedFrame or a StopFrame on once it wrote the speech
+        # queued ahead of it: the utterance's last packet is written then, before an interruption
+        # could drop it.
+        if isinstance(frame, (TTSStoppedFrame, StopFrame)) and direction == FrameDirection.DOWNSTREAM:
+            await self._finish_speech()
+        await super().push_frame(frame, direction)
+
+    # pipecat's media sender writes the audio and the messages in one task and the pictures in
+    # another, which a write that raises would end for good: a failed write is pushed upstream as an
+    # ErrorFrame instead, and the frames after it are written. Once publishing the media source
+    # failed, which it does for good, the room drops the audio and pictures after it, and the write
+    # returns False, so pipecat does not pass the audio on as sent.
+
     async def write_audio_frame(self, frame: OutputAudioRawFrame) -> bool:
-        await self._room.write_audio(frame.audio, frame.sample_rate)
-        return True
+        try:
+            return await self._room.write_audio(
+                frame.audio, frame.sample_rate, frame.num_channels, interruptible=frame.interruptible
+            )
+        except Exception as error:
+            await self._report_write_failure(f"cannot write audio: {error}", error)
+            return False
 
     async def write_video_frame(self, frame: OutputImageRawFrame) -> bool:
-        await self._room.write_picture(frame.image, frame.size, frame.format or "RGB")
-        return True
+        try:
+            return await self._room.write_picture(frame.image, frame.size, frame.format or "RGB")
+        except Exception as error:
+            await self._report_write_failure(f"cannot write a picture: {error}", error)
+            return False
+
+    async def _report_write_failure(self, message: str, error: Exception) -> None:
+        """Pushes a failed media write upstream as an `ErrorFrame`, non-fatal for a failure such as
+        a picture the encoder refuses. The one that found publishing the media source failed is
+        treated as permanent when the output writes no data track or event timeline: media was all
+        it could do."""
+        await self.push_error(message, error, force_treat_as_permanent=self._media_only and self._room.media_failed)
 
     async def send_message(self, frame: OutputTransportMessageFrame | OutputTransportMessageUrgentFrame):
         # pipecat passes a non-urgent message on by itself; an urgent one this transport does not write
@@ -529,6 +668,97 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
         written = await self._room.write_message(frame.message)
         if not written and isinstance(frame, OutputTransportMessageUrgentFrame):
             await self.push_frame(frame)
+
+
+class _MediaSender(BaseOutputTransport.MediaSender):
+    """pipecat's media sender of `MoqWasmOutputTransport`."""
+
+    def __init__(self, transport: "MoqWasmOutputTransport", **kwargs):
+        super().__init__(transport, **kwargs)
+        self._output = transport
+
+    def _clear_audio_buffer(self):
+        # pipecat clears the audio short of a chunk as a sender starts, holding none, and as the bot
+        # stops speaking, which a pause in the speech makes it do: the audio is kept for the speech
+        # after the pause or the next flush, as at a TTSStoppedFrame, an EndFrame or a StopFrame.
+        # An interruption drops the interruptible part of it itself (`handle_interruptions`).
+        pass
+
+    async def _audio_task_handler(self):
+        await super()._audio_task_handler()
+        # The speech's last packet, which the encoder holds.
+        await self._output._finish_speech()
+
+
+class _AudioNormalizer:
+    """Brings the audio of each `OutputAudioRawFrame` to the output's sample rate and channel
+    count, resampled as one stream. The resampler holds back a few samples of each frame: `flush`
+    returns them at the end of the speech, as a frame like the last one, and `interrupt` drops what
+    it holds of interruptible speech."""
+
+    def __init__(self, sample_rate: int, num_channels: int):
+        self._sample_rate = sample_rate
+        self._num_channels = num_channels
+        self._resampler = _PcmResampler(sample_rate, num_channels)
+        # The last frame resampled, whose class and flags what the resampler holds takes; None while
+        # it holds nothing.
+        self._last: OutputAudioRawFrame | None = None
+
+    def normalized(self, frame: OutputAudioRawFrame) -> OutputAudioRawFrame:
+        """A copy of `frame` at the output's sample rate and channel count. Raises ValueError for
+        audio that is not 16-bit mono or stereo PCM."""
+        audio = self._resampler.resample(frame.audio, frame.sample_rate, frame.num_channels)
+        self._last = frame
+        return self._frame(frame, audio)
+
+    def flush(self) -> OutputAudioRawFrame | None:
+        """What the resampler holds of the speech, as a frame like its last one; None when it holds
+        nothing. Raises what failed the resampler, which then holds nothing."""
+        last, self._last = self._last, None
+        if last is None:
+            return None
+        try:
+            audio = self._resampler.flush()
+        except BaseException:
+            self._resampler.reset()
+            raise
+        return self._frame(last, audio) if audio else None
+
+    def interrupt(self) -> None:
+        if self._last is not None and self._last.interruptible:
+            self._resampler.reset()
+            self._last = None
+
+    def _frame(self, frame: OutputAudioRawFrame, audio: bytes) -> OutputAudioRawFrame:
+        return _copied(
+            frame,
+            audio=audio,
+            sample_rate=self._sample_rate,
+            num_channels=self._num_channels,
+            num_frames=len(audio) // (self._num_channels * 2),
+        )
+
+
+def _copied(frame: FrameT, **changes: object) -> FrameT:
+    """A copy of `frame`, of its class and with its id and flags, such as `interruptible`, with
+    `changes` made to it, so the frame an upstream processor still holds is left as it was."""
+    copied = copy.copy(frame)
+    for name, value in changes.items():
+        setattr(copied, name, value)
+    return copied
+
+
+def _has_soundfile_mixer(mixer: object) -> bool:
+    """Whether `mixer` is, or maps a destination to, pipecat's `SoundfileMixer`, which mixes one
+    sample of its mono file into each sample of the audio, so plays it twice as fast into stereo."""
+    if mixer is None:
+        return False
+    try:
+        from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
+    except ImportError:  # Without `soundfile`, pipecat has no `SoundfileMixer`.
+        return False
+    mixers = mixer.values() if isinstance(mixer, Mapping) else [mixer]
+    return any(isinstance(each, SoundfileMixer) for each in mixers)
 
 
 class MoqWasmTransport(BaseTransport):
@@ -550,9 +780,14 @@ class MoqWasmTransport(BaseTransport):
     `processor_unusable_policy=ProcessorUnusablePolicy.CANCEL` (or `END`) to end the pipeline then.
     An output that keeps running without a media sender passes on the frames other than audio and
     pictures, which pipecat would route to that sender, so a `StopFrame` still stops the pipeline.
-    An `audio_in_filter` raises ValueError: the input carries every participant's audio, and one
-    filter, such as pipecat's `RNNoiseFilter`, would carry one speaker's state into another's
-    audio; run a `MoqWasmParticipantInput` per participant, each with a filter of its own.
+    The output does the same once publishing its media failed when it writes no data track or event
+    timeline, and when its audio sample rate, under 100 Hz, leaves no sample in pipecat's 10 ms
+    chunks. A nonpositive `audio_out_10ms_chunks` raises ValueError, as does an `audio_out_mixer`
+    that is or holds pipecat's `SoundfileMixer` with `audio_out_channels=2`: it mixes its mono files
+    into mono audio only. An `audio_in_filter` raises ValueError too: the input carries every
+    participant's audio, and one filter, such as pipecat's `RNNoiseFilter`, would carry one
+    speaker's state into another's audio; run a `MoqWasmParticipantInput` per participant, each
+    with a filter of its own.
     A room that cannot be left at an `EndFrame` or a `CancelFrame` is reported
     with a non-fatal `ErrorFrame`, and the frame goes on, so the pipeline ends.
 
@@ -560,7 +795,9 @@ class MoqWasmTransport(BaseTransport):
     of its pipeline, `input()` or `output()` returns a new one, which opens the room again, so
     build each pipeline from them rather than from the processors of an earlier one. A `StopFrame`
     does not end the run: pipecat keeps the stopped processors running, in the room, and the next
-    pipeline's `StartFrame` resumes them, the output's media senders replaced by new ones."""
+    pipeline's `StartFrame` resumes them, the output's media senders replaced by new ones; the
+    output writes all the speech queued before the `StopFrame`, its last chunk and packet padded
+    with silence, as at an `EndFrame`."""
 
     def __init__(
         self,
@@ -571,11 +808,23 @@ class MoqWasmTransport(BaseTransport):
     ):
         super().__init__(input_name=input_name, output_name=output_name)
         params = _snapshot(params)
+        if params.audio_out_destinations or params.video_out_destinations:
+            raise ValueError("MoqWasmTransport publishes one broadcast: it takes no output destinations")
         if params.audio_in_filter is not None:
             raise ValueError(
                 "MoqWasmTransport's input carries every participant's audio through one filter, which would mix"
                 " their state: give each participant a MoqWasmParticipantInput with an audio_in_filter of its own"
             )
+        if params.audio_out_channels not in (1, 2):
+            raise ValueError("MoqWasmTransport takes mono or stereo output audio")
+        if params.audio_out_channels != 1 and _has_soundfile_mixer(params.audio_out_mixer):
+            raise ValueError(
+                "pipecat's SoundfileMixer mixes its mono files into mono output audio only: set audio_out_channels=1"
+            )
+        # pipecat's media sender cuts the audio into chunks of this many 10 ms: with none, its loop
+        # would queue empty chunks forever.
+        if params.audio_out_10ms_chunks <= 0:
+            raise ValueError("MoqWasmTransport takes a positive audio_out_10ms_chunks")
         self._params = params
         options = RoomOptions(
             room=params.room,
@@ -587,6 +836,9 @@ class MoqWasmTransport(BaseTransport):
             video_out_codec=params.video_out_codec or DEFAULT_VIDEO_OUT_CODEC,
             video_out_size=(params.video_out_width, params.video_out_height),
             video_out_framerate=params.video_out_framerate,
+            audio_out_bitrate=params.audio_out_bitrate,
+            audio_out_channels=params.audio_out_channels,
+            video_out_bitrate=params.video_out_bitrate,
             data_out_tracks=params.data_out_tracks,
             event_timelines_out=params.event_timelines_out,
             empty_timeout=params.empty_timeout,

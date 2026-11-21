@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pipecat.frames.frames import UserImageRequestFrame
@@ -8,7 +9,7 @@ from pipecat.frames.frames import UserImageRequestFrame
 from moq_wasm._errors import SessionEnded
 from moq_wasm._once import wait_through_cancellation
 from moq_wasm._session import NamespaceWatch, Session, TrackWriter
-from moq_wasm.codecs import OPUS_SAMPLE_RATE, OpusEncoder, VideoEncoder
+from moq_wasm.codecs import OPUS_BITRATE, OPUS_SAMPLE_RATE, OpusEncoder, VideoEncoder
 from moq_wasm.media import (
     EventRecord,
     EventTimeline,
@@ -39,6 +40,9 @@ class RoomOptions:
     video_out_size: tuple[int, int]
     video_out_framerate: int
     broadcast: list[str]
+    audio_out_bitrate: int = OPUS_BITRATE
+    audio_out_channels: int = 1
+    video_out_bitrate: int | None = None
     data_out_tracks: dict[str, float] = field(default_factory=dict)
     event_timelines_out: dict[str, float] = field(default_factory=dict)
     empty_timeout: float | None = None
@@ -74,6 +78,8 @@ class Room:
         # What the current opening opened, once it did; None while the room is stopped.
         self._opened: _OpenedRoom | None = None
         self._audio_clock = _MediaClock()
+        # Bumped by each interruption; a write started before it stops.
+        self._audio_generation = 0
         self._video_clock = _MediaClock()
         self._users: set[object] = set()
         # Opens the room once for both processors; None while the room is stopped.
@@ -181,13 +187,20 @@ class Room:
         options = self._options
         broadcast = create_broadcast(self._session, options.broadcast)
         if options.audio_out or options.video_out:
-            opened.media = media = broadcast.add_media_source(label=options.participant_id)
+            opened.media = media = broadcast.add_media_source(
+                label=options.participant_id,
+                video_bitrate=options.video_out_bitrate,
+                video_framerate=options.video_out_framerate,
+            )
             if options.audio_out:
-                opened.opus = OpusEncoder()
-                media.configure_audio("opus", OPUS_SAMPLE_RATE, 1)
+                opened.opus = self._new_opus_encoder()
+                media.configure_audio("opus", OPUS_SAMPLE_RATE, options.audio_out_channels)
             if options.video_out:
                 opened.video = video = VideoEncoder(
-                    options.video_out_codec, *options.video_out_size, options.video_out_framerate
+                    options.video_out_codec,
+                    *options.video_out_size,
+                    options.video_out_framerate,
+                    options.video_out_bitrate,
                 )
                 media.configure_video(video.codec_string)
                 opened.tasks.append(asyncio.create_task(self._answer_keyframe_requests(media, video)))
@@ -211,6 +224,14 @@ class Room:
             raise
         opened.tasks.append(asyncio.create_task(self._follow_participants(watch)))
 
+    def _new_opus_encoder(self) -> OpusEncoder:
+        return OpusEncoder(self._options.audio_out_bitrate, self._options.audio_out_channels)
+
+    @property
+    def media_failed(self) -> bool:
+        """Whether publishing the open room's media source failed, which it does for good."""
+        return self._opened is not None and self._opened.media_failed
+
     async def start_audio(self) -> None:
         """Receives the audio of the participants in the room and of those joining later, when the
         options receive audio. Until then, and again once the room closed, no audio track is
@@ -219,25 +240,91 @@ class Room:
         for receiver in list(self._receivers.values()):
             await receiver.start_audio()
 
-    async def write_audio(self, pcm: bytes, sample_rate: int) -> None:
-        """Encodes `pcm` and waits while the speech written so far runs more than
-        `MAX_AUDIO_AHEAD_MICROS` ahead of the clock, as pipecat's `MOQTransport` paces its own."""
+    async def write_audio(
+        self, pcm: bytes, sample_rate: int, num_channels: int = 1, *, interruptible: bool = True
+    ) -> bool:
+        """Encodes `pcm` (16-bit, `num_channels` interleaved, mixed to `audio_out_channels`) and
+        writes it packet by packet, each once the speech written before it runs at most
+        `MAX_AUDIO_AHEAD_MICROS` ahead of the clock, as pipecat's `MOQTransport` paces its own. An
+        `interruptible` write stops at the next packet after `interrupt_audio`. Uninterruptible
+        speech the encoder holds back is written first, its last packet padded with silence, when
+        interruptible speech follows it, so an interruption, which drops what the encoder holds,
+        never drops it. Returns whether the room wrote all of the speech: False when it is not open,
+        publishes no audio or publishing its media source failed, when an interruption stopped it
+        before its last packet, and when the media source dropped a packet or drops what is pushed,
+        as once the session ended, which the encoder then does not take, even speech short of a
+        packet. Raises what failed publishing the media source, as `_push_media` does."""
         opened = self._opened
-        if opened is None or opened.opus is None or opened.media is None:
-            return
-        for packet in opened.opus.encode(pcm, sample_rate):
-            opened.media.push_audio(packet, self._audio_clock.next(OPUS_FRAME_MICROS))
-        ahead = self._audio_clock.ahead_micros()
-        if ahead > MAX_AUDIO_AHEAD_MICROS:
-            await asyncio.sleep((ahead - MAX_AUDIO_AHEAD_MICROS) / 1_000_000)
+        if opened is None or opened.opus is None or not opened.takes_media():
+            return False
+        generation = self._audio_generation
+        packets: list[tuple[bytes, bool]] = []
+        if interruptible and opened.opus_holds_interruptible is False:
+            finished, opened.opus = opened.opus, self._new_opus_encoder()
+            packets = [(packet, False) for packet in finished.finish()]
+        opened.opus_holds_interruptible = interruptible
+        packets.extend((packet, interruptible) for packet in opened.opus.encode(pcm, sample_rate, num_channels))
+        for packet, packet_interruptible in packets:
+            ahead = self._audio_clock.ahead_micros()
+            if ahead > MAX_AUDIO_AHEAD_MICROS:
+                await asyncio.sleep((ahead - MAX_AUDIO_AHEAD_MICROS) / 1_000_000)
+            if packet_interruptible and generation != self._audio_generation:
+                return False
+            if not self._push_media(
+                opened, lambda media: media.push_audio(packet, self._audio_clock.next(OPUS_FRAME_MICROS))
+            ):
+                return False
+        return True
 
-    async def write_picture(self, image: bytes, size: tuple[int, int], color_format: str) -> None:
+    def finish_audio(self) -> None:
+        """Writes what the Opus encoder holds back of the speech, its last packet padded with
+        silence, as the speech ends; the next write starts a fresh encoder. Raises what failed
+        publishing the media source, as `_push_media` does."""
         opened = self._opened
-        if opened is None or opened.video is None or opened.media is None:
+        if opened is None or opened.opus is None or opened.media_failed:
             return
+        finished, opened.opus = opened.opus, self._new_opus_encoder()
+        opened.opus_holds_interruptible = None
+        for packet in finished.finish():
+            self._push_media(opened, lambda media: media.push_audio(packet, self._audio_clock.next(OPUS_FRAME_MICROS)))
+
+    def interrupt_audio(self) -> None:
+        """Stops the interruptible speech being written and drops what the encoder holds of it; what
+        it holds of uninterruptible speech is kept for the next write."""
+        self._audio_generation += 1
+        opened = self._opened
+        if opened is not None and opened.opus is not None and opened.opus_holds_interruptible:
+            opened.opus = self._new_opus_encoder()
+            opened.opus_holds_interruptible = None
+
+    async def write_picture(self, image: bytes, size: tuple[int, int], color_format: str) -> bool:
+        """Encodes the picture in a thread and pushes it. Raises what failed the encode, as for a
+        picture in a color format the encoder does not take, and what failed publishing the media
+        source, as `_push_media` does. Returns whether the room wrote the picture: False when it is
+        not open, publishes no video or publishing its media source failed, and when the media
+        source dropped it, as once the session ended."""
+        opened = self._opened
+        if opened is None or opened.video is None or not opened.takes_media():
+            return False
         packets = await asyncio.to_thread(opened.video.encode, image, size, color_format)
         for packet in packets:
-            opened.media.push_video(packet, self._video_clock.next(1))
+            if not self._push_media(opened, lambda media: media.push_video(packet, self._video_clock.next(1))):
+                return False
+        return True
+
+    @staticmethod
+    def _push_media(opened: "_OpenedRoom", push: Callable[[MediaSource], bool]) -> bool:
+        """Pushes into the room's media source, unless publishing it failed; returns whether the
+        source took the push. A push raises RuntimeError once publishing the source failed, which it
+        does for good: the push that found it raises it, and the audio and pictures after it are
+        dropped, so it is reported once."""
+        if opened.media is None or opened.media_failed:
+            return False
+        try:
+            return push(opened.media)
+        except RuntimeError:
+            opened.media_failed = True
+            raise
 
     async def write_message(self, message: object) -> bool:
         """Writes a `MoqWasmTrackObject` or a `MoqWasmEventRecord`; returns False for any other
@@ -319,10 +406,22 @@ class _OpenedRoom:
         self.broadcast: LocalBroadcast | None = None
         self.media: MediaSource | None = None
         self.opus: OpusEncoder | None = None
+        # Whether the samples `opus` holds back, short of a packet, are of interruptible speech;
+        # None while it holds none. Interruptible samples may follow uninterruptible ones only once
+        # those were written.
+        self.opus_holds_interruptible: bool | None = None
         self.video: VideoEncoder | None = None
+        # Whether publishing `media` failed, which it does for good.
+        self.media_failed = False
         self.tasks: list[asyncio.Task] = []
         self.data_writers: dict[str, TrackWriter] = {}
         self.timelines: dict[str, EventTimeline] = {}
+
+    def takes_media(self) -> bool:
+        """Whether the media source takes what is pushed into it: publishing it did not fail, and it
+        does not drop it, as once the session ended. Checked before an encoder takes the media, as
+        speech short of a packet pushes nothing that would find the source stopped."""
+        return self.media is not None and not self.media_failed and not self.media._drops_pushes()
 
     async def close(self) -> None:
         for task in self.tasks:
@@ -337,9 +436,11 @@ class _OpenedRoom:
 
 
 class _MediaClock:
-    """Timestamps in wall-clock microseconds that never run backwards: a frame right after the
-    previous one follows it by its duration, even ahead of the clock as when speech is generated
-    faster than real time, and one after a pause starts at the clock."""
+    """Timestamps in microseconds that never run backwards: a frame right after the previous one
+    follows it by its duration, even ahead of the clock as when speech is generated faster than
+    real time, and one after a pause starts at the clock. The clock is the wall clock when it was
+    made, advanced by the monotonic clock, so a wall-clock step changes neither the pacing nor the
+    order."""
 
     def __init__(self):
         self._last: int | None = None
@@ -354,5 +455,8 @@ class _MediaClock:
         return 0 if self._last is None else self._last - _now_micros()
 
 
+_WALL_MINUS_MONOTONIC_NS = time.time_ns() - time.monotonic_ns()
+
+
 def _now_micros() -> int:
-    return time.time_ns() // 1000
+    return (time.monotonic_ns() + _WALL_MINUS_MONOTONIC_NS) // 1000
