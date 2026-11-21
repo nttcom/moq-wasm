@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 
 use moqt::{
     AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
@@ -260,6 +264,34 @@ impl FakeRelay {
         assert!(arrived.is_ok(), "{expected} must arrive, saw {seen:?}");
     }
 
+    /// Waits for PUBLISH_DONE of each of `tracks` in `namespace`, in any
+    /// order, and returns every request seen meanwhile.
+    pub(crate) async fn wait_for_publish_done(
+        &mut self,
+        namespace: &str,
+        tracks: &[&str],
+    ) -> Vec<String> {
+        let mut pending: BTreeSet<String> = tracks
+            .iter()
+            .map(|track| format!("PUBLISH_DONE {namespace}/{track}"))
+            .collect();
+        let mut seen = Vec::new();
+        let _ = tokio::time::timeout(TEST_TIMEOUT, async {
+            while !pending.is_empty()
+                && let Some(request) = self.requests.recv().await
+            {
+                pending.remove(&request);
+                seen.push(request);
+            }
+        })
+        .await;
+        assert!(
+            pending.is_empty(),
+            "PUBLISH_DONE must arrive for {pending:?}, saw {seen:?}"
+        );
+        seen
+    }
+
     pub(crate) async fn received_catalogs(&mut self) -> Vec<TrackObject> {
         let mut catalogs = Vec::new();
         while let Ok(Some(object)) =
@@ -299,6 +331,27 @@ impl FakeRelay {
         })
         .await
         .expect("an object of the track must arrive")
+    }
+
+    /// The first `count` objects of the published track `track_name`.
+    pub(crate) async fn track_objects(
+        &mut self,
+        track_name: &str,
+        count: usize,
+    ) -> Vec<TrackObject> {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut reader = TrackReader::new(self.track_receiver(track_name).await);
+            let mut objects = Vec::new();
+            while objects.len() < count {
+                match reader.next_object().await.unwrap() {
+                    Some(object) => objects.push(object),
+                    None => break,
+                }
+            }
+            objects
+        })
+        .await
+        .expect("the objects of the track must arrive")
     }
 
     /// The header of the first subgroup of the published track `track_name`.

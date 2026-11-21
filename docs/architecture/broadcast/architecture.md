@@ -79,6 +79,19 @@ reusing a location.
 before it, so a configuration still in the queue does not publish the track
 again.
 
+A broadcast that ends ends its sources first and its catalog last, with
+PUBLISH_DONE for every track (draft-ietf-moq-msf-02 §11.4); the `isComplete`
+catalog update §11.4 also lists is not sent. `MediaSource::end` removes the
+video, each rendition and the audio as `remove_track` does, each after the
+media queued before it, and stops the rendition tasks so that a later frame
+fails as `Stopped`. A writer or rendition whose task has already stopped takes
+no removal, so its track is removed from the `Broadcast` directly.
+`Broadcast::end_catalog` then forgets the namespace's catalog and ends the
+catalog track with PUBLISH_DONE: the `CatalogRefreshTask`, which serves every
+broadcast of the connection, no longer resends it, and a refresh that took the
+namespace before sends nothing. A catalog update after it publishes the
+catalog again.
+
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the
 codec bitstream, H.264 or H.265 in Annex-B, VP8 or VP9 frames, AV1 temporal units and
@@ -216,6 +229,8 @@ configuration that finds even the free slots taken is held, the latest replacing
 an earlier one, and queued just before that keyframe. The bindings keep only
 their callbacks and their error types: `MediaSourceError` tells media the caller
 got wrong (`InvalidMedia`) from a source that stopped publishing.
+`MediaSource::end` ends the source's tracks after its queued media (see
+"Publishing without subscribers").
 
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or

@@ -15,7 +15,7 @@ use crate::{
     broadcast::{Broadcast, SourceTracks},
     publish_queue::PushOutcome,
     rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack},
-    writer::BroadcastWriter,
+    writer::{BroadcastWriter, remove_track_after},
 };
 pub use demand_changes::DemandChanges;
 use rendition_task::{RenditionCommand, RenditionTask};
@@ -75,7 +75,13 @@ pub struct MediaSource {
     video: Option<LocDemuxer>,
     keyframe_requests: Arc<Notify>,
     demand_changes: Option<DemandChanges>,
-    renditions: Vec<mpsc::Sender<RenditionCommand>>,
+    renditions: Vec<RenditionCommands>,
+}
+
+/// `track_name` lets `end` remove the track itself once the task has stopped.
+struct RenditionCommands {
+    track_name: String,
+    command_sender: mpsc::Sender<RenditionCommand>,
 }
 
 impl MediaSource {
@@ -201,10 +207,13 @@ impl MediaSource {
         let task = RenditionTask::run(
             track,
             self.writer.broadcast().clone(),
-            track_name,
+            track_name.clone(),
             self.keyframe_requests.clone(),
         );
-        self.renditions.push(task.command_sender());
+        self.renditions.push(RenditionCommands {
+            track_name,
+            command_sender: task.command_sender(),
+        });
         MediaRendition { task, video: None }
     }
 
@@ -224,7 +233,11 @@ impl MediaSource {
         };
         let removal = self.writer.remove_track(track_name);
         let renditions: Vec<_> = match kind {
-            TrackKind::Video => self.renditions.iter().map(remove_rendition).collect(),
+            TrackKind::Video => self
+                .renditions
+                .iter()
+                .map(|rendition| remove_rendition(&rendition.command_sender))
+                .collect(),
             TrackKind::Audio => Vec::new(),
         };
         async move {
@@ -233,6 +246,30 @@ impl MediaSource {
                 result = result.and(removed.await);
             }
             result
+        }
+    }
+
+    /// Ends the video, its renditions and the audio with PUBLISH_DONE after
+    /// the media queued before, as `remove_track` does; later pushes to its
+    /// renditions fail with `MediaSourceError::Stopped`. A track whose
+    /// publish task stopped is removed from the broadcast directly. A step
+    /// that fails, as once the relay session ended, does not stop the
+    /// others; the first failure is returned.
+    pub fn end(self) -> impl Future<Output = anyhow::Result<()>> + use<> {
+        let tracks = self.writer.source_tracks();
+        let video = self.writer.end_track(&tracks.video);
+        let renditions: Vec<_> = self
+            .renditions
+            .iter()
+            .map(|rendition| end_rendition(rendition, self.writer.broadcast().clone()))
+            .collect();
+        let audio = self.writer.end_track(&tracks.audio);
+        async move {
+            let mut result = video.await;
+            for ended in renditions {
+                result = result.and(ended.await);
+            }
+            result.and(audio.await)
         }
     }
 
@@ -302,21 +339,40 @@ fn push_frame(
     Ok(outcome)
 }
 
-/// Waits for room in the rendition's queue rather than dropping the removal,
-/// which is never repeated.
 fn remove_rendition(
     command_sender: &mpsc::Sender<RenditionCommand>,
 ) -> impl Future<Output = anyhow::Result<()>> + use<> {
+    let removal = send_rendition_command(command_sender, RenditionCommand::Remove);
+    async move {
+        removal
+            .await
+            .ok_or_else(|| anyhow::anyhow!("rendition task ended"))?
+    }
+}
+
+fn end_rendition(
+    rendition: &RenditionCommands,
+    broadcast: Broadcast,
+) -> impl Future<Output = anyhow::Result<()>> + use<> {
+    remove_track_after(
+        send_rendition_command(&rendition.command_sender, RenditionCommand::End),
+        broadcast,
+        rendition.track_name.clone(),
+    )
+}
+
+/// Waits for room in the rendition's queue rather than dropping the command,
+/// which is never repeated. `None` when the task has stopped and so never
+/// takes the command.
+fn send_rendition_command(
+    command_sender: &mpsc::Sender<RenditionCommand>,
+    command: fn(oneshot::Sender<anyhow::Result<()>>) -> RenditionCommand,
+) -> impl Future<Output = Option<anyhow::Result<()>>> + use<> {
     let command_sender = command_sender.clone();
     async move {
         let (done_sender, done_receiver) = oneshot::channel();
-        command_sender
-            .send(RenditionCommand::Remove(done_sender))
-            .await
-            .map_err(|_| anyhow::anyhow!("rendition task ended"))?;
-        done_receiver
-            .await
-            .map_err(|_| anyhow::anyhow!("rendition task ended"))?
+        command_sender.send(command(done_sender)).await.ok()?;
+        done_receiver.await.ok()
     }
 }
 
@@ -574,6 +630,84 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn ending_a_source_ends_its_tracks_after_the_media_queued_before() {
+        // Arrange: nothing is sent before the end, since the publish task is still connecting
+        let mut relay = FakeRelay::spawn("media-source-end");
+        let mut source = source_on(relay.connection(), false);
+        let mut rendition = source.add_rendition("low", "low".to_string(), None, None);
+        source.configure_video("vp8").unwrap();
+        source.push_video(vp8_keyframe(), 0).unwrap();
+        rendition.configure_video("vp8").unwrap();
+        rendition.push_video(vp8_keyframe(), 0).unwrap();
+        source.configure_audio("opus", 48_000, 1, None).unwrap();
+        for index in 0..3u8 {
+            source
+                .push_audio(Bytes::from(vec![index]), u64::from(index) * 20_000, None)
+                .unwrap();
+        }
+
+        // Act
+        let ended = source.end().await;
+        let before_done = relay
+            .wait_for_publish_done("live", &["video", "video_low", "audio"])
+            .await;
+        let audio = relay.track_objects("audio", 3).await;
+        let after_done = relay.received_requests();
+
+        // Assert: the queued media was published before the end, and nothing publishes it again
+        assert!(ended.is_ok(), "{ended:?}");
+        for track in ["video", "video_low", "audio"] {
+            assert!(
+                before_done.contains(&format!("PUBLISH live/{track}")),
+                "{before_done:?}"
+            );
+        }
+        let payloads: Vec<&[u8]> = audio.iter().map(|object| object.payload.as_ref()).collect();
+        assert_eq!(payloads, [[0], [1], [2]]);
+        assert!(
+            !after_done
+                .iter()
+                .any(|request| request.starts_with("PUBLISH ")),
+            "{after_done:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rendition_frame_after_its_source_ended_is_refused_as_stopped() {
+        // Arrange
+        let mut source = source();
+        let mut rendition = source.add_rendition("low", "low".to_string(), None, None);
+        rendition.configure_video("vp8").unwrap();
+        source.end().await.unwrap();
+
+        // Act
+        let result = rendition.push_video(vp8_keyframe(), 0);
+
+        // Assert
+        assert!(matches!(result, Err(MediaSourceError::Stopped(_))));
+    }
+
+    #[tokio::test]
+    async fn ending_a_source_ends_a_rendition_whose_task_stopped() {
+        // Arrange: dropping the rendition once its frame arrived stops its task between frames,
+        // so it takes no end
+        let mut relay = FakeRelay::spawn("media-source-end-stopped-rendition");
+        let mut source = source_on(relay.connection(), false);
+        let mut rendition = source.add_rendition("low", "low".to_string(), None, None);
+        rendition.configure_video("vp8").unwrap();
+        rendition.push_video(vp8_keyframe(), 0).unwrap();
+        relay.first_track_object("video_low").await;
+        drop(rendition);
+
+        // Act
+        let ended = source.end().await;
+
+        // Assert
+        assert!(ended.is_ok(), "{ended:?}");
+        relay.wait_for_publish_done("live", &["video_low"]).await;
     }
 
     #[tokio::test]

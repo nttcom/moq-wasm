@@ -71,6 +71,16 @@ impl BroadcastWriter {
         self.queue.remove_track(track_name.to_string())
     }
 
+    /// `remove_track`, or `Broadcast::remove_track` at once when the publish
+    /// task has stopped, as after the relay refused a write.
+    pub(crate) fn end_track(&self, track_name: &str) -> impl Future<Output = Result<()>> + use<> {
+        remove_track_after(
+            self.queue.queue_removal(track_name.to_string()),
+            self.broadcast.clone(),
+            track_name.to_string(),
+        )
+    }
+
     pub fn source_tracks(&self) -> &SourceTracks {
         &self.source_tracks
     }
@@ -81,6 +91,20 @@ impl BroadcastWriter {
 
     pub(crate) fn shared_timing(&self) -> SharedTiming {
         self.timing.clone()
+    }
+}
+
+/// Awaits `removal`, sent to the task that writes the track, or removes the
+/// track from `broadcast` at once when that task has stopped and so never
+/// takes it.
+pub(crate) async fn remove_track_after(
+    removal: impl Future<Output = Option<Result<()>>>,
+    broadcast: Broadcast,
+    track_name: String,
+) -> Result<()> {
+    match removal.await {
+        Some(removed) => removed,
+        None => broadcast.remove_track(&track_name).await,
     }
 }
 

@@ -151,6 +151,20 @@ impl PublishQueue {
         &self,
         track_name: String,
     ) -> impl Future<Output = Result<()>> + use<> {
+        let removal = self.queue_removal(track_name);
+        async move {
+            removal
+                .await
+                .ok_or_else(|| anyhow!("media publishing stopped"))?
+        }
+    }
+
+    /// `remove_track`, resolving to `None` when the publish task has stopped
+    /// and so never takes the removal.
+    pub(crate) fn queue_removal(
+        &self,
+        track_name: String,
+    ) -> impl Future<Output = Option<Result<()>>> + use<> {
         let event_sender = self.event_sender.clone();
         async move {
             let (done_sender, done_receiver) = oneshot::channel();
@@ -160,10 +174,8 @@ impl PublishQueue {
                     done_sender,
                 })
                 .await
-                .map_err(|_| anyhow!("media publishing stopped"))?;
-            done_receiver
-                .await
-                .map_err(|_| anyhow!("media publishing stopped"))?
+                .ok()?;
+            done_receiver.await.ok()
         }
     }
 
