@@ -91,7 +91,7 @@ transcriber does.
 flowchart TB
     subgraph moq_wasm
         pipecat["moq_wasm.pipecat<br/>MoqWasmTransport"]
-        codecs["moq_wasm.codecs<br/>OpusDecoder · OpusEncoder · VideoDecoder · VideoEncoder · decode_pictures (PyAV)"]
+        codecs["moq_wasm.codecs<br/>OpusDecoder · OpusEncoder · VideoDecoder · VideoEncoder · decode_pictures · follow_pictures (PyAV)"]
         media["moq_wasm.media<br/>watch_broadcasts · RemoteBroadcast · create_broadcast · Catalog · EventTimeline"]
         core["moq_wasm<br/>connect · Session"]
         native["moq_wasm._native<br/>(PyO3, sdk/python/src)"]
@@ -206,7 +206,7 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   groups or of a `Fetch` raises it too, a read already waiting included,
   whose native read it cancels: the native iterator would wait until the
   native session gave its connection up, so a reader outside `run`, such
-  as `follow()` or `catalogs()`, would outlive
+  as `follow()`, `catalogs()` or `follow_pictures`, would outlive
   `close()`. The session's end also cancels the native read a timed-out
   read left for the next one, and drops the item it took as it ends, also
   when no read follows, so no read returns an object once the session
@@ -679,10 +679,13 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   PyAV decodes, or the one `video_in_track` picks; any other source is the
   video track of that name, as an ONVIF camera names its profiles. Each
   group is decoded with a fresh decoder (a group starts at a keyframe), and
-  each subscription to the track with a `decode_pictures` of its own: the
-  pictures its decoders hold back come as the subscription ends, and the
-  next one, as of a page that took over and starts its groups at 0 again,
-  starts afresh, so its groups are not taken as ones already decoded. Each
+  each subscription to the track with a `decode_pictures` of its own
+  (`follow_pictures`): the pictures its decoders hold back come as the
+  subscription ends, and the next one, as of a page that took over and
+  starts its groups at 0 again, carries no state of the one before but its
+  Video Config, so its groups are not taken as ones already decoded. Each
+  subscription starts at the first object of the group the relay holds, so
+  the first pictures come without waiting for the next keyframe. Each
   picture is pushed as an RGB `UserImageRawFrame` with the source in
   `transport_source` and the `Location` of its object in
   `metadata["location"]`, so a bot records a verdict at the picture it
@@ -765,8 +768,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   which holds the GIL already. `decode_pictures` turns the
   objects of one subscription to a video track into pictures with the
   `Location` of each, a decoder for each group and at most one every
-  `interval` seconds. It returns a `Following`, read as the remote
-  broadcast's iterators are. `decode_pictures` decodes each object whole in a worker
+  `interval` seconds, and `follow_pictures(remote, name, codec)` follows a
+  track with a `decode_pictures` for each subscription, as the transport
+  does. Both return a `Following`, read as the remote broadcast's
+  iterators are. `decode_pictures` decodes each object whole in a worker
   thread, whose result a cancelled read leaves to the next read, and
   advances the caller's objects in the reader's own task and context, so a
   generator that sets a context variable or enters `asyncio.timeout`
@@ -777,7 +782,14 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   on the caller's next object. A timeout that reaches a read of
   the caller's objects reaches them too, which an async generator does not
   survive: a reader that reads with a timeout gives it objects whose reads
-  survive one, as those of `subscriptions()` or a `Subscription`. The objects of the
+  survive one, as those of `subscriptions()` or a `Subscription`, or uses
+  `follow_pictures`. It subscribes `from_group_start`, so a subscriber joining a group
+  past its first object still gets its keyframe and the Video Config of a
+  track whose publisher writes one only when it changes, which the live
+  edge alone would never bring; each picture carries the Largest Location
+  its subscription's SUBSCRIBE_OK reported (`DecodedPicture.largest`), so a
+  reader tells the pictures replayed from before the subscription from
+  the newer ones. The objects of the
   groups in flight interleave, since each group is a stream of its own, so
   up to four groups are decoded at once; a group's decoder gives up the
   pictures it holds back (H.264 B-frames) at the group's End of Group, once
@@ -842,6 +854,16 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   as `config`: the groups that have neither one of their own nor an
   earlier group with one decode with it, so a subscriber that joined past
   the only object carrying one still decodes a length-prefixed track.
+  `follow_pictures` carries the Video Config of the newest object that
+  had one from a subscription to the next, the only state it carries, so
+  a resubscription that joins past the object carrying it, of a publisher
+  that writes it only when it changes, does not decode to nothing; with
+  none seen yet, it starts with the `config` it was given. Its `config`
+  property gives that Video Config to a reader that follows the track
+  again, as after a decoder error; closed, it drops
+  its decoders and the pictures they hold, freed once a decoding a
+  cancelled read left in a worker finished, and keeps only that Video
+  Config, so a reader holding it to read `config` holds no codec context.
   When the lost group
   had changed the configuration, the pictures come out wrong or the
   decoder refuses them, and a group joined at its keyframe that the

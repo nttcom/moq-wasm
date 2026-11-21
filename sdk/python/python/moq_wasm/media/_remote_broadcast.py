@@ -356,17 +356,18 @@ class RemoteBroadcast:
         delivery_timeout: float | None = DEFAULT_DELIVERY_TIMEOUT_SECONDS,
     ) -> Following[Following[Object]]:
         """`follow()` one subscription at a time, for a reader whose state does not carry over
-        from one subscription to the next, as a video decoder's: the objects of each subscription,
-        which end with it, as when the publisher leaves and another one, whose groups start at 0
-        again, takes over. Read each in `contextlib.aclosing` before taking the next, which
-        unsubscribes from it, as closing this does; the read taking the next one waits for that
-        UNSUBSCRIBE, but a cancelled read leaves it going for the next read to wait for. Each one
-        yielded owns its subscription: kept after this was dropped, it stays subscribed until it is
-        closed or dropped in turn. Subscribes, awaits `on_subscribed`, takes `delivery_timeout` and
-        ends as `follow()`; neither it nor the objects of a subscription end with a cancelled read,
-        and a read cancelled while it awaits `on_subscribed` leaves the subscription to the next
-        read, which does not await `on_subscribed` again. With `from_group_start`, each
-        subscription starts with the objects of the current group the relay holds (a joining FETCH,
+        from one subscription to the next, as a video decoder's (`moq_wasm.codecs.follow_pictures`):
+        the objects of each subscription, which end with it, as when the publisher leaves and
+        another one, whose groups start at 0 again, takes over. Read each in `contextlib.aclosing`
+        before taking the next, which unsubscribes from it, as closing this does; the read taking
+        the next one waits for that UNSUBSCRIBE, but a cancelled read leaves it going for the next
+        read to wait for. Each one yielded owns its subscription: kept after this was dropped, it
+        stays subscribed until it is closed or dropped in turn. Subscribes, awaits `on_subscribed`,
+        takes `delivery_timeout` and ends as `follow()`; neither it nor the objects of a
+        subscription end with a cancelled read, and a read cancelled while it awaits
+        `on_subscribed` leaves the subscription to the next read, which does not await
+        `on_subscribed` again. With `from_group_start`, each subscription starts with the objects
+        of the current group the relay holds (a joining FETCH,
         `moq_wasm.Session.subscribe_current_group`), so a reader that needs a group's first object,
         as a video decoder its keyframe and the Video Config only that object may carry, does not
         wait for the next group."""
