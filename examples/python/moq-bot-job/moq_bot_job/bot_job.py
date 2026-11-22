@@ -14,10 +14,10 @@ import aiohttp
 from loguru import logger
 
 from moq_bot_job.identity_token import IdentityToken, metadata_identity_token
-from moq_bot_job.relay import add_relay_arguments
 from moq_bot_job.telemetry import add_telemetry_arguments, report_logs, telemetry_endpoint
 
 BOT_KEY_ENV = "BOT_DISPATCHER_BOT_KEY"
+DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 # A stop the app asked for is learnt at the next heartbeat.
 HEARTBEAT_SECONDS = 5.0
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
@@ -54,7 +54,12 @@ def add_bot_job_arguments(parser: argparse.ArgumentParser) -> None:
     """The arguments the bot service appends, plus the relay's. `--max-seconds` is read by the
     service itself, which asks the bot to stop at its longest run."""
     add_telemetry_arguments(parser)
-    add_relay_arguments(parser)
+    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="skip TLS verification, for a local relay with a self-signed certificate",
+    )
     parser.add_argument("--bot-type", required=True)
     parser.add_argument("--bot-id", required=True)
     parser.add_argument("--bot-dispatcher-url", required=True)
