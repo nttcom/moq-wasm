@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use broadcast::{Broadcast, RelayConnection};
+use broadcast::Broadcast;
 use futures::{FutureExt, StreamExt};
 use mediapack::mpegts;
 use srt_tokio::{ConnectionRequest, SrtListener, options::ByteCount};
@@ -49,10 +49,8 @@ async fn publish(
     let remote = request.remote();
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
-    let connection = RelayConnection::new(options.moqt.clone());
-    let _registration = options.stats.as_ref().map(|registry| {
-        registry.register(format!("srt {remote} {}", namespace.join("/")), &connection)
-    });
+    let (connection, _registration) =
+        options.connect(format!("srt {remote} {}", namespace.join("/")));
     let mut publisher =
         IngestPublisher::new(Broadcast::new(connection, namespace), options.transcode);
     let mut packets = 0_u64;

@@ -1,14 +1,32 @@
 use anyhow::Result;
-use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, SourceTracks, VideoTrackInfo};
+use broadcast::{
+    Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks, VideoTrackInfo,
+};
 use mediapack::MediaEvent;
 
-use crate::{renditions::RenditionFanout, stats_panel::ConnectionRegistry};
+use crate::{
+    renditions::RenditionFanout,
+    stats_panel::{ConnectionRegistry, Registration},
+};
 
 #[derive(Clone)]
 pub struct IngestOptions {
     pub moqt: Option<MoqtTarget>,
     pub transcode: bool,
     pub stats: Option<ConnectionRegistry>,
+}
+
+impl IngestOptions {
+    /// A connection to the relay, shown on the stats panel under `label` for
+    /// as long as the registration lives.
+    pub fn connect(&self, label: String) -> (RelayConnection, Option<Registration>) {
+        let connection = RelayConnection::new(self.moqt.clone());
+        let registration = self
+            .stats
+            .as_ref()
+            .map(|registry| registry.register(label, &connection));
+        (connection, registration)
+    }
 }
 
 pub struct IngestPublisher {
