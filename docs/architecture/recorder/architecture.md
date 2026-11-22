@@ -458,7 +458,7 @@ element rather than the last, and the last two always content and index, two
 members never share one. The transcriber's namespace is not announced (see
 below), nor one that recorded no media its catalog lists, such as the screen
 share of a participant who never shared their screen: it has nothing to play.
-The answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
+The answer is an NDJSON stream (`replay_stream::replay_stream`) that stays open: one
 line with `namespace_prefix` (`<room>/recordings/<id>`),
 `renew_after_seconds` and `started_at_ms`, the start of the media time the
 replay's objects carry, then an empty line every 15 s. A player finds the

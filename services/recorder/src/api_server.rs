@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
-use http_body_util::{Either, Full};
+use http_body_util::{Either, Full, combinators::BoxBody};
 use http_server::{HttpServer, bearer_token, query_params};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
@@ -16,13 +16,13 @@ use tracing::Instrument;
 
 use crate::{
     recordings::{Publication, PublishRejection, Recordings},
-    replay_stream::ReplayStream,
+    replay_stream::replay_stream,
 };
 
 /// Serves the recordings that `recorder bot` jobs made; `bot-dispatcher` starts and
 /// stops them (docs/architecture/bot-dispatcher/architecture.md):
 /// - `POST /recordings/{id}/publish` exposes a finished recording through relay FETCH
-///   while its answer stays open (see [`ReplayStream`])
+///   while its answer stays open (see [`replay_stream`])
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it
 /// - `GET /apps/{app_id}/recordings` lists the app's MP4 recordings with their
 ///   files, and `GET /recordings/{id}/file?name=` answers a signed URL that
@@ -61,7 +61,7 @@ impl ApiServer {
     }
 }
 
-type ApiResponse = Response<Either<Full<Bytes>, ReplayStream>>;
+type ApiResponse = Response<Either<Full<Bytes>, BoxBody<Bytes, Infallible>>>;
 
 async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse {
     let span = tracing::info_span!(
@@ -233,7 +233,7 @@ fn found(value: Option<Value>) -> ApiResponse {
 }
 
 fn replay_response(publication: Publication) -> ApiResponse {
-    let mut response = Response::new(Either::Right(ReplayStream::new(
+    let mut response = Response::new(Either::Right(replay_stream(
         &publication.description,
         publication.lease,
     )));
