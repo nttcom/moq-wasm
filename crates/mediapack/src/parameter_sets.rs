@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
     h264::{
@@ -93,6 +93,42 @@ pub trait NalDecoderConfig: Clone + PartialEq + Into<VideoConfig> {
             .filter(|nal| !matches!(Self::nal_kind(nal), NalKind::ParameterSet(_)));
         length_prefixed(nals, nal_length_size)
     }
+}
+
+/// Reads `count` parameter sets that each follow their 16-bit length, as an
+/// AVC or HEVC decoder configuration record stores them.
+pub(crate) fn read_parameter_sets(
+    data: &[u8],
+    offset: &mut usize,
+    count: usize,
+) -> Result<Vec<Bytes>> {
+    (0..count)
+        .map(|_| {
+            let length = read_record(data, offset, 2)?;
+            let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+            Ok(Bytes::copy_from_slice(read_record(data, offset, length)?))
+        })
+        .collect()
+}
+
+/// Writes `sets` as [`read_parameter_sets`] reads them.
+pub(crate) fn put_parameter_sets(out: &mut BytesMut, sets: &[Bytes]) {
+    for set in sets {
+        out.put_u16(set.len() as u16);
+        out.put_slice(set);
+    }
+}
+
+pub(crate) fn read_record<'a>(
+    data: &'a [u8],
+    offset: &mut usize,
+    length: usize,
+) -> Result<&'a [u8]> {
+    let bytes = data
+        .get(*offset..*offset + length)
+        .ok_or_else(|| anyhow::anyhow!("decoder configuration record truncated"))?;
+    *offset += length;
+    Ok(bytes)
 }
 
 pub struct ParameterSetTracker<C> {

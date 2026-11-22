@@ -6,7 +6,9 @@ use crate::{
         ACCESS_UNIT_DELIMITER, GENERAL_PROFILE_TIER_LEVEL_LENGTH, IRAP_SLICES, PPS, PREFIX_SEI,
         SLICES, SPS, SequenceParameterSet, VPS, nal_unit_type,
     },
-    parameter_sets::{NalDecoderConfig, NalKind},
+    parameter_sets::{
+        NalDecoderConfig, NalKind, put_parameter_sets, read_parameter_sets, read_record,
+    },
     sample::VideoConfig,
 };
 
@@ -58,14 +60,9 @@ impl HevcDecoderConfigurationRecord {
         };
         let mut offset = FIXED_LENGTH + 1;
         for _ in 0..data[FIXED_LENGTH] {
-            let header = read(data, &mut offset, 3)?;
-            let count = u16::from_be_bytes([header[1], header[2]]);
-            let mut sets = Vec::with_capacity(usize::from(count));
-            for _ in 0..count {
-                let length = read(data, &mut offset, 2)?;
-                let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
-                sets.push(Bytes::copy_from_slice(read(data, &mut offset, length)?));
-            }
+            let header = read_record(data, &mut offset, 3)?;
+            let count = usize::from(u16::from_be_bytes([header[1], header[2]]));
+            let sets = read_parameter_sets(data, &mut offset, count)?;
             match header[0] & 0x3F {
                 VPS => record.vps = sets,
                 SPS => record.sps = sets,
@@ -118,10 +115,7 @@ impl HevcDecoderConfigurationRecord {
         for (nal_unit_type, sets) in arrays {
             out.put_u8(0x80 | nal_unit_type);
             out.put_u16(sets.len() as u16);
-            for set in sets {
-                out.put_u16(set.len() as u16);
-                out.put_slice(set);
-            }
+            put_parameter_sets(&mut out, sets);
         }
         out.freeze()
     }
@@ -155,14 +149,6 @@ impl HevcDecoderConfigurationRecord {
             .ok_or_else(|| anyhow::anyhow!("no SPS in HEVC configuration record"))?;
         SequenceParameterSet::parse(sps)
     }
-}
-
-fn read<'a>(data: &'a [u8], offset: &mut usize, length: usize) -> Result<&'a [u8]> {
-    let bytes = data
-        .get(*offset..*offset + length)
-        .ok_or_else(|| anyhow::anyhow!("HEVC configuration record truncated"))?;
-    *offset += length;
-    Ok(bytes)
 }
 
 impl NalDecoderConfig for HevcDecoderConfigurationRecord {
