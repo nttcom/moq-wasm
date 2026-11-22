@@ -14,6 +14,5 @@ pub fn parse_loc_header(value: JsValue) -> Result<ExtensionHeaders, JsValue> {
 }
 
 pub fn encode_loc_header(extensions: &[LocExtension]) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(extensions)
-        .map_err(|err| JsValue::from_str(&format!("loc header: {err}")))
+    serde_wasm_bindgen::to_value(extensions).map_err(|err| js_error(format!("loc header: {err}")))
 }
