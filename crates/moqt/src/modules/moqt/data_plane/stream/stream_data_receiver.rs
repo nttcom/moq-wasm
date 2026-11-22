@@ -244,7 +244,7 @@ mod tests {
     use crate::{
         modules::moqt::data_plane::object::subgroup::{SubgroupId, SubgroupObject},
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, first_subgroup_stream, open_raw_subgroup, published_track,
+            first_subgroup_stream, open_raw_subgroup, published_track, within,
         },
         object::{
             ForwardingPreference, Location, ObjectStatus, StreamReceiveError, SubgroupObjectSender,
@@ -261,10 +261,7 @@ mod tests {
     }
 
     async fn receive(receiver: &mut super::StreamDataReceiver) -> Option<Subgroup> {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
-            .await
-            .expect("receive within timeout")
-            .unwrap()
+        within(receiver.receive()).await.unwrap()
     }
 
     #[tokio::test]
@@ -392,9 +389,7 @@ mod tests {
         receive(&mut receiver).await;
 
         // Act
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
-            .await
-            .unwrap();
+        let result = within(receiver.receive()).await;
 
         // Assert
         assert!(

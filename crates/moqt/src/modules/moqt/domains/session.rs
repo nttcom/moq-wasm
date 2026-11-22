@@ -239,9 +239,9 @@ mod tests {
     use crate::{
         CertificateVerification, ClientConfig, SessionEvent, TerminationErrorCode,
         modules::test_support::{
-            DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, connect_sessions, connected_sessions,
+            DISCONNECT_TIMEOUT, DRAFTS, connect_sessions, connected_sessions,
             native_client_with_config, next_event, published_track_over, receive_disconnected,
-            spawn_native_server,
+            spawn_native_server, within,
         },
     };
 
@@ -266,10 +266,7 @@ mod tests {
                     .connect(&format!("moqt://127.0.0.1:{port}"))
                     .await
                     .unwrap();
-                let session = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let session = within(connecting).await.unwrap();
                 drop(endpoint);
                 let _publisher = session.publisher();
                 session.close().await;

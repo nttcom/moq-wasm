@@ -257,7 +257,7 @@ mod tests {
         modules::test_support::{
             HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config, native_client,
             native_client_with_config, receive_disconnected, self_signed_server_config,
-            spawn_native_server,
+            spawn_native_server, within,
         },
         server::ServerConfig,
     };
@@ -373,10 +373,7 @@ mod tests {
             let _session = client.connect(&url).await?.await;
             anyhow::Ok(())
         });
-        let accepted = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let accepted = within(accept).await.unwrap();
         connecting.abort();
 
         // Assert
@@ -416,14 +413,13 @@ mod tests {
             follow_go_away: false,
             ..ClientConfig::default()
         });
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let result = within(async {
             client
                 .connect(&format!("moqt://127.0.0.1:{port}"))
                 .await?
                 .await
         })
-        .await
-        .expect("the handshake must end before its timeout");
+        .await;
         accept.abort();
         result.map(drop)
     }
@@ -433,10 +429,7 @@ mod tests {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let endpoint = native_client();
                 let connecting = endpoint.connect(&url).await.unwrap();
-                let session = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let session = within(connecting).await.unwrap();
                 drop(session);
                 endpoint.wait_idle().await;
             })

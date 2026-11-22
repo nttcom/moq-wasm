@@ -245,7 +245,7 @@ mod tests {
             moqt::control_plane::error_codes::DataStreamResetCode,
             test_support::{
                 HANDSHAKE_TIMEOUT, fetched_draft18_stream, fetched_stream, location,
-                object_with_extensions, read_fetch_objects,
+                object_with_extensions, read_fetch_objects, within,
             },
         },
         object::{ExtensionHeaders, Object, ObjectStatus, ReadError, StreamReceiveError},
@@ -284,20 +284,17 @@ mod tests {
         ];
 
         // Act
-        timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             for object in &expected {
                 stream.sender.send_object(object).await.unwrap();
             }
             stream.sender.close().await.unwrap();
         })
-        .await
-        .unwrap();
+        .await;
 
         // Assert
         assert_eq!(
-            timeout(HANDSHAKE_TIMEOUT, read_fetch_objects(&mut stream.receiver))
-                .await
-                .unwrap(),
+            within(read_fetch_objects(&mut stream.receiver)).await,
             expected
         );
     }
@@ -308,15 +305,8 @@ mod tests {
         let mut stream = fetched_stream("fetch-object-reset").await;
         let expected = object_with_extensions();
         let reset_error = StreamReceiveError::Closed(ReadError::Reset).to_string();
-        timeout(HANDSHAKE_TIMEOUT, stream.sender.send_object(&expected))
-            .await
-            .unwrap()
-            .unwrap();
-        let Fetch::Object(_) = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
-            .await
-            .unwrap()
-            .unwrap()
-        else {
+        within(stream.sender.send_object(&expected)).await.unwrap();
+        let Fetch::Object(_) = within(stream.receiver.receive()).await.unwrap() else {
             panic!("expected an object before RESET");
         };
 
@@ -328,9 +318,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        let result = timeout(HANDSHAKE_TIMEOUT, stream.receiver.receive())
-            .await
-            .unwrap();
+        let result = within(stream.receiver.receive()).await;
 
         // Assert
         assert!(

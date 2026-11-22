@@ -93,9 +93,9 @@ mod tests {
         Version,
         modules::moqt::data_plane::object::subgroup::SubgroupId,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, PublishedTrack, data_receiver, datagram_object, next_datagram,
-            next_subgroup, object_with_extensions, open_raw_subgroup, published_track,
-            published_track_over,
+            PublishedTrack, data_receiver, datagram_object, next_datagram, next_subgroup,
+            object_with_extensions, open_raw_subgroup, published_track, published_track_over,
+            within,
         },
         object::{
             DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus,
@@ -134,11 +134,7 @@ mod tests {
     }
 
     async fn next_group(receiver: &mut DataReceiver) -> (bool, u64) {
-        match tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
-            .await
-            .unwrap()
-            .unwrap()
-        {
+        match within(receiver.next()).await.unwrap() {
             super::TrackData::Subgroup(stream) => (false, stream.group_id()),
             super::TrackData::Datagram(object) => (true, object.location.group_id),
         }
@@ -155,12 +151,11 @@ mod tests {
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
 
         // Act
-        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let received = within(async {
             sender.send_object(&object).await.unwrap();
             next_datagram(&mut receiver).await
         })
-        .await
-        .unwrap();
+        .await;
 
         // Assert
         assert_eq!(received, object);
@@ -202,7 +197,7 @@ mod tests {
         let mut receiver = data_receiver(&track.server, &track.accepted).await;
 
         // Act
-        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let received = within(async {
             for object in &expected {
                 sender.send_object(object).await.unwrap();
             }
@@ -212,8 +207,7 @@ mod tests {
             }
             received
         })
-        .await
-        .unwrap();
+        .await;
 
         // Assert
         assert_eq!(received, expected);
@@ -239,9 +233,7 @@ mod tests {
         .await;
 
         // Act
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
-            .await
-            .unwrap();
+        let result = within(receiver.next()).await;
 
         // Assert
         assert_eq!(
@@ -270,9 +262,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
-            .await
-            .unwrap();
+        let result = within(receiver.next()).await;
 
         // Assert
         assert_eq!(
