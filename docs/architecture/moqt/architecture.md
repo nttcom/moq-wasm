@@ -54,10 +54,9 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   `client::Session`, whose types it binds to JavaScript.
 - `wire.rs` exports the draft-14 numeric codes (`RequestKind` and the
   request-error / PUBLISH_DONE conversions) for the wasm bindings, whose
-  JavaScript API carries draft-14 numbers, and the types public items expose:
-  `TrackStatusOk` (with `SubscribeOk`), the `Fetch` message in the public
-  field `FetchHandler::fetch`, and `DecodeError` from the `decode` functions.
-  The control-message framing is crate-private. Types the other crates reason about
+  JavaScript API carries draft-14 numbers, and `TrackStatusOk` (with
+  `SubscribeOk`), the type public items expose. The control-message framing
+  is crate-private. Types the other crates reason about
   (`AuthorizationToken`, `fetch::FetchParams`, the typed codes) are exported
   from the operation modules, so a consumer that does not import `wire`
   depends on no draft-14 message layout.
