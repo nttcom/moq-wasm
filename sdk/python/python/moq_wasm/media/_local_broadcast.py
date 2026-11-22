@@ -36,8 +36,14 @@ class LocalBroadcast:
         `retention_seconds`; with `datagram`, sent in datagrams. It takes no `publish`: the tracks
         declared before the first `await` are registered before the namespace is published, and a
         PUBLISH must follow the namespace."""
-        writer = self._session._track_writer(
-            self.namespace, name, retention_seconds, publish=False, datagram=datagram, priority=priority
+        writer = TrackWriter(
+            self.namespace,
+            name,
+            retention_seconds,
+            publish=False,
+            datagram=datagram,
+            priority=priority,
+            session_ended=self._session._done,
         )
         if self._batching:
             self._pending.append(writer)

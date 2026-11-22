@@ -262,23 +262,7 @@ class Session:
         """Registers a track that the session answers SUBSCRIBE and FETCH for
         (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
         a SUBSCRIBE at once; with `publish`, announce first."""
-        writer = self._track_writer(
-            namespace, name, retention_seconds, publish=publish, datagram=datagram, priority=priority
-        )
-        await self._register(writer)
-        return writer
-
-    def _track_writer(
-        self,
-        namespace: list[str],
-        name: str,
-        retention_seconds: float,
-        *,
-        publish: bool,
-        datagram: bool,
-        priority: int,
-    ) -> TrackWriter:
-        return TrackWriter(
+        writer = TrackWriter(
             namespace,
             name,
             retention_seconds,
@@ -287,6 +271,8 @@ class Session:
             priority=priority,
             session_ended=self._done,
         )
+        await self._register(writer)
+        return writer
 
     async def _register(self, writer: TrackWriter) -> None:
         try:
