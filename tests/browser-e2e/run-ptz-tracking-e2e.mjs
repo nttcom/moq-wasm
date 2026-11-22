@@ -6,25 +6,9 @@ import { resolve } from "node:path";
 import { spawnProcess, waitForOutput } from "./process.mjs";
 import { repoRoot } from "../../scripts/dev-env.mjs";
 import { findFreePort } from "./helpers.mjs";
-import { runSystemOneBotE2E } from "./system-one-bot-e2e.mjs";
+import { answerQuestions, runSystemOneBotE2E } from "./system-one-bot-e2e.mjs";
 
 const moqCliBinary = resolve(repoRoot, "target/debug/moq-cli");
-
-/// Answers the bot's boxes questions, reading each target from its `Every <target>.` instructions.
-/// `PUT /boxes` with `{"<target>": [[left, top, right, bottom], ...]}` (fractions of the picture) sets
-/// each target's boxes; a target left out has none.
-function answerQuestions({ questions }, { boxes }) {
-  return Object.fromEntries(
-    Object.entries(questions).map(([id, question]) => {
-      const target = question.instructions.replace(/^Every (.*)\.$/, "$1");
-      const found = (boxes[target] ?? []).map(([left, top, right, bottom]) => ({
-        box: { left, top, right, bottom },
-        found: 0.9,
-      }));
-      return [id, { type: "boxes", boxes: found, count: found.length }];
-    }),
-  );
-}
 
 async function startCamera({ botDir, moqtUrl, app, childProcesses }) {
   const cameraPort = await findFreePort();

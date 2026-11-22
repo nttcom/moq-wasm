@@ -20,6 +20,25 @@ import {
 import { localPythonBot, startBotDispatcher, temporaryAppSecret } from "./bot-dispatcher-dev.mjs";
 import { startRelayAndPage } from "./relay-dev.mjs";
 
+/// Answers every choice question with the choice `PUT /answer` set, and every boxes question
+/// (`Every <target>.`) with the boxes `PUT /boxes` set for its target: `{"<target>": [[left, top,
+/// right, bottom], ...]}`, in fractions of the picture.
+export function answerQuestions({ questions }, { answer, boxes }) {
+  return Object.fromEntries(
+    Object.entries(questions).map(([id, question]) => {
+      if (question.type !== "boxes") {
+        return [id, { choice: answer }];
+      }
+      const target = question.instructions.replace(/^Every (.*)\.$/, "$1");
+      const found = (boxes[target] ?? []).map(([left, top, right, bottom]) => ({
+        box: { left, top, right, bottom },
+        found: 0.9,
+      }));
+      return [id, { boxes: found, count: found.length }];
+    }),
+  );
+}
+
 /// A fake System One answering each POST with `{ answers: answer(body, settings) }`. `PUT /<key>`
 /// sets `settings[key]` to its body: as text if the setting is a string, else parsed as JSON.
 /// `PUT /delay` delays every answer by that many milliseconds.
