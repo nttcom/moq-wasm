@@ -104,10 +104,10 @@ fn outcome(result: &Result<SignedToken, VerifyError>) -> &'static str {
 mod tests {
     use std::time::{Duration, SystemTime};
 
+    use http_server::testing::StubServer;
     use hyper::StatusCode;
 
     use super::{AppVerifier, VerifyError};
-    use crate::test_support::fake_http_server_answering;
 
     fn answer(exp: u64) -> String {
         format!(
@@ -127,9 +127,8 @@ mod tests {
     async fn a_verified_token_is_answered_from_memory_until_it_expires() {
         // Arrange
         let exp = unix_now() + 30;
-        let (vts_url, mut vts_requests, _vts) =
-            fake_http_server_answering(StatusCode::OK, &answer(exp)).await;
-        let verifier = AppVerifier::new(format!("{vts_url}/verify"));
+        let vts = StubServer::run(StatusCode::OK, answer(exp)).await;
+        let verifier = AppVerifier::new(format!("{}/verify", vts.url()));
         let expired = SystemTime::UNIX_EPOCH + Duration::from_secs(exp + 61);
 
         // Act
@@ -141,17 +140,15 @@ mod tests {
             (first.app_id.as_str(), second.app_id.as_str()),
             ("app-1", "app-1")
         );
-        assert!(vts_requests.recv().await.is_some());
-        assert!(vts_requests.try_recv().is_err());
+        assert_eq!(vts.requests().len(), 1);
         assert!(verifier.cached("jwt", expired).is_none());
     }
 
     #[tokio::test]
     async fn a_token_the_vts_signed_but_already_expired_is_unauthorized() {
         // Arrange
-        let (vts_url, _vts_requests, _vts) =
-            fake_http_server_answering(StatusCode::OK, &answer(1_000)).await;
-        let verifier = AppVerifier::new(format!("{vts_url}/verify"));
+        let vts = StubServer::run(StatusCode::OK, answer(1_000)).await;
+        let verifier = AppVerifier::new(format!("{}/verify", vts.url()));
 
         // Act
         let result = verifier.verify("jwt").await;

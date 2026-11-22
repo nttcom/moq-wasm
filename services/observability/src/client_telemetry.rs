@@ -165,16 +165,15 @@ impl ClientTelemetry {
 mod tests {
     use std::sync::Arc;
 
-    use http_server::HttpServer;
+    use http_server::testing::StubServer;
     use hyper::StatusCode;
     use serde_json::{Value, json};
-    use tokio::sync::mpsc;
 
     use super::{ClientTelemetry, ClientTelemetryConfig, MAX_BODY_BYTES};
     use crate::{
         api_server::{ApiServer, ApiState},
         app_verifier::AppVerifier,
-        test_support::{api_server, fake_http_server, fake_http_server_answering, vts_answer},
+        test_support::{api_server, vts_answer},
     };
 
     struct Observability {
@@ -182,28 +181,29 @@ mod tests {
         _api: ApiServer,
     }
 
-    struct Collector {
-        url: String,
-        request_receiver: mpsc::UnboundedReceiver<(String, String)>,
-        _server: HttpServer,
+    async fn collector() -> StubServer {
+        StubServer::run(StatusCode::OK, "").await
     }
 
-    async fn collector() -> Collector {
-        let (url, request_receiver, server) = fake_http_server().await;
-        Collector {
-            url,
-            request_receiver,
-            _server: server,
-        }
+    /// The URI and body of each request the collector received.
+    fn forwarded(collector: &StubServer) -> Vec<(String, String)> {
+        collector
+            .requests()
+            .into_iter()
+            .map(|request| {
+                let body = String::from_utf8(request.body.to_vec()).unwrap();
+                (request.uri, body)
+            })
+            .collect()
     }
 
-    async fn observability(collector: &Collector, vts_url: Option<String>) -> Observability {
+    async fn observability(collector: &StubServer, vts_url: Option<String>) -> Observability {
         let verifier = vts_url.map(|url| Arc::new(AppVerifier::new(url)));
         let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
             verifier: verifier.clone(),
-            otlp_logs_endpoint: Some(format!("{}/v1/logs", collector.url)),
-            otlp_metrics_endpoint: Some(format!("{}/v1/metrics", collector.url)),
-            otlp_traces_endpoint: Some(format!("{}/v1/traces", collector.url)),
+            otlp_logs_endpoint: Some(format!("{}/v1/logs", collector.url())),
+            otlp_metrics_endpoint: Some(format!("{}/v1/metrics", collector.url())),
+            otlp_traces_endpoint: Some(format!("{}/v1/traces", collector.url())),
         });
         let (url, api) = api_server(|clickhouse| ApiState {
             clickhouse,
@@ -248,20 +248,17 @@ mod tests {
     #[tokio::test]
     async fn an_anonymous_report_is_forwarded_as_anon_logs_metrics_and_traces() {
         // Arrange
-        let mut collector = collector().await;
+        let collector = collector().await;
         let observability = observability(&collector, None).await;
 
         // Act
         let status = post(&observability, report(None).to_string()).await;
 
-        // Assert
+        // Assert: the report is answered only after all three are forwarded
         assert_eq!(status, StatusCode::ACCEPTED);
-        let mut forwarded = [
-            collector.request_receiver.recv().await.unwrap(),
-            collector.request_receiver.recv().await.unwrap(),
-            collector.request_receiver.recv().await.unwrap(),
-        ];
+        let mut forwarded = forwarded(&collector);
         forwarded.sort();
+        assert_eq!(forwarded.len(), 3);
         assert_eq!(forwarded[0].0, "/v1/logs");
         assert_eq!(forwarded[1].0, "/v1/metrics");
         assert_eq!(forwarded[2].0, "/v1/traces");
@@ -271,34 +268,32 @@ mod tests {
     #[tokio::test]
     async fn a_verified_token_names_the_app_of_the_report() {
         // Arrange
-        let mut collector = collector().await;
-        let (vts_url, _vts_requests, _vts) =
-            fake_http_server_answering(StatusCode::OK, &vts_answer("app-1", None)).await;
-        let observability = observability(&collector, Some(format!("{vts_url}/verify"))).await;
+        let collector = collector().await;
+        let vts = StubServer::run(StatusCode::OK, vts_answer("app-1", None)).await;
+        let observability = observability(&collector, Some(format!("{}/verify", vts.url()))).await;
 
         // Act
         let status = post(&observability, report(Some("jwt")).to_string()).await;
 
         // Assert
         assert_eq!(status, StatusCode::ACCEPTED);
-        let (_, body) = collector.request_receiver.recv().await.unwrap();
+        let (_, body) = &forwarded(&collector)[0];
         assert!(body.contains("\"app-1\""), "{body}");
     }
 
     #[tokio::test]
     async fn a_rejected_token_forwards_nothing() {
         // Arrange
-        let mut collector = collector().await;
-        let (vts_url, _vts_requests, _vts) =
-            fake_http_server_answering(StatusCode::UNAUTHORIZED, r#"{"error":"bad"}"#).await;
-        let observability = observability(&collector, Some(format!("{vts_url}/verify"))).await;
+        let collector = collector().await;
+        let vts = StubServer::run(StatusCode::UNAUTHORIZED, r#"{"error":"bad"}"#).await;
+        let observability = observability(&collector, Some(format!("{}/verify", vts.url()))).await;
 
         // Act
         let status = post(&observability, report(Some("jwt")).to_string()).await;
 
         // Assert
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert!(collector.request_receiver.try_recv().is_err());
+        assert!(collector.requests().is_empty());
     }
 
     #[tokio::test]

@@ -275,13 +275,14 @@ async fn app_usage(
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
+    use http_server::testing::StubServer;
     use hyper::StatusCode;
 
     use super::{ApiState, past_snapshot_times, series_query};
     use crate::{
         app_verifier::AppVerifier,
         series::{SeriesQuery, SeriesTarget},
-        test_support::{api_server, fake_http_server_answering, vts_answer},
+        test_support::{api_server, vts_answer},
     };
 
     async fn get(url: &str, token: Option<&str>) -> StatusCode {
@@ -295,9 +296,8 @@ mod tests {
     #[tokio::test]
     async fn a_stats_request_with_a_token_short_of_its_whole_app_reads_nothing() {
         // Arrange
-        let (vts_url, _vts_requests, _vts) =
-            fake_http_server_answering(StatusCode::OK, &vts_answer("app-1", Some("room"))).await;
-        let verifier = Arc::new(AppVerifier::new(format!("{vts_url}/verify")));
+        let vts = StubServer::run(StatusCode::OK, vts_answer("app-1", Some("room"))).await;
+        let verifier = Arc::new(AppVerifier::new(format!("{}/verify", vts.url())));
         let (url, _api) = api_server(|clickhouse| ApiState {
             clickhouse,
             verifier: Some(verifier),
