@@ -204,7 +204,7 @@ mod tests {
     }
 
     async fn observability(collector: &Collector, vts_url: Option<String>) -> Observability {
-        let verifier = vts_url.map(|url| Arc::new(AppVerifier::new(url).unwrap()));
+        let verifier = vts_url.map(|url| Arc::new(AppVerifier::new(url)));
         let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
             verifier: verifier.clone(),
             otlp_logs_endpoint: Some(format!("{}/v1/logs", collector.url)),

@@ -297,7 +297,7 @@ mod tests {
         // Arrange
         let (vts_url, _vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &vts_answer("app-1", Some("room"))).await;
-        let verifier = Arc::new(AppVerifier::new(format!("{vts_url}/verify")).unwrap());
+        let verifier = Arc::new(AppVerifier::new(format!("{vts_url}/verify")));
         let (url, _api) = api_server(|clickhouse| ApiState {
             clickhouse,
             verifier: Some(verifier),

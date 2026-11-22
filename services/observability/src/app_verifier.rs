@@ -29,11 +29,11 @@ pub struct AppVerifier {
 }
 
 impl AppVerifier {
-    pub fn new(verify_url: String) -> anyhow::Result<Self> {
-        Ok(Self {
+    pub fn new(verify_url: String) -> Self {
+        Self {
             vts: VtsClient::new(verify_url),
             verified: Mutex::new(HashMap::new()),
-        })
+        }
     }
 
     pub(crate) async fn verify(&self, token: &str) -> Result<SignedToken, VerifyError> {
@@ -129,7 +129,7 @@ mod tests {
         let exp = unix_now() + 30;
         let (vts_url, mut vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &answer(exp)).await;
-        let verifier = AppVerifier::new(format!("{vts_url}/verify")).unwrap();
+        let verifier = AppVerifier::new(format!("{vts_url}/verify"));
         let expired = SystemTime::UNIX_EPOCH + Duration::from_secs(exp + 61);
 
         // Act
@@ -151,7 +151,7 @@ mod tests {
         // Arrange
         let (vts_url, _vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &answer(1_000)).await;
-        let verifier = AppVerifier::new(format!("{vts_url}/verify")).unwrap();
+        let verifier = AppVerifier::new(format!("{vts_url}/verify"));
 
         // Act
         let result = verifier.verify("jwt").await;

@@ -89,7 +89,7 @@ mod tests {
     ) {
         let (vts_url, vts_requests, vts) = fake_http_server_answering(status, body).await;
         (
-            AppVerifier::new(format!("{vts_url}/verify")).unwrap(),
+            AppVerifier::new(format!("{vts_url}/verify")),
             (vts_requests, vts),
         )
     }
