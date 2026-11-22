@@ -1,20 +1,15 @@
-use std::{
-    convert::Infallible,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll, ready},
-    time::Duration,
-};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, combinators::BoxBody};
+use futures_util::stream;
+use http_body_util::{BodyExt, StreamBody, combinators::BoxBody};
 use http_server::{HttpServer, allow_any_origin, bearer_token};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
-    body::{Body, Frame, Incoming},
+    body::{Frame, Incoming},
     header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue},
 };
-use tokio::{net::TcpListener, time::Interval};
+use tokio::{net::TcpListener, time::interval};
 use tracing::Instrument;
 
 use crate::temporary_apps::{Refusal, TemporaryApps};
@@ -94,36 +89,16 @@ fn empty_response(status: StatusCode) -> ServerResponse {
 }
 
 fn events() -> ServerResponse {
-    let mut response = Response::new(Heartbeat::new().boxed());
+    let heartbeats = stream::unfold(interval(EVENTS_HEARTBEAT), |mut ticks| async move {
+        ticks.tick().await;
+        let heartbeat = Frame::data(Bytes::from_static(b": alive\n\n"));
+        Some((Ok::<_, Infallible>(heartbeat), ticks))
+    });
+    let mut response = Response::new(StreamBody::new(heartbeats).boxed());
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response
-}
-
-struct Heartbeat {
-    ticks: Interval,
-}
-
-impl Heartbeat {
-    fn new() -> Self {
-        Self {
-            ticks: tokio::time::interval(EVENTS_HEARTBEAT),
-        }
-    }
-}
-
-impl Body for Heartbeat {
-    type Data = Bytes;
-    type Error = Infallible;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        ready!(self.ticks.poll_tick(cx));
-        Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b": alive\n\n")))))
-    }
 }
 
 fn error_response(status: StatusCode, error: &str) -> ServerResponse {
