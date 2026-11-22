@@ -24,4 +24,5 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+http-server = { path = "../../crates/http-server", features = ["testing"] }
 app-registry = { path = "../../crates/app-registry", features = ["testing"] }

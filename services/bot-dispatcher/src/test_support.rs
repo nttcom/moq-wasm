@@ -8,10 +8,6 @@ use google_cloud::MetadataToken;
 use serde_json::json;
 use url::Url;
 
-use http_server::{HttpServer, json_response};
-use hyper::StatusCode;
-use tokio::net::TcpListener;
-
 use crate::{bot_types::BotTypes, bots::Bots, signer::BotTokenSigner, store::BotStore};
 
 static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
@@ -58,29 +54,14 @@ pub(crate) fn test_bots() -> TestBots {
     }
 }
 
-/// A VTS that verifies every token as the app `app`'s launch token for its
-/// whole root, signed now and living a minute.
-pub(crate) struct FakeVts {
-    pub(crate) url: String,
-    _server: HttpServer,
-}
-
-pub(crate) async fn fake_vts() -> FakeVts {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/verify", listener.local_addr().unwrap());
-    let server = HttpServer::run(listener, |_, _| async {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        json_response(
-            StatusCode::OK,
-            &json!({ "appId": "app", "isRelay": false,
-                     "claims": { "appId": "app", "bots": "", "iat": now, "exp": now + 60 } }),
-        )
-    });
-    FakeVts {
-        url,
-        _server: server,
-    }
+/// The VTS `/verify` answer for the app `app`'s launch token for its whole
+/// root, signed now and living a minute.
+pub(crate) fn launch_token_answer() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    json!({ "appId": "app", "isRelay": false,
+            "claims": { "appId": "app", "bots": "", "iat": now, "exp": now + 60 } })
+    .to_string()
 }

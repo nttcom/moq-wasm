@@ -311,19 +311,23 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use http_server::testing::StubServer;
     use serde_json::Value;
 
     use super::*;
-    use crate::test_support::{fake_vts, test_bots};
+    use crate::test_support::{launch_token_answer, test_bots};
 
     #[tokio::test]
     async fn an_app_server_starts_finds_and_stops_a_bot_of_a_type() {
         // Arrange
-        let vts = fake_vts().await;
+        let vts = StubServer::run(StatusCode::OK, launch_token_answer()).await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let _server =
-            BotDispatcherServer::run(listener, test_bots().bots, LaunchAuth::new(vts.url.clone()));
+        let _server = BotDispatcherServer::run(
+            listener,
+            test_bots().bots,
+            LaunchAuth::new(format!("{}/verify", vts.url())),
+        );
         let client = reqwest::Client::new();
 
         // Act
