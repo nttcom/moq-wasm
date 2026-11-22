@@ -5,4 +5,3 @@ pub use crate::modules::moqt::control_plane::handler::subscribe_update_handler::
 pub use crate::modules::moqt::control_plane::handler::track_status_handler::TrackStatusHandler;
 pub use crate::modules::moqt::control_plane::handler::unsubscribe_handler::UnsubscribeHandler;
 pub use crate::modules::moqt::control_plane::options::SubscribeOption;
-pub use crate::modules::moqt::control_plane::options::SubscribeUpdateOption;

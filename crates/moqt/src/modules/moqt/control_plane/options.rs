@@ -48,11 +48,11 @@ impl Default for FetchOption {
 /// draft-14 §9.10: every field is sent, so a caller that only changes one
 /// of them repeats the subscription's current values for the others.
 #[derive(Clone, Copy, Debug)]
-pub struct SubscribeUpdateOption {
-    pub start_location: Location,
-    pub end_group: u64,
-    pub subscriber_priority: u8,
-    pub forward: bool,
+pub(crate) struct SubscribeUpdateOption {
+    pub(crate) start_location: Location,
+    pub(crate) end_group: u64,
+    pub(crate) subscriber_priority: u8,
+    pub(crate) forward: bool,
 }
 
 #[derive(Clone)]
