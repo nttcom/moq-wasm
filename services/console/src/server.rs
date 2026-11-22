@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use app_registry::{App, RegistryStore};
 use auth_token::unix_now;
+use google_cloud::IapCaller;
 use http_body_util::Full;
 use http_server::{
     HttpServer, JsonResponse, empty_response, error_response, json_response, query_params,
@@ -23,7 +24,7 @@ use tracing::Instrument;
 
 use crate::{
     apps::{self, Creation, TokenScope},
-    identity::{Caller, Identity},
+    identity::Identity,
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
     recordings::RecorderClient,
     static_files::StaticFiles,
@@ -378,7 +379,7 @@ const RECORDER_UNAVAILABLE: Refusal =
 /// A token for the whole app, signed with its secret, with which a backend
 /// answers the app's data alone; `no_app` when the caller does not own it.
 async fn app_read_token(
-    caller: &Caller,
+    caller: &IapCaller,
     app_id: &str,
     state: &ConsoleState,
 ) -> Result<String, Refusal> {
@@ -394,7 +395,7 @@ async fn app_read_token(
     Ok(issued.token)
 }
 
-async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Caller, Refusal> {
+async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<IapCaller, Refusal> {
     state
         .identity
         .caller(headers, unix_now())

@@ -2,7 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
-use console::{ConsoleServer, ConsoleState, GOOGLE_IAP_KEYS_URL, Identity, IdentitySettings};
+use console::{ConsoleServer, ConsoleState, Identity, IdentitySettings};
+use google_cloud::GOOGLE_IAP_KEYS_URL;
 use reqwest::Url;
 use telemetry_otlp::non_empty_env;
 use tokio::net::TcpListener;

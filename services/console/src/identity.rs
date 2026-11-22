@@ -1,9 +1,7 @@
 use anyhow::{Context, bail};
-use google_cloud::IapVerifier;
+use google_cloud::{IapCaller, IapVerifier};
 use hyper::HeaderMap;
 use reqwest::Url;
-
-pub use google_cloud::IapCaller as Caller;
 
 pub(crate) const IAP_ASSERTION_HEADER: &str = "x-goog-iap-jwt-assertion";
 
@@ -36,9 +34,9 @@ impl Identity {
         }
     }
 
-    pub async fn caller(&self, headers: &HeaderMap, now: u64) -> anyhow::Result<Caller> {
+    pub async fn caller(&self, headers: &HeaderMap, now: u64) -> anyhow::Result<IapCaller> {
         match self {
-            Self::Development { sub } => Ok(Caller {
+            Self::Development { sub } => Ok(IapCaller {
                 sub: sub.clone(),
                 email: None,
             }),
