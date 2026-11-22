@@ -31,10 +31,7 @@ pub struct ClientTelemetryConfig {
 /// collector as OTLP.
 pub struct ClientTelemetry {
     http: reqwest::Client,
-    verifier: Option<Arc<AppVerifier>>,
-    otlp_logs_endpoint: Option<String>,
-    otlp_metrics_endpoint: Option<String>,
-    otlp_traces_endpoint: Option<String>,
+    config: ClientTelemetryConfig,
     rate_limiter: RateLimiter,
 }
 
@@ -82,10 +79,7 @@ impl ClientTelemetry {
         }
         Some(Self {
             http: reqwest::Client::new(),
-            verifier: config.verifier,
-            otlp_logs_endpoint: config.otlp_logs_endpoint,
-            otlp_metrics_endpoint: config.otlp_metrics_endpoint,
-            otlp_traces_endpoint: config.otlp_traces_endpoint,
+            config,
             rate_limiter: RateLimiter::new(),
         })
     }
@@ -117,7 +111,7 @@ impl ClientTelemetry {
     }
 
     async fn app_id(&self, token: Option<&str>) -> Result<String, Rejection> {
-        let (Some(verifier), Some(token)) = (&self.verifier, token) else {
+        let (Some(verifier), Some(token)) = (&self.config.verifier, token) else {
             return Ok(ANONYMOUS_APP_ID.to_string());
         };
         let verified = verifier.verify(token).await.map_err(|error| match error {
@@ -135,15 +129,15 @@ impl ClientTelemetry {
 
     async fn export(&self, report: &ClientReport, app_id: &str) -> Result<(), Rejection> {
         let logs = self.forward(
-            self.otlp_logs_endpoint.as_deref(),
+            self.config.otlp_logs_endpoint.as_deref(),
             otlp_export::logs_request(report, app_id),
         );
         let metrics = self.forward(
-            self.otlp_metrics_endpoint.as_deref(),
+            self.config.otlp_metrics_endpoint.as_deref(),
             otlp_export::metrics_request(report, app_id),
         );
         let traces = self.forward(
-            self.otlp_traces_endpoint.as_deref(),
+            self.config.otlp_traces_endpoint.as_deref(),
             otlp_export::traces_request(report, app_id),
         );
         let (logs, metrics, traces) = tokio::join!(logs, metrics, traces);
