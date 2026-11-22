@@ -640,8 +640,7 @@ timeout), `--max-seconds` and `--options` (`layout`, `composite` and
   `POST /bots/{type}/{id}/heartbeat` every 5 s and stops the recording when
   the answer asks it to. The final state is reported once the recording ends;
   a job that fails before recording reports `failed` with the error.
-- `bot_job::run` prepares the recording and `record_job::record_room`
-  records it.
+- `bot_job::run` prepares the recording and records it.
 
 ## Token refresh
 A `TokenRefreshTask` polls a `TokenRenewal` every 10 s: `File` re-reads a token

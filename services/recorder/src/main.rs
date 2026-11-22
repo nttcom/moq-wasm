@@ -10,10 +10,8 @@ mod catalog_reader;
 mod composite;
 mod composite_job;
 mod file_writer;
-mod launcher;
 mod manifest;
 mod pipeline;
-mod record_job;
 mod recorder;
 mod recording;
 mod recording_clock;
@@ -39,7 +37,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::Result;
 use clap::Parser;
 
-use crate::{launcher::LauncherKind, recording::Layout};
+use crate::{bot_job::LauncherKind, recording::Layout};
 
 #[derive(Parser, Debug)]
 #[command(
