@@ -18,7 +18,7 @@ use pyo3::{
 use broadcast::{Broadcast, RelayConnection};
 
 use crate::{
-    errors::{CloseInfo, TransportStats, request_error},
+    errors::{CloseInfo, TransportStats, publish_track_error, request_error},
     fetch::Fetch,
     location::Location,
     log_sink,
@@ -31,14 +31,17 @@ use crate::{
 
 /// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport.
 /// The session follows the relay's GOAWAY by itself, presenting the latest
-/// token given to `connect` or `refresh_token`.
+/// token given to `connect` or `refresh_token`. With `refreshes_token`, it
+/// also reconnects when the relay closes it for an expired token; without it,
+/// that close ends the session and `refresh_token` fails.
 #[pyfunction]
-#[pyo3(signature = (url, *, verify_certificate = true, token = None, versions = None))]
+#[pyo3(signature = (url, *, verify_certificate = true, token = None, refreshes_token = false, versions = None))]
 pub fn connect(
     py: Python<'_>,
     url: String,
     verify_certificate: bool,
     token: Option<String>,
+    refreshes_token: bool,
     versions: Option<Vec<String>>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let versions = Version::offered(versions.as_deref())
@@ -47,6 +50,9 @@ pub fn connect(
     let scope = log_sink::session_scope(token.as_ref());
     scope.future_into_py(py, async move {
         let authorization_token = token.clone().map(|current| {
+            if !refreshes_token {
+                return AuthorizationTokenSource::from(current.lock().unwrap().clone());
+            }
             AuthorizationTokenSource::provider(move || {
                 let token = current.lock().unwrap().clone();
                 async move { Ok(token) }
@@ -65,6 +71,7 @@ pub fn connect(
         Ok(Session {
             session: Arc::new(client::Session::new(session)),
             token,
+            refreshes_token,
             scope,
         })
     })
@@ -112,6 +119,8 @@ pub struct Session {
     session: Arc<client::Session>,
     /// The token the session presents when it follows a GOAWAY.
     token: Option<Arc<Mutex<String>>>,
+    /// Whether each connection presents what `refresh_token` last set `token` to.
+    refreshes_token: bool,
     scope: SessionScope,
 }
 
@@ -283,12 +292,12 @@ impl Session {
             .scope
             .run(|| RelayConnection::with_client_session(&self.session));
         let handler = self.session.add_handler(Arc::new(connection.clone()));
-        MediaBroadcast {
-            broadcast: Broadcast::new(connection, namespace),
-            session: self.session.clone(),
+        MediaBroadcast::new(
+            Broadcast::new(connection, namespace),
+            self.session.clone(),
             handler,
-            scope: self.scope,
-        }
+            self.scope,
+        )
     }
 
     /// PUBLISH_NAMESPACE_DONE for a namespace `announce` published.
@@ -302,6 +311,25 @@ impl Session {
             session
                 .publisher()
                 .publish_namespace_done(namespace.join("/"))
+                .await?;
+            Ok(())
+        })
+    }
+
+    /// Ends every subscription to a track `publish_track` registered with
+    /// PUBLISH_DONE (draft-ietf-moq-transport-14 §9.12); the track keeps its
+    /// numbering and cache, so registering it again continues them.
+    fn end_track<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        self.scope.future_into_py(py, async move {
+            session
+                .origin()
+                .end_track(&namespace.join("/"), &name)
                 .await?;
             Ok(())
         })
@@ -338,7 +366,10 @@ impl Session {
                 datagram,
                 priority,
             };
-            let writer = session.publish_track(&namespace, &name, options).await?;
+            let writer = session
+                .publish_track(&namespace, &name, options)
+                .await
+                .map_err(publish_track_error)?;
             Ok(TrackWriter::new(writer, scope))
         })
     }
@@ -347,9 +378,9 @@ impl Session {
     /// (docs/architecture/relay/architecture.md "Token refresh"), and presents
     /// it on the connections the session opens from now on, even when the
     /// relay rejects it for this connection. Fails for a session connected
-    /// without a token, or when the relay rejects `token`; the relay then
-    /// keeps the connection's token until it expires, and the session opens
-    /// its next connection with `token`.
+    /// without a token or without `refreshes_token`, or when the relay rejects
+    /// `token`; the relay then keeps the connection's token until it expires,
+    /// and the session opens its next connection with `token`.
     #[pyo3(signature = (token, *, app_id))]
     fn refresh_token<'py>(
         &self,
@@ -362,6 +393,11 @@ impl Session {
                 "the session was connected without a token",
             ));
         };
+        if !self.refreshes_token {
+            return Err(PyRuntimeError::new_err(
+                "the session was connected without refreshes_token",
+            ));
+        }
         *current.lock().unwrap() = token.clone();
         let session = self.session.moqt_session().clone();
         self.scope.future_into_py(py, async move {

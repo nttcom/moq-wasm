@@ -82,12 +82,15 @@ class CameraDetector(FrameProcessor):
                 UserImageRequestFrame(user_id=CAMERA, result_callback=self._request_failed), FrameDirection.UPSTREAM
             )
 
+    def camera_left(self) -> None:
+        """Stops asking for pictures; the camera's next prompt starts afresh."""
+        self._prompt = None
+
     async def _request_failed(self, result: dict) -> None:
-        """No picture answers the request, as when the camera left; the camera's next prompt starts
-        afresh."""
+        """No picture answers the request, as while the camera is paused; the next one is asked for
+        at the next sample."""
         logger.info(f"no camera picture: {result.get('error')}")
         self._requesting = False
-        self._prompt = None
 
     def _judge_later(self, frame: UserImageRawFrame) -> None:
         if self._prompt is None:

@@ -1,9 +1,13 @@
 use moqt::{
-    TransportClose,
-    client::RequestError as ClientRequestError,
+    RequestErrorCode, RequestFailure, TransportClose,
+    client::{PublishTrackError, RequestError as ClientRequestError},
     wire::{RequestKind, request_error_code_to_wire},
 };
-use pyo3::{create_exception, exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    create_exception,
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 create_exception!(
     moq_wasm,
@@ -16,10 +20,39 @@ create_exception!(
 /// is the `RequestFailure` alone, without the `{kind:?} failed:` prefix the
 /// Rust error displays.
 pub(crate) fn request_error(error: ClientRequestError) -> PyErr {
-    let code = request_error_code_to_wire(error.code(), error.kind);
-    let reason = error.reason();
-    let message_type = message_type(error.kind);
-    let exception = RequestError::new_err(error.failure.to_string());
+    failed_request(error.kind, &error.failure)
+}
+
+/// The Python exception of an error from a call that sends a `kind`
+/// request among other steps: a `RequestError` when the request failed, and
+/// a plain `RuntimeError` for a failure of another step.
+pub(crate) fn request_error_in(error: anyhow::Error, kind: RequestKind) -> PyErr {
+    match error.downcast::<RequestFailure>() {
+        Ok(failure) => failed_request(kind, &failure),
+        Err(error) => error.into(),
+    }
+}
+
+/// The Python exception of a failed `publish_track`: a `ValueError` for a
+/// registration with the other delivery than the track's objects took, and
+/// as `request_error_in` for a failed PUBLISH.
+pub(crate) fn publish_track_error(error: anyhow::Error) -> PyErr {
+    match error.downcast::<PublishTrackError>() {
+        Ok(error) => PyValueError::new_err(error.to_string()),
+        Err(error) => request_error_in(error, RequestKind::Publish),
+    }
+}
+
+fn failed_request(kind: RequestKind, failure: &RequestFailure) -> PyErr {
+    // As `moqt::client::RequestError::code` and `reason` read a failure.
+    let (code, reason) = match failure {
+        RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),
+        RequestFailure::Timeout => (RequestErrorCode::Timeout, failure.to_string()),
+        failure => (RequestErrorCode::InternalError, failure.to_string()),
+    };
+    let code = request_error_code_to_wire(code, kind);
+    let message_type = message_type(kind);
+    let exception = RequestError::new_err(failure.to_string());
     Python::attach(|py| {
         let value = exception.value(py);
         value.setattr("message_type", message_type)?;
