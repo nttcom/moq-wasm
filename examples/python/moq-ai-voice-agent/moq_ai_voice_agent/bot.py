@@ -10,7 +10,7 @@ from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import LLMMessagesAppendFrame
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineWorker
+from pipecat.pipeline.worker import PipelineWorker, ProcessorUnusablePolicy
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
 from pipecat.processors.filters.function_filter import FunctionFilter
@@ -94,7 +94,13 @@ async def talk_in_session(gemini: GeminiServices, job: BotJob, session: moq_wasm
         ),
     )
     listener = Listener()
-    worker = PipelineWorker(voice_pipeline(gemini, transport, listener), enable_rtvi=False, idle_timeout_secs=None)
+    worker = PipelineWorker(
+        voice_pipeline(gemini, transport, listener),
+        enable_rtvi=False,
+        idle_timeout_secs=None,
+        # A room the relay refuses leaves the transport unusable: end the pipeline, not idle in it.
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
+    )
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_, participant_id: str):

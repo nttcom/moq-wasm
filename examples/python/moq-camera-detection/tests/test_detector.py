@@ -98,19 +98,40 @@ async def test_an_answer_returned_after_a_newer_one_is_not_recorded():
     assert records(down) == [{"L": [44, 1], "data": {"prompt": (7, 0), "answers": ["no"]}}]
 
 
-async def test_a_request_no_picture_answers_drops_the_prompt():
+async def requests_while(detector: CameraDetector, fail_requests) -> list[UserImageRequestFrame]:
+    """The pictures `detector` asks for in 0.5 s after a prompt, while `fail_requests` runs."""
+    failing = asyncio.create_task(fail_requests())
+    _, up = await run_test(detector, frames_to_send=[prompt_message(), SleepFrame(0.5)])
+    await failing
+    return [frame for frame in up if isinstance(frame, UserImageRequestFrame)]
+
+
+async def test_a_request_no_picture_answers_is_asked_again():
     # Arrange
     detector = CameraDetector(StubVision(answers=["yes"]))
 
-    async def fail_requests():
+    async def time_out():
         await asyncio.sleep(0.15)
-        await detector._request_failed({"error": "camera left"})
-
-    failing = asyncio.create_task(fail_requests())
+        await detector._request_failed({"error": "no picture of camera of camera came in time"})
 
     # Act
-    _, up = await run_test(detector, frames_to_send=[prompt_message(), SleepFrame(0.5)])
-    await failing
+    requests = await requests_while(detector, time_out)
 
-    # Assert: the failed request was the only one
-    assert len([frame for frame in up if isinstance(frame, UserImageRequestFrame)]) == 1
+    # Assert: the prompt is kept while the camera is paused
+    assert len(requests) > 1
+
+
+async def test_a_camera_that_left_is_asked_for_no_more_pictures():
+    # Arrange
+    detector = CameraDetector(StubVision(answers=["yes"]))
+
+    async def leave():
+        await asyncio.sleep(0.15)
+        detector.camera_left()
+        await detector._request_failed({"error": "camera left"})
+
+    # Act
+    requests = await requests_while(detector, leave)
+
+    # Assert
+    assert len(requests) == 1
