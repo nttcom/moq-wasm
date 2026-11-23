@@ -337,8 +337,8 @@ mod tests {
         TrackObject, TrackReader,
         modules::moqt::data_plane::object::subgroup::{SubgroupId, SubgroupObject},
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, datagram_object, open_raw_subgroup, open_subgroup, published_track,
-            send_payload, send_raw_payload, subscribed_track_reader,
+            datagram_object, open_raw_subgroup, open_subgroup, published_track, send_payload,
+            send_raw_payload, subscribed_track_reader, within,
         },
         object::{DataStreamResetCode, ForwardingPreference, MalformedTrackError},
     };
@@ -348,9 +348,8 @@ mod tests {
     async fn collect_objects(reader: &mut TrackReader, count: usize) -> Vec<TrackObject> {
         let mut objects = Vec::new();
         while objects.len() < count {
-            let object = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            let object = within(reader.next_object())
                 .await
-                .expect("object within timeout")
                 .unwrap()
                 .expect("track still open");
             objects.push(object);
@@ -538,9 +537,7 @@ mod tests {
             .unwrap();
         let mut group_1 = open_subgroup(&factory, 1).await;
         send_payload(&mut group_1, b"g1-o0").await;
-        let next = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
-            .await
-            .expect("object within timeout");
+        let next = within(reader.next_object()).await;
 
         // Assert
         assert_eq!(next.unwrap().unwrap().payload, Bytes::from_static(b"g1-o0"));
@@ -567,9 +564,7 @@ mod tests {
             .send_object(&datagram_object())
             .await
             .unwrap();
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
-            .await
-            .unwrap();
+        let result = within(reader.next_object()).await;
 
         // Assert
         assert_eq!(

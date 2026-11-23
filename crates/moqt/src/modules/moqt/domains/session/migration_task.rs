@@ -818,7 +818,7 @@ mod tests {
                 client_with_config, data_receiver, datagram_object, native_client_with_config,
                 next_datagram, next_event, next_subgroup, open_subgroup, self_signed_server_config,
                 send_payload, sent_update, spawn_native_server, spawn_native_server_handshake,
-                spawn_server, subscribe_namespace_accepted, subscribed_track_reader,
+                spawn_server, subscribe_namespace_accepted, subscribed_track_reader, within,
             },
         },
         namespace::NamespaceInterest,
@@ -886,14 +886,13 @@ mod tests {
 
     async fn connect(port: u16, version: Version) -> Session {
         let client = client_with_config(following_go_away(), version);
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             client
                 .connect(&format!("moqt://127.0.0.1:{port}"))
                 .await?
                 .await
         })
         .await
-        .unwrap()
         .unwrap()
     }
 
@@ -948,14 +947,13 @@ mod tests {
                 versions,
                 ..following_go_away()
             });
-            let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            let client = within(async {
                 client
                     .connect(&format!("moqt://127.0.0.1:{port_a}"))
                     .await?
                     .await
             })
             .await
-            .unwrap()
             .unwrap();
             let server_a = accept_a.await.unwrap();
             Self {
@@ -1036,9 +1034,8 @@ mod tests {
     }
 
     async fn next_payload(reader: &mut TrackReader) -> (u64, Bytes) {
-        let object = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+        let object = within(reader.next_object())
             .await
-            .expect("object within timeout")
             .unwrap()
             .expect("track still open");
         (object.group_id, object.payload)
@@ -1204,9 +1201,7 @@ mod tests {
             .send_object(&object)
             .await
             .unwrap();
-        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
-            .await
-            .expect("the datagram arrives");
+        let received = within(receiver.next()).await;
 
         // Assert: draft-18 §11 lets a track mix subgroup streams and datagrams, which draft-14 §10 forbids
         assert!(
@@ -1240,9 +1235,7 @@ mod tests {
         // Act
         let mut group_2_b = open_subgroup(&sender_b, 2).await;
         send_payload(&mut group_2_b, b"b2-0").await;
-        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
-            .await
-            .expect("the subgroup stream arrives");
+        let received = within(receiver.next()).await;
 
         // Assert: draft-14 §10 forbids the mix only within a draft-14 connection
         assert!(
@@ -1816,9 +1809,8 @@ mod tests {
 
     async fn next_group_payload(server: &Session, subscription: &Subscription) -> Bytes {
         let mut reader = subscribed_track_reader(server, subscription).await;
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+        within(reader.next_object())
             .await
-            .expect("object within timeout")
             .unwrap()
             .expect("track still open")
             .payload
@@ -2039,16 +2031,10 @@ mod tests {
                 }
             }
         });
-        let (start_b, sender_b) =
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, serve_fetch(&server_b, end))
-                .await
-                .expect("the rest of the FETCH reaches B");
+        let (start_b, sender_b) = within(serve_fetch(&server_b, end)).await;
         sender_b.send_object(&fetched_object(2)).await.unwrap();
         sender_b.close().await.unwrap();
-        let rest = tokio::time::timeout(HANDSHAKE_TIMEOUT, rest)
-            .await
-            .unwrap()
-            .unwrap();
+        let rest = within(rest).await.unwrap();
 
         // Assert: B is asked from the first object A did not deliver
         assert_eq!(
@@ -2125,12 +2111,7 @@ mod tests {
         tokio::time::sleep(wait).await;
         server_a.close_with_error(TerminationErrorCode::GoawayTimeout, "drained");
         let _rest = tokio::spawn(async move { while receiver.receive().await.is_ok() {} });
-        let SessionEvent::Fetch(handler) =
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
-                .await
-                .expect("the rest of the FETCH reaches B")
-                .unwrap()
-        else {
+        let SessionEvent::Fetch(handler) = within(server_b.receive_event()).await.unwrap() else {
             panic!("expected FETCH on B");
         };
         (handler.fill_timeout(), first_sent.elapsed())
@@ -2188,13 +2169,12 @@ mod tests {
                 .unwrap();
             let server_b = accept_b.await.unwrap();
             let _ = serve_subscribe(&server_b).await;
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            within(async {
                 while client.subscriber().session.connection().generation == 0 {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             })
-            .await
-            .expect("the session moves to B");
+            .await;
             let end = Location {
                 group_id: 1,
                 object_id: 1,
@@ -2220,9 +2200,7 @@ mod tests {
                 .accept_fetch_receiver(&handle.unwrap())
                 .await
                 .unwrap();
-            let fetched = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
-                .await
-                .unwrap();
+            let fetched = within(receiver.receive()).await;
 
             // Assert
             assert_eq!(
@@ -2260,13 +2238,12 @@ mod tests {
             .unwrap();
         let server_b = accept_b.await.unwrap();
         let (_, filter_b, _) = serve_subscribe(&server_b).await;
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             while client.connection_generation() == 0 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
-        .await
-        .expect("the session moves to B");
+        .await;
 
         // Act
         let (handle, fetch_params) = tokio::join!(
@@ -2346,14 +2323,13 @@ mod tests {
             })),
             ..ClientConfig::default()
         });
-        let _client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let _client = within(async {
             endpoint
                 .connect(&format!("moqt://127.0.0.1:{port_a}"))
                 .await?
                 .await
         })
         .await
-        .unwrap()
         .unwrap();
         let server_a = accept_a.await.unwrap();
 
@@ -2362,10 +2338,7 @@ mod tests {
             .go_away(format!("moqt://127.0.0.1:{port_b}"))
             .await
             .unwrap();
-        let handshake_b = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake_b)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake_b = within(handshake_b).await.unwrap();
 
         // Assert
         assert_eq!(
@@ -2410,7 +2383,7 @@ mod tests {
             authorization_token: Some(token),
             ..ClientConfig::default()
         });
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             endpoint
                 .connect(&format!("moqt://127.0.0.1:{port}"))
                 .await?
@@ -2418,14 +2391,10 @@ mod tests {
         })
         .await
         .unwrap()
-        .unwrap()
     }
 
     async fn next_session(sessions: &mut AcceptedSessions) -> (Vec<AuthorizationToken>, Session) {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, sessions.recv())
-            .await
-            .expect("a connection within timeout")
-            .unwrap()
+        within(sessions.recv()).await.unwrap()
     }
 
     #[tokio::test]

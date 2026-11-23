@@ -16,6 +16,7 @@ use crate::{
             },
             enums::{RequestId, ResponseMessage},
             namespace_interest::NamespaceInterest,
+            options::SubscribeUpdateOption,
         },
         data_plane::{data_receiver::DataReceiver, stream::fetch_data_receiver::FetchDataReceiver},
         domains::{
@@ -29,7 +30,7 @@ use crate::{
         version::{Notification, OutgoingRequest, PendingResponse, ReceivedResponse, UpdateAnswer},
     },
     object::{GroupOrder, Location},
-    subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
+    subscribe::{FilterType, SubscribeOption},
     wire::TrackStatusOk,
 };
 
@@ -644,29 +645,9 @@ impl Subscriber {
         }
     }
 
-    /// Sends a SUBSCRIBE_UPDATE for `subscription` on each connection that
-    /// carries it (draft-14 §9.10). On draft-18 it returns once the peer
-    /// answers the REQUEST_UPDATE (§10.9) and fails on REQUEST_ERROR or after
-    /// the control message timeout; draft-14 defines no response, so there it
-    /// returns once written.
-    #[tracing::instrument(
-        level = "debug",
-        name = "moqt.subscriber.subscribe_update",
-        skip_all,
-        fields(subscription_request_id = subscription.request_id(), forward = option.forward)
-    )]
-    pub async fn subscribe_update(
-        &self,
-        subscription: &Subscription,
-        option: SubscribeUpdateOption,
-    ) -> anyhow::Result<()> {
-        let start = option.start_location;
-        let answers = self.write_update(subscription, option, |_| start).await?;
-        wait_for(answers).await
-    }
-
-    /// Writes `subscribe_update`'s message with the Start Location `start_on`
-    /// gives for each connection, and returns the answers to wait for.
+    /// Writes a SUBSCRIBE_UPDATE for `subscription` on each connection that
+    /// carries it (draft-14 §9.10), with the Start Location `start_on` gives
+    /// for that connection, and returns the answers to wait for.
     async fn write_update(
         &self,
         subscription: &Subscription,
@@ -1127,6 +1108,9 @@ fn new_group_request(
     }
 }
 
+/// On draft-18 an answer completes once the peer answers the REQUEST_UPDATE
+/// (§10.9) and fails on REQUEST_ERROR or after the control message timeout;
+/// draft-14 defines no response, so its answer completes once written.
 async fn wait_for(answers: Vec<UpdateAnswer>) -> anyhow::Result<()> {
     for answer in answers {
         answer.wait().await?;
@@ -1392,10 +1376,7 @@ mod tests {
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
-        subscribe::{
-            FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateHandler,
-            SubscribeUpdateOption,
-        },
+        subscribe::{FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateHandler},
     };
 
     const START: Location = Location {
@@ -2548,89 +2529,6 @@ mod tests {
                 end_group: 6,
             })
         );
-    }
-
-    #[tokio::test]
-    async fn update_forward_after_subscribe_update_repeats_its_start_location_and_priority() {
-        // Arrange
-        let (client, server) =
-            spawn_connected_native_sessions("subscriber-update-forward-after-update").await;
-        let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
-        let narrowed_start = Location {
-            group_id: 5,
-            object_id: 0,
-        };
-        client
-            .subscriber()
-            .subscribe_update(
-                &subscription.clone(),
-                SubscribeUpdateOption {
-                    start_location: narrowed_start,
-                    end_group: 0,
-                    subscriber_priority: 9,
-                    forward: true,
-                },
-            )
-            .await
-            .unwrap();
-        receive_subscribe_update(&server).await;
-
-        // Act
-        client
-            .subscriber()
-            .update_forward(&subscription, false)
-            .await
-            .unwrap();
-
-        // Assert: the SUBSCRIBE's Start Location {3, 2} would move the start back
-        let update = receive_subscribe_update(&server).await;
-        assert!(!update.forward());
-        assert_eq!(
-            update.filter(),
-            Some(FilterType::AbsoluteStart {
-                location: narrowed_start
-            })
-        );
-        assert_eq!(update.subscriber_priority(), 9);
-    }
-
-    #[tokio::test]
-    async fn subscribe_update_sends_the_given_fields_for_the_given_subscription() {
-        for version in DRAFTS {
-            // Arrange
-            let (client, server) = connected_sessions("subscriber-subscribe-update", version).await;
-            let option = SubscribeUpdateOption {
-                start_location: Location {
-                    group_id: 4,
-                    object_id: 2,
-                },
-                end_group: 9,
-                subscriber_priority: 7,
-                forward: true,
-            };
-
-            let (subscription, handler) = subscribed(&client, &server).await;
-
-            // Act
-            let subscriber = client.subscriber();
-            let update =
-                sent_update(subscriber.subscribe_update(&subscription, option), &server).await;
-
-            // Assert
-            assert_eq!(update.subscription_request_id(), handler.request_id());
-            assert_eq!(
-                update.filter(),
-                Some(FilterType::AbsoluteRange {
-                    location: Location {
-                        group_id: 4,
-                        object_id: 2
-                    },
-                    end_group: 8,
-                })
-            );
-            assert_eq!(update.subscriber_priority(), 7);
-            assert!(update.forward());
-        }
     }
 
     #[tokio::test]

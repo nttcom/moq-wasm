@@ -6,8 +6,9 @@ use crate::{
     modules::moqt::control_plane::control_messages::messages::{
         parameters::content_exists::ContentExists, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
+    modules::moqt::control_plane::options::SubscribeUpdateOption,
     object::GroupOrder,
-    subscribe::{FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption},
+    subscribe::{FilterType, SubscribeHandler, SubscribeOption},
 };
 
 #[derive(Clone, Debug)]

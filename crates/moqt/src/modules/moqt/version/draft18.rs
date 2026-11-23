@@ -2143,9 +2143,7 @@ mod tests {
 
         // Act: FIN, then STOP_SENDING on the publisher's half once it read the FIN
         client_request_stream.sender.close().await.unwrap();
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, fin_read.notified())
-            .await
-            .expect("the publisher should read the FIN");
+        within(fin_read.notified()).await;
         client_request_stream.reader_stop.notify_one();
         let event = next_event(&server).await;
 
@@ -2170,9 +2168,7 @@ mod tests {
 
         // Act: FIN, then STOP_SENDING on the publisher's half once it read the FIN
         client_request_stream.sender.close().await.unwrap();
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, fin_read.notified())
-            .await
-            .expect("the publisher should read the FIN");
+        within(fin_read.notified()).await;
         client_request_stream.reader_stop.notify_one();
         let released = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             while Arc::strong_count(&request_stream.sender) > 1 {
@@ -3755,10 +3751,7 @@ mod tests {
     }
 
     async fn request_ok_largest(receiver: &mut MessageReceiver) -> Option<Location> {
-        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
-            .await
-            .expect("no answer to the REQUEST_UPDATE")
-            .unwrap();
+        let response = within(receiver.receive()).await.unwrap();
         let Some(messages::Message::RequestOk(ok)) = response else {
             panic!("expected REQUEST_OK, got {response:?}");
         };
@@ -4766,10 +4759,7 @@ mod tests {
         handler.ok().await.unwrap();
 
         // Assert
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, pending.accepted())
-            .await
-            .expect("PUBLISH_NAMESPACE_OK should resolve the request")
-            .unwrap();
+        within(pending.accepted()).await.unwrap();
     }
 
     #[tokio::test]

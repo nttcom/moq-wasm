@@ -653,10 +653,7 @@ mod tests {
         });
 
         // Act
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
 
         // Assert
         assert_eq!(
@@ -685,10 +682,7 @@ mod tests {
         });
 
         // Act
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
 
         // Assert
         assert_eq!(
@@ -712,11 +706,7 @@ mod tests {
         });
 
         // Act
-        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            endpoint.connect(&url).await?.await
-        })
-        .await
-        .unwrap();
+        let result = within(async { endpoint.connect(&url).await?.await }).await;
 
         // Assert
         let Err(error) = result else {
@@ -736,10 +726,7 @@ mod tests {
         let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
 
         // Act
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
 
         // Assert
         assert!(handshake.authorization_tokens().is_empty());
@@ -774,18 +761,11 @@ mod tests {
         let (port, accept) = spawn_native_server_handshake(name);
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
         handshake
             .reject(TerminationErrorCode::Unauthorized, "bad token")
             .await;
-        let Err(error) = tokio::time::timeout(HANDSHAKE_TIMEOUT, client)
-            .await
-            .unwrap()
-            .unwrap()
-        else {
+        let Err(error) = within(client).await.unwrap() else {
             panic!("expected the handshake to be rejected");
         };
         error

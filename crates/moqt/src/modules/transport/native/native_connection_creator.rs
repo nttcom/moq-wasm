@@ -257,7 +257,7 @@ mod tests {
         test_support::{
             HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions,
             connect_transports, native_client, self_signed_server_config, server_transport_creator,
-            spawn_native_server,
+            spawn_native_server, within,
         },
         transport::{
             accept_error::AcceptError,
@@ -478,9 +478,8 @@ mod tests {
         let target = ConnectTarget::parse(&format!("wss://127.0.0.1:{port}/moq")).unwrap();
 
         // Act
-        let error = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.create_new_transport(&target))
+        let error = within(client.create_new_transport(&target))
             .await
-            .unwrap()
             .unwrap_err();
 
         // Assert

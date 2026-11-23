@@ -1080,10 +1080,7 @@ mod tests {
         .await;
 
         // Assert
-        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.receive_event())
-            .await
-            .expect("no session event")
-            .unwrap();
+        let event = within(server.receive_event()).await.unwrap();
         assert!(
             matches!(event, SessionEvent::ProtocolViolation()),
             "{event:?}"
@@ -1109,14 +1106,13 @@ mod tests {
 
         // Act
         let publisher = server.publisher();
-        let (published, _accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let (published, _accepted) = within(async {
             tokio::join!(
                 publisher.publish("live/room".into(), "video".into(), PublishOption::default()),
                 accept_publish(&client)
             )
         })
-        .await
-        .expect("the PUBLISH reaches the subscriber");
+        .await;
 
         // Assert: draft-14 §9.13 sends PUBLISH on the control stream and has no PUBLISH_BLOCKED
         assert!(published.is_ok(), "{published:?}");
@@ -1547,10 +1543,7 @@ mod tests {
             .unwrap();
 
         // Assert
-        let reservation = tokio::time::timeout(HANDSHAKE_TIMEOUT, reservation)
-            .await
-            .unwrap()
-            .unwrap();
+        let reservation = within(reservation).await.unwrap();
         assert_eq!(reservation.request_id(), 0);
         drop(reservation);
         assert_eq!(client_channel.request_ids.lock().await.blocked_on, Some(0));

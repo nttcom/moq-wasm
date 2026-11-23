@@ -85,7 +85,7 @@ mod tests {
         TerminationErrorCode,
         modules::{
             moqt::control_plane::constants::MOQ_TRANSPORT_VERSION,
-            test_support::{HANDSHAKE_TIMEOUT, native_client, spawn_native_server_handshake},
+            test_support::{native_client, spawn_native_server_handshake, within},
         },
     };
 
@@ -97,10 +97,7 @@ mod tests {
         let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
 
         // Act
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
 
         // Assert
         assert!(
@@ -118,17 +115,11 @@ mod tests {
         let (port, accept) = spawn_native_server_handshake("handshake-accept");
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
 
         // Act
         let server = handshake.accept(&tracing::Span::current()).await;
-        let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, client)
-            .await
-            .unwrap()
-            .unwrap();
+        let client = within(client).await.unwrap();
 
         // Assert
         assert!(server.is_ok());
@@ -141,19 +132,13 @@ mod tests {
         let (port, accept) = spawn_native_server_handshake("handshake-reject");
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
-        let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
-            .await
-            .unwrap()
-            .unwrap();
+        let handshake = within(accept).await.unwrap();
 
         // Act
         handshake
             .reject(TerminationErrorCode::Unauthorized, "test")
             .await;
-        let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, client)
-            .await
-            .unwrap()
-            .unwrap();
+        let client = within(client).await.unwrap();
 
         // Assert
         assert!(client.is_err());

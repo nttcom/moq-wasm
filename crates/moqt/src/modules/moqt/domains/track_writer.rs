@@ -331,8 +331,8 @@ mod tests {
     use crate::{
         Session, Subscription, TrackWriter, Version,
         modules::test_support::{
-            DRAFTS, HANDSHAKE_TIMEOUT, accept_publish, connected_sessions, data_receiver,
-            next_subgroup, subscribed_track_reader,
+            DRAFTS, accept_publish, connected_sessions, data_receiver, next_subgroup,
+            subscribed_track_reader, within,
         },
         object::{ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
         publish::PublishOption,
@@ -347,14 +347,13 @@ mod tests {
     ) -> (Session, Session, Subscription, TrackWriter) {
         let (client, server) = connected_sessions(name, Version::Draft18).await;
         let publisher = client.publisher();
-        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let (published, accepted) = within(async {
             tokio::join!(
                 publisher.publish("ns".into(), "track".into(), PublishOption::default()),
                 accept_publish(&server)
             )
         })
-        .await
-        .unwrap();
+        .await;
         let writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), first_group_id);
         (client, server, accepted, writer)
     }
@@ -365,14 +364,13 @@ mod tests {
             // Arrange
             let (client, server) = connected_sessions("track-writer", version).await;
             let publisher = client.publisher();
-            let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            let (published, accepted) = within(async {
                 tokio::join!(
                     publisher.publish("ns".into(), "track".into(), PublishOption::default()),
                     accept_publish(&server)
                 )
             })
-            .await
-            .unwrap();
+            .await;
             let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
 
             // Act
@@ -433,14 +431,13 @@ mod tests {
             // Arrange
             let (client, server) = connected_sessions("track-writer-groups", version).await;
             let publisher = client.publisher();
-            let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            let (published, accepted) = within(async {
                 tokio::join!(
                     publisher.publish("ns".into(), "track".into(), PublishOption::default()),
                     accept_publish(&server)
                 )
             })
-            .await
-            .unwrap();
+            .await;
             let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
 
             // Act: the first group may start anywhere, the next one skips 4 and 5
@@ -547,14 +544,13 @@ mod tests {
             // Arrange
             let (client, server) = connected_sessions("track-writer-stopped-group", version).await;
             let publisher = client.publisher();
-            let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            let (published, accepted) = within(async {
                 tokio::join!(
                     publisher.publish("ns".into(), "track".into(), PublishOption::default()),
                     accept_publish(&server)
                 )
             })
-            .await
-            .unwrap();
+            .await;
             let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
             writer.start_group().await.unwrap();
             writer
@@ -563,7 +559,7 @@ mod tests {
                 .unwrap();
             let mut streams = data_receiver(&server, &accepted).await;
             drop(next_subgroup(&mut streams).await);
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            within(async {
                 while writer
                     .write(Bytes::from_static(b"after stop"), vec![])
                     .await
@@ -572,8 +568,7 @@ mod tests {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
             })
-            .await
-            .unwrap();
+            .await;
 
             // Act
             writer.start_group().await.unwrap();

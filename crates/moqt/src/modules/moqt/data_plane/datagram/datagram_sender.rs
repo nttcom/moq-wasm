@@ -68,8 +68,8 @@ mod tests {
     use bytes::Bytes;
 
     use crate::modules::test_support::{
-        HANDSHAKE_TIMEOUT, connect_sessions, data_receiver, datagram_object, next_datagram,
-        published_track_between, spawn_native_server,
+        connect_sessions, data_receiver, datagram_object, next_datagram, published_track_between,
+        spawn_native_server, within,
     };
     use crate::object::DatagramDelivery;
 
@@ -98,9 +98,7 @@ mod tests {
         // Assert: draft-14 §10.3, draft-18 §11.3
         assert_eq!(dropped.unwrap(), DatagramDelivery::TooLarge);
         assert_eq!(sent.unwrap(), DatagramDelivery::Sent);
-        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, next_datagram(&mut receiver))
-            .await
-            .unwrap();
+        let received = within(next_datagram(&mut receiver)).await;
         assert_eq!(received, next);
     }
 

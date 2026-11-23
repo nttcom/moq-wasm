@@ -293,6 +293,7 @@ mod tests {
     use bytes::{Bytes, BytesMut};
 
     use super::*;
+    use crate::modules::test_support::within;
     use crate::modules::transport::{
         qmux::{
             frame::{Frame, TransportErrorCode},
@@ -303,14 +304,6 @@ mod tests {
         read_error::ReadError,
         transport_send_stream::TransportSendError,
     };
-
-    const TIMEOUT: Duration = Duration::from_secs(5);
-
-    async fn within<F: Future>(future: F) -> F::Output {
-        tokio::time::timeout(TIMEOUT, future)
-            .await
-            .expect("the exchange timed out")
-    }
 
     fn payload(length: usize) -> BytesMut {
         (0..length).map(|i| (i % 251) as u8).collect()

@@ -54,10 +54,9 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   `client::Session`, whose types it binds to JavaScript.
 - `wire.rs` exports the draft-14 numeric codes (`RequestKind` and the
   request-error / PUBLISH_DONE conversions) for the wasm bindings, whose
-  JavaScript API carries draft-14 numbers, and the types public items expose:
-  `TrackStatusOk` (with `SubscribeOk`), the `Fetch` message in the public
-  field `FetchHandler::fetch`, and `DecodeError` from the `decode` functions.
-  The control-message framing is crate-private. Types the other crates reason about
+  JavaScript API carries draft-14 numbers, and `TrackStatusOk` (with
+  `SubscribeOk`), the type public items expose. The control-message framing
+  is crate-private. Types the other crates reason about
   (`AuthorizationToken`, `fetch::FetchParams`, the typed codes) are exported
   from the operation modules, so a consumer that does not import `wire`
   depends on no draft-14 message layout.
@@ -431,8 +430,8 @@ call through the adapter; a draft never gets a task of its own (see
       answer: `send_request_update` queues a waiter on the request stream
       (in write order, which the Request ID reservation keeps), and the task
       reading that stream hands each REQUEST_OK or REQUEST_ERROR to the
-      oldest waiter. So `Subscriber::subscribe_update` and the methods built
-      on it (`update_forward`, `update_priority`, `end_before_group`) return
+      oldest waiter. So the `Subscriber` methods that send one
+      (`update_forward`, `update_priority`, `end_before_group`) return
       once the peer has applied the update, and fail on REQUEST_ERROR, when
       the stream ends without an answer (a peer that coalesced updates into
       one REQUEST_ERROR ends the subscription, §10.9.1), or after the control
@@ -599,7 +598,7 @@ before and returns GOAWAY as an event.
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
 `Subscriber` facades sharing the same `Arc<SessionContext>`. Operations on an
 established request take its handle, not its request id:
-`Subscriber::unsubscribe` / `subscribe_update` / `update_forward` / `end_before_group` /
+`Subscriber::unsubscribe` / `update_forward` / `end_before_group` /
 `fetch_relative_joining` take the `Subscription`, `Subscriber::fetch_cancel`
 the `FetchHandle`, and `Publisher::publish_done` the `Subscription` it
 publishes on. The request id stays readable as an identifier, but how a

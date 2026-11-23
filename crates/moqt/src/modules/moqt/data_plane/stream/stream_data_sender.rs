@@ -289,8 +289,8 @@ mod tests {
     use crate::{
         modules::moqt::data_plane::object::subgroup::SubgroupId,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, PublishedTrack, first_subgroup_stream, object_with_extensions,
-            published_track, published_track_between, spawn_connected_draft18_sessions,
+            PublishedTrack, first_subgroup_stream, object_with_extensions, published_track,
+            published_track_between, spawn_connected_draft18_sessions, within,
         },
         object::{
             DataStreamResetCode, ForwardingPreference, Location, Object, ObjectStatus, ReadError,
@@ -335,7 +335,7 @@ mod tests {
             object(16_385, ObjectStatus::EndOfGroup, b""),
         ];
 
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             // Act
             for object in &sent {
                 sender.send_object(object).await.unwrap();
@@ -354,8 +354,7 @@ mod tests {
             }
             assert!(receiver.receive().await.unwrap().is_none());
         })
-        .await
-        .expect("subgroup objects and FIN arrive within timeout");
+        .await;
     }
 
     #[tokio::test]
@@ -371,7 +370,7 @@ mod tests {
             };
             let mut sender = factory.next().await.unwrap().start(start).await.unwrap();
 
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            within(async {
                 // Act
                 sender.close().await.unwrap();
                 let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
@@ -382,8 +381,7 @@ mod tests {
                 assert!(matches!(header, Some(Subgroup::Header(received)) if received == start));
                 assert!(end.is_none(), "{end:?}");
             })
-            .await
-            .expect("empty subgroup finishes within timeout");
+            .await;
         }
     }
 
@@ -394,7 +392,7 @@ mod tests {
         let factory = track.client.publisher().create_stream(&track.published);
         let mut sender = factory.next().await.unwrap().start(START).await.unwrap();
         let sent = object(63, ObjectStatus::Normal, b"\x00before-reset\xff");
-        let mut receiver = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let mut receiver = within(async {
             sender.send_object(&sent).await.unwrap();
             let mut receiver = first_subgroup_stream(&track.server, &track.accepted).await;
             let Some(Subgroup::Header(_)) = receiver.receive().await.unwrap() else {
@@ -405,10 +403,9 @@ mod tests {
             };
             receiver
         })
-        .await
-        .expect("subgroup object arrives before reset within timeout");
+        .await;
 
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             // Act
             sender
                 .reset(DataStreamResetCode::InternalError)
@@ -422,8 +419,7 @@ mod tests {
                 "{result:?}"
             );
         })
-        .await
-        .expect("subgroup reset reaches the receiver within timeout");
+        .await;
     }
 
     #[tokio::test]
@@ -506,7 +502,7 @@ mod tests {
         mut sender: SubgroupObjectSender,
         expected: Object,
     ) {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             // Act: the receiver reads while the payload's second half is unsent
             sender
                 .begin_object(&object(63, ObjectStatus::Normal, b""), 8)
@@ -542,8 +538,7 @@ mod tests {
             assert!(receive_payload_bytes(&mut receiver, b"rame").await);
             assert!(receiver.receive().await.unwrap().is_none());
         })
-        .await
-        .expect("the payload pieces and FIN arrive within timeout");
+        .await;
     }
 
     #[tokio::test]
@@ -551,7 +546,7 @@ mod tests {
         // Arrange
         let (track, mut sender) = sender("sender-payload-whole").await;
 
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             // Act
             sender
                 .begin_object(&object(63, ObjectStatus::Normal, b""), 8)
@@ -576,8 +571,7 @@ mod tests {
             };
             assert_eq!(received, object(63, ObjectStatus::Normal, b"keyframe"));
         })
-        .await
-        .expect("the object arrives within timeout");
+        .await;
     }
 
     #[tokio::test]
@@ -593,7 +587,7 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        within(async {
             // Act
             sender
                 .begin_object(&object(5, ObjectStatus::Normal, b""), 8)
@@ -615,9 +609,7 @@ mod tests {
                 matches!(&start, Some(SubgroupPart::ObjectStart { object, .. }) if object.location.object_id == 5),
                 "{start:?}"
             );
-        })
-        .await
-        .expect("the header and the object start arrive within timeout");
+        }).await;
     }
 
     #[tokio::test]
