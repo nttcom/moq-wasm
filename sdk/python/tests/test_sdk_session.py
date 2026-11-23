@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import time
+import traceback
 from collections.abc import Callable
 
 import pytest
@@ -821,6 +822,40 @@ async def test_every_close_of_a_watch_waits_for_the_unsubscribe_even_after_one_w
     await session.close()
 
 
+async def test_changing_the_list_a_namespace_was_given_in_does_not_change_what_close_withdraws():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    namespace = list(NAMESPACE)
+    writer = await session.publish_track(namespace, "status")
+    announcement = await session.announce(namespace)
+
+    # Act
+    namespace[-1] = "someone-else"
+    await writer.close()
+    await announcement.close()
+
+    # Assert
+    assert native.ended == [(NAMESPACE, "status")]
+    assert native.calls[-1] == ("unannounce", NAMESPACE)
+    await session.close()
+
+
+async def test_announcing_a_namespace_the_session_publishes_raises_until_it_was_withdrawn():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    announcement = await session.announce(NAMESPACE)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="already publishes"):
+        await session.announce(NAMESPACE)
+    await announcement.close()
+    await within(session.announce(NAMESPACE))
+    await session.close()
+
+
 async def test_the_first_connection_failure_raises():
     # Arrange
     relay = FakeRelay()
@@ -829,6 +864,197 @@ async def test_the_first_connection_failure_raises():
     # Act / Assert
     with pytest.raises(RuntimeError, match="connection refused"):
         await open_session(relay)
+
+
+async def test_every_close_of_a_track_writer_waits_for_its_end_even_after_one_was_cancelled():
+    # Arrange: ending the track waits for the relay
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    gate = asyncio.Event()
+    ending_started = asyncio.Event()
+    ending = native.end_track
+
+    async def gated_end_track(namespace, name):
+        ending_started.set()
+        await gate.wait()
+        await ending(namespace, name)
+
+    native.end_track = gated_end_track
+    writer = await session.publish_track(NAMESPACE, "status")
+    closing = asyncio.create_task(writer.close())
+    await within(ending_started.wait())
+
+    # Act
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    closing_again = asyncio.create_task(writer.close())
+    await asyncio.sleep(0)
+    gate.set()
+    await within(closing_again)
+
+    # Assert
+    assert native.ended == [(NAMESPACE, "status")]
+    with pytest.raises(RuntimeError, match="closed"):
+        await writer.write(b"late")
+    await session.close()
+
+
+async def test_a_track_has_one_writer_until_it_was_closed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    first = await session.publish_track(NAMESPACE, "status")
+
+    # Act / Assert: closing the old writer again leaves its replacement's subscriptions alone
+    with pytest.raises(RuntimeError, match="already publishes"):
+        await session.publish_track(NAMESPACE, "status")
+    await first.close()
+    second = await session.publish_track(NAMESPACE, "status")
+    await first.close()
+    assert native.ended == [(NAMESPACE, "status")]
+    assert await second.write(b"v1") is None
+    await session.close()
+
+
+async def test_a_refused_publish_track_leaves_nothing_waiting_for_the_session_to_end():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    await session.publish_track(NAMESPACE, "status")
+    observers = len(session._enders)
+
+    # Act
+    for _ in range(24):
+        with pytest.raises(RuntimeError, match="already publishes"):
+            await session.publish_track(NAMESPACE, "status")
+
+    # Assert
+    assert len(session._enders) == observers
+    await session.close()
+
+
+async def test_publishing_a_track_once_the_session_was_closed_raises_session_closed():
+    # Arrange: the writer of the track is still open
+    relay = FakeRelay()
+    session = await open_session(relay)
+    await session.publish_track(NAMESPACE, "status")
+    await session.close()
+
+    # Act / Assert
+    with pytest.raises(SessionClosed):
+        await session.publish_track(NAMESPACE, "status")
+
+
+async def test_a_write_after_the_session_ended_raises_what_ended_it_without_reaching_the_native_writer():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status")
+    native = relay.sessions[0].writers["status"]
+    await session.close()
+
+    # Act / Assert: the native origin would cache what it is given
+    with pytest.raises(SessionClosed):
+        await within(writer.write(b"late"))
+    assert native.objects == []
+
+
+async def test_each_write_to_an_ended_writer_raises_an_error_of_its_own_caused_by_what_ended_it():
+    # Arrange: the connection was lost, which ended the writer
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status")
+    relay.sessions[0].drop(code=0x10, reason="gone")
+    with pytest.raises(ConnectionLost) as ended:
+        await within(session.closed())
+    lost = ended.value
+    frames = len(traceback.extract_tb(lost.__traceback__))
+
+    # Act
+    raised = []
+    for _ in range(3):
+        with pytest.raises(ConnectionLost) as info:
+            await within(writer.write(b"late"))
+        raised.append(info.value)
+
+    # Assert: the lost connection keeps its own traceback, so the writes retain no frames of each other
+    assert len({id(error) for error in raised}) == 3
+    assert all(error.__cause__ is lost and error.close_info is lost.close_info for error in raised)
+    assert all(str(error) == str(lost) for error in raised)
+    assert len(traceback.extract_tb(lost.__traceback__)) == frames
+
+
+async def test_a_write_after_close_began_raises_at_once_instead_of_waiting_behind_a_stalled_send():
+    # Arrange: a send stalls, and the writer's close waits for it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status")
+    native = relay.sessions[0].writers["status"]
+    native.send_gate = asyncio.Event()
+    stalled = asyncio.create_task(writer.write(b"stalled"))
+    await asyncio.sleep(0)
+    closing = asyncio.create_task(writer.close())
+    await asyncio.sleep(0)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="closed"):
+        await asyncio.wait_for(writer.write(b"late"), 0.5)
+    native.send_gate.set()
+    await within(asyncio.gather(stalled, closing))
+    assert native.objects == [(b"stalled", False)]
+    await session.close()
+
+
+@pytest.mark.parametrize(
+    ("ended_by", "raised"), [("close", RuntimeError), ("connection lost", ConnectionLost)]
+)
+async def test_writes_queued_behind_a_stalled_send_raise_once_the_writer_ended(ended_by, raised):
+    # Arrange: a send stalls with writes queued behind it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status")
+    native = relay.sessions[0].writers["status"]
+    native.send_gate = asyncio.Event()
+    stalled = asyncio.create_task(writer.write(b"stalled"))
+    await eventually(lambda: native.objects != [])
+    queued = [asyncio.create_task(writer.write(payload)) for payload in (b"queued", b"queued group")]
+    await asyncio.sleep(0)
+
+    # Act
+    if ended_by == "close":
+        closing = asyncio.create_task(writer.close())
+    else:
+        relay.sessions[0].drop()
+        closing = asyncio.create_task(session.closed())
+
+    # Assert: the queued writes raise while the send under way may still finish
+    for write in queued:
+        with pytest.raises(raised):
+            await asyncio.wait_for(write, 0.5)
+    native.send_gate.set()
+    await within(asyncio.gather(stalled, closing, return_exceptions=True))
+    assert native.objects == [(b"stalled", False)]
+    await session.close()
+
+
+async def test_the_name_of_a_track_writer_cannot_be_changed_to_redirect_its_close():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    writer = await session.publish_track(NAMESPACE, "status")
+
+    # Act
+    with pytest.raises(AttributeError):
+        writer.name = "other"  # type: ignore[misc]
+    await writer.close()
+
+    # Assert
+    assert native.ended == [(NAMESPACE, "status")]
+    await session.close()
 
 
 async def test_a_track_publish_cancelled_as_the_relay_accepted_it_ends_before_the_next_writer_registers():
@@ -848,4 +1074,25 @@ async def test_a_track_publish_cancelled_as_the_relay_accepted_it_ends_before_th
 
     # Assert
     assert native.calls == [("publish_track", "status"), ("end_track", "status"), ("publish_track", "status")]
+    await session.close()
+
+
+async def test_a_subscriber_that_came_as_its_waiter_was_cancelled_goes_to_the_next_waiter():
+    # Arrange: a waiter awaits the native notification
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status")
+    native_writer = relay.sessions[0].writers["status"]
+    waiting = asyncio.create_task(writer.next_subscriber())
+    await eventually(lambda: native_writer.subscriber_waits > 0)
+    cancelled = cancel_as_it_resumes(waiting)
+
+    # Act
+    native_writer.subscribers.put_nowait(True)
+    await within(cancelled)
+
+    # Assert
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert await within(writer.next_subscriber()) is True
     await session.close()

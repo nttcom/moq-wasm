@@ -44,11 +44,27 @@ def native_future(awaitable) -> asyncio.Future:
 
 
 class FakeWriter:
+    """`next_subscriber` resolves with each value put in `subscribers`, in turn; a write raises
+    `failure` once it is set, and while `send_gate` is set and not released, a write that took its
+    payload waits to finish sending it."""
+
     def __init__(self):
         self.objects: list[tuple[bytes, bool]] = []
+        self.subscribers: asyncio.Queue[bool] = asyncio.Queue()
+        self.subscriber_waits = 0
+        self.failure: Exception | None = None
+        self.send_gate: asyncio.Event | None = None
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
+        if self.failure is not None:
+            raise self.failure
         self.objects.append((payload, new_group))
+        if self.send_gate is not None:
+            await self.send_gate.wait()
+
+    def next_subscriber(self) -> asyncio.Future:
+        self.subscriber_waits += 1
+        return native_future(self.subscribers.get())
 
 
 class FakeSubscription:
