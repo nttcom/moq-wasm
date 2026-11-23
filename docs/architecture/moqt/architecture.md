@@ -808,7 +808,9 @@ forward from their own cache through the raw stream senders.
   PUBLISH_DONE. `end_track` waits for every outlet; an outlet whose
   subscriber's connection is already lost counts as ended, since
   `Publisher::publish_done` takes the lost connection as having ended the
-  subscription. A send task exits once it is cancelled or has ended its
+  subscription, and so does one whose subscriber ended or stopped its
+  draft-18 request stream before `release` dropped the outlet (§5.1.1): that
+  PUBLISH_DONE is not sent. A send task exits once it is cancelled or has ended its
   outlet. Unlike the other tasks, it is not aborted when its handle is
   dropped: a writer dropped mid-send finishes its open group with a FIN. When
   its command channel closes (the `Origin` is dropped), the task resets the

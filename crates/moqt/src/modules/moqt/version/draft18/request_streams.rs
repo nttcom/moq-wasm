@@ -778,7 +778,7 @@ enum FollowUp {
 /// Ends this side's half of the peer's request `request_id` with FIN;
 /// `false` when the request was no longer open.
 async fn finish_incoming(scope: &Scope, request_id: RequestId) -> bool {
-    let Some(stream) = scope.channel().take_incoming(request_id) else {
+    let Some(stream) = scope.channel().take_ended_incoming(request_id) else {
         return false;
     };
     if let Err(error) = stream.sender.close().await {
@@ -1300,7 +1300,7 @@ impl OutgoingRequestTask {
         kind: RequestStreamKind,
         end: PeerEnd,
     ) {
-        let Some(stream) = scope.channel().take_outgoing(request_id) else {
+        let Some(stream) = scope.channel().take_ended_outgoing(request_id) else {
             return;
         };
         let going_away = end == PeerEnd::GoAway;
