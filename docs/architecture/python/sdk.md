@@ -682,7 +682,11 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   PyAV decodes, or the one `video_in_track` picks; any other source is the
   video track of that name, as an ONVIF camera names its profiles. Each
   group is decoded with a fresh decoder (a group starts at a keyframe), and
-  each picture is pushed as an RGB `UserImageRawFrame` with the source in
+  each subscription to the track with a `decode_pictures` of its own: the
+  pictures its decoders hold back come as the subscription ends, and the
+  next one, as of a page that took over and starts its groups at 0 again,
+  starts afresh, so its groups are not taken as ones already decoded. Each
+  picture is pushed as an RGB `UserImageRawFrame` with the source in
   `transport_source` and the `Location` of its object in
   `metadata["location"]`, so a bot records a verdict at the picture it
   judged. As in pipecat, `video_in_enabled` receives the sources
@@ -748,9 +752,46 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
   PyAV). `MoqWasmTransport` does it with PyAV through `moq_wasm.codecs`,
   which a bot running its own pipeline (one per participant, or with the
-  location of each picture) uses too. `decode_pictures` turns a video
-  track's objects into pictures with the `Location` of each, a decoder for
-  each group and at most one every `interval` seconds.
+  location of each picture) uses too. A video codec is decoded by the first
+  of its software decoders the PyAV build has, AV1 (the browser's default
+  screenshare codec) by dav1d or else libaom; FFmpeg's own AV1 decoder is
+  not used, since it decodes only through a hardware accelerator, so a
+  track no decoder of the build takes is not picked. dav1d decodes on one
+  thread: its worker threads release a packet's payload and its opaque
+  value (the object's Location), which takes the GIL, while freeing the
+  decoder holds the GIL and waits for them, so a decoder dropped mid-group
+  deadlocked the process. A 1080p AV1 track therefore decodes at one core's
+  speed, which an AV1 camera at a high framerate may outrun. The other
+  decoders (FFmpeg's slice threads, libvpx, libaom) keep their threads:
+  some of them, as FFmpeg's VP9, keep a packet's payload or opaque value
+  past the decode call too, but release it on the thread that calls them,
+  which holds the GIL already. `decode_pictures` turns the
+  objects of one subscription to a video track into pictures with the
+  `Location` of each, a decoder for each group and at most one every
+  `interval` seconds. It returns a `Following`, read as the remote
+  broadcast's iterators are. `decode_pictures` decodes each object whole in a worker
+  thread, whose result a cancelled read leaves to the next read, and
+  advances the caller's objects in the reader's own task and context, so a
+  generator that sets a context variable or enters `asyncio.timeout`
+  across its yields keeps working; its `aclose()` never cancels or closes
+  those objects, which stay the caller's, and frees its decoders and the
+  pictures they hold, once a decode in flight in a worker finished, even
+  while the caller holds the closed decoding or a read of it still waits
+  on the caller's next object. A timeout that reaches a read of
+  the caller's objects reaches them too, which an async generator does not
+  survive: a reader that reads with a timeout gives it objects whose reads
+  survive one, as those of `subscriptions()` or a `Subscription`. The objects of the
+  groups in flight interleave, since each group is a stream of its own, so
+  up to four groups are decoded at once; a group's decoder gives up the
+  pictures it holds back (H.264 B-frames) at the group's End of Group, once
+  four newer groups opened, or when the objects end. A followed track's
+  object iteration skips status objects, so there the held-back pictures
+  of a group come only once it is evicted or the transport's subscription
+  ends. A group joined at its keyframe
+  that does not decode, its decoder refusing three of its objects in a row
+  or the group ending without a picture after a refusal, raises the
+  decoder's error, so the transport fails the track instead of waiting on
+  a broken stream; a group joined midway decodes to nothing.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
