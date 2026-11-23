@@ -12,7 +12,7 @@ from moq_system_one_bot.pipeline_track import PipelineTrack
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineWorker
+from pipecat.pipeline.worker import PipelineWorker, ProcessorUnusablePolicy
 from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.moderator import CHAT, EVENT_TIMELINE_TRACK, ChatModerator
@@ -60,6 +60,8 @@ async def moderate_session(
         Pipeline([transport.input(), ChatModerator(system_one), transport.output()]),
         enable_rtvi=False,
         idle_timeout_secs=None,
+        # A room the relay refuses leaves the transport unusable: end the pipeline, not idle in it.
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
     # serve_bot_job owns SIGINT and SIGTERM.
     runner = WorkerRunner(handle_sigint=False)

@@ -12,7 +12,7 @@ from moq_system_one_bot.pipeline_track import PipelineTrack
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineWorker
+from pipecat.pipeline.worker import PipelineWorker, ProcessorUnusablePolicy
 from pipecat.transports.base_transport import VideoInSourceParams
 from pipecat.workers.runner import WorkerRunner
 
@@ -63,13 +63,21 @@ async def detect_in_session(
     )
     status = SystemOneStatus()
     vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
+    detector = CameraDetector(vision)
     worker = PipelineWorker(
-        Pipeline([transport.input(), CameraDetector(vision), transport.output()]),
+        Pipeline([transport.input(), detector, transport.output()]),
         enable_rtvi=False,
         idle_timeout_secs=None,
+        # A room the relay refuses leaves the transport unusable: end the pipeline, not idle in it.
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
     # serve_bot_job owns SIGINT and SIGTERM.
     runner = WorkerRunner(handle_sigint=False)
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(_, participant_id: str):
+        if participant_id == CAMERA:
+            detector.camera_left()
 
     @transport.event_handler("on_room_empty")
     async def on_room_empty(_):
