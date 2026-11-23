@@ -728,7 +728,13 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   included, so the pipeline still stops, but not the audio and pictures it
   did not write. `on_connected` and `on_disconnected` mark those
   two moments; `on_track_subscribed` takes a `MoqWasmTrack` (participant id,
-  track name, `audio` or `video`).
+  track name, `audio`, `video` or `data`) once the relay accepted its
+  SUBSCRIBE, and again after each resubscription. An audio or video track
+  that failed, as on an object PyAV cannot decode, fires `on_error` and,
+  while the participant's catalog still picks it, is received again with a
+  fresh decoder a second later, the delay doubling with each failure in a
+  row up to 30 seconds, so one bad packet does not silence a participant
+  until its next catalog.
 - **Peers.** Every broadcast one level under `room` is a participant, its last
   namespace element the participant id, followed with `watch_broadcasts`.
   `MOQTransport` follows one peer; a room is what the transcriber, chat
@@ -739,11 +745,46 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   puts it where the bot service lets its bots publish
   (docs/architecture/bot-dispatcher/architecture.md "Bots in the room").
 - **Audio in.** For each participant, the Opus LOC audio track of its catalog
-  with the lowest bitrate, decoded and resampled to `audio_in_sample_rate`,
-  is pushed as `UserAudioRawFrame` with the participant id as `user_id`. The
-  lowest bitrate is the profile the room's viewers already take, so it starts
-  no extra encoder in the participant's browser. The track is unsubscribed
-  when its audio stops being in the catalog.
+  with the lowest bitrate, decoded and resampled to the input's sample rate
+  and mixed to `audio_in_channels` (mono or stereo; the inputs refuse more),
+  is pushed as `UserAudioRawFrame` with the participant id as `user_id`.
+  pipecat's stock VAD and turn analyzers (Silero, Smart Turn) read the PCM
+  as mono, so they need `audio_in_channels=1`, the default: interleaved
+  stereo read as mono lasts twice as long, so a pause reaches their silence
+  thresholds in half the time and a turn ends early. A pipeline
+  that needs stereo elsewhere downmixes it before the analyzers. The
+  input's sample rate is pipecat's: `audio_in_sample_rate` when set, and
+  otherwise the pipeline's `PipelineParams.audio_in_sample_rate`, which
+  pipecat also starts its stock analyzers at, as Silero, without looking
+  at the input. So the rate is set once, on the pipeline, with the inputs'
+  `audio_in_sample_rate` left unset: an input at 8 kHz in a 16 kHz pipeline
+  gives Silero audio it reads at twice its speed, and no speech. A
+  processor that needs another rate resamples the audio for itself, leaving
+  the frames the analyzers read at the pipeline's rate. pipecat
+  passes an input's audio through its one `audio_in_filter` before anything
+  can route it by `user_id`, and a filter keeps state from one chunk to the
+  next (pipecat's `RNNoiseFilter`, any buffering filter), so on the
+  transport's input, which carries every participant, one speaker's audio
+  would leak into frames labelled with another: `MoqWasmTransport` refuses
+  an `audio_in_filter` with ValueError, and a bot that filters runs a
+  `MoqWasmParticipantInput` per participant, each with a filter of its own.
+  The lowest bitrate is the profile the room's viewers already take, so it starts
+  no extra encoder in the participant's browser. The Opus decoder keeps
+  state from one packet to the next, so objects are decoded in order: one
+  older than the newest decoded, as of a group whose stream was delayed,
+  would play after newer audio and is dropped, and the decoder starts
+  afresh at each subscription and after missing objects, and at the
+  input's sample rate whenever it changes, as when the pipeline resuming an
+  input a `StopFrame` stopped runs at another rate. The track is unsubscribed
+  when its audio stops being in the catalog; a track a newer catalog
+  replaces, audio or video, is unsubscribed before its replacement is
+  subscribed to, and a participant who leaves ends once all its tracks are. With
+  `audio_in_stream_on_start` False when the input starts (pipecat's
+  `enable_audio_in_stream_on_start` may change it until then), no audio track
+  is subscribed to or decoded until an `InputTransportStartAudioStreamingFrame`,
+  as RTVI pushes once its
+  client is ready; then the audio of the participants in the room and of
+  those joining later is received.
 - **Video in.** pipecat's video sources name tracks of a participant's
   catalog. `"camera"` is the LOC video track with the lowest bitrate that
   PyAV decodes, or the one `video_in_track` picks; any other source is the
@@ -836,7 +877,11 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `FrameProcessor`. The bot follows the room with
   `watch_broadcasts`, starts a pipeline in each handler task (cancelled when
   the participant leaves), and publishes with `create_broadcast`.
-  `MoqWasmParams` extends `MoqWasmInputParams` with the room.
+  `MoqWasmParams` extends `MoqWasmInputParams` with the room. The transport
+  and the participant input each keep a copy of the params they are built
+  with, and of its lists and mappings, so a caller assigning a field or
+  changing `room` afterwards cannot relabel the audio and pictures their
+  processors were set up for, nor move the room.
 - **Codecs are the transport's job.** pipecat's frames carry raw audio and
   pictures, and each transport encodes and decodes with its own stack (the
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
@@ -889,10 +934,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   ends. A group joined at its keyframe
   that does not decode, its decoder refusing three of its objects in a row
   or the group ending without a picture after a refusal, raises the
-  decoder's error, so the transport fails the track instead of waiting on
-  a broken stream; a group joined midway decodes to nothing. An H.264 or
-  H.265 object of a group without a Video Config is read as Annex B when
-  it starts with a 4-byte or 3-byte start
+  decoder's error, so the transport receives the track again with a fresh
+  decoder instead of waiting on a broken stream; a group joined midway
+  decodes to nothing. An H.264 or H.265 object of a group without a Video
+  Config is read as Annex B when it starts with a 4-byte or 3-byte start
   code, and else as 4-byte length prefixes (draft-ietf-moq-loc-04
   §2.1.3–2.1.4). A start code followed by bytes that 4-byte length
   prefixes would also cover exactly, as a 3-byte one followed by the first

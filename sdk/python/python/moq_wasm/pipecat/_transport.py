@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import TypeVar
 
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import (
@@ -41,6 +42,8 @@ DEFAULT_VIDEO_OUT_CODEC = "H264"
 
 logger = logging.getLogger("moq_wasm")
 
+ParamsT = TypeVar("ParamsT", bound=TransportParams)
+
 
 class MoqWasmInputParams(TransportParams):
     """`TransportParams` with how a participant's broadcast is received.
@@ -50,6 +53,18 @@ class MoqWasmInputParams(TransportParams):
     other source is the video track of that name. As in pipecat, `video_in_enabled` receives the
     sources `video_in_sources` lists as each participant joins, and others only when asked for, by
     `MoqWasmTransport.capture_participant_video` or a `UserImageRequestFrame`.
+
+    `audio_in_channels` (1, the default, or 2) is the channel count the participants' audio is
+    pushed in. pipecat's stock VAD and turn analyzers (Silero, Smart Turn) read the PCM as mono, so
+    they need 1: stereo would end each turn early. A pipeline that needs stereo elsewhere downmixes
+    it before them.
+
+    Leave `audio_in_sample_rate` unset and set the rate once, with
+    `PipelineParams(audio_in_sample_rate=...)`: the inputs then decode at the pipeline's rate, which
+    pipecat also starts its stock analyzers at, such as Silero. An input rate that differs from the
+    pipeline's reaches them as audio they misread (8 kHz in a 16 kHz pipeline gives no speech at
+    all), so a processor that needs another rate resamples the audio for itself, leaving the
+    frames the analyzers read at the pipeline's rate.
 
     Parameters:
         video_in_track: Picks the `"camera"` video track of a participant's catalog.
@@ -88,16 +103,33 @@ class MoqWasmParams(MoqWasmInputParams):
     empty_timeout: float | None = None
 
 
+def _snapshot(params: ParamsT) -> ParamsT:
+    """A copy of `params` with copies of its lists and mappings, as `room` and an `audio_out_mixer`
+    by destination, so a processor built with it keeps what it was built with; the objects they
+    hold, as the mixers, are shared."""
+    copied = params.model_copy()
+    for name, value in params:
+        if isinstance(value, list):
+            setattr(copied, name, list(value))
+        elif isinstance(value, Mapping):
+            setattr(copied, name, dict(value))
+    return copied
+
+
 def _receive_options(params: MoqWasmInputParams) -> ReceiveOptions:
-    sources = {
+    """What an input receives. Raises ValueError for input audio that is neither mono nor stereo."""
+    if params.audio_in_channels not in (1, 2):
+        raise ValueError("moq-wasm's pipecat inputs take mono or stereo input audio")
+    sources: dict[str, float | None] = {
         name: None if source.on_request_only else source.framerate for name, source in params.video_in_sources.items()
     }
     return ReceiveOptions(
         audio_in=params.audio_in_enabled,
         video_sources=sources,
         video_in_track=params.video_in_track,
-        data_tracks=list(params.data_in_tracks),
+        data_tracks=params.data_in_tracks,
         video_in=params.video_in_enabled,
+        audio_in_channels=params.audio_in_channels,
     )
 
 
@@ -154,7 +186,9 @@ class _ReceivingInput(_OneRun, BaseInputTransport):
         if self._audio_task is None:
             return
         await self.push_audio_frame(
-            UserAudioRawFrame(audio=pcm, sample_rate=sample_rate, num_channels=1, user_id=participant_id)
+            UserAudioRawFrame(
+                audio=pcm, sample_rate=sample_rate, num_channels=self._params.audio_in_channels, user_id=participant_id
+            )
         )
 
     async def push_picture(self, picture: ReceivedPicture) -> None:
@@ -196,10 +230,19 @@ class _ReceivingInput(_OneRun, BaseInputTransport):
             return
         await super().process_frame(frame, direction)
 
+    async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        # pipecat's audio task replaces a frame's audio with what the audio_in_filter returns, which
+        # a buffering filter makes longer or shorter, and keeps the number of samples it received.
+        if isinstance(frame, UserAudioRawFrame):
+            frame.num_frames = len(frame.audio) // (2 * frame.num_channels)
+        await super().push_frame(frame, direction)
+
 
 class MoqWasmInputTransport(_ReceivingInput):
-    """The input of `MoqWasmTransport`: every participant of its room. It serves one pipeline run:
-    the next pipeline takes a new input from `MoqWasmTransport.input`."""
+    """The input of `MoqWasmTransport`: every participant of its room. With
+    `audio_in_stream_on_start` False when it starts, no participant's audio is subscribed to until
+    an `InputTransportStartAudioStreamingFrame`. It serves one pipeline run: the next pipeline
+    takes a new input from `MoqWasmTransport.input`."""
 
     def __init__(self, room: Room, params: MoqWasmParams, **kwargs):
         super().__init__(params, **kwargs)
@@ -211,6 +254,8 @@ class MoqWasmInputTransport(_ReceivingInput):
         await super().start(frame)
         if self.ran:
             return
+        if self._params.audio_in_stream_on_start:
+            await self._room.start_audio()
         if await _open_room(self, self._room):
             await self.set_transport_ready(frame)
 
@@ -241,6 +286,9 @@ class MoqWasmInputTransport(_ReceivingInput):
         finally:
             await self._room.stop(self)
 
+    async def _start_audio_in_streaming(self):
+        await self._room.start_audio()
+
     async def request_image(self, request: UserImageRequestFrame) -> None:
         await self._room.request_image(request)
 
@@ -251,7 +299,8 @@ class MoqWasmParticipantInput(_ReceivingInput):
     the `StartFrame` until the `EndFrame`, the `CancelFrame` or its `cleanup`, each of which returns
     once every track is unsubscribed and the image requests waiting are answered, even after pipecat
     cancelled an earlier one. Publishes nothing: follow the room with `watch_broadcasts` and
-    publish with `create_broadcast`.
+    publish with `create_broadcast`. It keeps a copy of `params` and of its lists and mappings:
+    assigning its fields or changing those once it is built changes nothing.
 
     It serves one pipeline run: create a new one for each pipeline. Set up again once its pipeline
     cleaned it up, it pushes an `ErrorFrame` treated as permanent and receives nothing. A
@@ -260,15 +309,19 @@ class MoqWasmParticipantInput(_ReceivingInput):
 
     Event handlers: `on_track_subscribed` (takes a `MoqWasmTrack`). A failed track, such as one
     PyAV cannot decode, is pushed upstream as a non-fatal `ErrorFrame`, which reaches pipecat's
-    `on_error`."""
+    `on_error`; an audio or video track is then received again with a fresh decoder, after a
+    delay that doubles with each failure in a row."""
 
     def __init__(self, broadcast: RemoteBroadcast, params: MoqWasmInputParams, **kwargs):
+        params = _snapshot(params)
         super().__init__(params, **kwargs)
         self._participant_id = broadcast.namespace[-1]
         # None once the receiving ended for good: an input the application still holds once it
         # stopped keeps neither the participant's broadcast, nor through it the session, nor its
         # catalog.
-        self._receiver: ParticipantReceiver | None = ParticipantReceiver(broadcast, _receive_options(params), self)
+        self._receiver: ParticipantReceiver | None = ParticipantReceiver(
+            broadcast, _receive_options(params), self, stream_audio=False
+        )
         # Kept until its teardown finished, which `_stopping` runs once for the stop, the cancel and
         # the cleanup: a caller pipecat cancels leaves it running for the others to wait for.
         self._receiving: asyncio.Task | None = None
@@ -283,11 +336,17 @@ class MoqWasmParticipantInput(_ReceivingInput):
         receiver = self._receiver
         if receiver is None:
             return
+        if self._params.audio_in_stream_on_start:
+            await receiver.start_audio()
         # A StopFrame leaves the input receiving, as pipecat keeps a stopped processor running, and
         # pausing it drops what it receives: the next StartFrame resumes that same receiving.
         if self._receiving is None and not self._stopping.started:
             self._receiving = asyncio.create_task(receiver.run())
             self._receiving.add_done_callback(_log_failure)
+
+    async def _start_audio_in_streaming(self):
+        if self._receiver is not None:
+            await self._receiver.start_audio()
 
     async def request_image(self, request: UserImageRequestFrame) -> None:
         """`ParticipantReceiver.request_image`. A request for another participant, or made once the
@@ -453,7 +512,9 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
 
 class MoqWasmTransport(BaseTransport):
     """Takes the place of pipecat's `MOQTransport` on a `moq_wasm.Session`, which owns the connection
-    and tokens. Every broadcast one level under `params.room` is a participant.
+    and tokens. Every broadcast one level under `params.room` is a participant. It keeps a copy of
+    `params` and of its lists and mappings, as `room` and an `audio_out_mixer` by destination:
+    assigning its fields or changing those once it is built changes nothing.
 
     Event handlers, as `MOQTransport`'s: `on_connected` and `on_disconnected` (the transport started
     and stopped), `on_client_connected` and `on_client_disconnected` (a participant's broadcast was
@@ -468,6 +529,9 @@ class MoqWasmTransport(BaseTransport):
     `processor_unusable_policy=ProcessorUnusablePolicy.CANCEL` (or `END`) to end the pipeline then.
     An output that keeps running without a media sender passes on the frames other than audio and
     pictures, which pipecat would route to that sender, so a `StopFrame` still stops the pipeline.
+    An `audio_in_filter` raises ValueError: the input carries every participant's audio, and one
+    filter, such as pipecat's `RNNoiseFilter`, would carry one speaker's state into another's
+    audio; run a `MoqWasmParticipantInput` per participant, each with a filter of its own.
     A room that cannot be left at an `EndFrame` or a `CancelFrame` is reported
     with a non-fatal `ErrorFrame`, and the frame goes on, so the pipeline ends.
 
@@ -485,6 +549,12 @@ class MoqWasmTransport(BaseTransport):
         output_name: str | None = None,
     ):
         super().__init__(input_name=input_name, output_name=output_name)
+        params = _snapshot(params)
+        if params.audio_in_filter is not None:
+            raise ValueError(
+                "MoqWasmTransport's input carries every participant's audio through one filter, which would mix"
+                " their state: give each participant a MoqWasmParticipantInput with an audio_in_filter of its own"
+            )
         self._params = params
         options = RoomOptions(
             room=params.room,
@@ -496,8 +566,8 @@ class MoqWasmTransport(BaseTransport):
             video_out_codec=params.video_out_codec or DEFAULT_VIDEO_OUT_CODEC,
             video_out_size=(params.video_out_width, params.video_out_height),
             video_out_framerate=params.video_out_framerate,
-            data_out_tracks=dict(params.data_out_tracks),
-            event_timelines_out=dict(params.event_timelines_out),
+            data_out_tracks=params.data_out_tracks,
+            event_timelines_out=params.event_timelines_out,
             empty_timeout=params.empty_timeout,
         )
         self._room = Room(session, options, self)
