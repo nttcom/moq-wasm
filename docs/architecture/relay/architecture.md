@@ -367,7 +367,17 @@ Each sequence owns the relay-side protocol logic for one message
   one prefix are two entries, and a draft-14 SUBSCRIBE_NAMESPACE is one
   `NamespacesAndTracks` entry. Each version's semantics come from the moqt
   handler, so a draft-14 and a draft-18 session are fanned out to by the same
-  rules. `unregister_publish_namespace` returns a `PeerRemoval`
+  rules. A PUBLISH_NAMESPACE_DONE withdraws the publication of the request
+  it names (`PublishNamespaceDoneHandler::request_id`): on draft-18 each
+  PUBLISH_NAMESPACE is its own stream, so the end of a session's earlier
+  request can be read after its later PUBLISH_NAMESPACE of the same
+  namespace, which stays published. The local namespace subscribers are
+  then told PUBLISH_NAMESPACE_DONE and PUBLISH_NAMESPACE, the order the
+  session sent them in, by the same rules as a withdrawal that leaves the
+  session no publication; the Redis route is left as it is. A draft-14 one
+  names no request and withdraws all of the session's publications of the
+  namespace.
+  `unregister_publish_namespace` returns a `PeerRemoval`
   (`NotRegistered`, `ClientsRemain`, `NoClientsRemain`): a
   PUBLISH_NAMESPACE_DONE from a client that did not publish the namespace is
   ignored, so it neither reaches the subscribers nor withdraws the Redis

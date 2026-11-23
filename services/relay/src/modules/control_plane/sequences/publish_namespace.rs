@@ -37,6 +37,7 @@ impl PublishNamespace {
         let track_namespace = handler.track_namespace();
         tracing::info!(
             session_id = %session_id,
+            request_id = handler.request_id(),
             track_namespace = %track_namespace,
             "PUBLISH_NAMESPACE received"
         );
