@@ -46,6 +46,25 @@ async def test_a_published_namespace_and_its_withdrawal_reach_the_prefix_subscri
     await watcher.close()
 
 
+async def test_a_closed_watch_lets_the_session_watch_its_prefix_again(relay_url):
+    # Arrange
+    prefix = room()
+    watcher = await connect(relay_url)
+    first = await within(watcher.watch_namespaces(prefix))
+    publisher = await connect(relay_url)
+
+    # Act
+    await within(first.close())
+    second = await within(watcher.watch_namespaces(prefix))
+    await publisher.announce([*prefix, "alice"])
+
+    # Assert: the closed watch ends, and the new one reports alice
+    assert [event async for event in first] == []
+    assert (await within(anext(second))).namespace == [*prefix, "alice"]
+    await publisher.close()
+    await watcher.close()
+
+
 async def test_an_announce_cancelled_as_the_relay_accepted_it_withdraws_the_namespace(relay_url):
     # Arrange
     prefix = room()

@@ -258,7 +258,7 @@ task that is cancelled, leaves the UNSUBSCRIBE going for the other calls.
 a timeout loses no object: the native read stays with the iterator until a
 caller takes its result, so a read cancelled after the object arrived
 leaves it to the next read, and a read while another waits raises
-RuntimeError. An
+RuntimeError, as a `NamespaceWatch` does. An
 `Object` carries `group_id`, `subgroup_id`, `object_id`, `status`,
 `payload`, its `extension_headers` as `(id, value)` pairs and
 `timestamp_micros`, the LOC Timestamp a recorder aligns audio and video

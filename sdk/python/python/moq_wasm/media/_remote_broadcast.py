@@ -147,9 +147,9 @@ async def watch_broadcasts(
             elif not running and empty_timeout is not None:
                 empty_until = loop.time() + empty_timeout
     finally:
-        watch.close()
         for task in running.values():
             task.cancel()
+        await watch.close()
 
 
 async def _run(handler: Callable[[RemoteBroadcast], Awaitable[None]], broadcast: RemoteBroadcast) -> None:
