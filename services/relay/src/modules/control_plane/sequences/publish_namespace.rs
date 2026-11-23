@@ -56,7 +56,12 @@ impl PublishNamespace {
             return;
         }
 
-        table.register_publish_namespace(session_id, track_namespace.to_string(), peer);
+        table.register_publish_namespace(
+            session_id,
+            handler.request_id(),
+            track_namespace.to_string(),
+            peer,
+        );
 
         if let Err(e) = handler.ok().await {
             tracing::error!(error = ?e, "PUBLISH_NAMESPACE failed");

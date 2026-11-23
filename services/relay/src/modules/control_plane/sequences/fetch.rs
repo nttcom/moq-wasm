@@ -686,6 +686,7 @@ mod tests {
         for publisher_session_id in [SUBSCRIBED_PUBLISHER, OTHER_PUBLISHER] {
             table.register_publish_namespace(
                 publisher_session_id,
+                0,
                 "ns".to_string(),
                 SessionPeer::Client,
             );
@@ -749,6 +750,7 @@ mod tests {
         for publisher_session_id in [ANSWERING_PUBLISHER, REFUSING_PUBLISHER] {
             table.register_publish_namespace(
                 publisher_session_id,
+                0,
                 "ns".to_string(),
                 SessionPeer::Client,
             );
@@ -829,7 +831,7 @@ mod tests {
         const PUBLISHER: SessionId = 5;
         const SUBSCRIBER: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_publish_namespace(PUBLISHER, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(PUBLISHER, 0, "ns".to_string(), SessionPeer::Client);
         let (publisher, recorded) = recorded_session_answering_fetch(upstream);
         let subscriber_recorded = RecordedControlMessages::default();
         let repository = session_repository_with_sessions(

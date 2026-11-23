@@ -690,6 +690,7 @@ mod tests {
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(
             PUBLISHER_SESSION,
+            0,
             track_key.track_namespace.clone(),
             SessionPeer::Client,
         );
@@ -775,6 +776,7 @@ mod tests {
         for publisher_session_id in publisher_session_ids {
             table.register_publish_namespace(
                 publisher_session_id,
+                0,
                 "ns".to_string(),
                 SessionPeer::Client,
             );
@@ -979,7 +981,12 @@ mod tests {
         )
         .await;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            0,
+            "ns".to_string(),
+            SessionPeer::Client,
+        );
         let _ = table_cell.set(table.clone());
         let forwarder = ControlMessageForwarder { repository };
 
@@ -1238,7 +1245,12 @@ mod tests {
     async fn a_subscribe_to_a_latched_track_sends_no_upstream_subscribe() {
         // Arrange
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            0,
+            "ns".to_string(),
+            SessionPeer::Client,
+        );
         let (publisher, recorded) = recorded_session_answering_subscribe(|| ContentExists::False);
         let repository = session_repository_with_sessions(
             vec![(PUBLISHER_SESSION, publisher)],
@@ -1427,7 +1439,12 @@ mod tests {
         // as when the last other subscriber leaves; the publisher answers a new SUBSCRIBE
         const SUBSCRIBER_SESSION: SessionId = 2;
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            0,
+            "ns".to_string(),
+            SessionPeer::Client,
+        );
         table.register_upstream_subscription(
             track_key(),
             PUBLISHER_SESSION,

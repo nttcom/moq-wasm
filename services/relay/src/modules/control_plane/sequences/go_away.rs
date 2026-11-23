@@ -132,7 +132,7 @@ mod tests {
             DEPARTING_RELAY,
             producer(ProducerOrigin::Subscribe),
         );
-        table.register_publish_namespace(OTHER_PUBLISHER, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(OTHER_PUBLISHER, 0, "ns".to_string(), SessionPeer::Client);
         let forwarder = ControlMessageForwarder {
             repository: Arc::new(tokio::sync::Mutex::new(repository)),
         };

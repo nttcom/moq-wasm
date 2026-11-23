@@ -354,7 +354,8 @@ Each sequence owns the relay-side protocol logic for one message
   the empty prefix covers every namespace. The
   join keeps field boundaries because `authorize` rejects a field containing
   `/`. Each namespace entry
-  carries its sessions' `SessionPeer`: client-owned Redis routes are cleaned
+  holds one publication per PUBLISH_NAMESPACE, keyed by (session, Request
+  ID), with its session's `SessionPeer`: client-owned Redis routes are cleaned
   up when the last *client* leaves, while client namespace subscribers get
   PUBLISH_NAMESPACE_DONE only once no client or relay session publishes the
   namespace, and relay namespace subscribers once no client does (split

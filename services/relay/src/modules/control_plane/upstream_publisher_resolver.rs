@@ -148,9 +148,9 @@ mod tests {
 
     fn table_with_publishers() -> InMemoryLocalPubSubDirectory {
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(3, "ns".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(5, "ns".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(7, "ns".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(3, 0, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(5, 0, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(7, 0, "ns".to_string(), SessionPeer::Relay);
         table
     }
 

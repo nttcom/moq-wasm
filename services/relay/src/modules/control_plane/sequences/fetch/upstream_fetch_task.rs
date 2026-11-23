@@ -152,6 +152,7 @@ mod tests {
         for publisher_session_id in [ANSWERING_PUBLISHER, MALFORMED_PUBLISHER] {
             table.register_publish_namespace(
                 publisher_session_id,
+                0,
                 "ns".to_string(),
                 SessionPeer::Client,
             );
