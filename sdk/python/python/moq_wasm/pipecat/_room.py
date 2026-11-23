@@ -81,6 +81,9 @@ class Room:
         # Bumped by each interruption; a write started before it stops.
         self._audio_generation = 0
         self._video_clock = _MediaClock()
+        # Held from the start of a picture's encode until its thread finishes, which a cancelled
+        # write does not wait for: the encoder's codec context takes one picture at a time.
+        self._encoding = asyncio.Lock()
         self._users: set[object] = set()
         # Opens the room once for both processors; None while the room is stopped.
         self._opening: asyncio.Task[_OpenedRoom] | None = None
@@ -297,20 +300,69 @@ class Room:
             opened.opus = self._new_opus_encoder()
             opened.opus_holds_interruptible = None
 
-    async def write_picture(self, image: bytes, size: tuple[int, int], color_format: str) -> bool:
-        """Encodes the picture in a thread and pushes it. Raises what failed the encode, as for a
-        picture in a color format the encoder does not take, and what failed publishing the media
-        source, as `_push_media` does. Returns whether the room wrote the picture: False when it is
-        not open, publishes no video or publishing its media source failed, and when the media
-        source dropped it, as once the session ended."""
+    def speech_end_micros(self, pending_micros: float) -> int | None:
+        """The timestamp at which the speech written so far ends once the speech the Opus encoder
+        holds back and `pending_micros` more, which has not reached it yet, are written: the
+        timestamp of a picture synchronized with the speech before it. The packets of what the
+        encoder holds follow the last packet written on the same clock, or start at the clock after
+        a pause. None when the room is not open or publishes no audio."""
+        opened = self._opened
+        if opened is None or opened.opus is None:
+            return None
+        next_packet = self._audio_clock.following(OPUS_FRAME_MICROS)
+        return next_packet + round(opened.opus.held_micros + pending_micros)
+
+    async def write_picture(
+        self, image: bytes, size: tuple[int, int], color_format: str, *, timestamp_micros: int | None = None
+    ) -> bool:
+        """Encodes the picture in a thread and pushes it as the encode finishes, before the next
+        picture's encode starts, at `timestamp_micros`, or the clock without one; a timestamp
+        before the previous picture's is moved right after it, so the track's timestamps never run
+        backwards. A write cancelled before then drops the picture, and the next picture is encoded
+        as a keyframe, since a subscriber's decoder misses the dropped one; a write cancelled after
+        then has pushed its picture. Raises what failed the encode, as for a picture in a color
+        format the encoder does not take, and what failed publishing the media source, as
+        `_push_media` does. Returns whether the room wrote the picture: False when it is not open,
+        publishes no video or publishing its media source failed, and when the media source dropped
+        it, as once the session ended."""
         opened = self._opened
         if opened is None or opened.video is None or not opened.takes_media():
             return False
-        packets = await asyncio.to_thread(opened.video.encode, image, size, color_format)
-        for packet in packets:
-            if not self._push_media(opened, lambda media: media.push_video(packet, self._video_clock.next(1))):
-                return False
-        return True
+        video = opened.video
+        await self._encoding.acquire()
+        dropped = False
+        pushed = True
+        failure: RuntimeError | None = None
+
+        def finished(encoded: asyncio.Future[list[bytes]]) -> None:
+            # Decides once, under the lock, whether the picture is pushed or replaced by a keyframe.
+            nonlocal failure, pushed
+            try:
+                if encoded.cancelled() or encoded.exception() is not None or dropped:
+                    if dropped:
+                        video.request_keyframe()
+                    return
+                for packet in encoded.result():
+                    timestamp = self._video_clock.next(1, at=timestamp_micros)
+                    if not self._push_media(opened, lambda media: media.push_video(packet, timestamp)):
+                        pushed = False
+                        return
+            except RuntimeError as error:
+                failure = error
+            finally:
+                self._encoding.release()
+
+        encoding = asyncio.ensure_future(asyncio.to_thread(video.encode, image, size, color_format))
+        encoding.add_done_callback(finished)
+        try:
+            await asyncio.shield(encoding)
+        except asyncio.CancelledError:
+            dropped = True
+            raise
+        # `finished` ran before this resumed: it was added to `encoding` before the shield was.
+        if failure is not None:
+            raise failure
+        return pushed
 
     @staticmethod
     def _push_media(opened: "_OpenedRoom", push: Callable[[MediaSource], bool]) -> bool:
@@ -445,11 +497,21 @@ class _MediaClock:
     def __init__(self):
         self._last: int | None = None
 
-    def next(self, duration_micros: int) -> int:
-        now = _now_micros()
-        timestamp = now if self._last is None else max(self._last + duration_micros, now)
+    def next(self, duration_micros: int, *, at: int | None = None) -> int:
+        """The next frame's timestamp: `at` when given, moved 1 µs after the previous frame's when
+        it is not after it; otherwise `following(duration_micros)`."""
+        if at is None:
+            timestamp = self.following(duration_micros)
+        else:
+            timestamp = at if self._last is None else max(at, self._last + 1)
         self._last = timestamp
         return timestamp
+
+    def following(self, duration_micros: int) -> int:
+        """The timestamp `next` would give the next frame now, after a previous one of
+        `duration_micros`."""
+        now = _now_micros()
+        return now if self._last is None else max(self._last + duration_micros, now)
 
     def ahead_micros(self) -> int:
         return 0 if self._last is None else self._last - _now_micros()

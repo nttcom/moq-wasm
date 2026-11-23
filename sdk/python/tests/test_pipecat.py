@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 import warnings
 import weakref
@@ -27,19 +28,23 @@ from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder
 from moq_wasm.media import RemoteBroadcast, create_broadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
-from moq_wasm.pipecat import _participant, _room
+from moq_wasm.pipecat import _participant, _room, _transport
 from moq_wasm.pipecat._participant import ParticipantReceiver, ReceiveOptions
+from moq_wasm.pipecat._transport import LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS
 from moq_wasm.pipecat._room import MAX_AUDIO_AHEAD_MICROS, OPUS_FRAME_MICROS, Room, RoomOptions, _now_micros
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
 from pipecat.clocks.system_clock import SystemClock
 from pipecat.frames.frames import (
+    AssistantImageRawFrame,
     CancelFrame,
     EndFrame,
     ErrorFrame,
     Frame,
     InterruptionFrame,
+    LLMFullResponseEndFrame,
+    LLMMessagesUpdateFrame,
     StartFrame,
     StopFrame,
     InputTransportMessageFrame,
@@ -48,7 +53,9 @@ from pipecat.frames.frames import (
     OutputImageRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
+    PipelineFlushFrame,
     SpeechOutputAudioRawFrame,
+    SpriteFrame,
     TTSAudioRawFrame,
     TTSStoppedFrame,
     UserAudioRawFrame,
@@ -56,6 +63,8 @@ from pipecat.frames.frames import (
     UserImageRequestFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMAssistantAggregator
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnusablePolicy
 from pipecat.transports.base_transport import VideoInSourceParams
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
@@ -68,7 +77,7 @@ from pipecat.workers.runner import WorkerRunner
 from pipecat.tests.utils import SleepFrame, run_test
 
 from tests.cancellation import cancel_as_it_resumes
-from tests.fake_native import STAY_OPEN, FakeRelay, FakeSubscription, open_session
+from tests.fake_native import STAY_OPEN, FakeMediaSource, FakeRelay, FakeSubscription, open_session
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -317,18 +326,6 @@ def test_the_video_encoder_refuses_a_size_that_is_no_integers():
     # Act / Assert
     with pytest.raises(ValueError, match="width and a height"):
         encoder.encode(picture(0), (float(SIZE[0]), SIZE[1]), "RGB")
-
-
-@pytest.mark.parametrize("buffer", [bytearray, memoryview, lambda image: memoryview(image).cast("I")])
-def test_the_video_encoder_reads_a_picture_in_a_contiguous_buffer_other_than_bytes(buffer):
-    # Arrange
-    encoder = VideoEncoder("H264", *SIZE, 30)
-
-    # Act
-    packets = encoder.encode(buffer(picture(0)), SIZE, "RGB")
-
-    # Assert
-    assert packets[0].startswith(b"\x00\x00\x00\x01\x67")
 
 
 @pytest.mark.parametrize(
@@ -1564,6 +1561,76 @@ async def test_the_transport_encodes_and_lists_its_media_at_the_bitrates_and_fra
     assert opened is not None and opened.opus is not None and opened.opus._encoder.bit_rate == 64_000
     assert opened.video is not None and opened.video._encoder.bit_rate == 500_000
     await room.stop("output")
+    await session.close()
+
+
+async def test_a_picture_whose_write_was_cancelled_is_encoded_alone_and_the_next_one_is_a_keyframe():
+    # Arrange: the second picture's encode holds its thread until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(video_out=True), RecordingSink())
+    await room.start("input")
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await room.write_picture(picture(0), SIZE, "RGB")
+    assert room._opened is not None
+    video = room._opened.video
+    assert video is not None
+    encode = video.encode
+    entered, gate, counting = threading.Event(), threading.Event(), threading.Lock()
+    encoding = most = 0
+
+    def gated(*args):
+        nonlocal encoding, most
+        with counting:
+            encoding += 1
+            most = max(most, encoding)
+        entered.set()
+        gate.wait(TIMEOUT_SECONDS)
+        try:
+            return encode(*args)
+        finally:
+            with counting:
+                encoding -= 1
+
+    video.encode = gated
+    cancelled = asyncio.create_task(room.write_picture(picture(10), SIZE, "RGB"))
+    await within(asyncio.to_thread(entered.wait))
+
+    # Act
+    cancelled.cancel()
+    following = asyncio.create_task(room.write_picture(picture(20), SIZE, "RGB"))
+    await asyncio.sleep(0.05)
+    gate.set()
+    await within(following)
+    await within(asyncio.gather(cancelled, return_exceptions=True))
+
+    # Assert: one encode at a time; the cancelled picture is not sent, and the next opens a group
+    keyframes = [call[1].startswith(b"\x00\x00\x00\x01\x67") for call in source.calls if call[0] == "push_video"]
+    assert most == 1
+    assert keyframes == [True, True]
+    await room.stop("input")
+    await session.close()
+
+
+async def test_a_picture_whose_write_was_cancelled_as_its_encode_finished_is_sent_before_the_next():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(video_out=True), RecordingSink())
+    await room.start("input")
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await room.write_picture(picture(0), SIZE, "RGB")
+    writing = asyncio.create_task(room.write_picture(picture(10), SIZE, "RGB"))
+
+    # Act
+    await within(cancel_as_it_resumes(writing))
+    await asyncio.gather(writing, return_exceptions=True)
+    await room.write_picture(picture(20), SIZE, "RGB")
+
+    # Assert: the third picture refers to the second, which was sent
+    keyframes = [call[1].startswith(b"\x00\x00\x00\x01\x67") for call in source.calls if call[0] == "push_video"]
+    assert keyframes == [True, False, False]
+    await room.stop("input")
     await session.close()
 
 
@@ -3913,6 +3980,73 @@ async def test_a_picture_that_cannot_be_encoded_is_reported_and_the_pictures_aft
 BGR_PICTURE = bytes(320 * 240 * 3)
 
 
+@pytest.mark.parametrize(
+    "malformed, live",
+    [
+        (OutputImageRawFrame(image=bytes(3), size=(320, 240), format="RGB"), True),
+        (OutputImageRawFrame(image=BGR_PICTURE, size=(320, 240), format="BGR"), True),
+        (SpriteFrame(images=[OutputImageRawFrame(image=bytes(3), size=(320, 240), format="RGB")]), False),
+        (SpriteFrame(images=[]), False),
+        (OutputImageRawFrame(image=bytes(320 * 240 * 3), size=(320.0, 240), format="RGB"), False),
+        (AssistantImageRawFrame(image=memoryview(bytes(320 * 240 * 3 * 2))[::2], size=(320, 240), format="RGB"), False),
+        (OutputImageRawFrame(image="\x00" * (320 * 240 * 3), size=(320, 240), format="RGB"), True),
+    ],
+)
+async def test_a_picture_pipecat_cannot_resize_is_dropped_before_its_video_sender_and_the_pictures_after_it_are_written(
+    malformed, live
+):
+    # Arrange: a picture pipecat's video sender would fail to resize to the output's size, then a
+    # valid one
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=live,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    rgb = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[malformed, SleepFrame(0.1), rgb, SleepFrame(0.2)]))
+
+    # Assert
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(errors) == 1 and "cannot write a picture" in errors[0].error and not errors[0].fatal
+    assert "push_video" in [call[0] for call in source.calls]
+    await session.close()
+
+
+@pytest.mark.parametrize("color_format", [None, ""])
+@pytest.mark.parametrize("live", [True, False])
+async def test_a_picture_without_a_color_format_is_resized_and_written_as_rgb(color_format, live):
+    # Arrange: an RGB picture half the output's size, without its color format
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=live,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    half = (SIZE[0] // 2, SIZE[1] // 2)
+    unlabelled = OutputImageRawFrame(image=bytes(half[0] * half[1] * 3), size=half, format=color_format)
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[unlabelled, SleepFrame(0.2)]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert not [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert "push_video" in [call[0] for call in source.calls]
+    await session.close()
+
+
 async def test_media_whose_publishing_failed_is_reported_once_and_dropped_after_it():
     # Arrange: publishing the bot's media fails before it speaks and shows pictures; the output
     # writes a data track too
@@ -5522,6 +5656,603 @@ async def test_a_processor_stopped_resumed_and_ended_stops_its_audio_filter_afte
     await session.close()
 
 
+async def test_a_live_output_writes_a_picture_synchronized_with_the_audio_once_the_speech_before_it_was_written():
+    # Arrange: 200 ms of speech, then a picture synchronized with it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=SAMPLE_RATE,
+        audio_out_end_silence_secs=0,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    speech = OutputAudioRawFrame(audio=tone(0.2), sample_rate=SAMPLE_RATE, num_channels=1)
+    synced = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+    synced.sync_with_audio = True
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[speech, synced, SleepFrame(0.5)]))
+
+    # Assert: the picture was written after the speech and passed on
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    kinds = [call[0] for call in source.calls]
+    assert "push_video" in kinds
+    assert kinds[: kinds.index("push_video")].count("push_audio") >= 9
+    assert [frame.id for frame in down if isinstance(frame, OutputImageRawFrame)] == [synced.id]
+    await session.close()
+
+
+async def test_a_live_output_writes_each_picture_of_a_sprite():
+    # Arrange: a sprite of two pictures
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_is_live=True, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    transport = MoqWasmTransport(session, params)
+    sprite = SpriteFrame(images=[OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in (0, 255)])
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[sprite, SleepFrame(0.3)]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert not [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert [call[0] for call in source.calls].count("push_video") == 2
+    await session.close()
+
+
+async def test_a_live_output_writes_the_assistant_images_of_a_sprite_and_passes_none_on(monkeypatch):
+    # Arrange: a sprite of a picture between two assistant images
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_is_live=True, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    transport = MoqWasmTransport(session, params)
+    values = record_encoded_values(monkeypatch)
+    middle = OutputImageRawFrame(image=picture(20), size=SIZE, format="RGB")
+    sprite = SpriteFrame(images=[assistant_image(10), middle, assistant_image(30)])
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[sprite, SleepFrame(0.3)]))
+
+    # Assert
+    assert values == [10, 20, 30]
+    assert not [frame for frame in down if isinstance(frame, AssistantImageRawFrame)]
+    await session.close()
+
+
+async def test_an_interruption_keeps_the_pictures_of_an_uninterruptible_sprite_a_live_output_queued():
+    # Arrange: a live output at 10 pictures a second, which waits 100 ms before its first picture,
+    # given an uninterruptible sprite of three pictures; the interruption comes before the first
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_framerate=10,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    sprite = SpriteFrame(images=[OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in (0, 128, 255)])
+    sprite.interruptible = False
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[sprite, SleepFrame(0.03), InterruptionFrame(), SleepFrame(0.4)]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == 3
+    await session.close()
+
+
+async def test_an_uninterruptible_picture_queued_as_an_interruption_replaces_the_live_video_task_is_written():
+    # Arrange: a live output, and an uninterruptible picture that comes once the interruption
+    # cancelled the video task, before it created it again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_is_live=True, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    output = MoqWasmTransport(session, params).output()
+    await within(start_alone(output))
+    sender = output._media_senders[None]
+    late = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+    late.interruptible = False
+    cancel_video_task = sender._cancel_video_task
+
+    async def cancel_as_a_picture_comes() -> None:
+        sender._cancel_video_task = cancel_video_task
+        await cancel_video_task()
+        await sender.handle_image_frame(late)
+
+    sender._cancel_video_task = cancel_as_a_picture_comes
+
+    # Act
+    await within(sender.handle_interruptions(InterruptionFrame()))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await until(lambda: len(source.video_timestamps) == 1)
+    await within(output.cleanup())
+    await session.close()
+
+
+async def test_an_uninterruptible_picture_the_live_video_task_took_as_an_interruption_waited_is_written(monkeypatch):
+    # Arrange: a live output whose encodes take 300 ms, writing an uninterruptible picture, and a
+    # second one that comes while the interruption waits for the first, which the video task then
+    # takes before the interruption cancels it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_is_live=True, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    output = MoqWasmTransport(session, params).output()
+    slow_encodes(monkeypatch, 0.3)
+    values = record_encoded_values(monkeypatch)
+    await within(start_alone(output))
+    sender = output._media_senders[None]
+    first, second = (OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in (1, 2))
+    first.interruptible = second.interruptible = False
+    await sender.handle_image_frame(first)
+    await until(lambda: values == [1])
+
+    # Act
+    interrupting = asyncio.create_task(sender.handle_interruptions(InterruptionFrame()))
+    await asyncio.sleep(0.05)
+    await sender.handle_image_frame(second)
+    await within(interrupting)
+
+    # Assert: both pictures were pushed, once each
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await until(lambda: len(source.video_timestamps) >= 2)
+    await asyncio.sleep(0.4)
+    assert len(source.video_timestamps) == 2
+    await within(output.cleanup())
+    await session.close()
+
+
+async def test_an_interruption_during_a_drain_leaves_it_waiting_for_the_uninterruptible_pictures_the_new_video_task_writes():
+    # Arrange: a live output at 10 pictures a second, given the eight uninterruptible pictures of a
+    # sprite, draining them as at an EndFrame
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_framerate=10,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    output = MoqWasmTransport(session, params).output()
+    await within(start_alone(output))
+    sender = output._media_senders[None]
+    pictures = [OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in range(8)]
+    for frame in pictures:
+        frame.interruptible = False
+    await sender.queue_live_pictures(pictures)
+    draining = asyncio.create_task(sender.write_given_pictures())
+    await asyncio.sleep(0.05)
+
+    # Act: an interruption creates the video task again while the drain waits
+    await within(sender.handle_interruptions(InterruptionFrame()))
+    await within(draining)
+
+    # Assert: the drain returned once the new video task wrote every picture
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == 8
+    await within(output.cleanup())
+    await session.close()
+
+
+async def test_a_drain_that_timed_out_leaves_no_unretrieved_exception(monkeypatch):
+    # Arrange: a live output at 10 pictures a second, given eight pictures, whose drain waits 0.1 s
+    monkeypatch.setattr(_transport, "LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS", 0.1)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_framerate=10,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    output = MoqWasmTransport(session, params).output()
+    await within(start_alone(output))
+    sender = output._media_senders[None]
+    await sender.queue_live_pictures([OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in range(8)])
+    loop = asyncio.get_running_loop()
+    reported: list[dict] = []
+    loop.set_exception_handler(lambda loop, context: reported.append(context))
+
+    # Act
+    try:
+        await within(sender.write_given_pictures())
+        await asyncio.sleep(0.05)
+        gc.collect()
+    finally:
+        loop.set_exception_handler(None)
+
+    # Assert
+    assert [context["message"] for context in reported] == []
+    await within(output.cleanup())
+    await session.close()
+
+
+async def test_a_live_output_given_pictures_faster_than_its_framerate_drops_the_oldest_past_two_seconds(monkeypatch):
+    # Arrange: a live output at 10 pictures a second, which queues 20 at most, given 40 at once
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_framerate=10,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    values = record_encoded_values(monkeypatch)
+    pictures = [OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in range(40)]
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=pictures))
+
+    # Assert: the newest pictures were written, the oldest dropped, and that was reported once
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert 20 <= len(values) <= 22
+    assert values[-20:] == list(range(20, 40))
+    assert len(errors) == 1 and "faster than 10 a second" in errors[0].error
+    await session.close()
+
+
+def live_pictures(kind: str) -> tuple[Frame, int]:
+    """A frame of live pictures of `kind`, and how many pictures it holds."""
+    if kind == "sprite":
+        return SpriteFrame(images=[OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in (0, 255)]), 2
+    frame = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+    frame.sync_with_audio = kind == "synchronized"
+    return frame, 1
+
+
+@pytest.mark.parametrize("kind", ["picture", "synchronized", "sprite"])
+async def test_a_live_output_ending_gracefully_writes_the_pictures_queued_before_its_end_frame(kind):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=SAMPLE_RATE,
+        audio_out_end_silence_secs=0,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    frame, count = live_pictures(kind)
+
+    # Act: run_test ends the pipeline with an EndFrame right after the pictures
+    await within(run_test(transport.output(), frames_to_send=[frame]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert [call[0] for call in source.calls].count("push_video") == count
+    await session.close()
+
+
+async def test_an_interruption_keeps_the_uninterruptible_pictures_a_live_output_queued_or_is_writing():
+    # Arrange: a live output paced at 10 pictures a second, given three uninterruptible pictures
+    # around an interruptible one; the interruption comes as it writes the first
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_framerate=10,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    pictures = [OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in (0, 64, 128, 255)]
+    for index, frame in enumerate(pictures):
+        frame.interruptible = index == 2
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[*pictures, SleepFrame(0.05), InterruptionFrame()]))
+
+    # Assert: the uninterruptible pictures were written, the interruptible one was dropped
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert [call[0] for call in source.calls].count("push_video") == 3
+    await session.close()
+
+
+@pytest.mark.parametrize("kind", ["picture", "sprite"])
+async def test_an_output_ending_gracefully_writes_the_still_it_was_given_last(kind):
+    # Arrange: an output that is not live, which shows a picture or a sprite as a still
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(room=ROOM, video_out_enabled=True, video_out_width=SIZE[0], video_out_height=SIZE[1])
+    transport = MoqWasmTransport(session, params)
+    frame, _ = live_pictures(kind)
+
+    # Act: run_test ends the pipeline with an EndFrame right after the still
+    await within(run_test(transport.output(), frames_to_send=[frame]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert "push_video" in [call[0] for call in source.calls]
+    await session.close()
+
+
+def slow_encodes(monkeypatch, seconds: float) -> None:
+    encode = VideoEncoder.encode
+
+    def slow(self, image: bytes, size, color_format: str) -> list[bytes]:
+        time.sleep(seconds)
+        return encode(self, image, size, color_format)
+
+    monkeypatch.setattr(VideoEncoder, "encode", slow)
+
+
+async def test_an_output_ending_gracefully_writes_its_last_still_at_once_however_slow_its_framerate(monkeypatch):
+    # Arrange: an output that is not live, at a picture a second, whose encodes take 70 ms
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_framerate=1, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    transport = MoqWasmTransport(session, params)
+    slow_encodes(monkeypatch, 0.07)
+    still = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+
+    # Act: run_test ends the pipeline with an EndFrame right after the still
+    started = time.monotonic()
+    _, up = await within(run_test(transport.output(), frames_to_send=[still]))
+
+    # Assert: the still was written, without waiting for the next frame a second later
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == 1
+    assert time.monotonic() - started < 0.8
+    assert not [frame for frame in up if isinstance(frame, ErrorFrame)]
+    await session.close()
+
+
+async def test_an_output_ending_gracefully_reports_a_last_still_it_could_not_write_in_time(monkeypatch):
+    # Arrange: an output that is not live whose encodes take longer than the second it waits
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(room=ROOM, video_out_enabled=True, video_out_width=SIZE[0], video_out_height=SIZE[1])
+    transport = MoqWasmTransport(session, params)
+    slow_encodes(monkeypatch, 1.5)
+    still = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[still]))
+
+    # Assert
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(errors) == 1 and "the last still was not written" in errors[0].error
+    await session.close()
+
+
+@pytest.mark.parametrize("live", [True, False])
+async def test_an_output_a_stop_frame_stopped_writes_the_pictures_it_was_given_before_it_runs_again(live):
+    # Arrange: a live output at 10 pictures a second given five pictures, or one that is not live at
+    # a picture a second given a still, then a StopFrame
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=live,
+        video_out_framerate=10 if live else 1,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    count = 5 if live else 1
+    pictures = [OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in range(count)]
+    output = transport.output()
+
+    # Act: the next pipeline resumes the output, which replaces its media senders
+    await within(run_test(output, frames_to_send=[*pictures, StopFrame()], send_end_frame=False))
+    await within(run_test(transport.output(), frames_to_send=[SleepFrame(0.1)]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == count
+    await session.close()
+
+
+async def test_a_pipeline_flush_returns_once_the_output_wrote_the_media_given_before_it():
+    # Arrange: an output in a running pipeline given 15 ms of speech, short of pipecat's chunk of
+    # 40 ms and of an Opus packet, a synchronized picture and 20 live pictures at 30 a second
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params()).output()
+    worker = PipelineWorker(Pipeline([output]), cancel_on_idle_timeout=False)
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    running = asyncio.create_task(runner.run())
+    pictures = [OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in range(20)]
+    speech = OutputAudioRawFrame(audio=tone(0.015), sample_rate=SAMPLE_RATE, num_channels=1)
+    await worker.queue_frames([speech, synchronized(255), *pictures])
+
+    # Act
+    flushed = await within(worker.flush_pipeline())
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    written = (len(source.audio_timestamps), len(source.video_timestamps))
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert: the speech, its last chunk and packet padded with silence, and every picture were
+    # written by then
+    assert flushed
+    assert written[0] > 0 and written[1] == 21
+    await session.close()
+
+
+class PassedOn(FrameProcessor):
+    """Records the frames that reach it, and passes each on."""
+
+    def __init__(self):
+        super().__init__()
+        self.frames: list[Frame] = []
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        self.frames.append(frame)
+        await self.push_frame(frame, direction)
+
+
+async def run_worker(output: FrameProcessor, *after: FrameProcessor) -> tuple[PipelineWorker, asyncio.Task]:
+    """Runs a pipeline of `output`, followed by `after`; the task ends once an EndFrame queued to
+    the worker ended the pipeline."""
+    worker = PipelineWorker(Pipeline([output, *after]), cancel_on_idle_timeout=False)
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    return worker, asyncio.create_task(runner.run())
+
+
+async def test_a_pipeline_flush_shows_the_still_given_before_it_and_not_one_given_after_it_first(monkeypatch):
+    # Arrange: an output that is not live, at a picture a second, in a running pipeline given 300 ms
+    # of speech and a still A, then a flush, then a still B 90 ms later, while the flush probe waits
+    # behind the speech
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_is_live=False, video_out_framerate=1)).output()
+    values = record_encoded_values(monkeypatch)
+    worker, running = await run_worker(output)
+    speech = OutputAudioRawFrame(audio=tone(0.3), sample_rate=SAMPLE_RATE, num_channels=1)
+    await worker.queue_frames([speech, OutputImageRawFrame(image=picture(10), size=SIZE, format="RGB")])
+
+    # Act
+    flushing = asyncio.create_task(worker.flush_pipeline())
+    await asyncio.sleep(0.09)
+    await worker.queue_frame(OutputImageRawFrame(image=picture(20), size=SIZE, format="RGB"))
+    flushed = await within(flushing)
+    at_flush = list(values)
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert: A was shown by the time the flush returned, before B
+    assert flushed
+    assert at_flush[:1] == [10]
+    assert values.index(10) < values.index(20)
+    await session.close()
+
+
+class AroundTheFinalFlushProbe(FrameProcessor):
+    """Passes the last of the three probes of `PipelineWorker.flush_pipeline`, its second one
+    downstream, on between the frames `before` and `after`."""
+
+    def __init__(self, before: list[Frame], after: list[Frame]):
+        super().__init__()
+        self._before = before
+        self._after = after
+        self._downstream_probes = 0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        final = False
+        if isinstance(frame, PipelineFlushFrame) and direction == FrameDirection.DOWNSTREAM:
+            self._downstream_probes += 1
+            final = self._downstream_probes == 2
+        for before in self._before if final else []:
+            await self.push_frame(before)
+        await self.push_frame(frame, direction)
+        for after in self._after if final else []:
+            await self.push_frame(after)
+
+
+async def test_a_pipeline_flush_leaves_a_still_given_after_its_final_probe_to_the_video_task(monkeypatch):
+    # Arrange: an output that is not live, at a picture a second, in a running pipeline given a
+    # still A, then a flush whose final probe waits behind 100 ms of speech, then a still B whose
+    # encode takes 1.2 s
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_is_live=False, video_out_framerate=1)).output()
+    encode = VideoEncoder.encode
+
+    def slow_for_b(self, image: bytes, size, color_format: str) -> list[bytes]:
+        if image[0] == 20:
+            time.sleep(1.2)
+        return encode(self, image, size, color_format)
+
+    monkeypatch.setattr(VideoEncoder, "encode", slow_for_b)
+    speech = OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)
+    later = OutputImageRawFrame(image=picture(20), size=SIZE, format="RGB")
+    worker = PipelineWorker(
+        Pipeline([AroundTheFinalFlushProbe([speech], [later]), output]), cancel_on_idle_timeout=False
+    )
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    running = asyncio.create_task(runner.run())
+    await worker.queue_frame(OutputImageRawFrame(image=picture(10), size=SIZE, format="RGB"))
+
+    # Act
+    started = time.monotonic()
+    flushed = await within(worker.flush_pipeline())
+    flush_seconds = time.monotonic() - started
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert: the flush did not wait for B's encode, as B was given after its final probe
+    assert flushed
+    assert flush_seconds < 0.7
+    await session.close()
+
+
+async def test_a_pipeline_flush_waits_only_for_the_live_pictures_given_before_it():
+    # Arrange: a live output at 10 pictures a second in a running pipeline, given pictures at 20 a
+    # second for 300 ms before a flush and on while it waits
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_framerate=10)).output()
+    _, up = link_recorders(output)
+    worker, running = await run_worker(output)
+    producing = True
+
+    async def produce() -> None:
+        for value in range(80):
+            if not producing:
+                return
+            await worker.queue_frame(OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB"))
+            await asyncio.sleep(0.05)
+
+    producer = asyncio.create_task(produce())
+    await asyncio.sleep(0.3)
+
+    # Act: each of the flush's two downstream legs would wait three seconds for the queue to empty
+    started = time.monotonic()
+    flushed = await asyncio.wait_for(worker.flush_pipeline(), 2 * LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS + TIMEOUT_SECONDS)
+    elapsed = time.monotonic() - started
+    producing = False
+    await within(producer)
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert: the flush returned once the few pictures queued before it were written, well before
+    # the three seconds it waits at most, without reporting pictures not written
+    assert flushed
+    assert elapsed < 1.5
+    assert not [frame for frame in up.frames if isinstance(frame, ErrorFrame) and "not written" in frame.error]
+    await session.close()
+
+
 async def test_an_output_whose_speech_paused_writes_the_partial_chunk_the_pause_left_at_its_stop_frame(monkeypatch):
     # Arrange: pipecat's chunks of 40 ms, 50 ms of speech whose last 10 ms are louder, and a pause
     # longer than the one after which pipecat's sender takes the bot as no longer speaking
@@ -5562,6 +6293,208 @@ def speaking_params(**overrides) -> MoqWasmParams:
         video_out_height=SIZE[1],
     )
     return MoqWasmParams(**{**params, **overrides})
+
+
+def synchronized(value: int, *, interruptible: bool = True) -> OutputImageRawFrame:
+    frame = OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB")
+    frame.sync_with_audio = True
+    frame.interruptible = interruptible
+    return frame
+
+
+def record_encoded_values(monkeypatch) -> list[int]:
+    """Records the value of each `picture(value)` the video encoders encode, in the order they are
+    pushed, one packet each."""
+    values: list[int] = []
+    encode = VideoEncoder.encode
+
+    def recording(self, image: bytes, size, color_format: str) -> list[bytes]:
+        values.append(image[0])
+        return encode(self, image, size, color_format)
+
+    monkeypatch.setattr(VideoEncoder, "encode", recording)
+    return values
+
+
+@pytest.mark.parametrize("live", [True, False])
+@pytest.mark.parametrize("chunks", [4, 1], ids=["partial chunk", "encoder tail"])
+async def test_a_synchronized_picture_is_timestamped_where_the_speech_before_it_ends(chunks, live):
+    # Arrange: 250 ms of speech, whose last 10 ms pipecat's chunk of 40 ms or, in chunks of 10 ms,
+    # the Opus encoder holds as the picture comes, then a synchronized picture and 250 ms more
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params(audio_out_10ms_chunks=chunks, video_out_is_live=live))
+    before = OutputAudioRawFrame(audio=tone(0.25), sample_rate=SAMPLE_RATE, num_channels=1)
+    after = OutputAudioRawFrame(audio=tone(0.25), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[before, synchronized(0), after]))
+
+    # Assert: the picture is presented 10 ms into the 13th packet, where the speech before it ends
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert source.audio_timestamps[12] == source.audio_timestamps[0] + 12 * OPUS_FRAME_MICROS
+    assert abs(source.video_timestamps[0] - (source.audio_timestamps[12] + 10_000)) <= 1_000
+    await session.close()
+
+
+async def test_a_synchronized_picture_after_speech_that_pauses_is_written_at_once(monkeypatch):
+    # Arrange: 10 ms of speech, short of pipecat's chunk, a synchronized picture, then a pause with
+    # no TTSStoppedFrame
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params())
+    pushed_at: list[float] = []
+    push_video = FakeMediaSource.push_video
+
+    def recording(self, data: bytes, timestamp_micros: int) -> None:
+        pushed_at.append(time.monotonic())
+        push_video(self, data, timestamp_micros)
+
+    monkeypatch.setattr(FakeMediaSource, "push_video", recording)
+    speech = OutputAudioRawFrame(audio=tone(0.01), sample_rate=SAMPLE_RATE, num_channels=1)
+    started = time.monotonic()
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[speech, synchronized(0), SleepFrame(0.6)]))
+
+    # Assert: the picture was written well before the pause ended
+    assert len(pushed_at) == 1
+    assert pushed_at[0] - started < 0.3
+    await session.close()
+
+
+async def test_a_synchronized_picture_carries_its_own_timestamp_past_the_live_pictures_queued(monkeypatch):
+    # Arrange: a live output at 5 pictures a second given three pictures, which take it 400 ms to
+    # write, then 200 ms of speech and a synchronized picture
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params(video_out_framerate=5))
+    values = record_encoded_values(monkeypatch)
+    queued = [OutputImageRawFrame(image=picture(value), size=SIZE, format="RGB") for value in (1, 2, 3)]
+    speech = OutputAudioRawFrame(audio=tone(0.2), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=[*queued, speech, synchronized(9), SleepFrame(0.6)]))
+
+    # Assert: the synchronized picture is presented where the speech ends, and the pictures written
+    # after it follow it
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert sorted(values) == [1, 2, 3, 9] and len(source.video_timestamps) == 4
+    stamped = dict(zip(values, source.video_timestamps))
+    assert abs(stamped[9] - (source.audio_timestamps[0] + 200_000)) <= 1_000
+    assert source.video_timestamps == sorted(set(source.video_timestamps))
+    await session.close()
+
+
+async def test_synchronized_pictures_kept_through_an_interruption_keep_their_order_and_timestamps(monkeypatch):
+    # Arrange: uninterruptible speech and picture, interruptible speech and picture, the
+    # interruption, then uninterruptible speech and picture again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params())
+    values = record_encoded_values(monkeypatch)
+
+    def speech(seconds: float, *, interruptible: bool) -> OutputAudioRawFrame:
+        frame = OutputAudioRawFrame(audio=tone(seconds), sample_rate=SAMPLE_RATE, num_channels=1)
+        frame.interruptible = interruptible
+        return frame
+
+    frames = [
+        speech(0.2, interruptible=False),
+        synchronized(1, interruptible=False),
+        speech(1.0, interruptible=True),
+        synchronized(2),
+        SleepFrame(0.3),
+        InterruptionFrame(),
+        speech(0.1, interruptible=False),
+        synchronized(3, interruptible=False),
+    ]
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=frames))
+
+    # Assert: the interruptible picture was dropped; the others came in order, the first where the
+    # speech before it ends
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert values == [1, 3]
+    assert abs(source.video_timestamps[0] - (source.audio_timestamps[0] + 200_000)) <= 1_000
+    assert source.video_timestamps[0] < source.video_timestamps[1]
+    await session.close()
+
+
+async def test_a_synchronized_picture_released_before_an_interruption_is_passed_on_once_written():
+    # Arrange: 10 ms of speech, short of pipecat's chunk, then a synchronized picture, which pipecat
+    # releases at once, and an interruption
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params()).output()
+    speech = OutputAudioRawFrame(audio=tone(0.01), sample_rate=SAMPLE_RATE, num_channels=1)
+    synced = synchronized(0)
+
+    # Act
+    down, _ = await within(run_test(output, frames_to_send=[speech, synced, SleepFrame(0.2), InterruptionFrame()]))
+
+    # Assert: the picture passed on is the one written
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == 1
+    assert [frame.id for frame in down if isinstance(frame, OutputImageRawFrame)] == [synced.id]
+    await session.close()
+
+
+async def test_a_synchronized_picture_that_cannot_be_written_is_not_passed_on(monkeypatch):
+    # Arrange: an encoder that fails
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params()).output()
+
+    def failing(self, image: bytes, size, color_format: str) -> list[bytes]:
+        raise RuntimeError("the encoder failed")
+
+    monkeypatch.setattr(VideoEncoder, "encode", failing)
+    speech = OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act
+    down, up = await within(run_test(output, frames_to_send=[speech, synchronized(0), SleepFrame(0.2)]))
+
+    # Assert: the failure was reported and the picture not passed on
+    assert [frame for frame in down if isinstance(frame, OutputImageRawFrame)] == []
+    assert any("the encoder failed" in frame.error for frame in up if isinstance(frame, ErrorFrame))
+    await session.close()
+
+
+@pytest.mark.parametrize("frame_seconds", [0.02, 0.04])
+async def test_pictures_synchronized_with_continuous_speech_do_not_lengthen_it(frame_seconds):
+    # Arrange: 200 ms of speech in frames of 20 or 40 ms, each followed by a synchronized picture
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        audio_out_enabled=True,
+        audio_out_sample_rate=SAMPLE_RATE,
+        audio_out_end_silence_secs=0,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    count = round(0.2 / frame_seconds)
+    frames = []
+    for index in range(count):
+        frames.append(OutputAudioRawFrame(audio=tone(frame_seconds), sample_rate=SAMPLE_RATE, num_channels=1))
+        synced = OutputImageRawFrame(image=picture(index), size=SIZE, format="RGB")
+        synced.sync_with_audio = True
+        frames.append(synced)
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=frames))
+
+    # Assert: the Opus packets last as long as the speech, give or take a packet, and every picture
+    # was written
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert abs(len(source.audio_timestamps) * OPUS_FRAME_MICROS - 200_000) <= OPUS_FRAME_MICROS
+    assert [call[0] for call in source.calls].count("push_video") == count
+    await session.close()
 
 
 async def test_frames_for_another_destination_go_on_as_they_came_and_write_nothing():
@@ -5651,3 +6584,414 @@ async def test_a_cancel_frame_for_another_destination_leaves_the_output_running(
     await within(output.cleanup())
     await session.close()
 
+
+async def test_an_interruption_waiting_for_an_uninterruptible_picture_writes_no_more_interruptible_speech(monkeypatch):
+    # Arrange: a live output whose encodes take 300 ms, given a second of interruptible speech and
+    # an uninterruptible picture, then an interruption while the picture is encoded
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params())
+    slow_encodes(monkeypatch, 0.3)
+    interrupted_at: list[float] = []
+    pushed_at: list[float] = []
+    interrupt_audio = Room.interrupt_audio
+    push_audio = FakeMediaSource.push_audio
+
+    def interrupting(self) -> None:
+        interrupted_at.append(time.monotonic())
+        interrupt_audio(self)
+
+    def pushing(self, data: bytes, timestamp_micros: int, **level) -> None:
+        pushed_at.append(time.monotonic())
+        push_audio(self, data, timestamp_micros, **level)
+
+    monkeypatch.setattr(Room, "interrupt_audio", interrupting)
+    monkeypatch.setattr(FakeMediaSource, "push_audio", pushing)
+    speech = OutputAudioRawFrame(audio=tone(1.0), sample_rate=SAMPLE_RATE, num_channels=1)
+    protected = OutputImageRawFrame(image=picture(0), size=SIZE, format="RGB")
+    protected.interruptible = False
+
+    # Act
+    await within(
+        run_test(transport.output(), frames_to_send=[speech, protected, SleepFrame(0.15), InterruptionFrame(), SleepFrame(0.4)])
+    )
+
+    # Assert: the picture was written, and of the speech after the interruption, at most the 40 ms
+    # chunk pipecat's sender may have taken as it came, two packets
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == 1
+    assert len(interrupted_at) == 1
+    assert len([at for at in pushed_at if at > interrupted_at[0]]) <= 2
+    await session.close()
+
+
+def assistant_image(value: int) -> AssistantImageRawFrame:
+    return AssistantImageRawFrame(image=picture(value), size=SIZE, format="RGB")
+
+
+async def test_a_live_output_writes_each_assistant_image_and_passes_it_on_once_in_order():
+    # Arrange: a live output at 10 pictures a second, which queues 20 live pictures at most, given
+    # 40 assistant images at once
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM,
+        video_out_enabled=True,
+        video_out_is_live=True,
+        video_out_framerate=10,
+        video_out_width=SIZE[0],
+        video_out_height=SIZE[1],
+    )
+    transport = MoqWasmTransport(session, params)
+    images = [assistant_image(value) for value in range(40)]
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=images))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) == 40
+    assert [frame.id for frame in down if isinstance(frame, AssistantImageRawFrame)] == [image.id for image in images]
+    await session.close()
+
+
+@pytest.mark.parametrize("live", [True, False])
+async def test_an_assistant_image_that_cannot_be_written_is_not_passed_on(monkeypatch, live):
+    # Arrange: an encoder that fails
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, video_out_enabled=True, video_out_is_live=live, video_out_width=SIZE[0], video_out_height=SIZE[1]
+    )
+    transport = MoqWasmTransport(session, params)
+
+    def failing(self, image: bytes, size, color_format: str) -> list[bytes]:
+        raise RuntimeError("the encoder failed")
+
+    monkeypatch.setattr(VideoEncoder, "encode", failing)
+
+    # Act
+    down, up = await within(run_test(transport.output(), frames_to_send=[assistant_image(0), SleepFrame(0.2)]))
+
+    # Assert: the failure was reported and the image not passed on
+    assert [frame for frame in down if isinstance(frame, AssistantImageRawFrame)] == []
+    assert any("the encoder failed" in frame.error for frame in up if isinstance(frame, ErrorFrame))
+    await session.close()
+
+
+async def test_a_still_assistant_image_is_passed_on_once_however_often_it_is_written():
+    # Arrange: an output that is not live, which writes its still at each of its 30 frames a second
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(room=ROOM, video_out_enabled=True, video_out_width=SIZE[0], video_out_height=SIZE[1])
+    transport = MoqWasmTransport(session, params)
+    still = assistant_image(0)
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[still, SleepFrame(0.2)]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert len(source.video_timestamps) > 1
+    assert [frame.id for frame in down if isinstance(frame, AssistantImageRawFrame)] == [still.id]
+    await session.close()
+
+
+def assistant_image_frames(kind: str) -> tuple[MoqWasmParams, list[Frame], AssistantImageRawFrame]:
+    """The params of an output that speaks, the frames giving it an assistant image of `kind`, a
+    `still` of an output that is not live, a `live` picture or one `synchronized` after 100 ms of
+    speech, and that image."""
+    image = assistant_image(0)
+    image.sync_with_audio = kind == "synchronized"
+    frames: list[Frame] = [image]
+    if kind == "synchronized":
+        frames.insert(0, OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1))
+    return speaking_params(video_out_is_live=kind == "live"), frames, image
+
+
+@pytest.mark.parametrize("kind", ["still", "live", "synchronized"])
+async def test_an_assistant_image_given_before_a_context_reset_is_not_in_the_context_after_it(kind):
+    # Arrange: the assistant's context aggregator after the output, as in a pipeline
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params, frames, _ = assistant_image_frames(kind)
+    context = LLMContext()
+    pipeline = Pipeline([MoqWasmTransport(session, params).output(), LLMAssistantAggregator(context)])
+    reset = [{"role": "system", "content": "start over"}]
+
+    # Act
+    await within(
+        run_test(pipeline, frames_to_send=[*frames, LLMMessagesUpdateFrame(messages=reset, run_llm=False), SleepFrame(0.2)])
+    )
+
+    # Assert
+    assert context.get_messages() == reset
+    await session.close()
+
+
+@pytest.mark.parametrize("kind", ["still", "live", "synchronized"])
+async def test_an_assistant_image_is_passed_on_ahead_of_the_frames_given_after_it(kind):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params, frames, image = assistant_image_frames(kind)
+
+    # Act
+    down, _ = await within(
+        run_test(MoqWasmTransport(session, params).output(), frames_to_send=[*frames, LLMFullResponseEndFrame()])
+    )
+
+    # Assert
+    passed = [frame for frame in down if isinstance(frame, (AssistantImageRawFrame, LLMFullResponseEndFrame))]
+    assert [frame.id for frame in passed][:1] == [image.id]
+    assert [type(frame) for frame in passed] == [AssistantImageRawFrame, LLMFullResponseEndFrame]
+    await session.close()
+
+
+@pytest.mark.parametrize("kind", ["synchronized", "sprite"])
+async def test_an_assistant_image_an_output_that_is_not_live_draws_again_is_passed_on_at_most_once(kind):
+    # Arrange: an output that is not live, which draws its still at each of its 30 frames a second,
+    # given a synchronized assistant image or a sprite of two
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params, frames, image = assistant_image_frames("synchronized")
+    if kind == "sprite":
+        frames = [SpriteFrame(images=[assistant_image(0), assistant_image(255)])]
+    output = MoqWasmTransport(session, params.model_copy(update={"video_out_is_live": False})).output()
+
+    # Act
+    down, _ = await within(run_test(output, frames_to_send=[*frames, SleepFrame(0.25)]))
+
+    # Assert: pipecat passes a sprite's pictures on not at all
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    passed = [frame.id for frame in down if isinstance(frame, AssistantImageRawFrame)]
+    assert len(source.video_timestamps) > 2
+    assert passed == ([image.id] if kind == "synchronized" else [])
+    await session.close()
+
+
+@pytest.mark.parametrize("interruptible", [True, False])
+@pytest.mark.parametrize("live", [True, False])
+async def test_an_assistant_image_is_shown_if_and_only_if_it_reaches_the_context_across_an_interruption(
+    live, interruptible
+):
+    # Arrange: the assistant's context aggregator after an output given a second of speech, then an
+    # assistant image, then an interruption 100 ms later, before the speech before the image was
+    # written
+    relay = FakeRelay()
+    session = await open_session(relay)
+    context = LLMContext()
+    output = MoqWasmTransport(session, speaking_params(video_out_is_live=live)).output()
+    pipeline = Pipeline([output, LLMAssistantAggregator(context)])
+    speech = OutputAudioRawFrame(audio=tone(1.0), sample_rate=SAMPLE_RATE, num_channels=1)
+    speech.interruptible = interruptible
+    image = assistant_image(0)
+    image.interruptible = interruptible
+
+    # Act
+    await within(
+        run_test(pipeline, frames_to_send=[speech, image, SleepFrame(0.1), InterruptionFrame(), SleepFrame(1.2)])
+    )
+
+    # Assert: an interruptible image is dropped from both, an uninterruptible one reaches both
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    shown = len(source.video_timestamps) > 0
+    in_context = any(message["role"] == "assistant" for message in context.get_messages())
+    assert (shown, in_context) == (not interruptible, not interruptible)
+    await session.close()
+
+
+@pytest.mark.parametrize("ending", ["flush", "end"])
+@pytest.mark.parametrize("synchronized", [False, True])
+async def test_an_assistant_image_an_output_that_is_not_live_reaches_after_a_later_still_leaves_that_still_last(
+    monkeypatch, synchronized, ending
+):
+    # Arrange: an output that is not live, at a picture a second, given 1.5 s of speech, an
+    # assistant image behind it, synchronized with the audio or not, then a still at once, which
+    # its video task draws a second in, before pipecat's audio task reaches the image
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_is_live=False, video_out_framerate=1)).output()
+    values = record_encoded_values(monkeypatch)
+    speech = OutputAudioRawFrame(audio=tone(1.5), sample_rate=SAMPLE_RATE, num_channels=1)
+    image = assistant_image(10)
+    image.sync_with_audio = synchronized
+    later = OutputImageRawFrame(image=picture(20), size=SIZE, format="RGB")
+
+    # Act: a pipeline flush, or an EndFrame, right behind them
+    passed_on = PassedOn()
+    worker, running = await run_worker(output, passed_on)
+    await worker.queue_frames([speech, image, later])
+    if ending == "flush":
+        flushed = await within(worker.flush_pipeline())
+        last = values[-1]
+        await worker.queue_frame(EndFrame())
+        await within(running)
+    else:
+        await worker.queue_frame(EndFrame())
+        await within(running)
+        flushed, last = True, values[-1]
+
+    # Assert: the image was written, then the still given after it, which was written last, and the
+    # image was passed on once
+    assert flushed
+    assert 10 in values and last == 20
+    assert [frame.id for frame in passed_on.frames if isinstance(frame, AssistantImageRawFrame)] == [image.id]
+    await session.close()
+
+
+async def test_an_assistant_image_drawn_before_the_next_one_queued_is_shown_until_an_interruption_drops_that_one(
+    monkeypatch,
+):
+    # Arrange: an output that is not live showing a still, given 100 ms of speech, an assistant
+    # image A, a second of speech and an assistant image B, then an interruption 400 ms later,
+    # while the speech before B is being written
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_is_live=False)).output()
+    values = record_encoded_values(monkeypatch)
+    slide = OutputImageRawFrame(image=picture(5), size=SIZE, format="RGB")
+    short = OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)
+    long = OutputAudioRawFrame(audio=tone(1.0), sample_rate=SAMPLE_RATE, num_channels=1)
+    frames = [slide, short, assistant_image(10), long, assistant_image(20)]
+
+    # Act
+    await within(run_test(output, frames_to_send=[*frames, SleepFrame(0.4), InterruptionFrame(), SleepFrame(0.3)]))
+
+    # Assert: A was the still from its draw on, and B, dropped, was never drawn
+    assert 10 in values and 20 not in values
+    assert set(values[values.index(10) :]) == {10}
+    await session.close()
+
+
+async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(monkeypatch):
+    # Arrange: a live output whose encodes take 100 ms, given 600 ms of speech in frames of 30 ms,
+    # each followed by a synchronized picture
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params())
+    slow_encodes(monkeypatch, 0.1)
+    pushed_at: list[float] = []
+    push_audio = FakeMediaSource.push_audio
+
+    def pushing(self, data: bytes, timestamp_micros: int, **level) -> None:
+        pushed_at.append(time.monotonic())
+        push_audio(self, data, timestamp_micros, **level)
+
+    monkeypatch.setattr(FakeMediaSource, "push_audio", pushing)
+    frames = []
+    for value in range(20):
+        frames.append(OutputAudioRawFrame(audio=tone(0.03), sample_rate=SAMPLE_RATE, num_channels=1))
+        frames.append(synchronized(value))
+
+    # Act
+    await within(run_test(transport.output(), frames_to_send=frames))
+
+    # Assert: the speech went out in about its own 600 ms, not after the two seconds of encodes,
+    # and every picture was written
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert pushed_at[-1] - pushed_at[0] < 1.0
+    assert len(source.video_timestamps) == 20
+    await session.close()
+
+
+async def test_synchronized_pictures_past_two_seconds_of_them_waiting_are_dropped(monkeypatch):
+    # Arrange: a live output at 10 pictures a second, which holds 20 synchronized pictures at most,
+    # whose encodes take 100 ms, given 900 ms of speech in frames of 30 ms, each followed by a
+    # synchronized picture
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, speaking_params(video_out_framerate=10))
+    slow_encodes(monkeypatch, 0.1)
+    values = record_encoded_values(monkeypatch)
+    frames = []
+    for value in range(30):
+        frames.append(OutputAudioRawFrame(audio=tone(0.03), sample_rate=SAMPLE_RATE, num_channels=1))
+        frames.append(synchronized(value))
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=frames))
+
+    # Assert: the pictures past the 20 waiting were dropped, which was reported once
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert 20 <= len(values) <= 21 and values == list(range(len(values)))
+    assert len(errors) == 1 and "synchronized pictures" in errors[0].error
+    await session.close()
+
+
+def alive_frames(ids: set[int]) -> list[Frame]:
+    """The frames, or copies of them, with one of `ids` that are still referenced."""
+    gc.collect()
+    return [frame for frame in gc.get_objects() if isinstance(frame, Frame) and frame.id in ids]
+
+
+@pytest.mark.parametrize("video", [True, False])
+async def test_an_output_keeps_no_assistant_image_once_drawn_passed_on_or_dropped_by_an_interruption(video):
+    # Arrange: an output, with or without video, given six assistant images behind 100 ms of
+    # speech, then twice six behind a second of speech each interrupted 100 ms later
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_enabled=video, video_out_is_live=False)).output()
+    frames: list[Frame] = [OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1)]
+    frames += [assistant_image(value) for value in range(6)]
+    for turn in range(2):
+        frames.append(OutputAudioRawFrame(audio=tone(1.0), sample_rate=SAMPLE_RATE, num_channels=1))
+        frames += [assistant_image(10 * (turn + 1) + value) for value in range(6)]
+        frames += [SleepFrame(0.1), InterruptionFrame()]
+    frames.append(SleepFrame(0.3))
+    ids = {frame.id for frame in frames if isinstance(frame, AssistantImageRawFrame)}
+
+    # Act
+    down, _ = await within(run_test(output, frames_to_send=frames))
+    del frames, down
+
+    # Assert: the output, still referenced, holds no image but the still it shows
+    assert len(alive_frames(ids)) == (1 if video else 0)
+    assert output is not None
+    await session.close()
+
+
+@pytest.mark.parametrize("buffer", [bytearray, memoryview, lambda image: memoryview(image).cast("I")])
+@pytest.mark.parametrize("live", [True, False])
+async def test_a_picture_in_a_contiguous_buffer_is_written(buffer, live):
+    # Arrange: an RGB picture half the output's size, in a buffer other than bytes
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = speaking_params(audio_out_enabled=False, video_out_is_live=live)
+    half = (SIZE[0] // 2, SIZE[1] // 2)
+    frame = OutputImageRawFrame(image=buffer(bytes(half[0] * half[1] * 3)), size=half, format="RGB")
+
+    # Act
+    _, up = await within(run_test(MoqWasmTransport(session, params).output(), frames_to_send=[frame, SleepFrame(0.2)]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert not [error for error in up if isinstance(error, ErrorFrame)]
+    assert "push_video" in [call[0] for call in source.calls]
+    await session.close()
+
+
+async def test_an_assistant_image_that_cannot_be_resized_is_reported_and_the_speech_after_it_is_written(monkeypatch):
+    # Arrange: an output that is not live, whose resize fails, given an assistant image half its
+    # size between two 100 ms of speech
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_is_live=False)).output()
+
+    def failing(frame: OutputImageRawFrame, size: tuple[int, int]) -> OutputImageRawFrame:
+        raise ValueError("the resize failed")
+
+    monkeypatch.setattr(_transport, "_resized", failing)
+    half = (SIZE[0] // 2, SIZE[1] // 2)
+    image = AssistantImageRawFrame(image=bytes(half[0] * half[1] * 3), size=half, format="RGB")
+    speech = [OutputAudioRawFrame(audio=tone(0.1), sample_rate=SAMPLE_RATE, num_channels=1) for _ in range(2)]
+
+    # Act
+    down, up = await within(run_test(output, frames_to_send=[speech[0], image, speech[1], SleepFrame(0.3)]))
+
+    # Assert: the failure was reported, the image not passed on, and the speech after it written
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(errors) == 1 and "the resize failed" in errors[0].error and not errors[0].fatal
+    assert not [frame for frame in down if isinstance(frame, AssistantImageRawFrame)]
+    assert len([frame for frame in down if isinstance(frame, OutputAudioRawFrame)]) >= 2 * 100 // 40
+    await session.close()
