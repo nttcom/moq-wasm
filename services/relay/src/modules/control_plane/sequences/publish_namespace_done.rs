@@ -96,7 +96,9 @@ impl PublishNamespaceDone {
     )]
     /// Tells the namespace subscribers the publisher session withdrew it, as
     /// if none of the session's publications of it remained; returns the
-    /// subscribers told.
+    /// subscribers told. The publisher session is one of them when it
+    /// subscribes to the namespace, since its own namespace was announced to
+    /// it (draft-14 §9.28, draft-18 §10.18).
     pub(crate) async fn notify_local_subscribers(
         publisher_session_id: SessionId,
         publisher_is_client: bool,
@@ -125,7 +127,7 @@ impl PublishNamespaceDone {
                 SessionPeer::Client => !published_by_relay,
                 SessionPeer::Relay => publisher_is_client,
             };
-            if withdraw && subscriber_session_id != publisher_session_id {
+            if withdraw {
                 forwarder
                     .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
                     .await;
@@ -219,11 +221,14 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use std::sync::Arc;
 
-    use moqt::namespace::PublishNamespaceDoneHandler;
+    use moqt::{SessionEvent, Version, namespace::PublishNamespaceDoneHandler};
 
     use super::*;
     use crate::modules::{
-        auth::verified_token::VerifiedToken,
+        auth::{
+            test_support::{app_token, connect_client, spawn_relay_offering},
+            verified_token::VerifiedToken,
+        },
         cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::NamespaceSubscription,
         session::session_repository::NewSession,
@@ -236,6 +241,7 @@ mod tests {
                 mock_session_with_transport_stats, recorded_session_answering_subscribe,
                 session_repository_with_sessions,
             },
+            relay_clients::{next_event, publish_namespace, subscribe_namespace},
         },
     };
 
@@ -528,6 +534,46 @@ mod tests {
             recorded.publish_namespace_dones(),
             vec![NAMESPACE.to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn a_publisher_subscribed_to_its_namespace_is_told_done_and_then_its_next_publisher() {
+        for version in [Version::Draft14, Version::Draft18] {
+            // Arrange
+            let relay = spawn_relay_offering(
+                app_token(Some(""), Some("")),
+                Arc::new(NoopRelayRouteRegistry),
+                &[version],
+            );
+            let watcher = connect_client(&relay).await;
+            let next_publisher = connect_client(&relay).await;
+            subscribe_namespace(&watcher, "APP/room").await;
+            publish_namespace(&watcher, "APP/room/camera").await;
+            let SessionEvent::PublishNamespace(echoed) = next_event(&watcher).await else {
+                panic!("{version:?}: expected the watcher's own namespace");
+            };
+            echoed.ok().await.unwrap();
+
+            // Act: the next publisher waits for the withdrawal, so the relay handles the DONE first
+            watcher
+                .publisher()
+                .publish_namespace_done("APP/room/camera".to_string())
+                .await
+                .unwrap();
+            let withdrawal = next_event(&watcher).await;
+            publish_namespace(&next_publisher, "APP/room/camera").await;
+            let announcement = next_event(&watcher).await;
+
+            // Assert
+            let SessionEvent::PublishNamespaceDone(done) = withdrawal else {
+                panic!("{version:?}: expected PUBLISH_NAMESPACE_DONE, got {withdrawal:?}");
+            };
+            assert_eq!(done.track_namespace, "APP/room/camera");
+            let SessionEvent::PublishNamespace(announced) = announcement else {
+                panic!("{version:?}: expected PUBLISH_NAMESPACE, got {announcement:?}");
+            };
+            assert_eq!(announced.track_namespace, "APP/room/camera");
+        }
     }
 
     #[tokio::test]
