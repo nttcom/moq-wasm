@@ -1,6 +1,9 @@
+import uuid
+
 import pytest
 
 import moq_wasm
+from moq_wasm.media import create_broadcast
 from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room, within
 
 
@@ -37,6 +40,37 @@ async def test_a_fetch_of_a_range_the_track_does_not_have_raises_a_request_error
     assert rejected.message_type == "FETCH"
     assert rejected.code == moq_wasm.RequestErrorCode.INVALID_RANGE
     await close_all(fetcher, publisher)
+
+
+async def test_a_refused_publish_raises_a_request_error(relay_url, temporary_app_token):
+    # Arrange: a temporary app may publish only under its own root
+    app_id = f"temp-{uuid.uuid4().hex}"
+    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+
+    # Act
+    with pytest.raises(moq_wasm.RequestError) as raised:
+        await within(session.publish_track([f"temp-{uuid.uuid4().hex}", "room", "bot"], TRACK, publish=True))
+
+    # Assert
+    assert raised.value.message_type == "PUBLISH"
+    await session.close()
+
+
+async def test_a_refused_media_broadcast_raises_a_request_error(relay_url, temporary_app_token):
+    # Arrange
+    app_id = f"temp-{uuid.uuid4().hex}"
+    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    broadcast = create_broadcast(session, [f"temp-{uuid.uuid4().hex}", "room", "bot"])
+    broadcast.add_media_source(label="bot").configure_audio("opus", 48_000, 1)
+
+    # Act
+    async with broadcast:
+        with pytest.raises(moq_wasm.RequestError) as raised:
+            await within(broadcast.published())
+
+    # Assert
+    assert raised.value.message_type == "PUBLISH_NAMESPACE"
+    await session.close()
 
 
 async def test_transport_stats_count_the_bytes_of_the_traffic(relay_url):

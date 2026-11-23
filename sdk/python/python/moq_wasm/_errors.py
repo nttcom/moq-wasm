@@ -1,6 +1,10 @@
 from enum import IntEnum
 
 
+class SessionEnded(Exception):
+    """The base of what ends a session: `SessionClosed`, `ConnectionLost` and `TokenExpired`."""
+
+
 class RequestErrorCode(IntEnum):
     """The draft-14 numbers a `RequestError.code` takes for SUBSCRIBE, FETCH and TRACK_STATUS, as the
     browser SDK's `RequestErrorCode` names them. SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE and PUBLISH
