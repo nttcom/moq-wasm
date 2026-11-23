@@ -6,7 +6,7 @@ use crate::{
         annexb::with_start_codes,
         nal::{NalUnitType, SequenceParameterSet, nal_unit_type},
     },
-    parameter_sets::{NalDecoderConfig, NalKind},
+    parameter_sets::{NalDecoderConfig, NalKind, put_parameter_sets, read_parameter_sets},
     sample::VideoConfig,
 };
 
@@ -74,15 +74,9 @@ impl AvcDecoderConfigurationRecord {
         out.put_u8(self.level_idc);
         out.put_u8(0xFC | (self.nal_length_size - 1));
         out.put_u8(0xE0 | self.sps.len() as u8);
-        for sps in &self.sps {
-            out.put_u16(sps.len() as u16);
-            out.put_slice(sps);
-        }
+        put_parameter_sets(&mut out, &self.sps);
         out.put_u8(self.pps.len() as u8);
-        for pps in &self.pps {
-            out.put_u16(pps.len() as u16);
-            out.put_slice(pps);
-        }
+        put_parameter_sets(&mut out, &self.pps);
         out.freeze()
     }
 
@@ -179,25 +173,6 @@ impl From<AvcDecoderConfigurationRecord> for VideoConfig {
 
 fn raw_nal_unit_type(nal: &[u8]) -> u8 {
     nal.first().map_or(0, |header| header & 0x1F)
-}
-
-fn read_parameter_sets(data: &[u8], offset: &mut usize, count: usize) -> Result<Vec<Bytes>> {
-    let mut sets = Vec::with_capacity(count);
-    for _ in 0..count {
-        ensure!(
-            *offset + 2 <= data.len(),
-            "AVC configuration record truncated in parameter set length"
-        );
-        let length = u16::from_be_bytes([data[*offset], data[*offset + 1]]) as usize;
-        *offset += 2;
-        ensure!(
-            *offset + length <= data.len(),
-            "AVC configuration record truncated in parameter set body"
-        );
-        sets.push(Bytes::copy_from_slice(&data[*offset..*offset + length]));
-        *offset += length;
-    }
-    Ok(sets)
 }
 
 pub fn length_prefixed<'a>(

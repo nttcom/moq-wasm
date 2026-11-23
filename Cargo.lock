@@ -2896,6 +2896,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "clap",
+ "futures-util",
  "google-cloud",
  "http-body-util",
  "http-server",

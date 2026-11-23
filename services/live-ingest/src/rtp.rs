@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use broadcast::{Broadcast, RelayConnection};
+use broadcast::Broadcast;
 use bytes::Bytes;
 use mediapack::rtp::{self, Codec, SessionDescription};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -97,11 +97,7 @@ async fn publish(
     namespace: Vec<String>,
 ) -> Result<Option<(Bytes, rtp::Demuxer)>> {
     let label = namespace.join("/");
-    let connection = RelayConnection::new(options.moqt.clone());
-    let _registration = options
-        .stats
-        .as_ref()
-        .map(|registry| registry.register(format!("rtp {label}"), &connection));
+    let (connection, _registration) = options.connect(format!("rtp {label}"));
     let mut publisher =
         IngestPublisher::new(Broadcast::new(connection, namespace), options.transcode);
     let mut packets = 0_u64;

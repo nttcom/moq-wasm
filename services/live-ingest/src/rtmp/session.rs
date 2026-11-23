@@ -39,11 +39,7 @@ pub struct RtmpStream {
 
 impl RtmpState {
     pub fn new(options: &IngestOptions, label: String) -> Self {
-        let connection = RelayConnection::new(options.moqt.clone());
-        let registration = options
-            .stats
-            .as_ref()
-            .map(|registry| registry.register(format!("rtmp {label}"), &connection));
+        let (connection, registration) = options.connect(format!("rtmp {label}"));
         Self {
             label,
             counters: RtmpCounters::default(),
