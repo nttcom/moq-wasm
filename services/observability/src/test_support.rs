@@ -1,11 +1,5 @@
-use http_body_util::{BodyExt, Full};
-use http_server::HttpServer;
-use hyper::{
-    Request, Response, StatusCode,
-    body::{Bytes, Incoming},
-};
 use telemetry::relay_stats::{ProcessStats, RelaySnapshot};
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::net::TcpListener;
 
 use crate::{
     api_server::{ApiServer, ApiState},
@@ -51,44 +45,4 @@ pub(crate) fn vts_answer(app_id: &str, subscribe: Option<&str>) -> String {
         "claims": { "appId": app_id, "subscribe": subscribe, "iat": now - 60, "exp": now + 3600 },
     })
     .to_string()
-}
-
-/// Answers 200 to every request and sends its URI and body to the receiver;
-/// dropping the server stops it.
-pub(crate) async fn fake_http_server() -> (
-    String,
-    mpsc::UnboundedReceiver<(String, String)>,
-    HttpServer,
-) {
-    fake_http_server_answering(StatusCode::OK, "").await
-}
-
-/// Answers every request with `status` and `body` and sends its URI and body
-/// to the receiver; dropping the server stops it.
-pub(crate) async fn fake_http_server_answering(
-    status: StatusCode,
-    body: &str,
-) -> (
-    String,
-    mpsc::UnboundedReceiver<(String, String)>,
-    HttpServer,
-) {
-    let body = Bytes::from(body.to_string());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let (request_sender, request_receiver) = mpsc::unbounded_channel();
-    let server = HttpServer::run(listener, move |request: Request<Incoming>, _| {
-        let request_sender = request_sender.clone();
-        let body = body.clone();
-        async move {
-            let uri = request.uri().to_string();
-            let received = request.into_body().collect().await.unwrap().to_bytes();
-            let received = String::from_utf8(received.to_vec()).unwrap();
-            request_sender.send((uri, received)).unwrap();
-            let mut response = Response::new(Full::new(body));
-            *response.status_mut() = status;
-            response
-        }
-    });
-    (url, request_receiver, server)
 }

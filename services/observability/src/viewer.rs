@@ -63,15 +63,11 @@ pub(crate) async fn viewer_app(
 
 #[cfg(test)]
 mod tests {
-    use http_server::HttpServer;
+    use http_server::testing::StubServer;
     use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
-    use tokio::sync::mpsc;
 
     use super::{Refusal, viewer_app};
-    use crate::{
-        app_verifier::AppVerifier,
-        test_support::{fake_http_server_answering, vts_answer},
-    };
+    use crate::{app_verifier::AppVerifier, test_support::vts_answer};
 
     fn bearer(token: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -79,19 +75,10 @@ mod tests {
         headers
     }
 
-    /// The VTS, with its request receiver, must outlive the verifier's requests.
-    async fn verifier_answering(
-        status: StatusCode,
-        body: &str,
-    ) -> (
-        AppVerifier,
-        (mpsc::UnboundedReceiver<(String, String)>, HttpServer),
-    ) {
-        let (vts_url, vts_requests, vts) = fake_http_server_answering(status, body).await;
-        (
-            AppVerifier::new(format!("{vts_url}/verify")).unwrap(),
-            (vts_requests, vts),
-        )
+    /// The VTS must outlive the verifier's requests.
+    async fn verifier_answering(status: StatusCode, body: String) -> (AppVerifier, StubServer) {
+        let vts = StubServer::run(status, body).await;
+        (AppVerifier::new(format!("{}/verify", vts.url())), vts)
     }
 
     #[tokio::test]
@@ -106,8 +93,8 @@ mod tests {
     #[tokio::test]
     async fn a_token_covering_its_whole_app_reads_that_app() {
         // Arrange
-        let (verifier, _verifier_requests) =
-            verifier_answering(StatusCode::OK, &vts_answer("app-1", Some(""))).await;
+        let (verifier, _vts) =
+            verifier_answering(StatusCode::OK, vts_answer("app-1", Some(""))).await;
 
         // Act / Assert
         assert_eq!(
@@ -119,10 +106,10 @@ mod tests {
     #[tokio::test]
     async fn a_token_for_part_of_its_app_or_for_publishing_only_is_forbidden() {
         // Arrange
-        let (room, _room_requests) =
-            verifier_answering(StatusCode::OK, &vts_answer("app-1", Some("room"))).await;
-        let (publisher, _publisher_requests) =
-            verifier_answering(StatusCode::OK, &vts_answer("app-1", None)).await;
+        let (room, _room_vts) =
+            verifier_answering(StatusCode::OK, vts_answer("app-1", Some("room"))).await;
+        let (publisher, _publisher_vts) =
+            verifier_answering(StatusCode::OK, vts_answer("app-1", None)).await;
 
         // Act / Assert
         assert_eq!(
@@ -138,8 +125,8 @@ mod tests {
     #[tokio::test]
     async fn a_rejected_or_malformed_token_is_unauthorized() {
         // Arrange
-        let (verifier, _verifier_requests) =
-            verifier_answering(StatusCode::UNAUTHORIZED, r#"{"error":"bad"}"#).await;
+        let (verifier, _vts) =
+            verifier_answering(StatusCode::UNAUTHORIZED, r#"{"error":"bad"}"#.to_string()).await;
         let mut basic = HeaderMap::new();
         basic.insert(AUTHORIZATION, "Basic abc".parse().unwrap());
 

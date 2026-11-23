@@ -26,9 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let verifier = config
         .vts_url
         .clone()
-        .map(AppVerifier::new)
-        .transpose()?
-        .map(Arc::new);
+        .map(|url| Arc::new(AppVerifier::new(url)));
     let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
         verifier: verifier.clone(),
         otlp_logs_endpoint: config.otlp_logs_endpoint.clone(),

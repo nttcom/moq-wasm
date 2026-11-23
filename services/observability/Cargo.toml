@@ -19,4 +19,5 @@ telemetry = { path = "../../crates/telemetry" }
 telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 
 [dev-dependencies]
+http-server = { path = "../../crates/http-server", features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
