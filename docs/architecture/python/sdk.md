@@ -201,7 +201,17 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   The three subclass `SessionEnded`, which is no
   `RuntimeError`: a request made after the session ended raises what ended
   it, so the loops that retry a refused request (`RemoteBroadcast.follow`)
-  end with it:
+  end with it. A read of a `Subscription`, of its groups or of a `Fetch`
+  raises it too, a read already waiting included,
+  whose native read it cancels: the native iterator would wait until the
+  native session gave its connection up, so a reader outside `run`, such
+  as `follow()` or `catalogs()`, would outlive
+  `close()`. The session's end also cancels the native read a timed-out
+  read left for the next one, and drops the item it took as it ends, also
+  when no read follows, so no read returns an object once the session
+  ended and none is kept. The session holds such an iterator only weakly:
+  one dropped while the session goes on is
+  collected, and the native read it left is cancelled with it:
 
 ```python
 async def work() -> None:
@@ -223,11 +233,32 @@ SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 origin keeps the delivery a track sent its objects with: registering it
 again with the other `datagram` switches a track that has no object yet and
 raises ValueError, from the native call, for one that has. A
+`subscribe*`, `watch_namespaces`, `publish_track` or `announce` cancelled
+before it returns, as by a timeout, keeps its native request running: once
+the relay accepts it, the session unsubscribes, ends the track (PUBLISH_DONE)
+or withdraws it, so nothing stays active without an owner, and a later
+watch of the prefix, writer of the track or announcement of the namespace
+waits for that. A
 `TrackWriter` has `write` and `write_group`, which return the group id an
 object went into when a subscriber took it, and `next_subscriber`; its
 objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
-through `groups()`, and has `largest`, `done()`, `set_forward`,
-`set_priority`, `request_new_group`, `end_before_group` and `close`. An
+through `groups()`, whose every call returns the same iterator, whichever
+is read first: reading the other raises RuntimeError at once, even while
+the first read still waits, as one a timeout cancelled does. One from
+`subscribe_current_group` or `subscribe_group_start`, whose native reader
+merges the joining FETCH into its objects, is read by object from the
+start, so reading its groups raises at once and leaves its objects
+readable. It has `largest`, `done()`, `set_forward`,
+`set_priority`, `request_new_group`, `end_before_group` and `close`, which
+sends the UNSUBSCRIBE at once, as the native `close` does, and returns an
+`asyncio.Future` of the caller's own: it resolves once the UNSUBSCRIBE was
+sent and raises what failed it, and cancelling it, or awaiting it in a
+task that is cancelled, leaves the UNSUBSCRIBE going for the other calls.
+`Subscription`, its `Group`s and `Fetch` wrap the native iterators so that
+a timeout loses no object: the native read stays with the iterator until a
+caller takes its result, so a read cancelled after the object arrived
+leaves it to the next read, and a read while another waits raises
+RuntimeError. An
 `Object` carries `group_id`, `subgroup_id`, `object_id`, `status`,
 `payload`, its `extension_headers` as `(id, value)` pairs and
 `timestamp_micros`, the LOC Timestamp a recorder aligns audio and video

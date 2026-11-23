@@ -1,8 +1,12 @@
 import asyncio
+import gc
+import weakref
 
 import pytest
 
 import moq_wasm
+from moq_wasm._subscription import _cancel
+from tests.cancellation import cancel_as_it_resumes, read
 from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room, within
 
 # Long enough for the relay to have forwarded an object it was going to forward.
@@ -22,6 +26,16 @@ async def subscribed_track(relay_url: str, namespace: list[str]):
     group_id = (await within(objects.__anext__())).group_id
     await within(objects.__anext__())
     return (publisher, holder), track, group_id
+
+
+def test_the_read_of_an_iterator_collected_after_its_loop_closed_is_left_without_an_error():
+    # Arrange
+    loop = asyncio.new_event_loop()
+    read = loop.create_future()
+    loop.close()
+
+    # Act / Assert
+    _cancel(read)
 
 
 async def test_a_subscription_without_forward_receives_once_forward_is_set(relay_url):
@@ -174,3 +188,209 @@ async def test_done_is_none_once_the_subscription_is_closed(relay_url):
     # Assert
     assert await within(subscription.done()) is None
     await close_all(subscriber, publisher)
+
+
+async def test_reading_groups_after_a_read_by_object_timed_out_raises_at_once(relay_url):
+    # Arrange: a read by object timed out with nothing published
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    subscription = await within(subscriber.subscribe(namespace, TRACK))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(subscription), NOTHING_ARRIVES_SECONDS)
+
+    # Act / Assert: no object needs to arrive for the refusal
+    with pytest.raises(RuntimeError, match="read by object"):
+        await asyncio.wait_for(anext(subscription.groups()), NOTHING_ARRIVES_SECONDS)
+    await close_all(subscriber, publisher)
+
+
+@pytest.mark.parametrize("subscribe", ["subscribe_current_group", "subscribe_group_start"])
+async def test_a_joining_subscription_refuses_groups_and_stays_readable_by_object(relay_url, subscribe):
+    # Arrange
+    namespace = [*room(), "alice"]
+    sessions, _, _ = await subscribed_track(relay_url, namespace)
+    late = await connect(relay_url)
+    arguments = (1000,) if subscribe == "subscribe_group_start" else ()
+    subscription = await within(getattr(late, subscribe)(namespace, TRACK, *arguments))
+
+    # Act
+    with pytest.raises(RuntimeError, match="read by object"):
+        await within(anext(subscription.groups()))
+    first = await within(anext(subscription))
+
+    # Assert: the native reader merges the joining FETCH, so reading by object is the valid mode
+    assert first.payload == b"o0"
+    await close_all(late, *reversed(sessions))
+
+
+async def test_an_object_a_cancelled_read_took_goes_to_the_next_read(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    reading = asyncio.create_task(read(objects))
+    cancelled = cancel_as_it_resumes(reading)
+
+    # Act
+    await within(track.write(b"one", new_group=True))
+    await within(cancelled)
+    await within(track.write(b"two"))
+
+    # Assert
+    with pytest.raises(asyncio.CancelledError):
+        await reading
+    assert (await within(anext(objects))).payload == b"one"
+    await close_all(subscriber, publisher)
+
+
+async def test_an_object_a_cancelled_read_of_a_group_took_goes_to_the_next_read(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    groups = (await within(subscriber.subscribe(namespace, TRACK))).groups()
+    await within(track.write(b"one", new_group=True))
+    group = await within(anext(groups))
+    reading = asyncio.create_task(read(group))
+    cancelled = cancel_as_it_resumes(reading)
+
+    # Act
+    await within(cancelled)
+    await within(track.write(b"two"))
+
+    # Assert
+    with pytest.raises(asyncio.CancelledError):
+        await reading
+    assert (await within(anext(group))).payload == b"one"
+    await close_all(subscriber, publisher)
+
+
+async def test_a_group_a_cancelled_read_took_goes_to_the_next_groups_call(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    subscription = await within(subscriber.subscribe(namespace, TRACK))
+    reading = asyncio.create_task(read(subscription.groups()))
+    cancelled = cancel_as_it_resumes(reading)
+
+    # Act
+    await within(track.write(b"one", new_group=True))
+    await within(cancelled)
+
+    # Assert
+    with pytest.raises(asyncio.CancelledError):
+        await reading
+    group = await within(anext(subscription.groups()))
+    assert (await within(anext(group))).payload == b"one"
+    await close_all(subscriber, publisher)
+
+
+async def test_an_object_a_cancelled_read_of_a_fetch_took_goes_to_the_next_read(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    sessions, _, group_id = await subscribed_track(relay_url, namespace)
+    late = await connect(relay_url)
+    whole_group = moq_wasm.Location(group_id, 0)
+    fetch = await within(late.fetch(namespace, TRACK, whole_group, whole_group))
+    reading = asyncio.create_task(read(fetch))
+    cancelled = cancel_as_it_resumes(reading)
+
+    # Act
+    await within(cancelled)
+
+    # Assert
+    with pytest.raises(asyncio.CancelledError):
+        await reading
+    assert [obj.payload async for obj in fetch] == [b"o0", b"o1"]
+    await close_all(late, *reversed(sessions))
+
+
+async def reader_after_one_object(subscriber: moq_wasm.Session, track: moq_wasm.TrackWriter, namespace):
+    """A subscription to the track that read one object."""
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    first = asyncio.ensure_future(anext(objects))
+    await track.write(b"o0", new_group=True)
+    await within(first)
+    return objects
+
+
+async def test_a_task_that_read_an_object_is_not_kept_by_the_open_session_once_it_ended(relay_url):
+    # Arrange: a task read an object, and the subscriber's session stays open
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    reading = asyncio.create_task(read(objects))
+    await within(track.write(b"one", new_group=True))
+    await within(reading)
+    task = weakref.ref(reading)
+
+    # Act: once the step that took the task's result, whose handle holds the task, ended
+    del reading
+    await asyncio.sleep(0)
+    gc.collect()
+
+    # Assert
+    assert task() is None
+    await close_all(subscriber, publisher)
+
+
+async def test_closing_the_session_ends_a_waiting_read_with_session_closed(relay_url):
+    # Arrange: the reader waits for its next object
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await reader_after_one_object(subscriber, track, namespace)
+    waiting = asyncio.ensure_future(anext(objects))
+    await asyncio.sleep(0.1)
+
+    # Act
+    await within(subscriber.close())
+
+    # Assert
+    with pytest.raises(moq_wasm.SessionClosed):
+        await within(waiting)
+    await publisher.close()
+
+
+async def test_an_object_a_timed_out_read_left_is_not_read_once_the_session_closed(relay_url):
+    # Arrange: a read timed out, and the object written after it reached the read it left
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(objects), 0.1)
+    await track.write(b"o0", new_group=True)
+    await asyncio.sleep(NOTHING_ARRIVES_SECONDS)
+
+    # Act
+    await within(subscriber.close())
+
+    # Assert
+    with pytest.raises(moq_wasm.SessionClosed):
+        await within(anext(objects))
+    await publisher.close()
+
+
+async def test_the_session_closing_lets_go_of_an_object_a_timed_out_read_left(relay_url):
+    # Arrange: a read timed out, and the object written after it reached the read it left
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(objects), 0.1)
+    await track.write(b"o0", new_group=True)
+    await asyncio.sleep(NOTHING_ARRIVES_SECONDS)
+
+    # Act
+    await within(subscriber.close())
+    await asyncio.sleep(0)
+
+    # Assert: no read is needed for the subscription to drop the object
+    assert objects._objects._pending is None
+    await publisher.close()

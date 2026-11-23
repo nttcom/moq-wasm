@@ -11,6 +11,7 @@ import pytest
 
 import moq_wasm
 from moq_wasm import _native
+from tests.cancellation import cancel_as_it_resumes
 from tests.conftest import REPO_ROOT, started_relay
 from tests.relay_sessions import TIMEOUT_SECONDS, TRACK, connect, publisher_with_track, room, within
 
@@ -43,6 +44,63 @@ async def test_a_published_namespace_and_its_withdrawal_reach_the_prefix_subscri
     assert (published.namespace, published.active) == ([*prefix, "alice"], True)
     assert (withdrawn.namespace, withdrawn.active) == ([*prefix, "alice"], False)
     await watcher.close()
+
+
+async def test_an_announce_cancelled_as_the_relay_accepted_it_withdraws_the_namespace(relay_url):
+    # Arrange
+    prefix = room()
+    watcher = await connect(relay_url)
+    events = await within(watcher.watch_namespaces(prefix))
+    publisher = await connect(relay_url)
+    announcing = asyncio.create_task(publisher.announce([*prefix, "alice"]))
+
+    # Act
+    await within(cancel_as_it_resumes(announcing))
+    published = await within(anext(events))
+    withdrawn = await within(anext(events))
+
+    # Assert
+    assert (published.active, withdrawn.active) == (True, False)
+    await publisher.close()
+    await watcher.close()
+
+
+async def test_a_watch_cancelled_as_the_relay_accepted_it_lets_the_session_watch_its_prefix_again(relay_url):
+    # Arrange
+    prefix = room()
+    watcher = await connect(relay_url)
+    watching = asyncio.create_task(watcher.watch_namespaces(prefix))
+    await within(cancel_as_it_resumes(watching))
+    publisher = await connect(relay_url)
+
+    # Act
+    again = await within(watcher.watch_namespaces(prefix))
+    await publisher.announce([*prefix, "alice"])
+
+    # Assert
+    assert (await within(anext(again))).namespace == [*prefix, "alice"]
+    await publisher.close()
+    await watcher.close()
+
+
+async def test_a_subscribe_cancelled_as_the_relay_accepted_it_unsubscribes(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    subscribing = asyncio.create_task(subscriber.subscribe(namespace, TRACK))
+
+    # Act
+    await within(cancel_as_it_resumes(subscribing))
+
+    # Assert: the relay stops taking the publisher's objects once nobody subscribes
+    async def taken_by_nobody() -> None:
+        while await track.write(b"v", new_group=True) is not None:
+            await asyncio.sleep(0.05)
+
+    await within(taken_by_nobody())
+    await subscriber.close()
+    await publisher.close()
 
 
 async def test_current_group_brings_the_object_the_relay_already_holds(relay_url):
