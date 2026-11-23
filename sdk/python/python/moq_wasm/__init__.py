@@ -2,7 +2,7 @@
 .. include:: ../../README.md
 """
 
-from moq_wasm._errors import RequestErrorCode
+from moq_wasm._errors import RequestErrorCode, SessionEnded
 from moq_wasm._log import init, report_log
 from moq_wasm._telemetry import TelemetryOptions
 from moq_wasm._native import (
@@ -44,6 +44,7 @@ __all__ = [
     "RequestErrorCode",
     "Session",
     "SessionClosed",
+    "SessionEnded",
     "Subscription",
     "TelemetryOptions",
     "TokenExpired",
