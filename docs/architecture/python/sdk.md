@@ -617,8 +617,12 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
 - **`Catalog`** is a typed draft-ietf-moq-msf-02 catalog (`tracks` of
   `CatalogTrack` with `name`, `namespace`, `role`, `packaging`, `codec`,
   `bitrate`, `width`, `height`, `framerate`, `samplerate`, and every field in
-  `fields`). `select` picks one track by its fields; `codec="avc1"` matches
-  `avc1.42e01f`.
+  `fields`), with every field of its root in `fields`, `initDataList`
+  included. `select` picks one track by its fields; `codec="avc1"` matches
+  `avc1.42e01f`. `init_data(track)` resolves the track's `initRef` in the
+  same catalog's `initDataList` and decodes an `inline` entry from Base64,
+  such as the AudioSpecificConfig of an AAC track or a CMAF track's
+  initialization segment.
   `parse_catalog`'s dict stays in the bindings.
 
 ### pipecat: `moq_wasm.pipecat`
@@ -791,7 +795,66 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   that does not decode, its decoder refusing three of its objects in a row
   or the group ending without a picture after a refusal, raises the
   decoder's error, so the transport fails the track instead of waiting on
-  a broken stream; a group joined midway decodes to nothing.
+  a broken stream; a group joined midway decodes to nothing. An H.264 or
+  H.265 object of a group without a Video Config is read as Annex B when
+  it starts with a 4-byte or 3-byte start
+  code, and else as 4-byte length prefixes (draft-ietf-moq-loc-04
+  §2.1.3–2.1.4). A start code followed by bytes that 4-byte length
+  prefixes would also cover exactly, as a 3-byte one followed by the first
+  bytes of a 256 to 511 byte length, is read as the group's earlier
+  objects were, so a short Annex B slice of a group that began Annex B
+  is not skipped as a length; in a group's first object, a 4-byte start
+  code is Annex B and a 3-byte one a length. Length prefixes that cover the
+  payload exactly are rewritten as start codes once the group carried an
+  SPS in band, as an `avc3` or `hev1` track may, so the decoder reads
+  them without extradata. A length-prefixed object before the group's
+  parameter sets, as when a subscriber joined after the only object
+  carrying the Video Config, and one readable neither way, are skipped
+  without reaching the decoder, which could make garbage pictures of
+  them, until a group carrying a Video Config arrives; the first one
+  skipped in a group joined at its keyframe, which would have carried the
+  parameter sets in band, logs a warning, since only a Video Config given
+  beforehand, as the catalog's initialization data, decodes them. A
+  group's decoder takes the LOC Video Config property
+  (draft-ietf-moq-loc-04 §2.3.2.1) as its extradata, so length-prefixed
+  H.264 with its avcC record decodes too: the one its first object carries,
+  or else the one the group before it decoded with last, and a later
+  keyframe of the group carrying another one starts a new decoder with it.
+  A group without one of its own that opens before the group before it, as
+  the groups' streams race, holds its objects until that group arrives or
+  closes, so a configuration change in the late group reaches it. Taken
+  from a group still open, the configuration is provisional for the
+  group's first objects: a later keyframe of the open group changing it,
+  delayed as the streams race, decodes those objects again with the new
+  one and gives their pictures again, since a followed track skips the End
+  of Group that would tell when the open group's configuration is final,
+  and holding every group until then would delay its pictures. A group
+  that decoded too many objects to decode them again keeps the old one, but
+  the configuration it passes on is tracked apart from its decoder, so the
+  groups after it that inherit it take the new one, as they do when the
+  group before it, taken as lost, arrives late with a configuration of its
+  own. A held
+  object carrying a Video Config of its own starts the group at it. The
+  objects a group holds are bounded (`MAX_HELD_OBJECTS`, `MAX_HELD_BYTES`):
+  once it holds that many, a later group opens, it ends or the objects end,
+  the group before it is taken as lost and the group decodes with the
+  Video Config of the newest earlier group that had one, so a lost group
+  does not stop the pictures of the groups after it. Each such group
+  records which group's own configuration it took, so a group between the
+  two arriving late passes its own on to it and to the groups after it,
+  across the groups still missing, up to the next group with one of its
+  own, even one equal to the configuration that group had inherited, which
+  makes it their supplier from then on. A Video Config the reader knows
+  beforehand, such as the track's catalog initialization data, is given
+  as `config`: the groups that have neither one of their own nor an
+  earlier group with one decode with it, so a subscriber that joined past
+  the only object carrying one still decodes a length-prefixed track.
+  When the lost group
+  had changed the configuration, the pictures come out wrong or the
+  decoder refuses them, and a group joined at its keyframe that the
+  decoder refuses fails the track as above. A track whose
+  objects carried no Video Config yet (parameter sets in band) and the
+  first group a subscription receives decode without waiting.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.

@@ -305,6 +305,10 @@ async def test_decoded_pictures_carry_the_location_of_their_object_and_are_thinn
     assert every[0].picture.width == SIZE[0]
 
 
+# The LOC Video Config property (draft-ietf-moq-loc-04 §2.3.2.1).
+VIDEO_CONFIG_ID = 0x0D
+
+
 def nal_units(annex_b: bytes) -> list[bytes]:
     """The NAL units of an H.264 access unit in Annex B."""
     return [unit.rstrip(b"\x00") for unit in annex_b.split(b"\x00\x00\x01") if unit.rstrip(b"\x00")]
@@ -317,6 +321,11 @@ def length_prefixed(annex_b: bytes) -> tuple[bytes, bytes, bytes]:
     pps = next((unit for unit in units if unit[0] & 0x1F == 8), b"")
     rest = b"".join(len(unit).to_bytes(4, "big") + unit for unit in units if unit[0] & 0x1F not in (7, 8))
     return sps, pps, rest
+
+
+def avc_decoder_configuration(sps: bytes, pps: bytes) -> bytes:
+    """The avcC record of one SPS and one PPS, with 4-byte lengths (ISO/IEC 14496-15 §5.3.3.1)."""
+    return bytes([1, *sps[1:4], 0xFF, 0xE1]) + len(sps).to_bytes(2, "big") + sps + b"\x01" + len(pps).to_bytes(2, "big") + pps
 
 
 def b_frame_groups(groups: int, pictures_per_group: int) -> list[list[tuple[bytes, int]]]:
@@ -1183,6 +1192,472 @@ async def test_a_closed_decoding_whose_read_waits_on_the_objects_keeps_no_decode
     gate.set()
     with pytest.raises(StopAsyncIteration):
         await within(reading)
+
+
+async def test_length_prefixed_h264_decodes_with_the_video_config_of_the_first_keyframe():
+    # Arrange: two groups of avcC H.264; only the first object carries the Video Config
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    groups = []
+    for values in ((0, 10, 20), (30, 40, 50)):
+        encoder.request_keyframe()
+        groups.append([length_prefixed(b"".join(encoder.encode(picture(value), SIZE, "RGB"))) for value in values])
+    sps, pps, _ = groups[0][0]
+    config = avc_decoder_configuration(sps, pps)
+
+    async def objects():
+        for group_id, group in enumerate(groups):
+            for object_id, (_, _, payload) in enumerate(group):
+                headers = [(VIDEO_CONFIG_ID, config)] if (group_id, object_id) == (0, 0) else []
+                yield video_object(group_id, object_id, payload, extension_headers=headers)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(g, o) for g in (0, 1) for o in range(3)]
+
+
+async def test_length_prefixed_h264_joined_after_its_only_video_config_decodes_to_nothing():
+    # Arrange: two groups of avcC H.264, only the first object carrying the Video Config, joined at
+    # the first group's second object
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    groups = []
+    for values in ((0, 10, 20), (30, 40, 50)):
+        encoder.request_keyframe()
+        groups.append([length_prefixed(b"".join(encoder.encode(picture(value), SIZE, "RGB")))[2] for value in values])
+
+    async def objects():
+        for group_id, group in enumerate(groups):
+            for object_id, payload in enumerate(group):
+                if (group_id, object_id) != (0, 0):
+                    yield video_object(group_id, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: without the Video Config, its keyframe group is skipped rather than raising
+    assert decoded == []
+
+
+async def test_length_prefixed_h264_joined_past_its_video_config_is_skipped_with_one_warning_until_a_group_brings_one(caplog):
+    # Arrange: joined at the second object of group 0, whose first alone carries the Video Config;
+    # group 1 carries none, and group 2 carries one again
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    _, group_0 = length_prefixed_group(encoder, 3)
+    _, group_1 = length_prefixed_group(encoder, 2)
+    config, group_2 = length_prefixed_group(encoder, 2)
+
+    async def objects():
+        yield video_object(0, 1, group_0[1])
+        yield video_object(0, 2, group_0[2])
+        for object_id, payload in enumerate(group_1):
+            yield video_object(1, object_id, payload)
+        yield video_object(2, 0, group_2[0], extension_headers=[(VIDEO_CONFIG_ID, config)])
+        yield video_object(2, 1, group_2[1])
+
+    # Act
+    with caplog.at_level("WARNING", logger="moq_wasm"):
+        decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: the warning comes from group 1, joined at its keyframe without parameter sets
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(2, 0), (2, 1)]
+    assert len([record for record in caplog.records if "Video Config" in record.getMessage()]) == 1
+
+
+async def test_length_prefixed_h264_with_its_parameter_sets_in_band_decodes_without_a_video_config(caplog):
+    # Arrange: an avc3 group whose keyframe carries its SPS and PPS, each NAL unit after a 4-byte
+    # length, and no object a Video Config
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    encoder.request_keyframe()
+    payloads = [
+        b"".join(len(unit).to_bytes(4, "big") + unit for unit in nal_units(b"".join(encoder.encode(picture(value), SIZE, "RGB"))))
+        for value in (0, 10, 20, 30, 40)
+    ]
+
+    async def objects():
+        for object_id, payload in enumerate(payloads):
+            yield video_object(0, object_id, payload)
+
+    # Act
+    with caplog.at_level("WARNING", logger="moq_wasm"):
+        decoded = [d async for d in decode_pictures(objects(), "avc3.42e01f")]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(0, object_id) for object_id in range(5)]
+    assert not [record for record in caplog.records if "Video Config" in record.getMessage()]
+
+
+async def test_annex_b_h264_with_3_byte_start_codes_decodes_without_a_video_config():
+    # Arrange: a group whose every NAL unit follows a 3-byte start code
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    encoder.request_keyframe()
+    payloads = [
+        b"".join(b"\x00\x00\x01" + unit for unit in nal_units(b"".join(encoder.encode(picture(value), SIZE, "RGB"))))
+        for value in (0, 10, 20)
+    ]
+
+    async def objects():
+        for object_id, payload in enumerate(payloads):
+            yield video_object(0, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(0, 0), (0, 1), (0, 2)]
+
+
+async def test_an_annex_b_object_whose_3_byte_start_code_reads_as_a_fitting_length_decodes_as_annex_b():
+    # Arrange: a group of 3-byte start codes whose second object, a P-slice padded with trailing
+    # zeros to 325 bytes, starts `00 00 01 41`, a 4-byte length of 321 that covers it exactly
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    encoder.request_keyframe()
+    keyframe, p_slice = (nal_units(b"".join(encoder.encode(picture(value), SIZE, "RGB"))) for value in (0, 10))
+    padded = (b"\x00\x00\x01" + p_slice[0]).ljust(325, b"\x00")
+    assert p_slice[0][0] == 0x41 and codecs._length_prefixed_units(padded) is not None
+
+    async def objects():
+        yield video_object(0, 0, b"".join(b"\x00\x00\x01" + unit for unit in keyframe))
+        yield video_object(0, 1, padded)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(0, 0), (0, 1)]
+
+
+async def test_length_prefixed_h264_without_a_video_config_decodes_with_the_one_given():
+    # Arrange: two groups of avcC H.264 joined past the only object carrying the Video Config,
+    # whose record the reader knows beforehand, as from the catalog
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    config, group_0 = length_prefixed_group(encoder, 3)
+    _, group_1 = length_prefixed_group(encoder, 3)
+
+    async def objects():
+        for group_id, group in enumerate((group_0, group_1)):
+            for object_id, payload in enumerate(group):
+                if (group_id, object_id) != (0, 0):
+                    yield video_object(group_id, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f", config=config)]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(1, 0), (1, 1), (1, 2)]
+
+
+HALF_SIZE = (SIZE[0] // 2, SIZE[1] // 2)
+
+
+def length_prefixed_group(encoder: VideoEncoder, count: int) -> tuple[bytes, list[bytes]]:
+    """The avcC record and the length-prefixed objects of a group of `count` pictures."""
+    encoder.request_keyframe()
+    units = [length_prefixed(b"".join(encoder.encode(picture(value * 10), SIZE, "RGB"))) for value in range(count)]
+    sps, pps, _ = units[0]
+    return avc_decoder_configuration(sps, pps), [payload for _, _, payload in units]
+
+
+async def test_each_group_decodes_with_the_video_config_of_its_own_or_of_the_group_before_it():
+    # Arrange: group 0 is full size; groups 1 and 2 are half size, and only group 1 carries its config;
+    # group 0 arrives late, after group 1 opened
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, group_0 = length_prefixed_group(full, 2)
+    half_config, group_1 = length_prefixed_group(half, 2)
+    _, group_2 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(1, 0, group_1[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, group_0[1])
+        yield video_object(1, 1, group_1[1])
+        for object_id, payload in enumerate(group_2):
+            yield video_object(2, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    sizes = {(d.location.group_id, d.location.object_id): (d.picture.width, d.picture.height) for d in decoded}
+    assert sizes == {(0, 0): SIZE, (0, 1): SIZE, (1, 0): HALF_SIZE, (1, 1): HALF_SIZE, (2, 0): HALF_SIZE, (2, 1): HALF_SIZE}
+
+
+async def test_a_group_without_a_video_config_opened_before_the_group_before_it_decodes_with_that_ones():
+    # Arrange: group 0 is full size; groups 1 and 2 are half size, and only group 1 carries its config;
+    # group 2 opens before group 1
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, group_0 = length_prefixed_group(full, 2)
+    half_config, group_1 = length_prefixed_group(half, 2)
+    _, group_2 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, group_0[1])
+        for object_id, payload in enumerate(group_2):
+            yield video_object(2, object_id, payload)
+        yield video_object(1, 0, group_1[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(1, 1, group_1[1])
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    sizes = {(d.location.group_id, d.location.object_id): (d.picture.width, d.picture.height) for d in decoded}
+    assert sizes == {(0, 0): SIZE, (0, 1): SIZE, (1, 0): HALF_SIZE, (1, 1): HALF_SIZE, (2, 0): HALF_SIZE, (2, 1): HALF_SIZE}
+
+
+async def test_a_late_group_carrying_the_first_video_config_of_its_own_passes_it_on_to_the_groups_after_it():
+    # Arrange: groups 0 and 2 are full size and groups 1 and 3 half size; group 2 holds as many
+    # objects as it may before group 1, the first with the half-size config, arrives
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, group_0 = length_prefixed_group(full, 2)
+    _, group_2 = length_prefixed_group(full, codecs.MAX_HELD_OBJECTS)
+    half_config, group_1 = length_prefixed_group(half, 2)
+    _, group_3 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, group_0[1])
+        for object_id, payload in enumerate(group_2):
+            yield video_object(2, object_id, payload)
+        yield video_object(1, 0, group_1[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(1, 1, group_1[1])
+        for object_id, payload in enumerate(group_3):
+            yield video_object(3, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: group 2 had decoded with group 0's config, and passes group 1's on
+    sizes = {(d.location.group_id, d.location.object_id): (d.picture.width, d.picture.height) for d in decoded}
+    assert {location: size for location, size in sizes.items() if location[0] == 3} == {(3, 0): HALF_SIZE, (3, 1): HALF_SIZE}
+    assert {size for location, size in sizes.items() if location[0] in (0, 2)} == {SIZE}
+
+
+async def test_a_late_groups_video_config_reaches_the_groups_after_a_lost_one():
+    # Arrange: group 2 is lost; groups 3 and 4 open before group 1, which changes the config to half
+    # size, and groups 5 and 6 open after it; groups 1 to 6 are half size
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, group_0 = length_prefixed_group(full, 2)
+    half_config, group_1 = length_prefixed_group(half, 2)
+    _, group_3 = length_prefixed_group(half, 2)
+    _, group_4 = length_prefixed_group(half, 2)
+    _, group_5 = length_prefixed_group(half, 2)
+    _, group_6 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, group_0[1])
+        for group_id, group in ((3, group_3), (4, group_4)):
+            for object_id, payload in enumerate(group):
+                yield video_object(group_id, object_id, payload)
+        yield video_object(1, 0, group_1[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(1, 1, group_1[1])
+        for group_id, group in ((5, group_5), (6, group_6)):
+            for object_id, payload in enumerate(group):
+                yield video_object(group_id, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: group 3 had decoded with group 0's config, and passes group 1's on
+    sizes = {(d.location.group_id, d.location.object_id): (d.picture.width, d.picture.height) for d in decoded}
+    assert {location: size for location, size in sizes.items() if location[0] in (5, 6)} == {
+        (group_id, object_id): HALF_SIZE for group_id in (5, 6) for object_id in (0, 1)
+    }
+
+
+async def test_a_late_groups_video_config_does_not_reach_the_groups_after_a_newer_one_carrying_its_own():
+    # Arrange: group 2 is lost; groups 3 and 4 open before group 1 and inherit group 0's full-size
+    # config, which group 3 then carries itself; late group 1 brings a half-size one; groups 0 and
+    # 3 to 5 are full size
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, group_0 = length_prefixed_group(full, 2)
+    _, group_3 = length_prefixed_group(full, 3)
+    _, group_4 = length_prefixed_group(full, 2)
+    _, group_5 = length_prefixed_group(full, 2)
+    half_config, group_1 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, group_0[1])
+        yield video_object(3, 0, group_3[0])
+        yield video_object(3, 1, group_3[1])
+        yield video_object(4, 0, group_4[0])
+        yield video_object(3, 2, group_3[2], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(4, 1, group_4[1])
+        yield video_object(1, 0, group_1[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(1, 1, group_1[1])
+        for object_id, payload in enumerate(group_5):
+            yield video_object(5, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: groups 4 and 5 keep group 3's config
+    sizes = [((d.location.group_id, d.location.object_id), (d.picture.width, d.picture.height)) for d in decoded]
+    assert {size for location, size in sizes if location[0] in (4, 5)} == {SIZE}
+    assert {location for location, _ in sizes if location[0] in (4, 5)} == {(4, 0), (4, 1), (5, 0), (5, 1)}
+
+
+@pytest.mark.parametrize("end_of_group", [True, False])
+async def test_the_groups_after_a_lost_group_decode_with_the_video_config_of_an_earlier_group(end_of_group):
+    # Arrange: only group 0 carries the Video Config, and group 1 never comes; with End of Group
+    # status objects or without
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    groups = [length_prefixed_group(encoder, 2) for _ in range(9)]
+    config = groups[0][0]
+
+    async def objects():
+        for group_id, (_, payloads) in enumerate(groups):
+            if group_id == 1:
+                continue
+            for object_id, payload in enumerate(payloads):
+                headers = [(VIDEO_CONFIG_ID, config)] if (group_id, object_id) == (0, 0) else []
+                yield video_object(group_id, object_id, payload, extension_headers=headers)
+            if end_of_group:
+                yield video_object(group_id, len(payloads), b"", status=END_OF_GROUP)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    locations = sorted((d.location.group_id, d.location.object_id) for d in decoded)
+    assert locations == [(g, o) for g in (0, *range(2, 9)) for o in range(2)]
+
+
+async def test_a_group_whose_predecessor_was_lost_starts_at_a_keyframe_carrying_its_own_video_config():
+    # Arrange: group 0 is full size; group 1 never comes; group 2 is half size, and its second
+    # keyframe carries its Video Config
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, group_0 = length_prefixed_group(full, 2)
+    half_config, first = length_prefixed_group(half, 1)
+    _, second = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, group_0[1])
+        yield video_object(2, 0, first[0])
+        yield video_object(2, 1, second[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(2, 2, second[1])
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: the object before the keyframe is dropped
+    sizes = {(d.location.group_id, d.location.object_id): (d.picture.width, d.picture.height) for d in decoded}
+    assert sizes == {(0, 0): SIZE, (0, 1): SIZE, (2, 1): HALF_SIZE, (2, 2): HALF_SIZE}
+
+
+@pytest.mark.parametrize("bound", ["objects", "bytes"])
+async def test_a_group_whose_predecessor_was_lost_decodes_once_it_holds_too_much(monkeypatch, bound):
+    # Arrange: only group 0 carries the Video Config, group 1 never comes, and group 2 holds as
+    # many objects as it may, or more bytes, before the track stalls
+    if bound == "bytes":
+        monkeypatch.setattr(codecs, "MAX_HELD_BYTES", 1)
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    config, group_0 = length_prefixed_group(encoder, 1)
+    _, group_2 = length_prefixed_group(encoder, codecs.MAX_HELD_OBJECTS)
+    stalled = asyncio.Event()
+
+    async def objects():
+        yield video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, config)])
+        for object_id, payload in enumerate(group_2):
+            yield video_object(2, object_id, payload)
+        await stalled.wait()
+
+    pictures = decode_pictures(objects(), "avc1.42e01f")
+
+    # Act
+    decoded = [await within(anext(pictures)) for _ in range(2)]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(0, 0), (2, 0)]
+    await pictures.aclose()
+
+
+async def test_a_group_opened_before_its_predecessor_changed_its_video_config_decodes_with_the_new_one():
+    # Arrange: group 0 starts full size and its second keyframe changes to half size, which group 1
+    # is, without a Video Config of its own; group 1 opens before that keyframe arrives, and no End
+    # of Group closes group 0, as a followed track skips status objects
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, first = length_prefixed_group(full, 1)
+    half_config, second = length_prefixed_group(half, 1)
+    _, group_1 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, first[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(1, 0, group_1[0])
+        yield video_object(0, 1, second[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(1, 1, group_1[1])
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert: the picture group 1 gave before the change is given again, at the new size
+    given = [((d.location.group_id, d.location.object_id), (d.picture.width, d.picture.height)) for d in decoded]
+    assert given[2:] == [((0, 1), HALF_SIZE), ((1, 0), HALF_SIZE), ((1, 1), HALF_SIZE)]
+
+
+async def test_the_groups_after_one_that_can_no_longer_take_its_predecessors_new_video_config_decode_with_it():
+    # Arrange: as above, but group 1 decoded more objects than it can decode again before group
+    # 0's keyframe changes the Video Config; groups 2 and 3 open after the change, without one of
+    # their own
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, first = length_prefixed_group(full, 1)
+    half_config, second = length_prefixed_group(half, 1)
+    _, group_1 = length_prefixed_group(half, codecs.MAX_HELD_OBJECTS + 1)
+    _, group_2 = length_prefixed_group(half, 2)
+    _, group_3 = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, first[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        for object_id, payload in enumerate(group_1):
+            yield video_object(1, object_id, payload)
+        yield video_object(0, 1, second[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        for group_id, group in ((2, group_2), (3, group_3)):
+            for object_id, payload in enumerate(group):
+                yield video_object(group_id, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    sizes = {(d.location.group_id, d.location.object_id): (d.picture.width, d.picture.height) for d in decoded if d.location.group_id >= 2}
+    assert sizes == {(2, 0): HALF_SIZE, (2, 1): HALF_SIZE, (3, 0): HALF_SIZE, (3, 1): HALF_SIZE}
+
+
+async def test_a_keyframe_carrying_another_video_config_within_a_group_reconfigures_its_decoder():
+    # Arrange: one group whose second keyframe changes the size
+    full = VideoEncoder("H264", *SIZE, 30)
+    half = VideoEncoder("H264", *HALF_SIZE, 30)
+    full_config, first = length_prefixed_group(full, 2)
+    half_config, second = length_prefixed_group(half, 2)
+
+    async def objects():
+        yield video_object(0, 0, first[0], extension_headers=[(VIDEO_CONFIG_ID, full_config)])
+        yield video_object(0, 1, first[1])
+        yield video_object(0, 2, second[0], extension_headers=[(VIDEO_CONFIG_ID, half_config)])
+        yield video_object(0, 3, second[1])
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    assert [(d.location.object_id, (d.picture.width, d.picture.height)) for d in decoded] == [
+        (0, SIZE),
+        (1, SIZE),
+        (2, HALF_SIZE),
+        (3, HALF_SIZE),
+    ]
 
 
 class TrackedLocation:

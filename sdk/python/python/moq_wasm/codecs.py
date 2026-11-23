@@ -3,6 +3,7 @@ carries no codec of its own (docs/architecture/python/sdk.md "No codec in the wh
 
 import asyncio
 import functools
+import logging
 import operator
 import time
 from collections import deque
@@ -19,19 +20,40 @@ from moq_wasm._native import Location, Object
 from moq_wasm._once import retrieve
 from moq_wasm.media import Following
 
+logger = logging.getLogger("moq_wasm")
+
 OPUS_SAMPLE_RATE = 48_000
 OPUS_BITRATE = 32_000
 
 # The Object Status of an object that ends its group (draft-ietf-moq-transport-14 §10.2.1.1).
 END_OF_GROUP_STATUS = 3
+# The LOC Video Config property: the codec's extradata, such as an H.264 avcC record
+# (draft-ietf-moq-loc-04 §2.3.2.1).
+VIDEO_CONFIG_ID = 0x0D
 # How many groups `decode_pictures` decodes at once: the objects of groups in flight interleave, and a
 # group still open when this many newer ones opened is taken as complete.
 MAX_OPEN_GROUPS = 4
 # How many complete groups `decode_pictures` remembers, to skip their late objects.
 FINISHED_GROUPS_KEPT = 16
+# How many objects, and how many bytes of their payloads, a group without a Video Config of its own
+# holds while the group before it has not arrived, before `decode_pictures` takes that group as late
+# or lost.
+MAX_HELD_OBJECTS = 5
+MAX_HELD_BYTES = 4 * 1024 * 1024
 # How many objects in a row `decode_pictures` lets the decoder of a group joined at its keyframe
 # refuse before it takes the track as undecodable.
 MAX_REFUSED_OBJECTS = 3
+# The first elements of the codec strings whose payloads may be length-prefixed, which only the Video
+# Config tells how to read (draft-ietf-moq-loc-04 §2.1.3).
+LENGTH_PREFIXED_CODECS = ("avc1", "avc3", "hvc1", "hev1")
+# The 4-byte start code an Annex B payload starts with, and the 3-byte one a track without a Video
+# Config may use instead (draft-ietf-moq-loc-04 §2.1.4).
+START_CODE = b"\x00\x00\x00\x01"
+SHORT_START_CODE = b"\x00\x00\x01"
+# The NAL unit type of a sequence parameter set: H.264's (ITU-T H.264 Table 7-1) and H.265's (ITU-T
+# H.265 Table 7-1).
+H264_SPS = 7
+HEVC_SPS = 33
 
 # A video codec string's first element, as the catalog writes it, to the PyAV decoders that decode
 # it in software, the preferred first. FFmpeg's own AV1 decoder (`av1`) is left out: it decodes only
@@ -140,15 +162,18 @@ class VideoDecoder:
     each group gets a decoder of its own; a group joined in the middle decodes to nothing. A
     codec with reordered frames (H.264 B-frames) returns a picture a few objects after the one it
     was decoded from, and its last ones from `flush`; each comes with the Location given with
-    its object."""
+    its object. `config` is the track's LOC Video Config, the codec's extradata, which
+    length-prefixed H.264 and H.265 need (an avcC or hvcC record)."""
 
-    def __init__(self, codec: str):
+    def __init__(self, codec: str, config: bytes | None = None):
         name = _decoder_name(codec)
         if name is None:
             raise ValueError(f"no decoder for video codec {codec}")
         self._decoder = cast(av.VideoCodecContext, av.CodecContext.create(name, "r"))
         if name in THREADLESS_DECODERS:
             self._decoder.thread_count = 1
+        if config is not None:
+            self._decoder.extradata = config
         # Each packet carries the Location of its object through the decoder to the pictures it
         # makes, so a packet that makes none, as an invisible VP8 frame, leaves nothing behind.
         self._decoder.copy_opaque = True
@@ -182,20 +207,58 @@ class VideoDecoder:
 
 
 class _Group:
-    """The decoding of one group of a video track. A group joined at its keyframe, its object 0,
+    """The decoding of one group of a video track, with the LOC Video Config it started with. An
+    object carrying another Video Config, a keyframe whose parameters changed, starts a decoder with
+    it, after the pictures the previous one held back. A group joined at its keyframe, its object 0,
     should decode: the decoder refusing `MAX_REFUSED_OBJECTS` of its objects in a row, or the group
-    ending without a picture after it refused one, raises the decoder's error. A group joined
-    midway decodes to nothing, which is expected."""
+    ending without a picture after it refused one, raises the decoder's error. A group joined midway
+    decodes to nothing, which is expected. An H.264 or H.265 object of a group without a Video
+    Config is read as Annex B when it starts with a start code, 4-byte or 3-byte, and else as 4-byte
+    length prefixes; one that reads either way is read as the group's earlier objects were. Length
+    prefixes are rewritten as start codes once the group carried its parameter sets in band (an
+    SPS), as `avc3` and `hev1` may. One readable neither way, or length-prefixed before the group's
+    parameter sets, is skipped without being decoded, which could make garbage of it, and, in a
+    group joined at its keyframe, which would have carried them, `unconfigured` is called."""
 
-    def __init__(self, codec: str, from_keyframe: bool):
-        self._decoder = VideoDecoder(codec)
+    def __init__(self, codec: str, config: bytes | None, from_keyframe: bool, unconfigured: Callable[[], None]):
+        self._codec = codec
+        self._unconfigured = unconfigured
+        family = codec.split(".")[0]
+        self._length_prefixed = family in LENGTH_PREFIXED_CODECS
+        self._hevc = family in ("hvc1", "hev1")
+        # Whether a length-prefixed object of the group carried an SPS, which a group without a
+        # Video Config needs before its length-prefixed objects decode.
+        self._in_band_parameter_sets = False
+        # Whether the group's objects are Annex B, as its first one readable either way was; None
+        # before it.
+        self._framed_annex_b: bool | None = None
+        # The Video Config the group decodes with now.
+        self.config = config
+        self._decoder = VideoDecoder(codec, config)
         self._from_keyframe = from_keyframe
         self._refused_in_a_row = 0
         self._refusal: FFmpegError | None = None
         self._pictured = False
 
-    def decode(self, payload: bytes, location: Location) -> list[tuple[av.VideoFrame, Location | None]]:
-        """The pictures the object completes."""
+    def decode(
+        self, payload: bytes, location: Location, config: bytes | None
+    ) -> list[tuple[av.VideoFrame, Location | None]]:
+        """The pictures the object completes; `config` is the Video Config the object carries."""
+        held_back = []
+        if config is not None and config != self.config:
+            held_back = self._decoder.flush()
+            self._pictured = self._pictured or bool(held_back)
+            self.config = config
+            self._decoder = VideoDecoder(self._codec, config)
+        if self.config is None and self._length_prefixed:
+            annex_b = self._annex_b(payload)
+            if annex_b is None:
+                # Without the parameter sets, as after a subscriber joined past the only object
+                # carrying the Video Config.
+                if self._from_keyframe:
+                    self._unconfigured()
+                return held_back
+            payload = annex_b
         try:
             pictures = self._decoder._decode(payload, location)
         except FFmpegError as error:
@@ -203,16 +266,51 @@ class _Group:
             self._refusal = error
             if self._from_keyframe and self._refused_in_a_row >= MAX_REFUSED_OBJECTS:
                 raise
-            return []
+            return held_back
         self._refused_in_a_row = 0
         self._pictured = self._pictured or bool(pictures)
-        return pictures
+        return held_back + pictures
+
+    def _annex_b(self, payload: bytes) -> bytes | None:
+        """`payload`, of a group without a Video Config, in Annex B, or None when it cannot be read
+        without one. A payload starting with a start code whose 4-byte length prefixes also cover
+        it exactly, as a 3-byte one followed by the first bytes of a length of 256 to 511 bytes
+        does, is read as the group's earlier objects were (draft-ietf-moq-loc-04 §2.1.3–2.1.4); in
+        the group's first object, a 4-byte start code is Annex B and a 3-byte one a length."""
+        units = _length_prefixed_units(payload)
+        annex_b = payload.startswith((SHORT_START_CODE, START_CODE))
+        if annex_b and units is not None:
+            framed = self._framed_annex_b
+            annex_b = payload.startswith(START_CODE) if framed is None else framed
+        if annex_b or units is not None:
+            self._framed_annex_b = annex_b
+        if annex_b:
+            return payload
+        if units is None:
+            return None
+        self._in_band_parameter_sets = self._in_band_parameter_sets or any(map(self._is_sps, units))
+        return b"".join(START_CODE + unit for unit in units) if self._in_band_parameter_sets else None
+
+    def _is_sps(self, unit: bytes) -> bool:
+        if self._hevc:
+            return unit[0] >> 1 & 0x3F == HEVC_SPS
+        return unit[0] & 0x1F == H264_SPS
 
     def flush(self) -> list[tuple[av.VideoFrame, Location | None]]:
         pictures = self._decoder.flush()
         if self._from_keyframe and not (self._pictured or pictures) and self._refusal is not None:
             raise self._refusal
         return pictures
+
+
+@dataclass(frozen=True)
+class _PassedConfig:
+    """The Video Config a group passes on to the group after it, and the group whose own one it is:
+    the group itself for one it carried, -1 for none or the initial one `decode_pictures` was
+    given."""
+
+    config: bytes | None
+    supplier: int
 
 
 @dataclass(frozen=True)
@@ -225,7 +323,7 @@ class DecodedPicture:
 
 
 def decode_pictures(
-    objects: AsyncIterable[Object], codec: str, *, interval: float = 0.0
+    objects: AsyncIterable[Object], codec: str, *, interval: float = 0.0, config: bytes | None = None
 ) -> Following[DecodedPicture]:
     """Decodes the objects of one subscription to a LOC video track, such as one that
     `RemoteBroadcast.subscriptions(name)` yields, in a thread and yields every picture, in
@@ -238,10 +336,40 @@ def decode_pictures(
     object, when `MAX_OPEN_GROUPS` newer groups opened since (the objects of that group arriving
     later are skipped), and at the end of `objects`.
 
+    A group's decoder takes the LOC Video Config its first object carries; a later object of the
+    group carrying another one, a keyframe whose parameters changed, starts a new decoder with it. A
+    group without a Video Config of its own takes the one the group before it decoded with last:
+    until that group arrives, the group holds its objects. Taken while that group is open, the Video
+    Config is provisional until the group decoded `MAX_HELD_OBJECTS` objects or `MAX_HELD_BYTES`
+    bytes: a later keyframe of that group changing it, arriving late as the groups' streams race,
+    decodes the group's objects again with the new one, and their pictures are given again; past
+    that, the group keeps decoding with the old one, but the groups after it that inherit its Video
+    Config take the new one. So do they when the group before it, arriving after it started, brings
+    a Video Config other than the one it took, and so do the groups after a group that has not
+    arrived, as a lost one, which took the Video Config of the newest earlier group that had one: a
+    group between the two arriving late passes its own on to them, until the next group with a Video
+    Config of its own, even one equal to the one that group inherited. A held object carrying a
+    Video Config of its own starts the group at it, the objects held before it dropped. A group
+    stops holding once the group before it arrives or closes, and, the group before it taken as late
+    or lost, once it holds `MAX_HELD_OBJECTS` objects or `MAX_HELD_BYTES` bytes, a later group
+    opens, it ends or `objects` end; it then decodes with the Video Config of the newest earlier
+    group that had one, or else `config`. `config` is the track's Video Config as the reader knows
+    it beforehand, such as from the catalog (`moq_wasm.media.Catalog.init_data`): the groups without
+    one of their own and without an earlier group that had one decode with it. A group decodes
+    without holding while no object of the track carried a Video Config, as one with its parameter
+    sets in band, and when no earlier group arrived, as the first group of a subscription.
+
     Raises ValueError at once when no decoder takes `codec`; its reads raise the decoder's
     `av.error.FFmpegError` when a group joined at its keyframe does not decode: the decoder refused
     `MAX_REFUSED_OBJECTS` of its objects in a row, or the group ended without a picture after it
-    refused one.
+    refused one. An H.264 or H.265 object of a group without a Video Config is Annex B when it
+    starts with a start code, 4-byte or 3-byte, and else length-prefixed; one that reads either way,
+    its start code followed by bytes that 4-byte lengths would cover exactly, is read as the group's
+    earlier objects were. A length-prefixed object decodes once the group carried its parameter sets
+    (SPS and PPS) in band, as an `avc3` or `hev1` track may. A length-prefixed object before them,
+    as of a track whose only Video Config came before the subscription joined, is skipped without
+    being decoded, with one warning logged when its group was joined at its keyframe, until a group
+    carrying a Video Config arrives; give the track's Video Config as `config` to decode it.
 
     `objects` stays the caller's: each read advances it in the reader's own task and context, and
     neither closing nor dropping the decoding cancels or closes it. A read cancelled, as by
@@ -253,7 +381,7 @@ def decode_pictures(
     StopAsyncIteration once `objects` gives it its object, which is dropped, and no read reads
     `objects` after it. Closed, the decoding keeps no decoder or picture, once a decode in flight
     in a worker finished, also while a read still waits on `objects`."""
-    return _DecodedPictures(objects, codec, interval)
+    return _DecodedPictures(objects, codec, interval, config)
 
 
 class _DecodedPictures(Following[DecodedPicture]):
@@ -263,11 +391,11 @@ class _DecodedPictures(Following[DecodedPicture]):
     # Its reads await `objects`, which are the caller's.
     _interrupts = False
 
-    def __init__(self, objects: AsyncIterable[Object], codec: str, interval: float):
+    def __init__(self, objects: AsyncIterable[Object], codec: str, interval: float, config: bytes | None):
         super().__init__("the pictures")
         # None once closed: the decoders and the pictures they hold are freed, once a decoding in a
         # worker finished.
-        self._decoder: _PictureDecoder | None = _PictureDecoder(codec, interval)
+        self._decoder: _PictureDecoder | None = _PictureDecoder(codec, interval, config)
         self._objects = aiter(objects)
         self._objects_ended = False
         # The decoding of the latest object in a thread, or of the end of the objects.
@@ -322,15 +450,30 @@ class _PictureDecoder:
     synchronous, so each runs whole in a worker thread, and the state is never left halfway through
     an object."""
 
-    def __init__(self, codec: str, interval: float):
+    def __init__(self, codec: str, interval: float, initial_config: bytes | None):
         # Raises ValueError for an unknown codec.
         VideoDecoder(codec)
         self._codec = codec
         self._interval = interval
+        self._initial_config = initial_config
         self._next_picture_at = 0.0
-        # Each group's decoding, in the order the groups opened.
-        self._groups: dict[int, _Group] = {}
+        # In the order the groups opened: each group's decoding, or the objects it holds while the
+        # group before it has not arrived.
+        self._groups: dict[int, _Group | list[Object]] = {}
         self._finished: deque[int] = deque(maxlen=FINISHED_GROUPS_KEPT)
+        # The Video Config each of the latest groups passes on to the group after it, None for one
+        # without: the newest it carried, or else the one it inherits, even once the group can no
+        # longer decode its objects again with that one; beside it, the group whose own one it is,
+        # -1 for none or the initial one.
+        # An inherited one changes with its supplier's, and becomes the one of a group between the
+        # two that arrives late, as the groups after a lost group do.
+        self._configs: dict[int, _PassedConfig] = {}
+        # The groups that took the Video Config of the group before them while that one was open,
+        # which may change it yet: the objects each decoded since, to decode them again with a
+        # changed one.
+        self._provisional: dict[int, list[Object]] = {}
+        self._carries_configs = False
+        self._warned_unconfigured = False
 
     def take(self, video_object: Object) -> list[DecodedPicture]:
         """The pictures `video_object` completes."""
@@ -340,14 +483,32 @@ class _PictureDecoder:
             return self._finish(group_id) if video_object.status == END_OF_GROUP_STATUS else []
         if group_id in self._finished:
             return []
-        pictures = []
+        config = _video_config(video_object.extension_headers)
+        self._carries_configs = self._carries_configs or config is not None
         group = groups.get(group_id)
+        if isinstance(group, _Group):
+            return self._decode(group, video_object)
+        pictures = []
         if group is None:
+            # The groups holding their objects before this one take the groups before them as late.
+            holding = sorted(held_id for held_id, held in groups.items() if isinstance(held, list) and held_id < group_id)
+            for held_id in holding:
+                pictures.extend(self._release(held_id))
             if len(groups) >= MAX_OPEN_GROUPS:
                 pictures.extend(self._finish(next(iter(groups))))
-            group = groups[group_id] = _Group(self._codec, video_object.object_id == 0)
-        location = Location(group_id, video_object.object_id)
-        return pictures + self._sampled(group.decode(video_object.payload, location))
+            first = all(seen > group_id for seen in (*self._configs, *self._finished))
+            if config is None and self._carries_configs and not first and group_id - 1 not in (*self._configs, *self._finished):
+                group = groups[group_id] = []
+            else:
+                pictures.extend(self._start(group_id, [video_object]))
+        if isinstance(group, list):
+            if config is not None:
+                pictures.extend(self._start(group_id, [video_object]))
+            else:
+                group.append(video_object)
+                if len(group) >= MAX_HELD_OBJECTS or _payload_bytes(group) >= MAX_HELD_BYTES:
+                    pictures.extend(self._release(group_id))
+        return pictures
 
     def finish(self) -> list[DecodedPicture]:
         """The pictures the groups still open hold back, at the end of the objects."""
@@ -355,6 +516,18 @@ class _PictureDecoder:
         while self._groups:
             pictures.extend(self._finish(min(self._groups)))
         return pictures
+
+    def _unconfigured(self) -> None:
+        """Warns, once, that length-prefixed objects are skipped for want of their parameter
+        sets."""
+        if not self._warned_unconfigured:
+            self._warned_unconfigured = True
+            logger.warning(
+                "%s objects skipped until a group carries its Video Config: they are length-prefixed "
+                "without their parameter sets in band, and the subscription joined past the object "
+                "carrying it with none given beforehand",
+                self._codec,
+            )
 
     def _sampled(self, pictures: list[tuple[av.VideoFrame, Location | None]]) -> list[DecodedPicture]:
         decoded_at = time.monotonic()
@@ -366,11 +539,133 @@ class _PictureDecoder:
             passed.append(DecodedPicture(picture, location, decoded_at))
         return passed
 
+    def _remember(self, group_id: int, passed: _PassedConfig) -> None:
+        self._configs[group_id] = passed
+        if len(self._configs) > FINISHED_GROUPS_KEPT + MAX_OPEN_GROUPS:
+            del self._configs[min(self._configs)]
+
+    def _supplier(self, group_id: int) -> int:
+        """The group whose own Video Config `group_id` passes on; itself for one it does not
+        remember."""
+        passed = self._configs.get(group_id)
+        return group_id if passed is None else passed.supplier
+
+    def _inherited(self, group_id: int) -> _PassedConfig:
+        """The Video Config of the newest group before `group_id` that had one, with the group whose
+        own one it is, or else the initial one, of no group."""
+        configs = self._configs
+        earlier = [earlier_id for earlier_id, passed in configs.items() if earlier_id < group_id and passed.config is not None]
+        return configs[max(earlier)] if earlier else _PassedConfig(self._initial_config, -1)
+
+    def _decode(self, group: _Group, video_object: Object) -> list[DecodedPicture]:
+        group_id = video_object.group_id
+        location = Location(group_id, video_object.object_id)
+        config = _video_config(video_object.extension_headers)
+        previous = group.config
+        # A group carrying its first Video Config of its own supplies the groups after it from now
+        # on, even with the one it inherited: a late group before it no longer reaches them.
+        supplied = config is not None and self._supplier(group_id) != group_id
+        pictures = group.decode(video_object.payload, location, config)
+        if config is not None or self._supplier(group_id) == group_id:
+            self._remember(group_id, _PassedConfig(group.config, group_id))
+        kept = self._provisional.get(group_id)
+        if kept is not None:
+            kept.append(video_object)
+            # A Video Config of its own, or more decoded than a group holds while it waits, makes
+            # the group's final.
+            if config is not None or len(kept) > MAX_HELD_OBJECTS or _payload_bytes(kept) > MAX_HELD_BYTES:
+                del self._provisional[group_id]
+        decoded = self._sampled(pictures)
+        if group.config != previous or supplied:
+            decoded.extend(self._reconfigure(group_id, group.config))
+        return decoded
+
+    def _reconfigure(self, group_id: int, config: bytes | None) -> list[DecodedPicture]:
+        """Passes `config`, the new Video Config `group_id` passes on, or the one it now supplies
+        itself, to the groups after it that inherit theirs from no later group than it does, across
+        the groups that have not arrived: those are the groups until the next one with a Video
+        Config of its own. A group whose Video Config is provisional decodes what it decoded with
+        the old one again, with `config`, and gives its pictures again; one that decoded too much to
+        do so keeps decoding with the old one, but passes `config` on, so the groups after it decode
+        with it."""
+        passing = self._supplier(group_id)
+        pictures = []
+        for later_id, passed in sorted(self._configs.items()):
+            if later_id <= group_id or passed.supplier == later_id or passed.supplier > passing:
+                continue
+            self._remember(later_id, _PassedConfig(config, passing))
+            if passed.config == config:
+                continue
+            kept = self._provisional.get(later_id)
+            if not kept or not isinstance(self._groups.get(later_id), _Group):
+                continue
+            group = self._groups[later_id] = _Group(self._codec, config, kept[0].object_id == 0, self._unconfigured)
+            for video_object in kept:
+                location = Location(later_id, video_object.object_id)
+                pictures.extend(group.decode(video_object.payload, location, None))
+        return self._sampled(pictures)
+
+    def _start(self, group_id: int, held: list[Object]) -> list[DecodedPicture]:
+        """Decodes the group, from its first held object, with the Video Config that object
+        carries, or else the one it inherits, then passes the Video Config it passes on to the
+        groups after it, which may have started before this one arrived, or starts the group after
+        it if that one held its objects."""
+        passed = _PassedConfig(_video_config(held[0].extension_headers), group_id)
+        own = passed.config is not None
+        if not own:
+            passed = self._inherited(group_id)
+        group = self._groups[group_id] = _Group(self._codec, passed.config, held[0].object_id == 0 or own, self._unconfigured)
+        self._remember(group_id, passed)
+        if not own and isinstance(self._groups.get(group_id - 1), _Group):
+            self._provisional[group_id] = []
+        decoded = []
+        for video_object in held:
+            decoded.extend(self._decode(group, video_object))
+        passing = self._configs[group_id].config if group_id in self._configs else group.config
+        decoded.extend(self._reconfigure(group_id, passing))
+        return decoded + self._release(group_id + 1)
+
+    def _release(self, group_id: int) -> list[DecodedPicture]:
+        """Starts the group if it holds its objects, with the Video Config it inherits."""
+        held = self._groups.get(group_id)
+        return self._start(group_id, held) if isinstance(held, list) else []
+
     def _finish(self, group_id: int) -> list[DecodedPicture]:
-        """Flushes the group."""
+        """Flushes the group, then starts the group after it if that one held its objects."""
+        decoded = self._release(group_id)
         self._finished.append(group_id)
+        self._provisional.pop(group_id, None)
+        self._provisional.pop(group_id + 1, None)
         group = self._groups.pop(group_id, None)
-        return [] if group is None else self._sampled(group.flush())
+        if group is not None:
+            decoded.extend(self._sampled(cast(_Group, group).flush()))
+        return decoded + self._release(group_id + 1)
+
+
+def _length_prefixed_units(payload: bytes) -> list[bytes] | None:
+    """The NAL units of `payload`, each after a 4-byte length, or None when such lengths do not
+    cover it exactly."""
+    units = []
+    offset = 0
+    while offset < len(payload):
+        length = int.from_bytes(payload[offset : offset + 4], "big")
+        offset += 4
+        if length == 0 or offset + length > len(payload):
+            return None
+        units.append(payload[offset : offset + length])
+        offset += length
+    return units or None
+
+
+def _payload_bytes(video_objects: list[Object]) -> int:
+    return sum(len(video_object.payload) for video_object in video_objects)
+
+
+def _video_config(extension_headers: list[tuple[int, int | bytes]]) -> bytes | None:
+    for header_id, value in extension_headers:
+        if header_id == VIDEO_CONFIG_ID and isinstance(value, bytes):
+            return value
+    return None
 
 
 # ITU-T H.264 Table A-1: level_idc, MaxMBPS (macroblocks/s), MaxFS (macroblocks/frame). Level 1b is omitted.

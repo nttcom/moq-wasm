@@ -1,3 +1,5 @@
+import base64
+import binascii
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -43,9 +45,11 @@ class CatalogTrack:
 
 @dataclass(frozen=True)
 class Catalog:
-    """An independent draft-02 MSF catalog."""
+    """An independent draft-02 MSF catalog; `fields` holds every field of its root as it was
+    written, `tracks` and `initDataList` included."""
 
     tracks: list[CatalogTrack]
+    fields: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
     def parse(cls, payload: bytes) -> "Catalog":
@@ -56,7 +60,28 @@ class Catalog:
         tracks = document.get("tracks")
         if not isinstance(tracks, list):
             raise ValueError("MSF catalog has no tracks array")
-        return cls([CatalogTrack.from_json(track) for track in tracks])
+        return cls([CatalogTrack.from_json(track) for track in tracks], document)
+
+    def init_data(self, track: CatalogTrack) -> bytes | None:
+        """The initialization data `track`'s `initRef` points at in this catalog's `initDataList`
+        (draft-ietf-moq-msf-02 §5.1.7, §5.2.14), such as an AAC AudioSpecificConfig or a CMAF
+        initialization segment, decoded from Base64. None for a track without `initRef`, one whose
+        entry this catalog lacks, and one of the `track-property` or `object-property` types, whose
+        data the track or its objects carry instead. Raises ValueError when an `inline` entry's data
+        is not Base64."""
+        init_ref = track.fields.get("initRef")
+        entries = self.fields.get("initDataList")
+        if init_ref is None or not isinstance(entries, list):
+            return None
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("id") == init_ref:
+                if entry.get("type") != "inline":
+                    return None
+                try:
+                    return base64.b64decode(entry.get("data", ""), validate=True)
+                except (binascii.Error, TypeError) as error:
+                    raise ValueError(f"initialization data {init_ref!r} is not Base64: {error}") from None
+        return None
 
     def select(
         self,
