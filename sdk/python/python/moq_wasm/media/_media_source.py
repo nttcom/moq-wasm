@@ -190,6 +190,14 @@ class MediaSource:
             self._detach(failure, failure=True)
             raise
 
+    def _drops_pushes(self) -> bool:
+        """Whether a push is dropped without raising: before the broadcast is published, and after
+        it was left or once the session ended, unless publishing the source failed."""
+        if self._ended.failed:
+            return False
+        session_ended = self._session_ended is not None and self._session_ended.done()
+        return self._source is None or not self._announced.is_set() or self._ended.ended or session_ended
+
     def _raise_if_failed(self) -> None:
         if self._ended.failed:
             raise RuntimeError("the media source stopped publishing") from self._ended.error()
