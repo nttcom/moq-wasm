@@ -119,8 +119,9 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
 - **Reconnection is the native session's.** The native session (the `moqt`
   crate, shared with the browser SDK) follows GOAWAY, and replaces a
   connection that ended without a termination code (a network outage, a
-  relay killed and restarted) or with EXPIRED_AUTH_TOKEN, retrying from
-  0.5 s, doubling up to 10 s, for at most 60 s
+  relay killed and restarted) or, for a session given `refresh_token`, with
+  EXPIRED_AUTH_TOKEN, retrying from 0.5 s, doubling up to 10 s, for at most
+  60 s
   ([moqt/session-migration.md](../moqt/session-migration.md) "Reconnecting
   after a lost connection"). It sends the namespace subscriptions,
   namespaces and subscriptions again on the new connection; each
@@ -128,7 +129,9 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   published in between are not filled in. The origin, and so the tracks the
   session publishes and their cache, stay. When the native session cannot
   replace its connection, the session ends with `ConnectionLost`, as the
-  browser SDK's `MoqSession.closed` resolves. It does not dial again: a bot
+  browser SDK's `MoqSession.closed` resolves; without `refresh_token`, that
+  is when the relay closes it at the token's `exp`, since no later token can
+  come. It does not dial again: a bot
   whose session ended ends its room, and the page that asked for the room
   asks again. A failure to connect raises from `connect`, as does a relay
   that does not open the transport, or answer CLIENT_SETUP once it is open,
@@ -138,19 +141,46 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   second. The SDK adds no deadline of its own.
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
-  `exp` from the token's claims, calls it five minutes before `exp`, retries
-  every 30 s until the token expires, and hands each new token to the relay
-  (`_native.Session.refresh_token`). Getting the token stays the caller's
-  job, as in architecture.md "Authorization tokens". The native session
-  also presents the latest token when it reconnects.
+  `exp` from the token's claims, calls it five minutes before `exp` (halfway
+  through a shorter lifetime, so a short-lived token is not refreshed in a
+  loop), retries every 30 s, or after half the time left, until the token
+  expires, and hands each new token to the relay
+  (`_native.Session.refresh_token`). A call that takes over 30 s, or past
+  the token's expiry, together with handing its token to the relay fails,
+  even when the call caught its timeout and returned a token, and
+  a token of another app or one that does not expire later is refused: the
+  native session presents the token it is handed on its next connection.
+  A token the relay refuses counts as a failed call too: the session keeps
+  the token the relay accepted and asks `refresh_token` again with it on
+  the same schedule, until that token's `exp`, while the native session
+  presents the refused token on its next connection until a
+  later one the relay accepts replaces it. Each call of `refresh_token`, and
+  each handover, runs in a task of its own: at the deadline the session
+  stops waiting for it and cancels it, so a call whose cleanup takes long
+  delays neither the retry nor `TokenExpired`, and what it returns later is
+  discarded. The task checks the deadline just before it starts the call,
+  and the session once the call returned, so a call the event loop stalled
+  past its deadline, before it started or while it ran, hands nothing
+  over. A call that ends cancelled while the session is not, as one
+  awaiting a shared future another task cancelled, counts as a failed call
+  and is retried, instead of stopping the refresh. Getting the token stays
+  the caller's job, as in architecture.md "Authorization tokens". The
+  native session also presents the latest token when it reconnects.
 - **Lifetime.** Leaving the `async with` block closes the session; awaiting
   `connect` instead leaves `close()` to the caller. Entering one `connect()`
   result again while it is entered raises RuntimeError before dialing, since
-  one exit closes one session. Closing cancels the session's own tasks, the
-  token refresh among them, and returns once they finished, a
-  `refresh_token` call's cleanup included, and the native session closed;
-  a `close()` the call makes from its cleanup returns at once instead of
-  waiting for the shutdown that waits for it. A session ends with
+  one exit closes one session. Awaiting one result more than once opens a
+  session each time; each refreshes its own token, starting from the
+  newest one the session opened before it holds, so neither takes the
+  token the other refreshed as not later than its own. Closing cancels the
+  session's own tasks, the token refresh among them, and returns once they
+  finished, a `refresh_token` call's cleanup included, even one given up
+  at its deadline (which is not cancelled again), and the native
+  session closed. The refresh ends with the cancellation even when the
+  call raises another error from its cleanup, or catches the cancellation
+  and returns a token, which is not handed over, and a `close()` the call
+  makes from its cleanup returns at once instead of waiting for the
+  shutdown that waits for it. A session ends with
   `ConnectionLost`, or with `TokenExpired` when the token expired while
   `refresh_token` kept failing. The failure raises from `async with`, after
   cancelling what runs inside it through `session.run`, which raises

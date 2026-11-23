@@ -91,17 +91,21 @@ must outlive it (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
 apps"):
 
 ```python
-session = await moq_wasm._native.connect(url, token=jwt)
+session = await moq_wasm._native.connect(url, token=jwt, refreshes_token=True)
 await session.refresh_token(later_jwt, app_id="temp-3f9a…")
 ```
 
 The SDK's `moq_wasm.connect(url, token=, refresh_token=)` calls these when the
 token is due (sdk.md "Core").
 
-`connect` hands `moqt` an `AuthorizationTokenSource::provider` that reads the
-session's current token, so a connection the session opens by itself (to
-follow GOAWAY, or after the relay closed it for an expired token) presents the
-latest one. `refresh_token` sends the relay's in-session refresh, a
+With `refreshes_token`, `connect` hands `moqt` an
+`AuthorizationTokenSource::provider` that reads the session's current token,
+so a connection the session opens by itself (to follow GOAWAY, or after the
+relay closed it for an expired token) presents the latest one. Without it,
+`connect` hands `moqt` the token itself: the session follows GOAWAY with it,
+the relay's close for an expired token ends the session, as no later token
+can come, and `refresh_token` raises. `refresh_token` sends the relay's
+in-session refresh, a
 TRACK_STATUS for `[app_id]` that carries the token (docs/architecture/relay/
 architecture.md "Token refresh"), and makes the token current whether or not
 the relay accepts it: a relay that refuses it keeps the connection's token
