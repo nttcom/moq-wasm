@@ -8,7 +8,7 @@ import moq_wasm
 from moq_wasm.codecs import VideoEncoder
 from moq_wasm.media import MediaSource, RemoteBroadcast, create_broadcast
 
-from tests.fake_native import FakeRelay, open_session
+from tests.fake_native import FakeRelay, called, open_session
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -190,6 +190,135 @@ async def test_leaving_a_media_broadcast_ends_its_media_and_catalog_for_their_su
         await session.close()
 
 
+async def test_a_media_track_that_sent_audio_is_refused_as_a_datagram_track_on_every_attempt(relay_url):
+    # Arrange: a media broadcast whose audio reached a subscriber, then was left
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        await bot.published()
+        media.push_audio(b"opus frame 0", 0)
+        catalogs = RemoteBroadcast(subscriber, namespace).catalogs()
+        await within(anext(catalogs))
+        audio = await within(subscriber.subscribe(namespace, "audio"))
+        await within(wanted(media, "audio"))
+        media.push_audio(b"opus frame 1", 20_000)
+        await within(anext(audio))
+        await catalogs.aclose()
+
+    # Act / Assert: the audio went on subgroup streams, which the track keeps
+    for _ in range(2):
+        with pytest.raises(ValueError, match="sends its objects on subgroup streams"):
+            await within(publisher.publish_track(namespace, "audio", datagram=True))
+    for session in (subscriber, publisher):
+        await session.close()
+
+
+async def test_a_media_track_name_never_configured_is_free_for_a_datagram_track_once_left(relay_url):
+    # Arrange: an audio-only source whose video name was never configured, then was left
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source("unused-video", label="bot")
+        media.configure_audio("opus", 48000, 1)
+        await within(bot.published())
+
+    # Act
+    track = await within(publisher.publish_track(namespace, "unused-video", datagram=True))
+    await within(publisher.announce(namespace))
+    objects = await within(subscriber.subscribe(namespace, "unused-video"))
+    await within(track.write(b"d1", new_group=True))
+    received = await within(anext(objects))
+
+    # Assert: the native origin never registered the name, so it took the datagram delivery
+    assert track.datagram
+    assert received.payload == b"d1"
+    for session in (subscriber, publisher):
+        await session.close()
+
+
+async def test_a_media_source_is_refused_a_track_the_session_sent_in_datagrams(relay_url):
+    # Arrange: a datagram track named as the default audio, opened, then closed
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    track = await within(publisher.publish_track(namespace, "audio", datagram=True))
+    await within(track.close())
+    bot = create_broadcast(publisher, namespace)
+
+    # Act / Assert: the native origin would send the media audio in datagrams too
+    with pytest.raises(ValueError, match="track audio of .* sends its objects in datagrams"):
+        bot.add_media_source(label="bot")
+    await publisher.close()
+
+
+async def test_entering_a_broadcast_refuses_a_media_track_registered_in_datagrams_since_it_was_declared():
+    # Arrange: a media source declared, then its audio registered as a datagram track and closed
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    bot.add_media_source("camera", "mic", label="bot")
+    track = await within(session.publish_track(BOT, "mic", datagram=True))
+    await within(track.close())
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="track mic of .* sends its objects in datagrams"):
+        await bot.__aenter__()
+
+    # Assert: the refused broadcast left the namespace free
+    await within(session.announce(BOT))
+    await session.close()
+
+
+async def test_the_cmaf_audio_of_an_aac_configuration_an_opus_one_replaced_keeps_its_retention_once_left():
+    # Arrange: a CMAF source whose AAC audio reached the native source, then was configured as Opus,
+    # which has no CMAF sibling, then was left
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot", cmaf=True)
+        media.configure_audio("mp4a.40.2", 48000, 1, description=AAC_LC_48K_MONO)
+        await within(bot.published())
+        media.configure_audio("opus", 48000, 1)
+
+    # Act / Assert: the native origin keeps the retention it registered the AAC's CMAF sibling with
+    with pytest.raises(ValueError, match="register it again with retention_seconds=60.0"):
+        await within(session.publish_track(BOT, "audio_cmaf", retention_seconds=0))
+    await session.close()
+
+
+async def test_a_media_source_is_refused_a_track_the_session_registered_with_another_retention():
+    # Arrange: a track named as a CMAF source's audio sibling, registered keeping its newest object
+    # only, then closed
+    relay = FakeRelay()
+    session = await open_session(relay)
+    track = await within(session.publish_track(BOT, "audio_cmaf", retention_seconds=0))
+    await within(track.close())
+    bot = create_broadcast(session, BOT)
+
+    # Act / Assert: the native origin would keep the media track's newest object only too
+    with pytest.raises(ValueError, match="track audio_cmaf of .* keeps its objects for 0 s"):
+        bot.add_media_source(label="bot", cmaf=True)
+    await session.close()
+
+
+async def test_a_media_catalog_registered_again_with_another_retention_is_refused(relay_url):
+    # Arrange: a media broadcast whose catalog went out, then was left
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        await within(bot.published())
+
+    # Act / Assert: the native origin keeps the newest catalog only, whatever a later writer asks
+    with pytest.raises(ValueError, match="register it again with retention_seconds=0.0"):
+        await within(publisher.publish_track(namespace, "catalog", retention_seconds=3600))
+    await publisher.close()
+
+
 async def test_a_rendition_declared_before_publishing_is_built_with_its_source():
     # Arrange
     relay = FakeRelay()
@@ -208,6 +337,292 @@ async def test_a_rendition_declared_before_publishing_is_built_with_its_source()
         assert native.name == "low"
         assert native.calls == [("configure_video", "vp8"), ("push_video", b"frame")]
     await session.close()
+
+
+async def test_a_media_broadcast_is_not_entered_while_a_writer_of_the_session_publishes_its_catalog():
+    # Arrange: the writer keeps the newest catalog only, as the media broadcast does
+    relay = FakeRelay()
+    session = await open_session(relay)
+    await session.publish_track(BOT, "catalog", retention_seconds=0)
+    bot = create_broadcast(session, BOT)
+    bot.add_media_source(label="bot")
+
+    # Act
+    with pytest.raises(RuntimeError, match="already publishes track catalog"):
+        await bot.__aenter__()
+
+    # Assert
+    assert relay.sessions[0].media_broadcasts == []
+    await session.close()
+
+
+@pytest.mark.parametrize("name", ["catalog", "video", "audio", "video_timeline", "video_cmaf", "video_low", "video_low_cmaf"])
+async def test_no_writer_takes_a_track_of_a_media_broadcast_until_it_was_left(name):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot", cmaf=True)
+        await bot.published()
+        media.add_rendition("low", label="180p")
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match=f"already publishes track {name} "):
+            await session.publish_track(BOT, name)
+        with pytest.raises(RuntimeError, match=f"already publishes track {name} "):
+            bot.publish_track(name)
+    # The native origin keeps the newest catalog only.
+    writer = await within(session.publish_track(BOT, name, retention_seconds=0 if name == "catalog" else 60))
+    assert writer.name == name
+    await session.close()
+
+
+@pytest.mark.parametrize(
+    ("video", "audio", "implied"),
+    [("video", "audio", "chat"), ("camera", "audio", "chat"), ("video", "mic", "chat"), ("video", "mic", "audio")],
+)
+async def test_no_writer_takes_a_track_the_native_catalog_lists_next_to_a_source(video, audio, implied):
+    # Arrange: the native catalog lists the chat next to the default video or audio, and an audio
+    # placeholder next to the default video
+    relay = FakeRelay()
+    session = await open_session(relay)
+    declared = create_broadcast(session, BOT)
+    declared.publish_track(implied)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match=f"already publishes track {implied} "):
+        declared.add_media_source(video, audio, label="bot")
+    async with create_broadcast(session, BOT) as bot:
+        bot.add_media_source(video, audio, label="bot")
+        with pytest.raises(RuntimeError, match=f"already publishes track {implied} "):
+            bot.publish_track(implied)
+        await within(bot.published())
+        with pytest.raises(RuntimeError, match=f"already publishes track {implied} "):
+            await session.publish_track(BOT, implied)
+    await session.close()
+
+
+async def test_sources_share_the_tracks_the_native_catalog_lists_next_to_them():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+
+    # Act: the second source's audio takes the place of the first one's audio placeholder
+    bot.add_media_source("video", "mic", label="camera")
+    bot.add_media_source("screen", "audio", label="screen")
+
+    # Assert: a source naming a track as the chat is refused
+    with pytest.raises(RuntimeError, match="already publishes track chat "):
+        bot.add_media_source("chat", "chat_audio", label="chat")
+    with pytest.raises(RuntimeError, match="names two of its tracks alike"):
+        create_broadcast(session, ["anon", "room", "other"]).add_media_source("video", "chat", label="chat")
+    async with bot:
+        await within(bot.published())
+    for name in ("chat", "audio"):
+        assert (await within(session.publish_track(BOT, name))).name == name
+    await session.close()
+
+
+@pytest.mark.parametrize(
+    ("first", "second"), [(("video", "mic"), ("audio", "aux")), (("audio", "aux"), ("video", "mic"))]
+)
+async def test_only_a_sources_audio_takes_the_place_of_the_audio_placeholder(first, second):
+    # Arrange: one source's catalog lists an audio placeholder, the other's video is named audio
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    bot.add_media_source(*first, label="first")
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="already publishes track audio "):
+        bot.add_media_source(*second, label="second")
+    await session.close()
+
+
+async def test_a_source_naming_its_video_as_its_audio_is_refused_while_an_audio_placeholder_is_listed():
+    # Arrange: the first source's catalog lists an audio placeholder
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    bot.add_media_source("video", "mic", label="camera")
+
+    # Act / Assert: its video and its default audio are both named audio
+    with pytest.raises(RuntimeError, match="names two of its tracks alike"):
+        bot.add_media_source("audio", label="second")
+    bot.add_media_source("screen", "audio", label="screen")
+    await session.close()
+
+
+async def test_every_track_of_a_native_catalog_is_one_the_broadcast_claimed(relay_url):
+    # Arrange: a source with the default video next to a source with other names
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    remote = RemoteBroadcast(subscriber, namespace)
+    encoder = VideoEncoder("VP8", *SIZE, FRAMERATE)
+
+    async with create_broadcast(publisher, namespace) as bot:
+        camera = bot.add_media_source("video", "mic", label="camera", cmaf=True)
+        camera.configure_video(encoder.codec_string)
+        screen = bot.add_media_source("screen", "screen_audio", label="screen")
+        screen.configure_audio("opus", 48000, 1)
+        await bot.published()
+        frames = 0
+
+        def push_frame() -> None:
+            nonlocal frames
+            for packet in encoder.encode(picture(frames), SIZE, "RGB"):
+                camera.push_video(packet, frames * 1_000_000 // FRAMERATE)
+            screen.push_audio(b"opus frame", frames * 1_000_000 // FRAMERATE)
+            frames += 1
+
+        # Act
+        push_frame()
+        catalogs = remote.catalogs()
+        catalog = await within(catalog_listing(catalogs, {"video", "screen_audio"}, push_frame))
+        await catalogs.aclose()
+
+        # Assert: the catalog lists the chat and the audio placeholder too
+        listed = {track.name for track in catalog.tracks}
+        assert {"chat", "audio"} <= listed
+        for name in listed - {"catalog"}:
+            with pytest.raises(RuntimeError, match=f"already publishes track {name} "):
+                await publisher.publish_track(namespace, name)
+    for session in (subscriber, publisher):
+        await session.close()
+
+
+async def test_a_media_broadcast_is_refused_a_track_until_a_cancelled_publish_track_of_it_was_undone():
+    # Arrange: the relay registers a raw "audio" track after its caller was cancelled, and holds
+    # back the PUBLISH_DONE that undoes it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    answer, end = asyncio.Event(), asyncio.Event()
+    registering, ending = native.publish_track, native.end_track
+
+    async def gated_publish_track(namespace, name, **options):
+        await answer.wait()
+        return await registering(namespace, name, **options)
+
+    async def gated_end_track(namespace, name):
+        await end.wait()
+        await ending(namespace, name)
+
+    native.publish_track, native.end_track = gated_publish_track, gated_end_track
+    publishing = asyncio.create_task(session.publish_track(BOT, "audio"))
+    await asyncio.sleep(0)
+    publishing.cancel()
+    await asyncio.gather(publishing, return_exceptions=True)
+    answer.set()
+    await within(called(native, ("publish_track", "audio")))
+    bot = create_broadcast(session, BOT)
+    bot.add_media_source(label="bot")
+
+    # Act / Assert: that PUBLISH_DONE would end the media broadcast's audio for its subscribers
+    with pytest.raises(RuntimeError, match="already publishes track audio"):
+        await bot.__aenter__()
+    end.set()
+    await within(called(native, ("end_track", "audio")))
+    async with create_broadcast(session, BOT) as again:
+        again.add_media_source(label="bot")
+        await within(again.published())
+    await session.close()
+
+
+async def test_a_track_or_rendition_named_as_another_track_of_the_broadcast_is_refused():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    bot.publish_track("screen_timeline")
+    media = bot.add_media_source(label="camera")
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="already publishes track screen_timeline"):
+        bot.add_media_source("screen", "screen_audio", label="screen")
+    with pytest.raises(RuntimeError, match="already publishes track video_timeline"):
+        media.add_rendition("timeline", label="timeline")
+    with pytest.raises(RuntimeError, match="already publishes track catalog"):
+        bot.publish_track("catalog")
+    await session.close()
+
+
+async def test_a_media_broadcast_that_fails_to_build_withdraws_its_namespace_and_closes():
+    # Arrange: the native broadcast refuses the second source
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    building = native.media_broadcast
+
+    def media_broadcast(namespace):
+        broadcast = building(namespace)
+        adding = broadcast.add_source
+
+        def add_source(video, audio, **options):
+            if video == "screen":
+                raise RuntimeError("the native broadcast refused the source")
+            return adding(video, audio, **options)
+
+        broadcast.add_source = add_source
+        return broadcast
+
+    native.media_broadcast = media_broadcast
+    bot = create_broadcast(session, BOT)
+    await bot.__aenter__()
+    bot.add_media_source(label="camera")
+    bot.add_media_source("screen", "screen_audio", label="screen")
+
+    # Act
+    with pytest.raises(RuntimeError, match="refused the source"):
+        await within(bot.published())
+    await within(called(native, ("unannounce", BOT)))
+
+    # Assert: closing first settles what a source built before published
+    assert native.calls[-2:] == [("media_close", BOT), ("unannounce", BOT)]
+    await bot.__aexit__(None, None, None)
+    await session.close()
+
+
+async def test_a_media_broadcast_that_fails_to_build_after_a_source_published_leaves_nothing_published(
+    draft18_relay_url,
+):
+    # Arrange: the configured camera publishes on its own once built; the screen then fails
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(draft18_relay_url, verify_certificate=False)
+    watcher = await moq_wasm.connect(draft18_relay_url, verify_certificate=False)
+    # Watched before anything is published: the withdrawal goes on the publisher's connection, so
+    # a watch sent after leaving may reach the relay before it.
+    watch = await within(watcher.watch_namespaces(namespace[:2]))
+    bot = create_broadcast(publisher, namespace)
+    await bot.__aenter__()
+    camera = bot.add_media_source(label="camera")
+    camera.configure_video("avc1.42e01f")
+    camera.configure_audio("opus", 48000, 1)
+    screen = bot.add_media_source("screen", "screen_audio", label="screen")
+
+    def refuse(broadcast, session_ended):
+        raise RuntimeError("the native broadcast refused the source")
+
+    screen._build = refuse
+    with pytest.raises(RuntimeError, match="refused the source"):
+        await within(bot.published())
+
+    # Act
+    await within(bot.__aexit__(None, None, None))
+
+    # Assert: the namespace the camera published was withdrawn
+    published = False
+    while True:
+        try:
+            event = await asyncio.wait_for(anext(watch), 1)
+        except TimeoutError:
+            break
+        published = event.active
+    assert not published
+    for session in (watcher, publisher):
+        await session.close()
 
 
 async def test_aac_audio_needs_its_audio_specific_config():
@@ -350,10 +765,12 @@ async def catalog_without(catalogs, tracks: set[str]):
             return catalog
 
 
-async def catalog_listing(catalogs, track: str, push_frame):
-    """The first catalog that lists `track`, pushing a frame after each that does not."""
+async def catalog_listing(catalogs, track: str | set[str], push_frame):
+    """The first catalog that lists `track`, or every track of a set, pushing a frame after each
+    that does not."""
+    tracks = {track} if isinstance(track, str) else track
     async for catalog in catalogs:
-        if any(listed.name == track for listed in catalog.tracks):
+        if tracks <= {listed.name for listed in catalog.tracks}:
             return catalog
         push_frame()
 
@@ -538,6 +955,40 @@ async def test_keyframe_request_raises_once_the_broadcast_was_left():
     # Act / Assert: leaving the block stopped the source
     with pytest.raises(RuntimeError, match="stopped publishing"):
         await within(waiting)
+    await session.close()
+
+
+@pytest.mark.parametrize("request_kind", ["keyframe_request", "demand_change"])
+async def test_a_request_waiting_as_the_relay_refuses_the_media_announce_raises_the_refusal(request_kind):
+    # Arrange: the relay refuses the media broadcast's PUBLISH_NAMESPACE once the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    gate = asyncio.Event()
+    building = native.media_broadcast
+
+    def refusing_broadcast(namespace):
+        broadcast = building(namespace)
+
+        async def refuse() -> None:
+            await gate.wait()
+            raise RuntimeError("PUBLISH_NAMESPACE refused")
+
+        broadcast.announce = refuse
+        return broadcast
+
+    native.media_broadcast = refusing_broadcast
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        waiting = asyncio.ensure_future(getattr(media, request_kind)())
+        await asyncio.sleep(0.01)
+
+        # Act
+        gate.set()
+
+        # Assert
+        with pytest.raises(RuntimeError, match="PUBLISH_NAMESPACE refused"):
+            await within(waiting)
     await session.close()
 
 

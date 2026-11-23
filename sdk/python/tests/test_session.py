@@ -11,6 +11,7 @@ import pytest
 
 import moq_wasm
 from moq_wasm import _native
+from moq_wasm.media import create_broadcast
 from tests.cancellation import cancel_as_it_resumes
 from tests.conftest import REPO_ROOT, started_relay
 from tests.relay_sessions import TIMEOUT_SECONDS, TRACK, connect, publisher_with_track, room, within
@@ -153,6 +154,37 @@ async def test_a_subscribe_to_a_track_the_publisher_does_not_have_fails(relay_ur
         await within(subscriber.subscribe(namespace, "unknown"))
     for session in (subscriber, publisher):
         await session.close()
+
+
+async def test_a_run_of_workers_in_a_task_group_returns_its_timeout_once_their_broadcast_was_withdrawn(relay_url):
+    # Arrange: one worker publishes a broadcast until cancelled, the other idles
+    namespace = [*room(), "bot"]
+    session = await connect(relay_url)
+    published = asyncio.Event()
+
+    async def publisher() -> None:
+        async with create_broadcast(session, namespace) as broadcast:
+            await broadcast.published()
+            published.set()
+            await asyncio.Event().wait()
+
+    async def workers() -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(publisher())
+            group.create_task(asyncio.Event().wait())
+
+    running = asyncio.ensure_future(session.run(workers()))
+    await within(published.wait())
+
+    # Act
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(running, 0)
+    reopened = create_broadcast(session, namespace)
+
+    # Assert: entering it raises no "already publishes", as the run's broadcast was withdrawn by then
+    async with reopened:
+        await within(reopened.published())
+    await session.close()
 
 
 async def test_close_resolves_closed_and_fails_later_calls(relay_url):
