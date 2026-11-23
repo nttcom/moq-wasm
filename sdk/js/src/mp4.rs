@@ -1,6 +1,8 @@
 use mediapack::mp4::{Mp4Index as SampleIndex, SampleKind};
 use wasm_bindgen::prelude::*;
 
+use crate::js_error;
+
 #[wasm_bindgen]
 pub struct Mp4VideoTrack {
     #[wasm_bindgen(getter_with_clone)]
@@ -51,7 +53,7 @@ impl Mp4Index {
 impl Mp4Index {
     #[wasm_bindgen(constructor)]
     pub fn new(moov: &[u8]) -> Result<Mp4Index, JsValue> {
-        let inner = SampleIndex::parse(moov).map_err(|err| JsValue::from_str(&err.to_string()))?;
+        let inner = SampleIndex::parse(moov).map_err(|err| js_error(err.to_string()))?;
         Ok(Self { inner })
     }
 
@@ -61,7 +63,7 @@ impl Mp4Index {
         };
         let sps = config
             .sequence_parameter_set()
-            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            .map_err(|err| js_error(err.to_string()))?;
         Ok(Some(Mp4VideoTrack {
             codec: config.codec_string(),
             width: sps.width,
@@ -114,6 +116,6 @@ impl Mp4Index {
         self.inner
             .annexb_video_sample(avcc, sync)
             .map(|annexb| annexb.to_vec())
-            .map_err(|err| JsValue::from_str(&err.to_string()))
+            .map_err(|err| js_error(err.to_string()))
     }
 }
