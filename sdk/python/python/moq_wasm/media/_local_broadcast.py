@@ -157,7 +157,9 @@ class LocalBroadcast:
         of one of its tracks. Raises ValueError for a track the session registered before in
         datagrams, which the media broadcast's subscribers cannot read by group, or with another
         retention than the media broadcast gives it (the newest object for the catalog, 60 s for
-        the others), as the native origin keeps both."""
+        the others), as the native origin keeps both, for a negative `video_bitrate` or
+        `video_framerate`, or one too large, and TypeError for an option of another type, such as
+        a float `video_framerate`."""
         self._raise_if_left()
         if self._failure is not None:
             raise RuntimeError("the broadcast was not published") from self._failure
@@ -274,9 +276,12 @@ class LocalBroadcast:
                 await self._session._register(self._pending.pop(0))
             self._batching = False
             if self._media_sources:
-                return await self._session._announce(
+                announcement = await self._session._announce(
                     self.namespace, lambda native: self._build_media(native).announce(), owns=False
                 )
+                for source in self._media_sources:
+                    source._announced.set()
+                return announcement
             return await self._session._announce(
                 self.namespace, lambda native: native.announce(self.namespace), owns=False
             )

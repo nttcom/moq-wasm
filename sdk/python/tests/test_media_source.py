@@ -1,13 +1,15 @@
 import asyncio
+import signal
 import time
 import uuid
 
 import pytest
 
 import moq_wasm
-from moq_wasm.codecs import VideoEncoder
+from moq_wasm.codecs import VideoDecoder, VideoEncoder
 from moq_wasm.media import MediaSource, RemoteBroadcast, create_broadcast
 
+from tests.conftest import started_relay
 from tests.fake_native import FakeRelay, called, open_session
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
@@ -20,6 +22,8 @@ FRAMERATE = 30
 AAC_LC_48K_MONO = bytes([0x11, 0x88])
 # The LOC Audio Level property (draft-ietf-moq-loc-04 §2.3.3.2).
 AUDIO_LEVEL_ID = 0x0C
+# The frames a rendition queues for a slow relay (`rendition_task.rs`).
+RENDITION_QUEUE_CAPACITY = 300
 
 
 def picture(index: int) -> bytes:
@@ -97,10 +101,33 @@ async def test_a_frame_pushed_after_leaving_the_broadcast_is_not_sent():
         await bot.published()
 
     # Act
-    media.push_audio(b"late", 0)
+    taken = media.push_audio(b"late", 0)
 
     # Assert
+    assert taken is False
     assert relay.sessions[0].media_broadcasts[0].sources[0].calls == [("configure_audio", "opus", 48000, 1)]
+    await session.close()
+
+
+async def test_a_push_tells_whether_the_native_source_took_it():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    media = bot.add_media_source(label="bot")
+    media.configure_audio("opus", 48000, 1)
+    low = media.add_rendition("low", label="180p")
+    low.configure_video("vp8")
+
+    # Act
+    before_entering = (media.push_audio(b"early", 0), low.push_video(b"early", 0))
+    async with bot:
+        await bot.published()
+        published = (media.push_audio(b"frame", 0), low.push_video(b"frame", 0))
+
+    # Assert
+    assert before_entering == (False, False)
+    assert published == (True, True)
     await session.close()
 
 
@@ -148,6 +175,7 @@ async def test_a_subscriber_gets_the_media_with_its_catalog_and_the_broadcasts_o
         catalog = await within(anext(catalogs))
         audio = await within(subscriber.subscribe(namespace, catalog.select(role="audio").name))
         statuses = await within(subscriber.subscribe(namespace, "status"))
+        await within(wanted(media, "audio"))
         media.push_audio(b"opus frame 1", 20_000)
         await status.write(b"ready", new_group=True)
 
@@ -336,6 +364,25 @@ async def test_a_rendition_declared_before_publishing_is_built_with_its_source()
         native = relay.sessions[0].media_broadcasts[0].sources[0].renditions[0]
         assert native.name == "low"
         assert native.calls == [("configure_video", "vp8"), ("push_video", b"frame")]
+    await session.close()
+
+
+async def test_source_options_the_native_broadcast_would_refuse_raise_before_anything_is_built():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="camera")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="video_bitrate"):
+            bot.add_media_source("screen", "screen_audio", label="screen", video_bitrate=-1)
+        with pytest.raises(ValueError, match="framerate"):
+            media.add_rendition("low", label="180p", framerate=-1)
+        with pytest.raises(ValueError, match="channels"):
+            media.configure_audio("opus", 48000, 256)
+        await bot.published()
+        assert [source.video for source in relay.sessions[0].media_broadcasts[0].sources] == ["video"]
     await session.close()
 
 
@@ -549,6 +596,68 @@ async def test_a_track_or_rendition_named_as_another_track_of_the_broadcast_is_r
     await session.close()
 
 
+async def test_the_track_names_of_a_media_source_and_its_renditions_cannot_be_changed_after_their_claim():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    media = bot.add_media_source(label="camera")
+    rendition = media.add_rendition("low", label="180p")
+
+    # Act / Assert: renamed, they would publish under a name another track of the broadcast owns
+    with pytest.raises(AttributeError):
+        media.audio = "messages"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        media.video = "screen"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        rendition.name = "high"  # type: ignore[misc]
+    assert (media.video, media.audio, rendition.name) == ("video", "audio", "low")
+    await session.close()
+
+
+async def test_source_options_of_a_type_the_native_broadcast_would_refuse_raise_before_anything_is_built():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="camera")
+
+        # Act / Assert
+        with pytest.raises(TypeError, match="video_framerate"):
+            bot.add_media_source("screen", "screen_audio", label="screen", video_framerate=29.97)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="cmaf"):
+            bot.add_media_source("screen", "screen_audio", label="screen", cmaf=1)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="bitrate"):
+            media.add_rendition("low", label="180p", bitrate=2e5)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="sample_rate"):
+            media.configure_audio("opus", 48000.0, 1)  # type: ignore[arg-type]
+        await bot.published()
+        assert [source.video for source in relay.sessions[0].media_broadcasts[0].sources] == ["video"]
+        assert relay.sessions[0].media_broadcasts[0].sources[0].renditions == []
+    await session.close()
+
+
+@pytest.mark.parametrize("sample_rate, channels", [(None, 1), (48000, None)])
+async def test_an_audio_configuration_without_its_sample_rate_or_channels_is_refused_at_once(sample_rate, channels):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    status = bot.publish_track("status")
+    media = bot.add_media_source(label="bot")
+
+    # Act
+    with pytest.raises(TypeError, match="sample_rate|channels"):
+        media.configure_audio("opus", sample_rate, channels)  # type: ignore[arg-type]
+
+    # Assert: the broadcast and its other track publish as if it was never given
+    async with bot:
+        await within(bot.published())
+        await within(status.write(b"ok"))
+    assert relay.sessions[0].media_broadcasts[0].sources[0].calls == []
+    await session.close()
+
+
 async def test_a_media_broadcast_that_fails_to_build_withdraws_its_namespace_and_closes():
     # Arrange: the native broadcast refuses the second source
     relay = FakeRelay()
@@ -676,6 +785,7 @@ async def test_a_subscriber_reads_a_rendition_in_another_codec_as_an_alternative
         catalogs = remote.catalogs()
         catalog = await within(catalog_listing(catalogs, "video_vp8", push_frame))
         rendition = await within(subscriber.subscribe(namespace, "video_vp8"))
+        await within(wanted(media, "video_vp8"))
         push_frame()
         received = await within(anext(rendition))
 
@@ -706,6 +816,7 @@ async def test_a_subscriber_gets_aac_audio_listed_with_its_codec_and_loc_propert
         catalogs = remote.catalogs()
         catalog = await within(anext(catalogs))
         audio = await within(subscriber.subscribe(namespace, catalog.select(role="audio").name))
+        await within(wanted(media, "audio"))
         media.push_audio(b"aac frame 1", 21_333, level=30, voice_activity=True)
 
         # Assert: the frame comes with its LOC Timestamp, which the broadcast puts on the wall
@@ -775,6 +886,95 @@ async def catalog_listing(catalogs, track: str | set[str], push_frame):
         push_frame()
 
 
+def sized_picture(size: tuple[int, int], index: int) -> bytes:
+    return bytes([index * 8 % 256]) * (size[0] * size[1] * 3)
+
+
+async def test_a_rendition_configuration_pushed_while_its_queue_is_full_is_published_later(relay_auth):
+    # Arrange: the relay stalls, so the rendition's first configuration waits for PUBLISH_OK and
+    # the frames after it fill the rendition's queue
+    with started_relay(relay_auth, "relay-stalled") as relay:
+        namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+        publisher = await moq_wasm.connect(relay.url, verify_certificate=False)
+        subscriber = await moq_wasm.connect(relay.url, verify_certificate=False)
+        async with create_broadcast(publisher, namespace) as bot:
+            media = bot.add_media_source(label="bot")
+            low = media.add_rendition("low", label="low")
+            low.configure_video("avc1.42e01f")
+            await bot.published()
+            native = low._rendition
+            assert native is not None
+            frames = 0
+
+            def push(encoder: VideoEncoder, size: tuple[int, int]) -> None:
+                nonlocal frames
+                for packet in encoder.encode(sized_picture(size, frames), size, "RGB"):
+                    native.push_video(packet, frames * 1_000_000 // FRAMERATE)
+                frames += 1
+
+            relay.process.send_signal(signal.SIGSTOP)
+            try:
+                first = VideoEncoder("H264", *SIZE, FRAMERATE)
+                push(first, SIZE)
+                await asyncio.sleep(0.2)
+                for _ in range(RENDITION_QUEUE_CAPACITY + 10):
+                    push(first, SIZE)
+
+                # Act: keyframes of alternating sizes, each a new configuration
+                sizes = [(32, 24), SIZE] * 3 + [(48, 32)]
+                for size in sizes:
+                    push(VideoEncoder("H264", *size, FRAMERATE), size)
+            finally:
+                relay.process.send_signal(signal.SIGCONT)
+
+            # Assert: the latest configuration goes out before a keyframe that fits
+            last = VideoEncoder("H264", *sizes[-1], FRAMERATE)
+            catalogs = RemoteBroadcast(subscriber, namespace).catalogs()
+
+            async def listed_width() -> int | None:
+                async for catalog in catalogs:
+                    track = next((track for track in catalog.tracks if track.name == "video_low"), None)
+                    if track is not None and track.width == sizes[-1][0]:
+                        return track.width
+                    last.request_keyframe()
+                    push(last, sizes[-1])
+                return None
+
+            push(last, sizes[-1])
+            assert await asyncio.wait_for(listed_width(), 20) == sizes[-1][0]
+            await catalogs.aclose()
+        for session in (subscriber, publisher):
+            await session.close()
+
+
+async def test_a_rendition_push_its_full_queue_drops_reports_it_was_not_taken(relay_auth):
+    # Arrange: the relay stalls, so the rendition's frames fill its queue
+    with started_relay(relay_auth, "relay-stalled") as relay:
+        namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+        publisher = await moq_wasm.connect(relay.url, verify_certificate=False)
+        encoder = VideoEncoder("VP8", *SIZE, FRAMERATE)
+        async with create_broadcast(publisher, namespace) as bot:
+            media = bot.add_media_source(label="bot")
+            low = media.add_rendition("low", label="low")
+            low.configure_video(encoder.codec_string)
+            await bot.published()
+            relay.process.send_signal(signal.SIGSTOP)
+            try:
+                # Act
+                taken = [
+                    low.push_video(packet, index * 1_000_000 // FRAMERATE)
+                    for index in range(RENDITION_QUEUE_CAPACITY + 10)
+                    for packet in encoder.encode(picture(index), SIZE, "RGB")
+                ]
+            finally:
+                relay.process.send_signal(signal.SIGCONT)
+
+            # Assert: the first frames were queued, and those the full queue dropped were not taken
+            assert taken[0] is True
+            assert False in taken
+        await publisher.close()
+
+
 def test_aac_with_bytes_that_are_no_audio_specific_config_is_refused_at_once():
     # Arrange
     media = MediaSource("video", "audio", label="bot")
@@ -784,7 +984,7 @@ def test_aac_with_bytes_that_are_no_audio_specific_config_is_refused_at_once():
         media.configure_audio("mp4a.40.2", 48000, 1, description=b"\xff")
 
 
-async def test_frames_of_a_rendition_are_dropped_once_the_session_ended(relay_url, caplog):
+async def test_frames_of_a_rendition_are_dropped_once_the_session_ended(relay_url):
     # Arrange
     namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
     publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
@@ -794,23 +994,222 @@ async def test_frames_of_a_rendition_are_dropped_once_the_session_ended(relay_ur
         low = media.add_rendition("low", label="low")
         low.configure_video(encoder.codec_string)
         await bot.published()
-        frames = 0
-
-        async def push_until_dropped() -> None:
-            nonlocal frames
-            # The native module's own log says so too once `moq_wasm.init` forwards it.
-            while "frame dropped: rendition publishing stopped" not in caplog.text:
-                for packet in encoder.encode(picture(frames), SIZE, "RGB"):
-                    low.push_video(packet, frames * 1_000_000 // FRAMERATE)
-                frames += 1
-                await asyncio.sleep(0.05)
 
         # Act
         await publisher.close()
-        await within(push_until_dropped())
+        taken = [
+            low.push_video(packet, index * 1_000_000 // FRAMERATE)
+            for index in range(FRAMERATE)
+            for packet in encoder.encode(picture(index), SIZE, "RGB")
+        ]
 
-        # Assert: the native rendition refuses frames, which the media layer drops with a warning
-        assert "frame dropped: rendition publishing stopped" in caplog.text
+        # Assert: none raises, and none is taken
+        assert taken and not any(taken)
+
+
+async def test_an_h264_access_unit_without_nal_units_is_not_taken(relay_url):
+    # Arrange
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    encoder = VideoEncoder("H264", *SIZE, FRAMERATE)
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video(encoder.codec_string)
+        low = media.add_rendition("low", label="low")
+        low.configure_video(encoder.codec_string)
+        await bot.published()
+        keyframe = encoder.encode(picture(0), SIZE, "RGB")[0]
+
+        # Act
+        empty = (media.push_video(b"\x00\x00\x00\x01", 0), low.push_video(b"\x00\x00\x00\x01", 0))
+        pictured = (media.push_video(keyframe, 0), low.push_video(keyframe, 0))
+
+        # Assert
+        assert empty == (False, False)
+        assert pictured == (True, True)
+    await publisher.close()
+
+
+def annex_b_units(access_unit: bytes) -> list[bytes]:
+    """The NAL units of an Annex B access unit, without their start codes."""
+    return [unit.rstrip(b"\x00") for unit in access_unit.split(b"\x00\x00\x01") if unit.rstrip(b"\x00")]
+
+
+def annex_b(*units: bytes) -> bytes:
+    return b"".join(b"\x00\x00\x00\x01" + unit for unit in units)
+
+
+async def test_an_h264_access_unit_without_a_slice_is_not_taken_and_its_parameter_sets_reach_the_next_keyframe(
+    relay_url,
+):
+    # Arrange: a keyframe split into an access unit of its parameter sets and one of its slice
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    encoder = VideoEncoder("H264", *SIZE, FRAMERATE)
+    units = annex_b_units(b"".join(encoder.encode(picture(0), SIZE, "RGB")))
+    parameter_sets = annex_b(*(unit for unit in units if unit[0] & 0x1F in (7, 8)))
+    slice_only = annex_b(*(unit for unit in units if unit[0] & 0x1F not in (7, 8)))
+    delimiter = annex_b(b"\x09\xf0")
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video(encoder.codec_string)
+        await bot.published()
+
+        # Act: the slice after the parameter sets configures the track, which is listed and
+        # subscribed to before the next slice comes
+        taken = [media.push_video(unit, 0) for unit in (delimiter, parameter_sets, slice_only)]
+        catalogs = RemoteBroadcast(subscriber, namespace).catalogs()
+        await within(catalog_listing(catalogs, "video", lambda: None))
+        await catalogs.aclose()
+        subscription = await within(subscriber.subscribe(namespace, "video"))
+        await within(wanted(media, "video"))
+        taken.append(media.push_video(slice_only, 1_000_000 // FRAMERATE))
+        received = await within(anext(subscription))
+
+    # Assert: neither unit without a slice is published, and the keyframe carries the parameter
+    # sets the earlier unit brought
+    assert taken == [False, False, True, True]
+    decoded = VideoDecoder(encoder.codec_string).decode(received.payload)
+    assert decoded is not None and (decoded.width, decoded.height) == SIZE
+    await subscriber.close()
+    await publisher.close()
+
+
+async def test_a_source_whose_native_publishing_failed_raises_from_its_pushes_and_requests():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video("avc1.42e01f")
+        low = media.add_rendition("low", label="180p")
+        low.configure_video("vp8")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        waiting = asyncio.create_task(media.keyframe_request())
+        await asyncio.sleep(0)
+        native.renditions[0].failure = RuntimeError("rendition publishing stopped")
+        native.failure = RuntimeError("media publishing stopped")
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="rendition publishing stopped"):
+            low.push_video(b"frame", 0)
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            media.push_video(b"frame", 0)
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            await within(waiting)
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            await within(media.keyframe_request())
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            media.push_video(b"frame", 1)
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            low.push_video(b"frame", 1)
+    await session.close()
+
+
+async def test_once_a_push_failed_a_new_rendition_and_the_configurations_raise():
+    # Arrange: a push failed while the session is live
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video("avc1.42e01f")
+        low = media.add_rendition("low", label="180p")
+        await bot.published()
+        relay.sessions[0].media_broadcasts[0].sources[0].failure = RuntimeError("media publishing stopped")
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            media.push_video(b"frame", 0)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            media.add_rendition("high", label="720p")
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            low.configure_video("vp8")
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            media.configure_video("avc1.42e01f")
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            media.configure_audio("opus", 48000, 1)
+    await session.close()
+
+
+async def test_once_a_push_failed_remove_track_raises_the_failure_instead_of_doing_nothing():
+    # Arrange: a push failed while the session is live, which detached the native source
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        native.failure = RuntimeError("media publishing stopped")
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            media.push_audio(b"frame", 0)
+
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            await within(media.remove_track("audio"))
+        assert ("remove_track", "audio") not in native.calls
+    await session.close()
+
+
+async def test_a_configuration_the_native_source_refuses_in_a_live_session_stops_the_source():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        relay.sessions[0].media_broadcasts[0].sources[0].failure = RuntimeError("media publishing stopped")
+
+        # Act
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            media.configure_audio("opus", 48000, 1)
+
+        # Assert
+        with pytest.raises(RuntimeError, match="media publishing stopped"):
+            await within(media.keyframe_request())
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            media.configure_video("avc1.42e01f")
+    await session.close()
+
+
+async def test_a_frame_the_native_source_refuses_once_the_session_ended_is_dropped():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video("avc1.42e01f")
+        await bot.published()
+        relay.sessions[0].media_broadcasts[0].sources[0].failure = RuntimeError("media publishing stopped")
+
+        # Act
+        await session.close()
+
+        # Assert
+        assert media.push_video(b"frame", 0) is False
+
+
+async def test_a_frame_pushed_once_the_session_ended_is_dropped_before_the_native_source_takes_it():
+    # Arrange: the native source and rendition would still take frames
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        low = media.add_rendition("low", label="180p")
+        low.configure_video("vp8")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+
+        # Act
+        await session.close()
+
+        # Assert
+        assert (media.push_audio(b"late", 0), low.push_video(b"late", 0)) == (False, False)
+        assert ("push_audio", b"late") not in native.calls
+        assert native.renditions[0].calls == [("configure_video", "vp8")]
 
 
 async def test_demand_changes_reach_a_source_published_on_demand():
@@ -829,6 +1228,79 @@ async def test_demand_changes_reach_a_source_published_on_demand():
         # Assert
         assert demand == "audio wanted"
         assert (native.options["cmaf"], native.options["on_demand"]) == (True, True)
+    await session.close()
+
+
+async def test_a_cancelled_demand_change_leaves_the_next_change_to_the_next_caller():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        abandoned = asyncio.create_task(media.demand_change())
+        await asyncio.sleep(0.01)
+        abandoned.cancel()
+        await asyncio.gather(abandoned, return_exceptions=True)
+
+        # Act
+        native.demands.put_nowait("audio wanted")
+        demand = await within(media.demand_change())
+
+        # Assert
+        assert demand == "audio wanted"
+    await session.close()
+
+
+@pytest.mark.parametrize("request_kind", ["demand_change", "keyframe_request"])
+async def test_an_answer_that_came_as_its_caller_was_cancelled_goes_to_the_next_caller(request_kind):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        abandoned = asyncio.create_task(getattr(media, request_kind)())
+        await asyncio.sleep(0.01)
+
+        # Act: the answer and the cancellation come in the same turn
+        if request_kind == "demand_change":
+            native.demands.put_nowait("audio wanted")
+        else:
+            native.keyframe_requested.set()
+        abandoned.cancel()
+        await asyncio.gather(abandoned, return_exceptions=True)
+        answer = await within(getattr(media, request_kind)())
+
+        # Assert
+        assert answer == ("audio wanted" if request_kind == "demand_change" else None)
+    await session.close()
+
+
+@pytest.mark.parametrize("request_kind", ["demand_change", "keyframe_request"])
+async def test_a_second_caller_while_one_waits_is_refused_and_the_first_gets_the_answer(request_kind):
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        first = asyncio.ensure_future(getattr(media, request_kind)())
+        await asyncio.sleep(0.01)
+
+        # Act
+        with pytest.raises(RuntimeError, match="already"):
+            await within(getattr(media, request_kind)())
+        if request_kind == "demand_change":
+            native.demands.put_nowait("audio wanted")
+        else:
+            native.keyframe_requested.set()
+
+        # Assert
+        assert await within(first) == ("audio wanted" if request_kind == "demand_change" else None)
     await session.close()
 
 
@@ -883,6 +1355,7 @@ async def test_a_cmaf_source_sends_the_video_as_cmaf_to_its_subscriber(relay_url
         catalogs = remote.catalogs()
         catalog = await within(catalog_listing(catalogs, "video_cmaf", push_frame))
         cmaf = await within(subscriber.subscribe(namespace, "video_cmaf"))
+        await within(wanted(media, "video_cmaf"))
         encoder.request_keyframe()
         push_frame()
         received = await within(anext(cmaf))
@@ -942,20 +1415,107 @@ async def test_demand_change_raises_once_the_session_ends():
             await within(waiting)
 
 
-async def test_keyframe_request_raises_once_the_broadcast_was_left():
+@pytest.mark.parametrize("request_kind", ["keyframe_request", "demand_change"])
+async def test_a_request_waiting_as_the_broadcast_is_left_raises_that_the_source_stopped(request_kind):
     # Arrange
     relay = FakeRelay()
     session = await open_session(relay)
     async with create_broadcast(session, BOT) as bot:
         media = bot.add_media_source(label="bot")
         await bot.published()
-        waiting = asyncio.ensure_future(media.keyframe_request())
-        await asyncio.sleep(0)
+        waiting = asyncio.ensure_future(getattr(media, request_kind)())
+        await asyncio.sleep(0.01)
 
     # Act / Assert: leaving the block stopped the source
     with pytest.raises(RuntimeError, match="stopped publishing"):
         await within(waiting)
     await session.close()
+
+
+async def test_media_pushed_while_the_namespace_is_being_published_is_dropped_and_its_configuration_is_built():
+    # Arrange: the relay has not answered the media broadcast's namespace yet
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.media_announce_gate = asyncio.Event()
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        low = media.add_rendition("low", label="180p")
+        low.configure_video("vp8")
+        await within(called(native, ("media_announce", BOT)))
+        media.configure_video("vp8")
+
+        # Act
+        pending = (media.push_audio(b"early", 0), media.push_video(b"early", 0), low.push_video(b"early", 0))
+        native.media_announce_gate.set()
+        await within(bot.published())
+        published = (media.push_audio(b"frame", 0), low.push_video(b"frame", 0))
+
+        # Assert
+        source = native.media_broadcasts[0].sources[0]
+        assert pending == (False, False, False)
+        assert published == (True, True)
+        assert source.calls == [
+            ("configure_audio", "opus", 48000, 1),
+            ("configure_video", "vp8"),
+            ("push_audio", b"frame"),
+        ]
+        assert source.renditions[0].calls == [("configure_video", "vp8"), ("push_video", b"frame")]
+    await session.close()
+
+
+async def test_a_refused_media_announce_fails_the_pushes_the_renditions_and_the_bound_writers():
+    # Arrange: a raw track is registered before the relay refuses the media broadcast's namespace
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.media_announce_gate = asyncio.Event()
+    native.media_announce_failure = RuntimeError("PUBLISH_NAMESPACE refused")
+    async with create_broadcast(session, BOT) as bot:
+        status = bot.publish_track("status")
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        low = media.add_rendition("low", label="180p")
+        low.configure_video("vp8")
+        await within(status.registered())
+        waiting = asyncio.ensure_future(status.next_subscriber())
+
+        # Act
+        native.media_announce_gate.set()
+        with pytest.raises(RuntimeError, match="PUBLISH_NAMESPACE refused"):
+            await within(bot.published())
+
+        # Assert
+        with pytest.raises(RuntimeError, match="stopped publishing") as pushed:
+            media.push_audio(b"frame", 0)
+        assert str(pushed.value.__cause__) == "PUBLISH_NAMESPACE refused"
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            low.push_video(b"frame", 0)
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            await within(media.remove_track("audio"))
+        assert await within(waiting) is False
+    await session.close()
+
+
+async def test_frames_pushed_once_the_session_ended_before_the_broadcast_was_published_are_dropped():
+    # Arrange: the session ends before the media broadcast's namespace is published
+    relay = FakeRelay()
+    session = await open_session(relay)
+    bot = create_broadcast(session, BOT)
+    media = bot.add_media_source(label="bot")
+    media.configure_audio("opus", 48000, 1)
+    low = media.add_rendition("low", label="180p")
+    low.configure_video("vp8")
+    await bot.__aenter__()
+    await session.close()
+    with pytest.raises(moq_wasm.SessionClosed):
+        await within(bot.published())
+
+    # Act / Assert: as after leaving the broadcast, nothing raises and nothing is taken
+    assert media.push_audio(b"frame", 0) is False
+    assert low.push_video(b"frame", 0) is False
+    await within(bot.__aexit__(None, None, None))
 
 
 @pytest.mark.parametrize("request_kind", ["keyframe_request", "demand_change"])
@@ -1014,6 +1574,32 @@ async def test_remove_track_before_publishing_forgets_the_kind_and_after_it_reac
         assert native.renditions[0].calls == []
         with pytest.raises(ValueError, match="screen"):
             await media.remove_track("screen")
+    await session.close()
+
+
+async def test_a_removal_whose_caller_timed_out_runs_to_its_end_and_a_retry_joins_it():
+    # Arrange: the video's removal waits for the relay before its renditions' removals
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video("vp8")
+        media.add_rendition("low", label="low")
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        native.remove_gate = asyncio.Event()
+
+        # Act
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(media.remove_track("video"), 0.05)
+        retry = asyncio.create_task(media.remove_track("video"))
+        await asyncio.sleep(0)
+        native.remove_gate.set()
+        await within(retry)
+
+        # Assert: the renditions were removed, and the retry started no second removal
+        assert native.calls[-2:] == [("remove_track", "video"), ("remove_renditions",)]
+        assert native.calls.count(("remove_track", "video")) == 1
     await session.close()
 
 

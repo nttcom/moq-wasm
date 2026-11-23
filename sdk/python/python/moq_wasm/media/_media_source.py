@@ -1,11 +1,12 @@
 import asyncio
 import logging
+import operator
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from moq_wasm import _native
 from moq_wasm._ended import Ended
-from moq_wasm._wait import wait
+from moq_wasm._once import retrieve
 
 logger = logging.getLogger("moq_wasm")
 
@@ -23,7 +24,13 @@ CHAT = "chat"
 class MediaSource:
     """A video and an audio track of a broadcast, fed with encoded frames, as the browser SDK's
     source is: `broadcast` builds the catalog, the LOC tracks and the media timeline. Frames pushed
-    before the broadcast is published, or after it ended, are dropped."""
+    before the broadcast is published, the relay having accepted its namespace, or after it was
+    left or the session ended, are dropped; the configurations reach the native source as soon as
+    it is built, since its catalog lists them. Once publishing the source failed, as the relay
+    refused the broadcast's namespace or the native publishing of a live session's source failed in
+    a push or a configuration, the pushes, configurations, `add_rendition`, the renditions'
+    configurations and pushes and `remove_track` raise RuntimeError from that failure, and
+    `keyframe_request` and `demand_change` raise it."""
 
     def __init__(
         self,
@@ -36,8 +43,17 @@ class MediaSource:
         cmaf: bool = False,
         on_demand: bool = True,
     ):
-        self.video = video
-        self.audio = audio
+        # Checked here, so a broadcast with a source the native broadcast would refuse fails before
+        # anything native is built.
+        _check_type("video", video, str)
+        _check_type("audio", audio, str)
+        _check_type("label", label, str)
+        _check_optional_unsigned("video_bitrate", video_bitrate, 64)
+        _check_optional_unsigned("video_framerate", video_framerate, 32)
+        _check_type("cmaf", cmaf, bool)
+        _check_type("on_demand", on_demand, bool)
+        self._video = video
+        self._audio = audio
         self._label = label
         self._video_bitrate = video_bitrate
         self._video_framerate = video_framerate
@@ -51,20 +67,40 @@ class MediaSource:
         self._replaced_track_names: set[str] = set()
         self._renditions: list[Rendition] = []
         self._built = asyncio.Event()
+        # Set once the relay accepted the broadcast's namespace: the pushes reach the native source
+        # only then, as the media of a namespace the relay refuses would be lost.
+        self._announced = asyncio.Event()
         # Ended once the broadcast was left or the session ended, which stop the source, or by
-        # what kept the broadcast from being published.
+        # what kept the broadcast from being published or stopped publishing the source.
         self._ended = Ended()
         self._session_ended: asyncio.Future[None] | None = None
+        # The native request of each kind whose answer no caller took yet, as one whose caller was
+        # cancelled: the next caller of the kind takes it, so no answer is lost.
+        self._requests: dict[str, asyncio.Future] = {}
+        # The kinds of request a caller awaits: one caller of a kind at a time, so no two take the
+        # same answer.
+        self._awaited: set[str] = set()
+        # The native removal of each kind under way, which a later removal of the kind joins.
+        self._removing: dict[str, asyncio.Future[None]] = {}
         # Set by the broadcast the source is added to: claims the tracks of a rendition, raising
         # RuntimeError while another track has the name of one of them.
         self._claim_tracks: Callable[[list[str]], None] | None = None
+
+    @property
+    def video(self) -> str:
+        """The video track's name; read-only, as the broadcast claimed the source's tracks by it."""
+        return self._video
+
+    @property
+    def audio(self) -> str:
+        """The audio track's name; read-only, as `video` is."""
+        return self._audio
 
     def configure_video(self, codec: str) -> None:
         """`codec` is a WebCodecs codec string: `avc1.*` (Annex B), `hvc1.*` (Annex B), `vp8`,
         `vp09.*` or `av01.*`. Raises ValueError for another codec."""
         _check_video_codec(codec)
-        if self._source is not None:
-            self._source.configure_video(codec)
+        self._publish(lambda source: source.configure_video(codec))
         self._video_codec = codec
 
     def add_rendition(
@@ -73,64 +109,109 @@ class MediaSource:
         """Another encoding of the video, in the track `<video>_<name>`, and with `cmaf` its
         `_cmaf` sibling (`_native.MediaSource.add_rendition`): feed it frames of the same pictures,
         with a keyframe on the same pictures as the video's. `bitrate` (bits per second) and
-        `framerate` go into the catalog. Raises RuntimeError while another track of the broadcast,
-        or once it was entered of the session, has the name of one of its tracks, and ValueError
-        for a track the session registered in datagrams or with another retention than 60 s."""
+        `framerate` go into the catalog. Raises ValueError for a negative `bitrate` or `framerate`,
+        or one too large, TypeError for an option of another type, such as a float `framerate`,
+        and RuntimeError once publishing the source failed, and while another track of the
+        broadcast, or once it was entered of the session, has the name of one of its tracks;
+        ValueError as well for a track the session registered in datagrams or with another
+        retention than 60 s."""
+        _check_type("name", name, str)
+        _check_type("label", label, str)
+        _check_optional_unsigned("bitrate", bitrate, 64)
+        _check_optional_unsigned("framerate", framerate, 32)
+        self._raise_if_failed()
         if self._claim_tracks is not None:
             self._claim_tracks(self._with_cmaf(f"{self.video}_{name}"))
         rendition = Rendition(name, {"label": label, "bitrate": bitrate, "framerate": framerate})
         self._renditions.append(rendition)
         if self._source is not None:
-            rendition._build(self._source)
+            assert self._session_ended is not None, "a built source knows its session"
+            rendition._build(self._source, self._session_ended, self._announced)
         return rendition
 
-    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+    def push_video(self, data: bytes, timestamp_micros: int) -> bool:
         """One encoded frame; a keyframe opens a group. `timestamp_micros` must not run
-        backwards. Raises RuntimeError before `configure_video`."""
+        backwards. Returns whether the native source took the frame: False for one dropped, before
+        the broadcast was published, the relay having accepted its namespace, after it was left or
+        once the session ended, for one the native source's publish queue dropped while the relay
+        does not keep up (up to the next keyframe that fits, which `keyframe_request` asks for), and
+        for one without a picture, as an H.264 access unit without NAL units or without a slice (an
+        access unit delimiter or parameter sets alone), which is not published, though the parameter
+        sets go to the keyframes after it. Raises RuntimeError before `configure_video`, and once
+        publishing the source failed."""
         if self._video_codec is None:
             raise RuntimeError("call configure_video first")
-        if self._source is not None:
-            _drop_once_ended(lambda: self._source.push_video(data, timestamp_micros))
+        return self._publish(lambda source: source.push_video(data, timestamp_micros), push=True)
 
     def configure_audio(
         self, codec: str, sample_rate: int, channels: int, *, description: bytes | None = None
     ) -> None:
         """`"opus"`, or an AAC `"mp4a.40.*"` whose `description` is the AudioSpecificConfig;
-        raises ValueError for another codec or an AAC without it."""
+        raises ValueError for another codec, an AAC without it, and a negative `sample_rate` or
+        `channels`, or one too large, TypeError for one that is no integer, as None, and
+        RuntimeError once publishing the source failed. A refused configuration changes nothing."""
+        _check_unsigned("sample_rate", sample_rate, 32)
+        _check_unsigned("channels", channels, 8)
         if codec != "opus" and not codec.startswith("mp4a.40."):
             raise ValueError(f"unsupported audio codec: {codec}")
         if codec != "opus":
             if description is None:
                 raise ValueError("AAC needs its AudioSpecificConfig")
             _native.check_audio_specific_config(description)
-        if self._source is not None:
-            self._source.configure_audio(codec, sample_rate, channels, description=description)
+        self._publish(lambda source: source.configure_audio(codec, sample_rate, channels, description=description))
         self._replaced_track_names.update(self._registered_track_names())
         self._audio_config = (codec, sample_rate, channels, description)
 
     def push_audio(
         self, data: bytes, timestamp_micros: int, *, level: int | None = None, voice_activity: bool = False
-    ) -> None:
+    ) -> bool:
         """One encoded audio frame; `level` and `voice_activity` as in
-        `_native.MediaSource.push_audio`. Raises RuntimeError before `configure_audio`."""
+        `_native.MediaSource.push_audio`. Returns whether the native source took it, as
+        `push_video` does. Raises RuntimeError before `configure_audio`, and once publishing the
+        source failed."""
         if self._audio_config is None:
             raise RuntimeError("call configure_audio first")
-        if self._source is not None:
-            _drop_once_ended(
-                lambda: self._source.push_audio(
-                    data, timestamp_micros, level=level, voice_activity=voice_activity
-                )
-            )
+        return self._publish(
+            lambda source: source.push_audio(data, timestamp_micros, level=level, voice_activity=voice_activity),
+            push=True,
+        )
+
+    def _publish(self, call: Callable[[_native.MediaSource], bool | None], *, push: bool = False) -> bool:
+        """`call` on the native source once it is built, and for a `push` once the broadcast was
+        published; returns whether the native source took it. Raises RuntimeError once publishing
+        the source failed; a failure of `call` in a live session is that failure."""
+        self._raise_if_failed()
+        if (source := self._source) is None or (push and not self._announced.is_set()):
+            return False
+        try:
+            return _call_native(lambda: call(source), self._session_ended)
+        except RuntimeError as failure:
+            # Ends the waiting requests with the failure.
+            self._detach(failure, failure=True)
+            raise
+
+    def _raise_if_failed(self) -> None:
+        if self._ended.failed:
+            raise RuntimeError("the media source stopped publishing") from self._ended.error()
 
     async def remove_track(self, kind: str) -> None:
         """`_native.MediaSource.remove_track` (`kind` is `"video"` or `"audio"`): stop pushing its
         media first; `configure_video` or `configure_audio` and the media pushed after it publish
         the track again. Before the broadcast is published, it forgets the kind's configuration
-        (the renditions' too, for the video). Raises ValueError for another kind."""
+        (the renditions' too, for the video). Raises ValueError for another kind, and RuntimeError
+        once publishing the source failed. The native removal runs to its end, the renditions'
+        removals after the video's included, even when its caller is cancelled, as by a timeout;
+        a call while it runs awaits it."""
         if kind not in ("video", "audio"):
             raise ValueError(f"unknown track kind: {kind}")
+        self._raise_if_failed()
         if self._source is not None:
-            await self._source.remove_track(kind)
+            removing = self._removing.get(kind)
+            if removing is None or removing.done():
+                removing = self._removing[kind] = asyncio.ensure_future(self._source.remove_track(kind))
+                # Its failure goes to the callers, and to nobody once they were all cancelled.
+                removing.add_done_callback(retrieve)
+            await asyncio.shield(removing)
         elif kind == "video":
             self._video_codec = None
             for rendition in self._renditions:
@@ -141,19 +222,35 @@ class MediaSource:
     async def keyframe_request(self) -> None:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
         broadcast needs one: encode the next frame as a keyframe then. Waits while the broadcast is
-        not published; raises RuntimeError once the broadcast was left or the session ended."""
-        await self._while_publishing(lambda source: source.keyframe_request())
+        not published; raises RuntimeError once the broadcast was left or the session ended, and
+        what kept the broadcast from being published or stopped publishing the source. One caller
+        at a time: a call while another waits raises RuntimeError."""
+        await self._while_publishing("keyframe_request", lambda source: source.keyframe_request())
 
     async def demand_change(self) -> _native.Demand:
         """`_native.MediaSource.demand_change`; waits while the broadcast is not published. Raises
-        RuntimeError for a source added with `on_demand=False`, and once the broadcast was left or the
-        session ended."""
+        RuntimeError for a source added with `on_demand=False`, and once the broadcast was left or
+        the session ended; raises what kept the broadcast from being published or stopped
+        publishing the source. One caller at a time: a call while another waits raises
+        RuntimeError."""
         if not self._on_demand:
             raise RuntimeError("the source was added with on_demand=False")
-        return await self._while_publishing(lambda source: source.demand_change())
+        return await self._while_publishing("demand_change", lambda source: source.demand_change())
 
-    async def _while_publishing(self, request: Callable[[_native.MediaSource], Awaitable[T]]) -> T:
-        """`request` on the native source once it is built, ended by the source stopping."""
+    async def _while_publishing(self, kind: str, request: Callable[[_native.MediaSource], Awaitable[T]]) -> T:
+        """`request` on the native source once it is built, ended by the source stopping. A request
+        of `kind` a cancelled caller left is awaited instead of a new one."""
+        if kind in self._awaited:
+            raise RuntimeError(f"{kind} is already awaited")
+        self._awaited.add(kind)
+        try:
+            return await self._request_while_publishing(kind, request)
+        finally:
+            self._awaited.discard(kind)
+
+    async def _request_while_publishing(
+        self, kind: str, request: Callable[[_native.MediaSource], Awaitable[T]]
+    ) -> T:
         built = asyncio.ensure_future(self._built.wait())
         try:
             await self._ended.until(built)
@@ -161,16 +258,15 @@ class MediaSource:
             built.cancel()
         if self._ended.ended or self._source is None:
             raise self._stopped_error()
-        answered = asyncio.ensure_future(request(self._source))
-        stopped = asyncio.ensure_future(self._ended.until(answered))
-        ending = [] if self._session_ended is None else [self._session_ended]
-        try:
-            await wait([stopped, *ending], return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            stopped.cancel()
-        if not answered.done():
-            answered.cancel()
+        answered = self._requests.get(kind)
+        if answered is None:
+            answered = self._requests[kind] = asyncio.ensure_future(request(self._source))
+        await self._ended.until(answered)
+        # Stopping the source cancels the native request, so a cancelled one means it stopped.
+        if not answered.done() or answered.cancelled():
             raise self._stopped_error()
+        if self._requests.get(kind) is answered:
+            del self._requests[kind]
         return answered.result()
 
     def _track_names(self) -> list[str]:
@@ -237,7 +333,7 @@ class MediaSource:
         self._source = source
         self._session_ended = session_ended
         for rendition in self._renditions:
-            rendition._build(source)
+            rendition._build(source, session_ended, self._announced)
         self._built.set()
 
     def _stopped_error(self) -> BaseException:
@@ -247,8 +343,10 @@ class MediaSource:
         self, error: Exception | None = None, *, failure: bool = False, raised: Callable[[], None] | None = None
     ) -> None:
         """Stops the source, which ends it with `error`, what kept its broadcast from being
-        published, unless it ended before. `raised` is called each time it is raised."""
-        self._ended.end(error or RuntimeError("the media source stopped publishing"), failure=failure, raised=raised)
+        published or stopped publishing the source, unless it ended before; with `failure`, its
+        pushes, configurations and renditions raise it too. `raised` is called each time it is
+        raised."""
+        self._end(error or RuntimeError("the media source stopped publishing"), failure=failure, raised=raised)
         self._source = None
         for rendition in self._renditions:
             rendition._rendition = None
@@ -256,39 +354,106 @@ class MediaSource:
     def _stop_with_session(self, _: BaseException) -> None:
         """The session ended: the requests raise that the source stopped, and the pushes reach the
         native source, which drops them."""
-        self._ended.end(RuntimeError("the media source stopped publishing"), failure=False)
+        self._end(RuntimeError("the media source stopped publishing"), failure=False)
+
+    def _end(self, error: BaseException, *, failure: bool, raised: Callable[[], None] | None = None) -> None:
+        # A source that stopped before, as when the session ended, stays stopped, and so do its
+        # renditions.
+        if self._ended.end(error, failure=failure, raised=raised) and failure:
+            for rendition in self._renditions:
+                rendition._ended.end(error, raised=raised)
+        # Cancelling a native request drops its wait, so it takes no later notification.
+        for answered in self._requests.values():
+            answered.cancel()
+        self._requests.clear()
 
 
 class Rendition:
     """Another encoding of a `MediaSource`'s video. Frames pushed before the broadcast is
-    published, or after it ended, are dropped."""
+    published, the relay having accepted its namespace, or after it was left or the session ended,
+    are dropped. Once publishing the rendition or its source failed, its configuration and pushes
+    raise RuntimeError."""
 
     def __init__(self, name: str, options: dict):
-        self.name = name
+        self._name = name
         self._options = options
         self._rendition: _native.Rendition | None = None
+        self._session_ended: asyncio.Future[None] | None = None
+        # Its source's: set once the relay accepted the broadcast's namespace.
+        self._announced: asyncio.Event | None = None
         self._video_codec: str | None = None
+        # Ended by a failure to publish the rendition or its source.
+        self._ended = Ended()
+
+    @property
+    def name(self) -> str:
+        """Read-only, as the broadcast claimed the rendition's tracks by it."""
+        return self._name
 
     def configure_video(self, codec: str) -> None:
         """As `MediaSource.configure_video`; it may differ from the video's codec."""
         _check_video_codec(codec)
-        if self._rendition is not None:
-            self._rendition.configure_video(codec)
+        self._publish(lambda rendition: rendition.configure_video(codec))
         self._video_codec = codec
 
-    def push_video(self, data: bytes, timestamp_micros: int) -> None:
-        """An encoded frame of the same picture as a video frame, at that frame's timestamp. Raises
-        RuntimeError before `configure_video`."""
+    def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        """An encoded frame of the same picture as a video frame, at that frame's timestamp.
+        Returns whether the native rendition took it, as `MediaSource.push_video` does. Raises
+        RuntimeError before `configure_video`, and once publishing the rendition failed while the
+        session was live."""
         if self._video_codec is None:
             raise RuntimeError("call configure_video first")
-        if self._rendition is not None:
-            _drop_once_ended(lambda: self._rendition.push_video(data, timestamp_micros))
+        return self._publish(lambda rendition: rendition.push_video(data, timestamp_micros), push=True)
 
-    def _build(self, source: _native.MediaSource) -> None:
+    def _publish(self, call: Callable[[_native.Rendition], bool | None], *, push: bool = False) -> bool:
+        """`call` on the native rendition once it is built, and for a `push` once the broadcast was
+        published; returns whether the native rendition took it. Raises RuntimeError once
+        publishing it failed; a failure of `call` in a live session is that failure."""
+        if self._ended.failed:
+            raise RuntimeError(f"rendition {self.name} stopped publishing") from self._ended.error()
+        if (rendition := self._rendition) is None:
+            return False
+        if push and not (self._announced is not None and self._announced.is_set()):
+            return False
+        try:
+            return _call_native(lambda: call(rendition), self._session_ended)
+        except RuntimeError as failure:
+            self._ended.end(failure)
+            raise
+
+    def _build(
+        self, source: _native.MediaSource, session_ended: asyncio.Future[None], announced: asyncio.Event
+    ) -> None:
         rendition = source.add_rendition(self.name, **self._options)
         if self._video_codec is not None:
             rendition.configure_video(self._video_codec)
         self._rendition = rendition
+        self._session_ended = session_ended
+        self._announced = announced
+
+
+def _check_optional_unsigned(what: str, value: int | None, bits: int) -> None:
+    """As `_check_unsigned`, for an option the native source takes as absent when it is None."""
+    if value is not None:
+        _check_unsigned(what, value, bits)
+
+
+def _check_unsigned(what: str, value: int, bits: int) -> None:
+    """The native source takes `value` as an unsigned integer of `bits` bits: raises TypeError for
+    what is no integer, as a float or None, and ValueError for one out of range."""
+    try:
+        # What the native source does to take it.
+        number = operator.index(value)
+    except TypeError:
+        raise TypeError(f"{what} must be an integer: {value!r}") from None
+    if not 0 <= number < 1 << bits:
+        raise ValueError(f"{what} must be between 0 and {(1 << bits) - 1}: {value}")
+
+
+def _check_type(what: str, value: object, kind: type) -> None:
+    """The native source takes `value` only as a `kind`."""
+    if not isinstance(value, kind):
+        raise TypeError(f"{what} must be a {kind.__name__}: {value!r}")
 
 
 def _check_video_codec(codec: str) -> None:
@@ -296,10 +461,20 @@ def _check_video_codec(codec: str) -> None:
         raise ValueError(f"unsupported video codec: {codec}")
 
 
-def _drop_once_ended(push) -> None:
-    """The configuration is checked before, so the native source refuses a frame only once its
-    publishing stopped, as when the session ended."""
+def _call_native(call: Callable[[], bool | None], session_ended: asyncio.Future[None] | None) -> bool:
+    """`call()`, a push or a configuration; returns whether the native source took it, which a
+    call returning False, as a push its full queue dropped, did not. Once the session ended, it is
+    dropped before it reaches the native source, which may still queue it with nothing left to
+    send it. Its arguments are checked before, so the native source refuses it only once its
+    publishing stopped: one refused as the session ended is dropped, and the error that stopped
+    publishing in a live session is raised."""
+    if session_ended is not None and session_ended.done():
+        return False
     try:
-        push()
+        taken = call()
     except RuntimeError as error:
-        logger.warning("frame dropped: %s", error)
+        if session_ended is not None and session_ended.done():
+            logger.warning("media dropped: %s", error)
+            return False
+        raise
+    return taken is not False
