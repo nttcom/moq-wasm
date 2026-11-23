@@ -240,7 +240,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::PublishNamespaceDone(publish_namespace_done) => {
                 let publish_namespace_done_handler =
-                    PublishNamespaceDoneHandler::new(publish_namespace_done);
+                    PublishNamespaceDoneHandler::new(publish_namespace_done, None);
                 DepacketizeResult::SessionEvent(SessionEvent::PublishNamespaceDone(
                     publish_namespace_done_handler,
                 ))

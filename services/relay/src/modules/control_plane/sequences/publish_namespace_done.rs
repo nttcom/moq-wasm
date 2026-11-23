@@ -261,6 +261,7 @@ mod tests {
                 &PublishNamespaceDoneHandler {
                     track_namespace: NAMESPACE.to_string(),
                     track_namespace_tuple: NAMESPACE.split('/').map(str::to_string).collect(),
+                    request_id: None,
                 },
             )
             .await;
@@ -395,6 +396,7 @@ mod tests {
                 &PublishNamespaceDoneHandler {
                     track_namespace: NAMESPACE.to_string(),
                     track_namespace_tuple: NAMESPACE.split('/').map(str::to_string).collect(),
+                    request_id: None,
                 },
             )
             .await;
