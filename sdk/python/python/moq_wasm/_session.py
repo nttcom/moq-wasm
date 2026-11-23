@@ -6,6 +6,7 @@ from typing import Any, Literal, TypeVar
 
 from moq_wasm import _native
 from moq_wasm._token import RefreshToken, TokenKeeper
+from moq_wasm._wait import wait
 
 logger = logging.getLogger("moq_wasm")
 
@@ -120,7 +121,7 @@ class TrackWriter:
         settled = asyncio.ensure_future(self._settled.wait())
         ended = [] if self._session_ended is None else [self._session_ended]
         try:
-            await asyncio.wait([settled, *ended], return_when=asyncio.FIRST_COMPLETED)
+            await wait([settled, *ended], return_when=asyncio.FIRST_COMPLETED)
         finally:
             settled.cancel()
         if self._writer is None:
@@ -323,7 +324,7 @@ class Session:
         `ConnectionLost` or `moq_wasm.TokenExpired`, or `SessionClosed` after `close()`."""
         running = asyncio.ensure_future(work)
         try:
-            await asyncio.wait([running, self._done], return_when=asyncio.FIRST_COMPLETED)
+            await wait([running, self._done], return_when=asyncio.FIRST_COMPLETED)
             # A failure also ends the watches, so `work` may have returned because of it.
             if self._done.done() and self._done.exception() is not None:
                 raise self._done.exception()

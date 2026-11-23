@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from moq_wasm import _native
+from moq_wasm._wait import wait
 
 logger = logging.getLogger("moq_wasm")
 
@@ -138,12 +139,12 @@ class MediaSource:
         stopped = asyncio.ensure_future(self._stopped.wait())
         built = asyncio.ensure_future(self._built.wait())
         try:
-            await asyncio.wait([built, stopped], return_when=asyncio.FIRST_COMPLETED)
+            await wait([built, stopped], return_when=asyncio.FIRST_COMPLETED)
             if self._source is None:
                 raise RuntimeError("the media source stopped publishing")
             answered = asyncio.ensure_future(request(self._source))
             ending = [stopped] if self._session_ended is None else [stopped, self._session_ended]
-            await asyncio.wait([answered, *ending], return_when=asyncio.FIRST_COMPLETED)
+            await wait([answered, *ending], return_when=asyncio.FIRST_COMPLETED)
             if not answered.done():
                 answered.cancel()
                 raise RuntimeError("the media source stopped publishing")
