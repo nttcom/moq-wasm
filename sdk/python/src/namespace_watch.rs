@@ -46,4 +46,13 @@ impl NamespaceWatch {
             }
         })
     }
+
+    /// UNSUBSCRIBE_NAMESPACE; a `__anext__` that waits stops the iteration.
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let watch = self.watch.clone();
+        self.scope.future_into_py(py, async move {
+            watch.close().await?;
+            Ok(())
+        })
+    }
 }

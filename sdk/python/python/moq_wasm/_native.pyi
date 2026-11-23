@@ -116,9 +116,12 @@ class Session:
         object in its own datagram: a lost one is not resent, one larger than the path's datagram
         size (about 1 KB is safe) is dropped, and a subscriber reads it by object, not with
         `groups()`. `priority` is the Publisher Priority: among the session's tracks, a lower value
-        is sent first. Raises RuntimeError when the relay refuses the PUBLISH, or when the track
-        already has an object and `datagram` differs from its earlier registration; OverflowError
-        for a `priority` outside 0-255."""
+        is sent first. Raises `RequestError` when the relay refuses the PUBLISH, ValueError when the
+        track already has an object and `datagram` differs from its earlier registration, and
+        OverflowError for a `priority` outside 0-255."""
+    def end_track(self, namespace: list[str], name: str) -> asyncio.Future[None]:
+        """Ends every subscription to a track `publish_track` registered with PUBLISH_DONE; the
+        track keeps its numbering and cache, so registering it again continues them."""
     def refresh_token(self, token: str, *, app_id: str) -> asyncio.Future[None]:
         """Hands the relay `token`, a later token of the same app, before the current one expires
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it
@@ -164,6 +167,8 @@ class NamespaceEvent:
 class NamespaceWatch(AsyncIterator[NamespaceEvent]):
     def __aiter__(self) -> NamespaceWatch: ...
     def __anext__(self) -> asyncio.Future[NamespaceEvent]: ...
+    def close(self) -> asyncio.Future[None]:
+        """UNSUBSCRIBE_NAMESPACE; a `__anext__` that waits stops the iteration."""
 
 class Location:
     @property
@@ -186,6 +191,15 @@ class Object:
         payload."""
     @property
     def payload(self) -> bytes: ...
+    @property
+    def extension_headers(self) -> list[tuple[int, int | bytes]]:
+        """The extension headers as `(id, value)` pairs in the order they came, which carry the
+        object's LOC properties (draft-ietf-moq-loc-04 §2.2): an even id carries an integer, an odd
+        one bytes."""
+    @property
+    def timestamp_micros(self) -> int | None:
+        """The LOC Timestamp property in µs (draft-ietf-moq-loc-04 §2.3.1): wall-clock time since
+        the Unix epoch, or media time when a Timescale property comes with it; None without one."""
 
 class PublishDone:
     @property
