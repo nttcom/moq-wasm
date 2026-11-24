@@ -718,7 +718,11 @@ forward from their own cache through the raw stream senders.
   `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`;
   a group or object after one numbered u64::MAX fails the write instead of
   wrapping),
-  an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
+  an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`
+  (a `For` cache serves an object until `duration` after its write; a FETCH
+  skips expired objects, and a `CacheExpiryTask`
+  (`origin/cache_expiry_task.rs`) drops them while no one writes, so an idle
+  track holds no cache past its retention while its numbering goes on),
   and one outlet per subscription to
   the track (a SUBSCRIBE served or a PUBLISH sent): its publication state and
   its `OutletSendTask` (`origin/outlet_send_task.rs`), which owns the
