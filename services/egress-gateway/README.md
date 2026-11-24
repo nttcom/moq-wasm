@@ -1,14 +1,10 @@
 # egress-gateway
 
-Subscribes to a broadcast on a MoQT relay and sends it as plain RTP: H.264 on
-one port, AAC, Opus or G.711 A-law on another, RTCP sender reports beside
-them, and an SDP file for the receiver. The broadcast is the one described in
-[`crates/broadcast`](../../crates/broadcast/README.md).
-Design: [architecture](../../docs/architecture/egress-gateway/architecture.md).
+Subscribes to an MSF broadcast ([`crates/broadcast`](../../crates/broadcast/README.md)) on a MoQT relay and outputs plain RTP (H.264 video, AAC/Opus/G.711 A-law audio, RTCP sender reports, and an SDP file). Design: [architecture.md](../../docs/architecture/egress-gateway/architecture.md).
 
 ## Run
 
-Run each command in a separate terminal from the workspace root:
+Run each command in its own terminal from the repository root:
 
 ```shell
 make relay
@@ -17,7 +13,7 @@ make ffmpeg-srt
 make egress-gateway
 ```
 
-Once the bridge writes `assets/egress.sdp`, play the test pattern and tone:
+Once `assets/egress.sdp` is written, play the stream:
 
 ```shell
 ffplay -protocol_whitelist file,udp,rtp assets/egress.sdp
@@ -29,10 +25,6 @@ ffplay -protocol_whitelist file,udp,rtp assets/egress.sdp
 | `EGRESS_GATEWAY_DESTINATION` | `127.0.0.1` |
 | `EGRESS_GATEWAY_VIDEO_PORT` / `EGRESS_GATEWAY_AUDIO_PORT` | `5014` / `5016` |
 | `EGRESS_GATEWAY_SDP` | `assets/egress.sdp` |
-| `EGRESS_GATEWAY_MOQT_URL` | the local relay |
+| `EGRESS_GATEWAY_MOQT_URL` | local relay |
 
-The tallest LOC video track and the LOC audio track with the highest bitrate
-of the catalog's main source are sent, starting at the next group.
-
-For all CLI options, including RTP payload types, SSRCs and RTCP multiplexing
-for a preconfigured receiver, run `cargo run -p egress-gateway -- --help`.
+Sends the tallest LOC video track and the highest-bitrate LOC audio track of the catalog's main source, starting at the next group. For all CLI flags (payload types, SSRCs, RTCP muxing), run `cargo run -p egress-gateway -- --help`.

@@ -1,14 +1,14 @@
 # moq-system-one-bot
 
-MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通で使う、System One（d1-2B）を呼ぶ MoQ bot の部品です。
+System One（d1-2B）を使う MoQ bot（Chat Moderation / Camera Detection / PTZ Tracking）向けの共通ユーティリティです。
 
-| モジュール | 内容 |
+| モジュール | 役割 |
 | --- | --- |
-| `system_one_client` | System One の `/v1/systemone` への POST。ID トークンを付け、待ち時間を `system_one_status` に反映する |
-| `event_timeline` | bot の判定を、判定した object の Location で引ける event timeline の record にする `location_record`（トラックは `moq_wasm.media` の `EventTimeline`） |
-| `system_one_status` | System One の状態 `{"system_one", "since"}` を status トラックに書く。1 状態 1 group |
-| `relay` | 最初の接続がつながるまで試し続ける `stay_connected`（つなぎ直しは `moq_wasm.Session` が行う） |
-| `video` | `moq_wasm.codecs` の `VideoDecoder` で復号した絵を JPEG にする `picture_to_jpeg`（幅を指定すると縦横比を保って縮小する） |
+| `system_one_client` | `/v1/systemone` への POST（ID トークン付与、`system_one_status` 更新） |
+| `event_timeline` | 判定結果を対象オブジェクトの Location に紐づける `location_record` |
+| `system_one_status` | `{"system_one", "since"}` を `status` トラックへ 1 状態 1 group で書き込み |
+| `relay` | 初回接続が成功するまでリトライする `stay_connected`（再接続は `moq_wasm.Session` 任せ） |
+| `video` | `VideoDecoder` の出力を縦横比維持リサイズ＋JPEG 化する `picture_to_jpeg` |
 
 ## テスト
 

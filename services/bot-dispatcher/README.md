@@ -1,13 +1,10 @@
 # bot-dispatcher
 
-Starts bots (a recorder, AI bots) in a room for your app's server.
-Design: [architecture document](../../docs/architecture/bot-dispatcher/architecture.md).
+Launches and manages room bots (recorder, AI bots) on behalf of your app server. Design: [architecture.md](../../docs/architecture/bot-dispatcher/architecture.md).
 
-## Starting a bot from your app
+## Flow
 
-A browser never calls bot-dispatcher. Your page asks your own server, your
-server decides whether that user may start the bot, and only then calls
-bot-dispatcher with a launch token it signs with the app's secret:
+Browsers never call `bot-dispatcher` directly. Your page asks your app server, which authorizes the user and calls `bot-dispatcher` with a short-lived launch token signed using the app's secret:
 
 ```mermaid
 sequenceDiagram
@@ -16,31 +13,27 @@ sequenceDiagram
     participant D as bot-dispatcher
     participant B as Bot
     participant R as Relay
-    P->>S: start the recorder in this room (your own API)
+    P->>S: start bot in room (your API)
     S->>D: POST /bots/recorder + launch token
-    D-->>S: 201 the bot
+    D-->>S: 201 bot record
     D->>B: launch
-    B->>D: its token, then a heartbeat every few seconds
-    B->>R: joins the room
+    B->>D: fetch token, then periodic heartbeat
+    B->>R: join room
 ```
 
-Pages of a temporary app have no server of their own; `services/temporary-apps`
-plays that server for them.
+For temporary apps (which have no app server), `services/temporary-apps` proxies these requests.
 
-## The launch token
+## Launch token
 
-A launch token is a JWT signed like a client token
-([Signing tokens on your own server](../console/README.md#signing-tokens-on-your-own-server)):
-HS256 with the UTF-8 bytes of your app's secret. Its claims differ:
+HS256 JWT signed with the UTF-8 bytes of your app's secret (same signing as [client tokens](../console/README.md#signing-tokens-on-your-own-server)):
 
 | Claim | Value |
 | --- | --- |
 | `appId` | Your app's `appId` |
-| `bots` | Path under your app whose rooms the token may start, stop and read bots in: `team-a` covers `<appId>/team-a` and below, `""` the whole app |
-| `iat`, `exp` | Unix seconds; `exp - iat` at most 5 minutes |
+| `bots` | Allowed room path prefix under `appId` (`team-a` covers `<appId>/team-a/**`; `""` covers the whole app) |
+| `iat`, `exp` | Unix seconds; `exp - iat` must be ≤ 5 minutes |
 
-Leave out `publish` and `subscribe`, so a leaked launch token cannot join a
-room. Sign one per call.
+Omit `publish` and `subscribe` so a leaked launch token cannot join a room. Sign a fresh token per request.
 
 ```python
 import base64, hashlib, hmac, json, time
@@ -58,18 +51,15 @@ def launch_token(app_id: str, secret: str, bots: str = "") -> str:
 
 ## API
 
-Send the launch token as `Authorization: Bearer <token>` on every route below.
+Pass the launch token as `Authorization: Bearer <token>` on all `/bots/*` routes (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific):
 
-| Route | Answer |
+| Route | Response |
 | --- | --- |
-| `POST /bots/{type}` `{"namespace_prefix", "options"}` | `201` the bot |
-| `GET /bots/{type}?namespace_prefix=` | `200` the room's latest bot of that type, `404` if it never had one |
-| `GET /bots/{type}/{id}` | `200` the bot |
-| `DELETE /bots/{type}/{id}` | `202`; the bot stops at its next heartbeat |
+| `POST /bots/{type}` `{"namespace_prefix", "options"}` | `201` bot record |
+| `GET /bots/{type}?namespace_prefix=` | `200` latest bot for that room/type, or `404` |
+| `GET /bots/{type}/{id}` | `200` bot record |
+| `DELETE /bots/{type}/{id}` | `202` (stops on next heartbeat) |
 | `GET /healthz` | `200 {"status": "ok"}` |
-
-`namespace_prefix` is the room, the full namespace `<appId>/<room>`.
-`options` is optional and depends on the type (below).
 
 ```
 POST /bots/recorder
@@ -90,84 +80,70 @@ Content-Type: application/json
 
 | Status | `error` | Meaning |
 | --- | --- | --- |
-| `400` | `invalid_request` | The body is not JSON with `namespace_prefix`, or `namespace_prefix` is missing from the query |
-| `400` | `invalid_room` | `namespace_prefix` has fewer than two elements or an empty one |
-| `401` | `a bearer token is required` | No `Authorization: Bearer` header |
-| `401` | `invalid_token` | The token is not signed with a registered app's secret |
-| `401` | `invalid_token_lifetime` | The token has expired, lives longer than 5 minutes, lacks `iat` or `exp`, or has an empty element in `bots` |
-| `403` | `forbidden` | The `bots` claim is missing or does not cover the room, or the app is a relay |
-| `404` | `not_found` | The type is not deployed, or no such bot of that type |
-| `409` | `conflict` | The room already runs a bot of that type |
-| `503` | `full` | The type runs as many bots as it may, over all apps |
-| `500` | `internal_error` | The bot could not be launched or the store failed; the room's latest bot then shows a `failed` launch, and you may retry |
-| `503` | `vts_unavailable` | The token could not be verified; retry |
+| `400` | `invalid_request` | Invalid JSON body or missing `namespace_prefix` |
+| `400` | `invalid_room` | `namespace_prefix` has fewer than 2 segments or an empty segment |
+| `401` | `a bearer token is required` | Missing `Authorization: Bearer` header |
+| `401` | `invalid_token` | Signature verification failed |
+| `401` | `invalid_token_lifetime` | Expired, lifetime > 5 min, missing `iat`/`exp`, or empty segment in `bots` |
+| `403` | `forbidden` | `bots` claim missing or doesn't cover the room, or app is a relay |
+| `404` | `not_found` | Unknown bot type or bot ID |
+| `409` | `conflict` | A bot of this type is already active in the room |
+| `503` | `full` | Global `max_running` limit reached for this type |
+| `500` | `internal_error` | Launch or store failure (query `GET /bots/{type}?namespace_prefix=` before retrying; only a launcher error attempts to mark the bot `failed`) |
+| `503` | `vts_unavailable` | VTS unreachable; retry |
 
 ## Bot states
 
 | `state` | Meaning |
 | --- | --- |
-| `starting` | Launched, not yet reporting |
-| `running` | In the room |
-| `stopping` | A `DELETE` is waiting for the bot's next heartbeat |
-| `finished` | Left the room |
-| `failed` | Could not launch, crashed, or stopped reporting; see `error` |
+| `starting` | Launched, awaiting first report |
+| `running` | Active in the room |
+| `stopping` | `DELETE` received, awaiting next heartbeat |
+| `finished` | Exited cleanly |
+| `failed` | Launch failed, crashed, or timed out (see `error`) |
 
-A bot that has not reported for 90 s, or has not reported at all 5 minutes
-after its launch, is
-`failed` with `the bot stopped reporting`, and the room may start another.
-
-A bot ends by itself once the room has had no member who publishes for its
-type's `grace_seconds`, counted from its start too, and after its type's
-`max_seconds` ([Configuration](#configuration)).
+- A bot is marked `failed` (`the bot stopped reporting`) if it misses heartbeats for 90 s or fails to report within 5 min of launch, freeing the room to start another.
+- Bots exit automatically after `grace_seconds` with no active publishers (including at startup) or after `max_seconds`.
 
 ## Bot types and options
 
-Which types exist depends on the deployment (`BOT_DISPATCHER_TYPES` below).
-This repository's bots:
+Deployed types come from `BOT_DISPATCHER_TYPES`. Built-in bots:
 
-| Type | Does | `options` |
+| Type | Purpose | `options` |
 | --- | --- | --- |
-| `recorder` | Records every participant of the room ([`services/recorder`](../recorder/README.md)) | `layout`: `combined` (default, video and audio in one file) or `per-track`; `composite`: `true` to also mix everyone into one `composite.mp4` (default `false`); `format`: `mp4` (default) or `moq`, a recording that can be replayed through the relay |
-| `transcriber` | Publishes live captions ([moq-meeting-transcriber](../../examples/python/moq-meeting-transcriber/README.md)) | `asr`: the recognizer, `whisper` by default or one the deployment offers |
-| `chat-moderation` | Moderates the chat ([moq-chat-moderation](../../examples/python/moq-chat-moderation/README.md)) | — |
-| `camera-detection` | Finds what is asked for in a camera ([moq-camera-detection](../../examples/python/moq-camera-detection/README.md)) | — |
-| `ptz-tracking` | Points a PTZ camera at what is asked for ([moq-ptz-tracking](../../examples/python/moq-ptz-tracking/README.md)) | — |
-| `voice-agent` | Talks with the room ([moq-ai-voice-agent](../../examples/python/moq-ai-voice-agent/README.md)) | — |
+| `recorder` | Records every participant ([`services/recorder`](../recorder/README.md)) | `layout`: `combined` (default) or `per-track`; `composite`: `true` to also mix everyone into `composite.mp4` (default `false`); `format`: `mp4` (default) or `moq` (replayable through the relay) |
+| `transcriber` | Live captions ([`moq-meeting-transcriber`](../../examples/python/moq-meeting-transcriber/README.md)) | `asr`: `whisper` (default) or another configured recognizer |
+| `chat-moderation` | Chat moderation ([`moq-chat-moderation`](../../examples/python/moq-chat-moderation/README.md)) | — |
+| `camera-detection` | Camera Q&A and bounding boxes ([`moq-camera-detection`](../../examples/python/moq-camera-detection/README.md)) | — |
+| `ptz-tracking` | PTZ camera auto-tracking ([`moq-ptz-tracking`](../../examples/python/moq-ptz-tracking/README.md)) | — |
+| `voice-agent` | Conversational voice agent ([`moq-ai-voice-agent`](../../examples/python/moq-ai-voice-agent/README.md)) | — |
 
-bot-dispatcher passes `options` on unchecked: a bot given an invalid one, or a
-recorder given `composite` with `format: moq`, turns `failed` with the reason
-in `error`.
+`options` are forwarded unchecked; invalid options (such as `composite: true` with `format: moq`) cause the bot to enter `failed` with the reason in `error`.
 
-A recorder's bot id is not its recording's id: list the room's recordings with
-`GET /recordings?namespace_prefix=` of `recorder serve`.
+Note: a recorder bot's `id` differs from its recording ID; list recordings via `GET /recordings?namespace_prefix=` on `recorder serve`.
 
-## The bot in the room
+## Room namespace
 
-A bot joins with a one-hour token bot-dispatcher signs for your app, which
-subscribes to the whole room and publishes only under `<room>/bots/<type>`. A page learns that a bot joined from that
-namespace's PUBLISH_NAMESPACE and that it left from its
-PUBLISH_NAMESPACE_DONE, so leave `bots` out of the names your members publish
-under.
+Bots join with a 1-hour token that subscribes to `<room>` and publishes only under `<room>/bots/<type>`. Pages detect bot arrival/departure via `PUBLISH_NAMESPACE` / `PUBLISH_NAMESPACE_DONE` on that prefix, so avoid naming user participants `bots`.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `BOT_DISPATCHER_PUBLIC_URL` | required | URL the bots call back, and the audience of their Google ID tokens |
-| `BOT_DISPATCHER_TYPES` | required | The bot types, JSON (below) |
-| `BOT_DISPATCHER_STORE_URL` | required | `gs://<bucket>/<prefix>` or `file:///<dir>/`: one record per bot and a lock per room and type; `file://` cannot lock, so run one instance on it |
-| `BOT_DISPATCHER_VTS_URL` | required without `BOT_DISPATCHER_INSECURE_SKIP_AUTH` | VTS `/verify` endpoint that checks launch tokens |
-| `BOT_DISPATCHER_REGISTRY_FILE` | unset | Registered apps in a local file, whose secrets sign the bot tokens; this or the bucket is required without `BOT_DISPATCHER_INSECURE_SKIP_AUTH` |
-| `BOT_DISPATCHER_REGISTRY_BUCKET`, `BOT_DISPATCHER_REGISTRY_OBJECT` | unset, `registry.json` | Read the registered apps from Cloud Storage instead |
-| `BOT_DISPATCHER_TEMPORARY_APP_SECRET` | unset | Secret of every temporary app; unset, a temporary app's bot gets no token |
-| `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT` | unset | Comma-separated service accounts the Cloud Run jobs run as; unset accepts only locally launched bots |
-| `BOT_DISPATCHER_INSECURE_SKIP_AUTH` | unset | `true` accepts every request and lets bots join with no token, for a relay without authorization (local development only) |
+| `BOT_DISPATCHER_PUBLIC_URL` | required | Callback URL for bots and Google ID token audience |
+| `BOT_DISPATCHER_TYPES` | required | JSON map of bot types (see below) |
+| `BOT_DISPATCHER_STORE_URL` | required | `gs://<bucket>/<prefix>` or `file:///<dir>/` (`file://` has no locking; single instance only) |
+| `BOT_DISPATCHER_VTS_URL` | required* | VTS `/verify` endpoint |
+| `BOT_DISPATCHER_REGISTRY_FILE` | unset | Local app registry file used to sign bot tokens (this or bucket required*) |
+| `BOT_DISPATCHER_REGISTRY_BUCKET`, `BOT_DISPATCHER_REGISTRY_OBJECT` | unset, `registry.json` | Cloud Storage app registry |
+| `BOT_DISPATCHER_TEMPORARY_APP_SECRET` | unset | Signing secret for temporary apps (unset disables temporary-app bot tokens) |
+| `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT` | unset | Comma-separated Cloud Run job service accounts (unset allows local bots only) |
+| `BOT_DISPATCHER_INSECURE_SKIP_AUTH` | unset | `true` skips auth and issues no bot token (local dev only) |
 | `PORT` | `8098` | Listen port |
 
-Logging and OTLP export follow `crates/telemetry-otlp`
-(`BOT_DISPATCHER_STDOUT_FILTER` and the standard `OTEL_*` variables).
+\*Not required when `BOT_DISPATCHER_INSECURE_SKIP_AUTH=true`. Logging/OTLP use `BOT_DISPATCHER_STDOUT_FILTER` and standard `OTEL_*` variables (`crates/telemetry-otlp`).
 
-`BOT_DISPATCHER_TYPES` maps each type to how it is launched and its limits:
+`BOT_DISPATCHER_TYPES` example:
 
 ```json
 {
@@ -181,21 +157,14 @@ Logging and OTLP export follow `crates/telemetry-otlp`
 }
 ```
 
-- `launcher` is `{"kind": "cloud-run", "job": ...}`, for which
-  bot-dispatcher's service account needs `run.jobs.runWithOverrides` on the
-  job, or `{"kind": "local", "program": <path>}`, a child process.
-- A bot runs `args` followed by `--bot-type`, `--bot-id`,
-  `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`,
-  `--max-seconds` and, when the request has them, `--options <JSON>`. A
-  locally launched bot also finds its key in `BOT_DISPATCHER_BOT_KEY`.
+- `launcher`: `{"kind": "cloud-run", "job": ...}` (requires `run.jobs.runWithOverrides`) or `{"kind": "local", "program": <path>}`.
+- `bot-dispatcher` appends `--bot-type`, `--bot-id`, `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds`, and (if present) `--options <JSON>` to `args`. Local bots receive their auth key in `BOT_DISPATCHER_BOT_KEY`.
 
-## Running
+## Running locally
 
-With a relay without authorization running locally, build the recorder
-(`cargo build -p recorder`) and start bot-dispatcher with the recorder as a
-child process:
+With an unauthenticated local relay running, build the recorder (`cargo build -p recorder`) and start `bot-dispatcher`:
 
-```
+```shell
 BOT_DISPATCHER_PUBLIC_URL=http://127.0.0.1:8098 \
 BOT_DISPATCHER_STORE_URL=file://$PWD/recordings/bots/ \
 BOT_DISPATCHER_INSECURE_SKIP_AUTH=true \
@@ -208,4 +177,4 @@ curl -X POST http://127.0.0.1:8098/bots/recorder \
   -H 'Content-Type: application/json' -d '{"namespace_prefix": "anon/research"}'
 ```
 
-`compose.demo.yml` runs it with the voice agent (`--profile voice-agent`).
+`compose.demo.yml --profile voice-agent` runs `bot-dispatcher` with the voice agent.

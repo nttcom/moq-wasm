@@ -3,52 +3,44 @@
 Browser demos built on `sdk/js`.
 
 ```shell
-npm ci              # the repository root is an npm workspace
-make browser        # wasm build + Vite on http://localhost:5173
-make chrome         # Chrome trusting the local relay certificate (make chrome:linux on Linux)
+npm ci              # repository root is an npm workspace
+make browser        # build wasm + start Vite on http://localhost:5173
+make chrome         # Chrome trusting the local relay cert (make chrome:linux on Linux)
 ```
 
-`make chrome` gives Chrome a fake camera and microphone;
-`MOQT_FAKE_MEDIA=0 make chrome` uses the real ones.
+`make chrome` uses fake camera/mic; run `MOQT_FAKE_MEDIA=0 make chrome` for real devices.
 
 ## Examples
 
-| Page                                                                                    | Shows                                                                               |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `message`                                                                               | Sending and receiving MoQT control messages by hand                                 |
-| `media`, `media-cmaf`                                                                   | Publisher and subscriber pages exchanging WebCodecs media, in LOC or CMAF packaging |
-| `embed`                                                                                 | Playing a broadcast with the `<moq-player>` element of `moq-wasm/element`           |
-| [`live-viewer`](examples/live-viewer/README.md)                                         | Player for `ingest-gateway`, `moqtsink` and in-browser MP4 publishing, with rewind  |
-| [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                                           |
-| [`live-translate`](examples/live-translate/README.md)                                   | Broadcast translated live by `services/live-translate`                              |
-| `onvif`                                                                                 | Remote control and monitoring of a PTZ camera through `services/ingest-gateway`     |
-| `remote-monitoring`                                                                     | Remote monitoring from a USB camera                                                 |
-| `moq-chat-moderation`, `moq-camera-detection`, `moq-ptz-tracking`, `moq-ai-voice-agent` | Pages backed by a pipecat bot, see [`examples/python`](../python)                   |
+| Page                                                                                    | Description                                                             |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `message`                                                                               | Send and receive MoQT control messages manually                         |
+| `media`, `media-cmaf`                                                                   | WebCodecs publisher/subscriber in LOC or CMAF packaging                 |
+| `embed`                                                                                 | Playback using the `<moq-player>` custom element (`moq-wasm/element`)   |
+| [`live-viewer`](examples/live-viewer/README.md)                                         | Player with rewind for `ingest-gateway`, `moqtsink`, and in-browser MP4 |
+| [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                               |
+| [`live-translate`](examples/live-translate/README.md)                                   | Live translated broadcast via `services/live-translate`                 |
+| `onvif`                                                                                 | Remote PTZ camera control and viewing via `services/ingest-gateway`     |
+| `remote-monitoring`                                                                     | USB camera remote monitoring                                            |
+| `moq-chat-moderation`, `moq-camera-detection`, `moq-ptz-tracking`, `moq-ai-voice-agent` | Pipecat bot demos (see [`examples/python`](../python))                  |
 
 ## Relay and authentication
 
-The tabs at the top right of the example list choose how every example
-connects; the choice is kept in localStorage.
+Use the tabs at the top right of the example list to pick an access mode (saved in `localStorage`):
 
-| Mode                                                    | Namespace root                 | Token                                                                                                                                                      |
-| ------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **一時トークン** (temporary), the default when deployed | `temp-…`, a new temporary app  | A one-hour token from `services/temporary-apps`, refreshed by the page. It stays in the address bar as `#jwt=<token>`, so a copied link joins the same app |
-| **Public**, the default on this machine                 | `anon`, which everyone can see | None                                                                                                                                                       |
+| Mode                                     | Namespace root               | Token                                                                                                                    |
+| ---------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **一時トークン** (default when deployed) | `temp-…`                     | 1-hour token from `services/temporary-apps`, auto-refreshed and kept in `#jwt=<token>` so shared links join the same app |
+| **Public** (default locally)             | `anon` (visible to everyone) | None                                                                                                                     |
 
-- `?access=public` opens one page as public without changing the stored mode.
-- `?jwt=<token>` connects with any app-scoped JWT (from the `auth-token` CLI
-  or the console). The root becomes the token's appId; the token is never
-  refreshed.
-- The bot-backed examples start their bot through the temporary-apps service,
-  which starts it on the bot service in the page's app, so only a temporary
-  app's page has a bot (`docs/architecture/bot-dispatcher/architecture.md`).
-- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`)
-  is used only when it names this machine or a host under
-  `moqt.research.skyway.io`, since the page sends its token there.
+- `?access=public` opens a single page in public mode without changing the stored mode.
+- `?jwt=<token>` connects with an app-scoped JWT (from `auth-token` CLI or console); root is the token's `appId` and it is not refreshed.
+- Bot demos launch bots via `services/temporary-apps` → `services/bot-dispatcher`, so bots only run in temporary-app mode ([design](../../docs/architecture/bot-dispatcher/architecture.md)).
+- Query overrides (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`) are only accepted for this machine (`localhost`, `127.0.0.1`, `[::1]`) or `*.moqt.research.skyway.io` since the page sends its token there.
 
 ## Safari
 
-Playwright's WebKit has no WebTransport, so check Safari on a Mac by hand.
+Playwright's WebKit lacks WebTransport; verify Safari manually on macOS:
 
 1. Trust the relay certificate once:
 
@@ -58,12 +50,9 @@ Playwright's WebKit has no WebTransport, so check Safari on a Mac by hand.
    ```
 
 2. Run `RELAY_CERT_DIR=~/.config/moqt/relay-keys make relay` and `make browser`.
-3. Open `media/publisher` and `media/subscriber` under
-   `http://localhost:5173/moq-wasm/examples/` and go through each page's
-   buttons in order.
+3. Open `media/publisher` and `media/subscriber` under `http://localhost:5173/moq-wasm/examples/` and step through the buttons.
 
-Safari lets one page capture the camera at a time, so a meeting check needs a
-second browser for the other participant.
+Safari allows only one tab to capture the camera at a time; use a second browser to test meetings.
 
 ## E2E
 

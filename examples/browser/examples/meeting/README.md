@@ -1,6 +1,6 @@
 # Meeting
 
-A browser meeting with camera, screen sharing, audio and chat.
+Multi-party browser meeting with camera, screen share, audio, chat, captions, and recording.
 
 ## Run
 
@@ -12,43 +12,33 @@ make browser
 make chrome
 ```
 
-Open `http://localhost:5173/moq-wasm/examples/meeting/` in two tabs. Choose
-the local relay in both, then join the same room with different user names.
-Turn on both cameras and check that each tab shows the other participant.
-See [relay and authentication](../../README.md#relay-and-authentication) for access modes.
+Open `http://localhost:5173/moq-wasm/examples/meeting/` in two tabs, select the local relay, and join the same room with different names. See [relay and authentication](../../README.md#relay-and-authentication) for access modes.
 
 ## Features
 
-- **Rooms**: Everyone's audio is subscribed, and their video while their tile is on the stage.
-- **Layout**: a gallery of equal tiles, or a speaker view with the active speaker large and the others in a filmstrip. A screen share takes the focus.
-- **Active speaker**: audio objects carry the LOC Audio Level (draft-ietf-moq-loc-04 §2.3.3.2); the loudest speaking participant takes the focus.
-- **Publishing**: camera and screen share in 1080p / 720p / 480p, audio at 128 / 64 / 32 kbps. Each profile is encoded only while someone subscribes to it. `Catalog Details` edits the tracks, codecs and keyframe intervals.
-- **Playback**: each remote participant plays through a `RemoteBroadcast` (`moq-wasm/media`) behind an adaptive jitter buffer, with playout settings per participant.
-- **Quality switching**: `Auto` (the default) picks a rendition no taller than the tile and steps down when delivery falls behind; a new rendition takes over at a group boundary.
-- **Stats**: a per-participant modal charts bitrate, the playout buffer, the capture-to-display delay and the A/V offset.
-- **Recording**: in a temporary app's room, Record in Activities asks the temporary-apps service ([`services/temporary-apps`](../../../../services/temporary-apps/README.md)) to start the recorder bot through [`services/bot-dispatcher`](../../../../docs/architecture/bot-dispatcher/architecture.md); the bot records the whole room as a MoQ archive with chat and transcript, as one composited video, or as one file per participant or per track. The recorder (`make recorder-serve`, see [`services/recorder`](../../../../services/recorder/README.md)) lists the room's recordings, and a finished MoQ archive opens in the [Recording Player](../recording-player/). `?temporaryAppsUrl=` and `?recorderUrl=` name the two services.
-- **Captions**: in a temporary app's room, STT in Activities asks the temporary-apps service to start the transcriber bot ([`examples/python/moq-meeting-transcriber`](../../../python/moq-meeting-transcriber/README.md)) through `services/bot-dispatcher`; each speaker's newest utterance shows on their tile.
-- **Chat** sidebar.
+- **Rooms & layout**: Subscribes to everyone's audio and visible tiles' video. Switch between equal gallery and speaker view (screen share or loudest speaker via LOC Audio Level `draft-ietf-moq-loc-04 §2.3.3.2`).
+- **Publishing**: Camera/screen share at 1080p/720p/480p and audio at 128/64/32 kbps, encoded only while subscribed. `Catalog Details` adjusts tracks, codecs, and keyframe intervals.
+- **Playback & ABR**: Plays each remote participant via `RemoteBroadcast` (`moq-wasm/media`) with an adaptive jitter buffer and `Auto` (default) rendition selection based on tile size and delivery lag (switches at group boundaries).
+- **Stats**: Per-participant modal charting bitrate, buffer, capture-to-display delay, and A/V offset.
+- **Recording & captions**: In temporary-app rooms, **Activities** starts the [recorder](../../../../services/recorder/README.md) (MoQ archive with chat and transcript, composite MP4, or one file per participant or per track; `make recorder-serve` lists recordings and finished MoQ archives open in [Recording Player](../recording-player/)) or [transcriber](../../../python/moq-meeting-transcriber/README.md) via `temporary-apps` → [`bot-dispatcher`](../../../../services/bot-dispatcher/README.md). Override URLs with `?temporaryAppsUrl=` and `?recorderUrl=`.
+- **Chat**: Sidebar text chat.
 
-Only a temporary app's page starts a recording: a registered app's server
-starts the recorder bot itself. The recorder lists recordings for a token (a
-temporary app or `?jwt=`); the transcriber joins public and temporary-app
-rooms, not `?jwt=` ones.
+Note: Recording start requires a temporary app (registered apps start bots from their own server); listing recordings requires a token (temporary app or `?jwt=`) whose `subscribe` claim covers the room; the transcriber can join public and temporary-app rooms (not `?jwt=`), though only a temporary-app page starts it.
 
 ## Protocol flow
 
-| Item            | Name                                                               |
-| --------------- | ------------------------------------------------------------------ |
-| Track namespace | `<root>/<room>/<user>` (public root: `anon`; otherwise the app ID) |
-| Catalog         | `catalog`                                                          |
-| Camera          | `camera` (1080p), `camera_720p`, `camera_480p`                     |
-| Screen share    | `screenshare` (1080p), `screenshare_720p`, `screenshare_480p`      |
-| Audio           | `camera_audio`                                                     |
-| Chat            | `chat`                                                             |
+| Item            | Name                                                          |
+| --------------- | ------------------------------------------------------------- |
+| Track namespace | `<root>/<room>/<user>` (`anon` or app ID)                     |
+| Catalog         | `catalog`                                                     |
+| Camera          | `camera` (1080p), `camera_720p`, `camera_480p`                |
+| Screen share    | `screenshare` (1080p), `screenshare_720p`, `screenshare_480p` |
+| Audio           | `camera_audio`                                                |
+| Chat            | `chat`                                                        |
 
-1. `SUBSCRIBE_NAMESPACE` on the room prefix; `PUBLISH_NAMESPACE` arrives for every present and later participant.
-2. `createBroadcast()` announces the participant namespace and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`.
-3. Receiving mirrors this: one catalog `SUBSCRIBE` per participant, then the players' per-track `SUBSCRIBE` and `UNSUBSCRIBE`. A new picture starts at the current group's keyframe through a joining `FETCH`.
+1. `SUBSCRIBE_NAMESPACE` on `<root>/<room>` discovers current and future participants via `PUBLISH_NAMESPACE`.
+2. `createBroadcast()` announces `<root>/<room>/<user>` and `PUBLISH`es `catalog` plus listed tracks; muting drops the track with `PUBLISH_DONE`.
+3. Receivers open one catalog `SUBSCRIBE` per participant, then per-track `SUBSCRIBE`/`UNSUBSCRIBE` for selected media (using joining `FETCH` to start video at the current group's keyframe).
 
 ## Stack
 
