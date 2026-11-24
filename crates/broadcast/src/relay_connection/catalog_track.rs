@@ -82,23 +82,18 @@ impl CatalogTrack {
             .catalog_sent_since_tick
             .insert(namespace_path.to_string(), true);
         let bytes = payload.len();
-        match self
+        let outcome = self
             .origin
             .write_group(namespace_path, CATALOG_TRACK_NAME, payload)
             .await
-            .context("send catalog group")?
-        {
+            .context("send catalog group")?;
+        self.ledger
+            .record_group(CATALOG_TRACK_NAME, &outcome, bytes);
+        match outcome {
             WriteOutcome::Sent(placement) => {
-                self.ledger
-                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
-                self.ledger.add_object(CATALOG_TRACK_NAME, bytes);
-                self.ledger.finish(CATALOG_TRACK_NAME);
                 tracing::info!(track_namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
             }
-            WriteOutcome::Stopped(placement) => {
-                self.ledger
-                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
-                self.ledger.finish(CATALOG_TRACK_NAME);
+            WriteOutcome::Stopped(_) => {
                 tracing::info!(track_namespace = %namespace_path, "subscriber stopped the catalog group");
             }
             WriteOutcome::NotSent => {}

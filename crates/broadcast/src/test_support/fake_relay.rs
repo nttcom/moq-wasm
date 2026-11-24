@@ -30,7 +30,7 @@ pub(crate) struct FakeRelay {
     pub(crate) authorization_tokens: oneshot::Receiver<Vec<AuthorizationToken>>,
     pub(crate) requests: mpsc::UnboundedReceiver<String>,
     pub(crate) published: mpsc::UnboundedReceiver<Subscription>,
-    video_objects: mpsc::UnboundedReceiver<TrackObject>,
+    pub(crate) video_objects: mpsc::UnboundedReceiver<TrackObject>,
     pub(crate) catalog_objects: mpsc::UnboundedReceiver<TrackObject>,
     /// The data of every other published track, by track name.
     track_data: mpsc::UnboundedReceiver<(String, DataReceiver)>,
