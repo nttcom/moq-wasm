@@ -41,7 +41,7 @@ both tracks into one init segment and one fragment stream.
    relay drains, every subscription moves to the relay it names, keeping its
    ids, and the files continue without a gap (see the `moqt` architecture,
    session-migration.md).
-2. `catalog_reader::CatalogReader` subscribes to the catalog first with
+2. `broadcast::CatalogReader` subscribes to the catalog first with
    `Subscriber::subscribe_current_group`: the SUBSCRIBE and joining FETCH
    (offset 0) draft-ietf-moq-msf-02 §5 asks for, read through one
    `TrackReader` that yields the current group before the live objects, or
@@ -49,7 +49,7 @@ both tracks into one init segment and one fragment stream.
    read with `msf::Catalog::parse`, which refuses a version this build does not
    read, a delta update and a catalog the draft calls invalid (§5.1.1, §5.1.6,
    §5.2).
-   `track_selection::select_tracks` picks the LOC track named by
+   `broadcast::selection::select_tracks` picks the LOC track named by
    `--video-track` and `--audio-track`. Without a name it takes the tracks
    of one source (see "Sources") by their catalog role and quality fields
    instead of guessing names the publisher chose: among the source's video
@@ -117,7 +117,7 @@ without one form one source. `broadcast` gives a source's renditions one
 the recorder chooses from. A `renderGroup` number means nothing beyond its
 catalog: `broadcast` numbers the sources anew in each catalog, and the
 camera's number changes when a screen share starts. So the source is found
-again in every catalog (`track_selection::SourceChoice`):
+again in every catalog (`broadcast::selection::SourceChoice`):
 
 - The main source (`Content::Camera`) is the one `broadcast` and the browser
   SDK publish by default: the source listing a media track named `video`,
@@ -129,7 +129,7 @@ again in every catalog (`track_selection::SourceChoice`):
 - Another source (`Content::ScreenShare`) is the first one listed besides
   the main one: a meeting participant's screen share.
 - A recorded track stays while the catalog lists it in a source of its
-  recording's kind (`track_selection::keeps`), so a track whose source turns
+  recording's kind (`broadcast::selection::keeps`), so a track whose source turns
   into the main one leaves the screen share recording.
 
 Neither MSF nor the catalog says which source is a camera and which a
@@ -150,7 +150,7 @@ before recording was not chosen, because a video-only `broadcast` lists the
 `audio` placeholder for good and a muted participant may never unmute.
 
 So the video starts alone, and while the recording has no audio,
-`record_live` runs every catalog object through `track_selection::select_audio`.
+`record_live` runs every catalog object through `broadcast::selection::select_audio`.
 The first track it returns is subscribed with `LargestObject` and added
 with `Recording::add_audio`. In the combined layout the pipeline adds the
 track to the muxer at once when nothing has been written yet; otherwise the
@@ -189,7 +189,7 @@ PUBLISH_NAMESPACE, so the participant would never be recorded again. The
 video therefore follows the catalog like the audio: `record_live` drops the
 subscription once a catalog no longer lists the track, or once it ends, and
 while the recording reads no video, each catalog object goes through
-`track_selection::select_video`, the same choice as at start. The track it
+`broadcast::selection::select_video`, the same choice as at start. The track it
 returns is subscribed with `NextGroupStart` and added with
 `Recording::add_video`.
 

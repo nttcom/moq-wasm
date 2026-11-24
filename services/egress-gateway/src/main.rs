@@ -11,7 +11,7 @@ use mediapack::rtp::{
 };
 use moqt::{CertificateVerification, ClientConfig, Session};
 
-use broadcast::BroadcastReader;
+use broadcast::{BroadcastReader, selection::TrackChoice};
 
 use crate::rtp::RtpOutput;
 
@@ -142,7 +142,7 @@ fn normalize_namespace(text: &str) -> Result<String> {
 }
 
 async fn run(session: &Session, namespace: &str, output: &RtpOutput) -> Result<()> {
-    let mut reader = BroadcastReader::run(session, namespace).await?;
+    let mut reader = BroadcastReader::run(session, namespace, TrackChoice::default()).await?;
     tokio::select! {
         result = rtp::run_rtp_output(&mut reader, output) => result,
         close = session.closed() => bail!("relay session ended: {close}"),

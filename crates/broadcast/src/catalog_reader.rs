@@ -5,12 +5,12 @@ use msf::Catalog;
 /// Yields the catalog's current group from the joining FETCH
 /// (draft-ietf-moq-msf-02 §5), then later objects from the subscription,
 /// whose first stream arrives with the next catalog object, up to 30 s later.
-pub(crate) struct CatalogReader {
+pub struct CatalogReader {
     reader: TrackReader,
 }
 
 impl CatalogReader {
-    pub(crate) async fn open(session: &Session, namespace: &str) -> Result<Self> {
+    pub async fn open(session: &Session, namespace: &str) -> Result<Self> {
         let (_, reader) = session
             .subscriber()
             .subscribe_current_group(
@@ -29,7 +29,7 @@ impl CatalogReader {
     }
 
     /// `Ok(None)` once the catalog track has ended.
-    pub(crate) async fn next(&mut self) -> Result<Option<Catalog>> {
+    pub async fn next(&mut self) -> Result<Option<Catalog>> {
         let Some(object) = self.reader.next_object().await? else {
             return Ok(None);
         };
@@ -47,7 +47,7 @@ mod tests {
     use moqt::publish::{GroupBoundary, OutgoingObject, Retention};
 
     use super::*;
-    use crate::{relay::RelayConnection, test_support::FakePublisher};
+    use crate::test_support::{FakePublisher, connect};
 
     const NAMESPACE: &str = "anon/room/alice";
 
@@ -79,16 +79,9 @@ mod tests {
             )
         };
         write(GroupBoundary::Next, catalog(1)).await.unwrap();
-        let connection = RelayConnection::connect(&publisher.url, false, None)
-            .await
-            .unwrap();
-        let mut reader = CatalogReader::open(&connection.session, NAMESPACE)
-            .await
-            .unwrap();
-        assert_eq!(
-            publisher.served.recv().await.as_deref(),
-            Some(msf::CATALOG_TRACK_NAME)
-        );
+        let session = connect(&publisher.url).await;
+        let mut reader = CatalogReader::open(&session, NAMESPACE).await.unwrap();
+        assert_eq!(publisher.next_served().await, msf::CATALOG_TRACK_NAME);
 
         // Act
         let fetched = next_catalog(&mut reader).await;
@@ -98,6 +91,6 @@ mod tests {
         // Assert
         assert_eq!(fetched, Catalog::new(Vec::new(), 1));
         assert_eq!(subscribed, Catalog::new(Vec::new(), 2));
-        connection.close().await;
+        session.close().await;
     }
 }

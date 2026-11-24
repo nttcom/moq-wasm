@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use broadcast::selection::{AudioTrack, Selection, VideoTrack};
 use clap::ValueEnum;
 use mediapack::Timestamp;
 use moqt::TrackObject;
@@ -13,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     file_writer::{ClosedFile, RecordingFile, suffixed_path},
     pipeline::{FileTracks, Output, Pipeline, capture_timestamp},
-    track_selection::{AudioTrack, Selection, VideoTrack},
     upload_task::{Upload, UploadQueue},
 };
 
@@ -331,12 +331,9 @@ mod tests {
     use crate::upload_task::UploadTask;
 
     use super::*;
-    use crate::{
-        test_support::{
-            audio_samples, demux, first_video_capture, fixture, opus_config, opus_object,
-            scratch_dir, video_samples,
-        },
-        track_selection::AudioTrack,
+    use crate::test_support::{
+        audio_samples, demux, first_video_capture, fixture, opus_config, opus_object, scratch_dir,
+        video_samples,
     };
 
     fn video_track() -> VideoTrack {

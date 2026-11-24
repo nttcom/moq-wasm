@@ -2,53 +2,51 @@ mod track_receive_task;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use bytes::Bytes;
-use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
+use anyhow::{Context, Result};
+use mediapack::{MediaEvent, StreamSet, Timestamp};
 use moqt::{
     Session, Subscription,
     subscribe::{FilterType, SubscribeOption},
 };
-use msf::{Catalog, KnownTrackRole, Track};
 use tokio::sync::mpsc;
 
-use crate::reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask};
+use crate::{
+    CatalogReader,
+    reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask},
+    selection::{Selection, TrackChoice, select_tracks},
+};
 
 const MEDIA_CHANNEL_CAPACITY: usize = 256;
 /// Objects the relay has not sent this long after receiving them would
 /// play late, so it drops them (draft-14 §9.2.1.2). Same as the browser player.
 const DELIVERY_TIMEOUT_MS: u64 = 2_000;
-const PCMA_CODEC: &str = "pcma";
-const OPUS_CODEC: &str = "opus";
 
-/// Subscribes to an MSF broadcast and yields its media events: the first
-/// LOC video track and the first LOC audio track of the catalog, demuxed
-/// from one shared capture origin so the two stay aligned.
+/// Subscribes to an MSF broadcast and yields its media events: the LOC video
+/// and audio tracks `TrackChoice` selects, demuxed from one shared capture
+/// origin so the two stay aligned.
 pub struct BroadcastReader {
     media_receiver: mpsc::Receiver<MediaEvent>,
     start: Arc<StartPoint>,
     _tasks: Vec<TrackReceiveTask>,
 }
 
-#[derive(Debug, PartialEq)]
-struct SelectedTracks {
-    video: Option<String>,
-    audio: Option<(String, AudioConfig)>,
-}
-
 impl BroadcastReader {
-    /// Reads the catalog of the broadcast at `namespace` and subscribes to the
-    /// tracks it selects. Fails when the catalog cannot be read or parsed, lists
-    /// neither a LOC video nor a LOC audio track, or a SUBSCRIBE fails.
-    pub async fn run(session: &Session, namespace: &str) -> Result<Self> {
-        let catalog = read_catalog(session, namespace).await?;
-        let catalog = Catalog::parse(&catalog).context("parse catalog json")?;
-        let tracks = select_tracks(&catalog)?;
+    /// Reads the catalog of the broadcast at `namespace` until it lists a track
+    /// `choice` selects, then subscribes to the selected tracks. Fails when the
+    /// catalog cannot be read or parsed, ends before it lists such a track, lists
+    /// a selected track `select_tracks` rejects, or a SUBSCRIBE fails.
+    pub async fn run(session: &Session, namespace: &str, choice: TrackChoice<'_>) -> Result<Self> {
+        let tracks = wait_for_selection(session, namespace, choice).await?;
         tracing::info!(
             namespace,
-            video = tracks.video.as_deref().unwrap_or("-"),
-            audio = tracks.audio.as_ref().map_or("-", |(name, _)| name.as_str()),
+            video = tracks
+                .video
+                .as_ref()
+                .map_or("-", |video| video.name.as_str()),
+            audio = tracks
+                .audio
+                .as_ref()
+                .map_or("-", |audio| audio.name.as_str()),
             "catalog resolved"
         );
 
@@ -62,11 +60,11 @@ impl BroadcastReader {
             .expect("the receiver is held by this reader");
         let start = Arc::new(StartPoint::new(tracks.video.is_some()));
         let mut kinds = Vec::new();
-        if let Some(name) = tracks.video {
-            kinds.push((name, TrackKind::Video));
+        if let Some(video) = tracks.video {
+            kinds.push((video.name, TrackKind::Video(video.codec)));
         }
-        if let Some((name, config)) = tracks.audio {
-            kinds.push((name, TrackKind::Audio(config)));
+        if let Some(audio) = tracks.audio {
+            kinds.push((audio.name, TrackKind::Audio(audio.config)));
         }
         let mut tasks = Vec::new();
         for (name, kind) in kinds {
@@ -75,7 +73,7 @@ impl BroadcastReader {
             // starts another, so the audio continues after the newest object
             // (draft-ietf-moq-transport-14 §9.7).
             let filter_type = match kind {
-                TrackKind::Video => FilterType::NextGroupStart,
+                TrackKind::Video(_) => FilterType::NextGroupStart,
                 TrackKind::Audio(_) => FilterType::LargestObject,
             };
             let subscription = subscribe(session, namespace, &name, filter_type).await?;
@@ -108,79 +106,19 @@ impl BroadcastReader {
     }
 }
 
-/// The first LOC track of each role in catalog order. An AAC track whose
-/// `initRef` (draft-ietf-moq-msf-02 §5.2.14) finds no AudioSpecificConfig in
-/// `initDataList` (§5.1.7), or an A-law or Opus track without a readable
-/// `samplerate` and `channelConfig`, is skipped; fails when neither role has a
-/// track.
-fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
-    let video = catalog
-        .loc_tracks()
-        .find(|track| track.has_role(KnownTrackRole::Video))
-        .map(|track| track.name.clone());
-    let audio = match catalog
-        .loc_tracks()
-        .find(|track| track.has_role(KnownTrackRole::Audio))
-    {
-        Some(track) => match audio_config(catalog, track) {
-            Ok(config) => Some((track.name.clone(), config)),
-            Err(error) => {
-                tracing::warn!(track = %track.name, %error, "audio track skipped");
-                None
-            }
-        },
-        None => None,
-    };
-    if video.is_none() && audio.is_none() {
-        bail!("catalog lists no LOC video or audio track");
-    }
-    Ok(SelectedTracks { video, audio })
-}
-
-/// A-law and Opus tracks carry no initialization data: their catalog entry's
-/// `codec`, `samplerate` and `channelConfig` (draft-ietf-moq-msf-02 §5.2.19,
-/// §5.2.29, §5.2.30) are the whole configuration. Any other track is read as
-/// AAC from its `initDataList` entry.
-fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
-    let rate_and_channels = || -> Result<(u32, u8)> {
-        let sample_rate = track.sample_rate.context("audio track has no samplerate")?;
-        let channels = track
-            .channel_config
-            .as_deref()
-            .context("audio track has no channelConfig")?;
-        let channels = msf::channel_count(channels)
-            .with_context(|| format!("unknown channelConfig {channels:?}"))?;
-        Ok((sample_rate, channels))
-    };
-    match track.codec.as_deref() {
-        Some(PCMA_CODEC) => {
-            let (sample_rate, channels) = rate_and_channels()?;
-            Ok(AudioConfig::Pcma {
-                sample_rate,
-                channels,
-            })
+async fn wait_for_selection(
+    session: &Session,
+    namespace: &str,
+    choice: TrackChoice<'_>,
+) -> Result<Selection> {
+    let mut catalogs = CatalogReader::open(session, namespace).await?;
+    while let Some(catalog) = catalogs.next().await? {
+        if let Some(selection) = select_tracks(&catalog, choice)? {
+            return Ok(selection);
         }
-        Some(OPUS_CODEC) => {
-            let (sample_rate, channels) = rate_and_channels()?;
-            Ok(AudioConfig::Opus {
-                sample_rate,
-                channels,
-            })
-        }
-        _ => Ok(AudioConfig::Aac(aac_config(catalog, track)?)),
+        tracing::info!(namespace, "waiting for the catalog to list a track to read");
     }
-}
-
-fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
-    let init_ref = track
-        .init_ref
-        .as_ref()
-        .context("audio track has no initRef")?;
-    let init_data = catalog
-        .init_data(track)
-        .with_context(|| format!("initDataList has no entry {init_ref}"))?;
-    let bytes = BASE64.decode(init_data).context("decode initData base64")?;
-    AudioSpecificConfig::parse(&bytes)
+    anyhow::bail!("catalog track ended before it listed a track to read")
 }
 
 async fn subscribe(
@@ -203,25 +141,6 @@ async fn subscribe(
         .with_context(|| format!("subscribe {namespace}/{name}"))
 }
 
-/// Reads the first object of the catalog's current group with the SUBSCRIBE and
-/// joining FETCH (offset 0) that draft-ietf-moq-msf-02 §5 requires, or the next
-/// object when the track has none yet.
-async fn read_catalog(session: &Session, namespace: &str) -> Result<Bytes> {
-    let (_subscription, mut reader) = session
-        .subscriber()
-        .subscribe_current_group(
-            namespace.to_string(),
-            msf::CATALOG_TRACK_NAME.to_string(),
-            SubscribeOption::default(),
-        )
-        .await
-        .with_context(|| format!("subscribe {namespace}/{}", msf::CATALOG_TRACK_NAME))?;
-    match reader.next_object().await? {
-        Some(object) => Ok(object.payload),
-        None => bail!("catalog track ended before any object"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -236,7 +155,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::{FakePublisher, connect};
-    use msf::KnownPackaging;
+    use msf::{Catalog, KnownPackaging, KnownTrackRole, Track};
 
     const NAMESPACE: &str = "anon/room/alice";
     const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
@@ -251,96 +170,6 @@ mod tests {
 
     fn catalog_with(tracks: Vec<Track>) -> Catalog {
         Catalog::new(tracks, 0)
-    }
-
-    #[test]
-    fn selects_the_first_loc_track_of_each_role() {
-        // Arrange
-        let mut audio = loc_track("audio", KnownTrackRole::Audio);
-        let init_data = audio.set_inline_init_data(BASE64.encode([0x11, 0x88]));
-        let mut catalog = catalog_with(vec![
-            loc_track("video", KnownTrackRole::Video),
-            loc_track("video", KnownTrackRole::Video).cmaf_sibling("video_cmaf", "video/mp4", None),
-            loc_track("video_480p", KnownTrackRole::Video),
-            audio,
-        ]);
-        catalog.init_data_list = Some(vec![init_data]);
-
-        // Act
-        let tracks = select_tracks(&catalog).unwrap();
-
-        // Assert
-        assert_eq!(
-            tracks,
-            SelectedTracks {
-                video: Some("video".to_owned()),
-                audio: Some((
-                    "audio".to_owned(),
-                    AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1))
-                )),
-            }
-        );
-    }
-
-    #[test]
-    fn reads_a_law_and_opus_tracks_from_their_catalog_fields() {
-        // Arrange
-        let audio_catalog = |codec: &str, sample_rate: Option<u32>, channels: Option<&str>| {
-            let mut audio = loc_track("audio", KnownTrackRole::Audio);
-            audio.codec = Some(codec.to_owned());
-            audio.sample_rate = sample_rate;
-            audio.channel_config = channels.map(str::to_owned);
-            catalog_with(vec![audio])
-        };
-
-        // Act
-        let pcma = select_tracks(&audio_catalog("pcma", Some(8_000), Some("mono"))).unwrap();
-        let opus = select_tracks(&audio_catalog("opus", Some(48_000), Some("2"))).unwrap();
-        let rejected = [
-            audio_catalog("opus", Some(48_000), Some("5.1")),
-            audio_catalog("pcma", Some(8_000), Some("0")),
-            audio_catalog("pcma", None, Some("mono")),
-            audio_catalog("opus", Some(48_000), None),
-        ];
-
-        // Assert: a numeric channelConfig is read; a missing samplerate or channelConfig (§5.2.29, §5.2.30), `5.1` and `0` are rejected
-        assert_eq!(
-            pcma.audio.unwrap().1,
-            AudioConfig::Pcma {
-                sample_rate: 8_000,
-                channels: 1
-            }
-        );
-        assert_eq!(
-            opus.audio.unwrap().1,
-            AudioConfig::Opus {
-                sample_rate: 48_000,
-                channels: 2
-            }
-        );
-        for catalog in &rejected {
-            assert!(select_tracks(catalog).is_err());
-        }
-    }
-
-    #[test]
-    fn skips_audio_without_init_data_and_rejects_empty_catalogs() {
-        // Arrange
-        let without_init = catalog_with(vec![
-            loc_track("video", KnownTrackRole::Video),
-            loc_track("audio", KnownTrackRole::Audio),
-        ]);
-        let cmaf_only = catalog_with(vec![
-            loc_track("video", KnownTrackRole::Video).cmaf_sibling("video_cmaf", "video/mp4", None),
-        ]);
-
-        // Act
-        let tracks = select_tracks(&without_init).unwrap();
-
-        // Assert
-        assert_eq!(tracks.video.as_deref(), Some("video"));
-        assert!(tracks.audio.is_none());
-        assert!(select_tracks(&cmaf_only).is_err());
     }
 
     fn first_keyframe() -> LocObject {
@@ -368,7 +197,7 @@ mod tests {
 
     fn meeting_catalog() -> Bytes {
         let mut audio = loc_track("audio", KnownTrackRole::Audio);
-        audio.codec = Some(OPUS_CODEC.to_owned());
+        audio.codec = Some("opus".to_owned());
         audio.sample_rate = Some(48_000);
         audio.channel_config = Some("2".to_owned());
         audio.bitrate = Some(64_000);
@@ -433,7 +262,9 @@ mod tests {
             .unwrap();
         let relay = connect(&publisher.url).await;
         let session = relay.clone();
-        let reading = tokio::spawn(async move { BroadcastReader::run(&session, NAMESPACE).await });
+        let reading = tokio::spawn(async move {
+            BroadcastReader::run(&session, NAMESPACE, TrackChoice::default()).await
+        });
         assert_eq!(publisher.next_served().await, msf::CATALOG_TRACK_NAME);
         write_catalog(GroupBoundary::Within).await.unwrap();
         for track in ["video", "audio"] {

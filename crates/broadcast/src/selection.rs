@@ -6,38 +6,48 @@ use mediapack::{AudioConfig, aac::AudioSpecificConfig, loc::VideoCodec};
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track};
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Selection {
-    pub(crate) video: Option<VideoTrack>,
-    pub(crate) audio: Option<AudioTrack>,
+pub struct Selection {
+    pub video: Option<VideoTrack>,
+    pub audio: Option<AudioTrack>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct VideoTrack {
-    pub(crate) name: String,
-    pub(crate) codec: VideoCodec,
+pub struct VideoTrack {
+    pub name: String,
+    pub codec: VideoCodec,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AudioTrack {
-    pub(crate) name: String,
-    pub(crate) config: AudioConfig,
+pub struct AudioTrack {
+    pub name: String,
+    pub config: AudioConfig,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Choice<'a> {
-    pub(crate) source: SourceChoice,
-    pub(crate) video: VideoChoice<'a>,
-    pub(crate) audio: AudioChoice<'a>,
+pub struct TrackChoice<'a> {
+    pub source: SourceChoice,
+    pub video: VideoChoice<'a>,
+    pub audio: AudioChoice<'a>,
 }
 
-/// Which source of a broadcast a recording reads. A source is the LOC video
+impl Default for TrackChoice<'_> {
+    fn default() -> Self {
+        Self {
+            source: SourceChoice::Main,
+            video: VideoChoice::MaxHeight(u32::MAX),
+            audio: AudioChoice::HighestBitrate,
+        }
+    }
+}
+
+/// Which source of a broadcast a reader takes. A source is the LOC video
 /// and audio tracks of one `renderGroup` (draft-ietf-moq-msf-02 §5.2.12), such
 /// as a camera with its renditions and microphone, or a shared screen; the
 /// tracks without a `renderGroup` form one source. `broadcast` renumbers the
 /// `renderGroup`s in each catalog, so the source is found again in every
 /// catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SourceChoice {
+pub enum SourceChoice {
     /// The source `broadcast` and the browser SDK publish by default, such as
     /// a meeting participant's camera and microphone: the one listing a media
     /// track named `video`, `audio` or `video_<rendition>`, or, as the browser
@@ -52,7 +62,7 @@ pub(crate) enum SourceChoice {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum VideoChoice<'a> {
+pub enum VideoChoice<'a> {
     /// Whichever source lists it.
     Named(&'a str),
     /// The source's tallest video track at most this many pixels high, or the
@@ -60,14 +70,16 @@ pub(crate) enum VideoChoice<'a> {
     /// `broadcast` source's video tracks are the members of its `altGroup`
     /// (§5.2.13), or its one video.
     MaxHeight(u32),
+    Off,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum AudioChoice<'a> {
+pub enum AudioChoice<'a> {
     /// Whichever source lists it.
     Named(&'a str),
     /// The source's decodable audio track with the highest `bitrate`.
     HighestBitrate,
+    Off,
 }
 
 /// A source, named by its tracks' `renderGroup`; `None` names the tracks
@@ -85,14 +97,14 @@ type Source = Option<u64>;
 /// The audio is `None` while no such track can be decoded from the catalog:
 /// `broadcast` lists AAC audio before the first audio frame delivers its
 /// configuration.
-pub(crate) fn select_tracks(catalog: &Catalog, choice: Choice) -> Result<Option<Selection>> {
+pub fn select_tracks(catalog: &Catalog, choice: TrackChoice) -> Result<Option<Selection>> {
     let video = select_video(catalog, choice)?;
     let audio = select_audio(catalog, choice)?;
     Ok((video.is_some() || audio.is_some()).then_some(Selection { video, audio }))
 }
 
 /// The video track `select_tracks` picks.
-pub(crate) fn select_video(catalog: &Catalog, choice: Choice) -> Result<Option<VideoTrack>> {
+pub fn select_video(catalog: &Catalog, choice: TrackChoice) -> Result<Option<VideoTrack>> {
     let max_height = match choice.video {
         VideoChoice::Named(name) => {
             return match catalog.loc_tracks().find(|track| track.name == name) {
@@ -101,6 +113,7 @@ pub(crate) fn select_video(catalog: &Catalog, choice: Choice) -> Result<Option<V
             };
         }
         VideoChoice::MaxHeight(max_height) => max_height,
+        VideoChoice::Off => return Ok(None),
     };
     let listed: Vec<&Track> = source_tracks(catalog, choice.source)
         .filter(|track| track.has_role(KnownTrackRole::Video))
@@ -121,7 +134,7 @@ pub(crate) fn select_video(catalog: &Catalog, choice: Choice) -> Result<Option<V
                 .map(|track| format!("{} ({})", track.name, track.codec.as_deref().unwrap_or("-")))
                 .collect();
             format!(
-                "no video track in the catalog can be recorded: {}",
+                "no video track in the catalog can be read: {}",
                 codecs.join(", ")
             )
         })
@@ -141,7 +154,7 @@ fn video_track(track: &Track) -> Result<VideoTrack> {
         name: track.name.clone(),
         codec: VideoCodec::from_codec_string(codec).with_context(|| {
             format!(
-                "video track {} has codec {codec}, which cannot be recorded",
+                "video track {} has codec {codec}, which cannot be read",
                 track.name
             )
         })?,
@@ -149,7 +162,7 @@ fn video_track(track: &Track) -> Result<VideoTrack> {
 }
 
 /// The audio track `select_tracks` picks.
-pub(crate) fn select_audio(catalog: &Catalog, choice: Choice) -> Result<Option<AudioTrack>> {
+pub fn select_audio(catalog: &Catalog, choice: TrackChoice) -> Result<Option<AudioTrack>> {
     let name = match choice.audio {
         AudioChoice::Named(name) => name,
         AudioChoice::HighestBitrate => {
@@ -171,6 +184,7 @@ pub(crate) fn select_audio(catalog: &Catalog, choice: Choice) -> Result<Option<A
                 .max_by_key(|(bitrate, _)| *bitrate)
                 .map(|(_, audio)| audio));
         }
+        AudioChoice::Off => return Ok(None),
     };
     let Some(track) = catalog.loc_tracks().find(|track| track.name == name) else {
         return Ok(None);
@@ -181,10 +195,10 @@ pub(crate) fn select_audio(catalog: &Catalog, choice: Choice) -> Result<Option<A
     }))
 }
 
-/// Whether a recording that reads `track` goes on with it after `catalog`:
+/// Whether a reader that reads `track` goes on with it after `catalog`:
 /// while the catalog lists it, and unless it was named, in a source of the
 /// kind the choice takes.
-pub(crate) fn keeps(catalog: &Catalog, choice: Choice, track: &str) -> bool {
+pub fn keeps(catalog: &Catalog, choice: TrackChoice, track: &str) -> bool {
     let Some(listed) = catalog.loc_tracks().find(|listed| listed.name == track) else {
         return false;
     };
@@ -196,13 +210,13 @@ pub(crate) fn keeps(catalog: &Catalog, choice: Choice, track: &str) -> bool {
 
 /// The event timeline tracks (draft-ietf-moq-msf-02 §8), such as a meeting's
 /// chat.
-pub(crate) fn event_timelines(catalog: &Catalog) -> impl Iterator<Item = &Track> {
+pub fn event_timelines(catalog: &Catalog) -> impl Iterator<Item = &Track> {
     packaged(catalog, KnownPackaging::EventTimeline)
 }
 
 /// The media timeline tracks (draft-ietf-moq-msf-02 §7) whose `depends`
 /// refers to any of `tracks`.
-pub(crate) fn media_timelines<'a>(
+pub fn media_timelines<'a>(
     catalog: &'a Catalog,
     tracks: &[&str],
 ) -> impl Iterator<Item = &'a Track> {
@@ -357,16 +371,16 @@ mod tests {
         Track::new("chat", KnownPackaging::EventTimeline, true)
     }
 
-    fn choice(source: SourceChoice, max_height: u32) -> Choice<'static> {
-        Choice {
+    fn choice(source: SourceChoice, max_height: u32) -> TrackChoice<'static> {
+        TrackChoice {
             source,
             video: VideoChoice::MaxHeight(max_height),
             audio: AudioChoice::HighestBitrate,
         }
     }
 
-    fn named<'a>(video: &'a str, audio: &'a str) -> Choice<'a> {
-        Choice {
+    fn named<'a>(video: &'a str, audio: &'a str) -> TrackChoice<'a> {
+        TrackChoice {
             source: SourceChoice::Main,
             video: VideoChoice::Named(video),
             audio: AudioChoice::Named(audio),
@@ -444,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_tallest_recordable_video_under_the_height_or_else_the_shortest() {
+    fn picks_the_tallest_readable_video_under_the_height_or_else_the_shortest() {
         // Arrange
         let catalog = meeting();
 
@@ -452,7 +466,7 @@ mod tests {
         let under = select_video(&catalog, choice(SourceChoice::Main, 480)).unwrap();
         let over = select_video(&catalog, choice(SourceChoice::Main, 240)).unwrap();
 
-        // Assert: video_vvc cannot be recorded, so video_480p wins both ties at 480 pixels
+        // Assert: video_vvc cannot be read, so video_480p wins both ties at 480 pixels
         assert_eq!(under.unwrap().name, "video_480p");
         assert_eq!(over.unwrap().name, "video_480p");
     }
@@ -627,7 +641,7 @@ mod tests {
         // Assert
         assert_eq!(
             error.to_string(),
-            "no video track in the catalog can be recorded: video (vvc1.1.L51.CQA)"
+            "no video track in the catalog can be read: video (vvc1.1.L51.CQA)"
         );
     }
 
@@ -676,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn records_audio_only_while_no_video_track_is_listed() {
+    fn reads_audio_only_while_no_video_track_is_listed() {
         // Arrange: a meeting participant with the camera off
         let catalog = catalog(vec![in_source(audio_track("opus"), 1)]);
 
@@ -691,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn records_video_only_when_the_aac_track_has_no_init_data_yet() {
+    fn reads_video_only_when_the_aac_track_has_no_init_data_yet() {
         // Arrange
         let catalog = catalog(vec![video_track(), audio_track("mp4a.40.2")]);
 
@@ -702,6 +716,30 @@ mod tests {
 
         // Assert
         assert_eq!(selection.audio, None);
+    }
+
+    #[test]
+    fn a_track_kind_turned_off_is_not_selected() {
+        // Arrange
+        let catalog = catalog(vec![video_track(), audio_track("opus")]);
+        let audio_only = TrackChoice {
+            video: VideoChoice::Off,
+            ..TrackChoice::default()
+        };
+        let video_only = TrackChoice {
+            audio: AudioChoice::Off,
+            ..TrackChoice::default()
+        };
+
+        // Act
+        let audio_only = select_tracks(&catalog, audio_only).unwrap().unwrap();
+        let video_only = select_tracks(&catalog, video_only).unwrap().unwrap();
+
+        // Assert
+        assert_eq!(audio_only.video, None);
+        assert_eq!(audio_only.audio.unwrap().name, "audio");
+        assert_eq!(video_only.video.unwrap().name, "video");
+        assert_eq!(video_only.audio, None);
     }
 
     #[test]
@@ -767,7 +805,7 @@ mod tests {
         assert_eq!(hevc.unwrap().codec, VideoCodec::H265);
         assert_eq!(
             error.to_string(),
-            "video track vvc has codec vvc1.1.L51.CQA, which cannot be recorded"
+            "video track vvc has codec vvc1.1.L51.CQA, which cannot be read"
         );
     }
 

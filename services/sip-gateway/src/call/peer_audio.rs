@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use broadcast::BroadcastReader;
+use broadcast::{BroadcastReader, selection::TrackChoice};
 use bytes::Bytes;
 use mediapack::{AudioConfig, MediaEvent};
 use moqt::client;
@@ -123,7 +123,8 @@ async fn forward(
     namespace: &str,
     audio_sender: &mpsc::Sender<PeerAudio>,
 ) -> Result<()> {
-    let mut reader = BroadcastReader::run(session.moqt_session(), namespace).await?;
+    let mut reader =
+        BroadcastReader::run(session.moqt_session(), namespace, TrackChoice::default()).await?;
     tracing::info!(track_namespace = namespace, "peer audio subscribed");
     while let Some(event) = reader.next_event().await {
         let audio = match event {

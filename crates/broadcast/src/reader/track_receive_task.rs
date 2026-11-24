@@ -11,7 +11,7 @@ use moqt::{
 use tokio::sync::mpsc;
 
 pub(super) enum TrackKind {
-    Video,
+    Video(loc::VideoCodec),
     Audio(AudioConfig),
 }
 
@@ -40,7 +40,7 @@ impl StartPoint {
     /// The first admitted object sets the capture origin.
     fn admits(&self, kind: &TrackKind, object: &LocObject) -> bool {
         let capture = object.capture_timestamp();
-        if matches!(kind, TrackKind::Video) || !self.has_video {
+        if matches!(kind, TrackKind::Video(_)) || !self.has_video {
             self.capture_origin
                 .get_or_init(|| capture.unwrap_or(Timestamp::ZERO));
             return true;
@@ -108,7 +108,7 @@ async fn receive_track(
                 .capture_origin()
                 .expect("an admitted object sets the capture origin");
             match &kind {
-                TrackKind::Video => loc::Demuxer::video(loc::VideoCodec::H264),
+                TrackKind::Video(codec) => loc::Demuxer::video(*codec),
                 TrackKind::Audio(config) => loc::Demuxer::audio(config.clone()),
             }
             .with_capture_origin(origin)
@@ -163,7 +163,10 @@ mod tests {
 
         // Act
         let before_video = start.admits(&audio(), &object(Some(900)));
-        let video = start.admits(&TrackKind::Video, &object(Some(1_000)));
+        let video = start.admits(
+            &TrackKind::Video(loc::VideoCodec::H264),
+            &object(Some(1_000)),
+        );
         let captured_earlier = start.admits(&audio(), &object(Some(999)));
         let captured_with_video = start.admits(&audio(), &object(Some(1_000)));
         let unstamped = start.admits(&audio(), &object(None));

@@ -5,6 +5,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use broadcast::{
+    CatalogReader,
+    selection::{
+        AudioChoice, Selection, SourceChoice, TrackChoice, VideoChoice, keeps, select_audio,
+        select_tracks, select_video,
+    },
+};
 use mediapack::Timestamp;
 use moqt::{
     Session, TrackObject,
@@ -20,15 +27,10 @@ use tokio::{
 
 use crate::{
     Args,
-    catalog_reader::CatalogReader,
     recording::{Layout, RecordedFile, Recording, Uploader},
     relay::{self, RelayConnection, ServiceToken, Track},
     token_refresh_task::{TokenRenewal, read_token_file},
     track_list::track_table,
-    track_selection::{
-        AudioChoice, Choice, Selection, SourceChoice, VideoChoice, keeps, select_audio,
-        select_tracks, select_video,
-    },
     upload_task::{UploadQueue, UploadTask},
 };
 
@@ -276,7 +278,7 @@ async fn wait_for_selection(
 
 /// A track named in the options is recorded only by the main source's
 /// recording.
-pub(crate) fn choice(options: &BroadcastOptions) -> Choice<'_> {
+pub(crate) fn choice(options: &BroadcastOptions) -> TrackChoice<'_> {
     let (source, video_track, audio_track) = match options.content {
         Content::Camera => (
             SourceChoice::Main,
@@ -285,7 +287,7 @@ pub(crate) fn choice(options: &BroadcastOptions) -> Choice<'_> {
         ),
         Content::ScreenShare => (SourceChoice::Other, None, None),
     };
-    Choice {
+    TrackChoice {
         source,
         video: video_track.map_or(
             VideoChoice::MaxHeight(options.max_video_height),

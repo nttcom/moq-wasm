@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use broadcast::selection::{self, Selection};
 use moqt::{Session, TrackObject, object::ObjectStatus, subscribe::FilterType};
 use serde_json::json;
 use tokio::{
@@ -21,7 +22,6 @@ use crate::{
     archive_receiver::{ArchiveTrack, Event},
     recorder::{BroadcastOptions, Content, choice, default_output_path},
     recording_clock::RecordingClock,
-    track_selection::{self, Selection},
 };
 
 pub(crate) async fn record(session: &Session, args: &Args) -> Result<()> {
@@ -176,7 +176,7 @@ async fn record_part(
                     let document = catalog_document(namespace, &event)?;
                     let selection = document
                         .as_ref()
-                        .map(|document| track_selection::select_tracks(document, choice(options)))
+                        .map(|document| selection::select_tracks(document, choice(options)))
                         .transpose()?
                         .map(Option::unwrap_or_default);
                     if selection.as_ref().is_some_and(|selection| replaces(&recorded, selection)) {
@@ -186,7 +186,7 @@ async fn record_part(
                     archive.write_event("catalog", event).await?;
                     let (Some(document), Some(selection)) = (document, selection) else { continue };
                     if options.content == Content::Camera {
-                        let names = track_selection::event_timelines(&document).map(|track| track.name.as_str());
+                        let names = selection::event_timelines(&document).map(|track| track.name.as_str());
                         subscribe_event_timelines(session, namespace, names, &mut event_timelines).await?;
                     }
                     let video_name = selection.video.as_ref().map(|v| v.name.as_str());
@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn a_swapped_track_or_codec_replaces_and_an_added_or_dropped_one_does_not() {
         // Arrange
-        let video = |name: &str, codec| crate::track_selection::VideoTrack {
+        let video = |name: &str, codec| selection::VideoTrack {
             name: name.to_string(),
             codec,
         };
