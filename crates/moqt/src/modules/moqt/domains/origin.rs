@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -29,6 +32,7 @@ use crate::{
     },
 };
 
+mod cache_expiry_task;
 mod fetch_serve_task;
 mod new_group_delay_task;
 mod new_group_requests;
@@ -40,6 +44,7 @@ pub use new_group_requests::MIN_GROUP_OBJECTS;
 pub use object_cache::Retention;
 pub use object_numbering::{GroupBoundary, Placement};
 
+use cache_expiry_task::CacheExpiryTask;
 use fetch_serve_task::FetchServeTask;
 use new_group_requests::NewGroupRequests;
 use object_cache::{CachedObject, FetchRange, ObjectCache};
@@ -150,6 +155,9 @@ enum Publication {
 struct OriginTrack {
     numbering: ObjectNumbering,
     cache: ObjectCache,
+    /// Set while the cache holds an object that will expire. Expiry drops
+    /// cached objects only; the numbering goes on.
+    cache_expiry: Option<CacheExpiryTask>,
     outlets: Vec<Outlet>,
     /// Set for a track with dynamic groups (draft-18 §12.6).
     new_group_requests: Option<NewGroupRequests>,
@@ -206,6 +214,7 @@ impl OriginTrack {
         Self {
             numbering: ObjectNumbering::new(first_group_id),
             cache: ObjectCache::new(retention),
+            cache_expiry: None,
             outlets: Vec::new(),
             new_group_requests: None,
             demand: None,
@@ -259,7 +268,15 @@ impl OriginTrack {
         }
     }
 
-    fn store(&mut self, placement: Placement, extension_headers: ExtensionHeaders, payload: Bytes) {
+    /// `state` and `key` locate this track for its cache expiry task.
+    fn store(
+        &mut self,
+        state: Weak<Mutex<OriginState>>,
+        key: &TrackKey,
+        placement: Placement,
+        extension_headers: ExtensionHeaders,
+        payload: Bytes,
+    ) {
         let now = executor::now();
         if let Some(requests) = &mut self.new_group_requests {
             requests.object_placed(placement, now);
@@ -272,6 +289,13 @@ impl OriginTrack {
             },
             now,
         );
+        // A running task wakes no later than the oldest object's expiry, and a
+        // newer object expires no earlier.
+        if self.cache_expiry.is_none()
+            && let Some(expires_at) = self.cache.next_expiry()
+        {
+            self.cache_expiry = Some(CacheExpiryTask::run(state, key.clone(), expires_at));
+        }
     }
 
     fn outlet_mut(&mut self, request: RequestKey) -> Option<&mut Outlet> {
@@ -486,6 +510,8 @@ impl Origin {
                 return Ok(WriteOutcome::NotSent);
             };
             track.store(
+                Arc::downgrade(&self.state),
+                &key,
                 placement,
                 object.extension_headers.clone(),
                 object.payload.clone(),
@@ -517,7 +543,13 @@ impl Origin {
                 .numbering
                 .place(GroupBoundary::Next)?
                 .context("a new group always places its first object")?;
-            track.store(placement, ExtensionHeaders::default(), payload.clone());
+            track.store(
+                Arc::downgrade(&self.state),
+                &key,
+                placement,
+                ExtensionHeaders::default(),
+                payload.clone(),
+            );
             if track.datagrams {
                 let senders = datagram_senders(track, placement);
                 let priority = track.publisher_priority;
@@ -762,9 +794,11 @@ impl Origin {
                 return Ok(());
             }
         };
-        let range = state.tracks.get(&key).map(|track| {
+        let range = state.tracks.get_mut(&key).map(|track| {
             (
-                track.cache.resolve(start_location, end_location),
+                track
+                    .cache
+                    .resolve(start_location, end_location, executor::now()),
                 track.publisher_priority,
             )
         });
@@ -2384,6 +2418,52 @@ mod tests {
             assert_eq!(rejection(empty).code, no_objects);
             assert_eq!(rejection(invalid).code, RequestErrorCode::InvalidRange);
         }
+    }
+
+    #[tokio::test]
+    async fn an_idle_track_serves_no_object_past_its_retention_and_keeps_its_numbering() {
+        // Arrange
+        let retention = Duration::from_millis(50);
+        let peers = origin_with_track(
+            "origin-idle-expiry",
+            Retention::For(retention),
+            Version::Draft14,
+        )
+        .await;
+        let origin = &peers.origin;
+        origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        // Act
+        let reclaimed = origin.state.lock().await.tracks[&track_key(NAMESPACE, TRACK)]
+            .cache
+            .is_empty();
+        let expired = fetch(
+            &peers,
+            TRACK,
+            location(FIRST_GROUP_ID, 0),
+            location(FIRST_GROUP_ID, 0),
+            GroupOrder::Ascending,
+        )
+        .await;
+        let next = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+            .await
+            .unwrap();
+
+        // Assert: the cache is gone without a read, and the numbering goes on
+        assert!(reclaimed);
+        assert_eq!(rejection(expired).code, RequestErrorCode::NoObjects);
+        assert_eq!(next, WriteOutcome::NotSent);
+        assert_eq!(
+            origin.state.lock().await.tracks[&track_key(NAMESPACE, TRACK)]
+                .numbering
+                .largest(),
+            Some(location(FIRST_GROUP_ID + 1, 0))
+        );
     }
 
     #[tokio::test]
