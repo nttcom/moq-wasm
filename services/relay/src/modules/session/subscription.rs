@@ -108,6 +108,13 @@ impl DownstreamSubscription {
         }
     }
 
+    pub(crate) fn publish_ok_new_group_request(&self) -> Option<u64> {
+        match &self.inner {
+            moqt::Subscription::PublisherInitiated(subscription) => subscription.new_group_request,
+            moqt::Subscription::SubscriberInitiated(_) => None,
+        }
+    }
+
     pub(crate) fn publish_ok_forward(&self) -> Option<bool> {
         match &self.inner {
             moqt::Subscription::PublisherInitiated(subscription) => Some(subscription.forward),
