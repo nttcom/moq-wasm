@@ -30,10 +30,13 @@ fn with_unencodable_extension(mut object: Object) -> Object {
     object
 }
 
+/// Ignores reprioritizations: a stream may open while an earlier group's
+/// task is still ending and move ahead once it is gone.
 async fn next_steps(egress: &mut EgressRunnerHandle, count: usize) -> Vec<String> {
     let mut steps = Vec::new();
     while steps.len() < count {
         steps.push(match egress.expect_sent().await {
+            Sent::Reprioritized(_) => continue,
             Sent::Object(SubgroupPart::Header(start)) => format!("header {}", start.group_id),
             Sent::Object(SubgroupPart::Object(object)) | Sent::Datagram(object) => {
                 format!("{}/{}", object.location.group_id, object.location.object_id)
