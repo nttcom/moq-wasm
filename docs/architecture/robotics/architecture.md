@@ -189,9 +189,9 @@ points, to be tuned on the example over a real network:
   every `seq`; it publishes no `control`, which could not reach anyone.
 
 `Robot` publishes `state` from the values the application hands it at each
-control tick, `control` on each change, and `episode` on the application's
-start and end calls. It does not run the control loop; the application
-calls it from its own.
+control tick, `control` on each change and at each episode start, and
+`episode` on the application's start and end calls. It does not run the
+control loop; the application calls it from its own.
 
 #### The robot's runtime
 ```rust
@@ -268,9 +268,12 @@ browser SDK's `createBroadcast` with `eventTimelines`) and the policy's
 participant, without counting it as one that keeps the room alive. A robot
 room is recorded by starting the recorder bot in it, as for a meeting.
 The recording keeps only the records written after it starts, as it does a
-meeting's chat, so it is started before the episodes it should hold: of an
-episode already open, it has neither the start nor the task, and of the
-driver, only the changes that follow.
+meeting's chat, so it is started before the episodes it should hold. An
+episode opened during the recording starts with its `episode` start and a
+`control` naming its driver, which the robot writes at each episode start
+even when the driver stays. One already open when the recording starts has
+only its end, and the exporter leaves it out: its observations before the
+start are missing too.
 
 The exporter writes a LeRobot dataset (one episode per `episode` group:
 the observations at the dataset's fps, aligned by their timestamps, the action applied at each
