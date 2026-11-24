@@ -2452,6 +2452,7 @@ dependencies = [
  "mediapack",
  "moqt",
  "msf",
+ "robotics",
  "serde_json",
  "tokio",
  "tracing",

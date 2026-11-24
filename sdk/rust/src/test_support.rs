@@ -6,7 +6,7 @@ use moqt::{
     object::ExtensionHeaders,
     publish::{GroupBoundary, Origin, OutgoingObject, Retention},
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
-    subscribe::SubscribeOption,
+    subscribe::{FilterType, SubscribeOption},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -17,8 +17,9 @@ pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// A draft-14 relay for one session. It answers the session's
 /// PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE, echoes the session's
 /// namespaces back once it subscribed to namespaces, as a relay does
-/// (draft-14 §6.1), serves SUBSCRIBEs from `origin`, and hands the
-/// namespace requests it receives to `next_request`.
+/// (draft-14 §6.1), accepts every PUBLISH, serves SUBSCRIBEs from `origin`,
+/// and hands the namespace requests and PUBLISHes it receives to
+/// `next_request`.
 pub(crate) struct TestRelay {
     url: String,
     session_receiver: Option<oneshot::Receiver<Arc<moqt::Session>>>,
@@ -67,6 +68,18 @@ impl TestRelay {
                         ));
                         handler.ok().await.unwrap();
                         watching_sender.send_replace(true);
+                    }
+                    SessionEvent::Publish(handler) => {
+                        let _ = request_sender.send(format!(
+                            "PUBLISH {}/{}",
+                            handler.track_namespace, handler.track_name
+                        ));
+                        tokio::spawn(async move {
+                            handler.accept_data_receiver().await;
+                            let _ = handler
+                                .ok(0, FilterType::LargestObject, handler.forward)
+                                .await;
+                        });
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                     event => {

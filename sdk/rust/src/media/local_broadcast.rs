@@ -152,6 +152,12 @@ struct BroadcastTracks {
     handler: HandlerId,
 }
 
+impl LocalBroadcast {
+    pub(crate) fn broadcast(&self) -> &Broadcast {
+        &self.tracks.broadcast
+    }
+}
+
 impl BroadcastTracks {
     async fn publish_track(
         &self,

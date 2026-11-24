@@ -12,7 +12,7 @@ operation first, released like the Python SDK
 ([python/sdk.md](../python/sdk.md)): a new crate `sdk/rust` that a
 Rust application adds as its only dependency on this repository. This
 document fixes the crate, its API and its release. Robot-specific features
-(command expiry, dead-man stop, observation alignment, the track layout of a
+(command expiry, dead-man stop, the track layout of a
 robot) are designed separately; "Robotics" below says how they reach this
 crate.
 
@@ -285,16 +285,18 @@ GStreamer pipeline can use `gst-plugin-moqt` instead.
 Robot teleoperation and cloud VLA are the first users. Their features are
 designed in [robotics/architecture.md](../robotics/architecture.md): the
 room layout, the record types on event timeline tracks, the arbitration
-between operator and policy with its dead-man hold, observation alignment,
+between operator and policy with its dead-man hold,
 recording and the LeRobot export. That logic lives once in the crate
 `robotics`, and each SDK wraps it.
 
-This crate gains `moq_wasm::robotics` with the shape of the Python SDK's
-`moq_wasm.robotics` (the robot side, `Robot`, first), in the same plan step
-as the Python module. It is not behind a Cargo feature: `robotics` adds
-record types and logic, not a heavy dependency, and a feature would split
-the tested builds. Until then the crate stays domain-free. The robotics
-design needs two things of the general API, both above:
+`moq_wasm::robotics` is the robot side: `run_robot(session, broadcast,
+config)` runs `robotics::Robot` on an announced `LocalBroadcast` named
+`<room>/robot`, the room being its namespace without `robot`, and the module
+re-exports `Robot`, `Command`, `HoldReason` and `ArbiterConfig`. The Rust
+SDK has it first; the Python SDK's module follows when a Python robot needs
+it. It is not behind a Cargo feature: `robotics` adds record types and
+logic, not a heavy dependency, and a feature would split the tested builds.
+The robotics design needs two things of the general API, both above:
 - `priority` in `PublishTrackOptions`, the Publisher Priority per track that
   `moqt` gains in that design's step 1; this crate exposes it through the
   re-export without code of its own.
@@ -382,8 +384,7 @@ the SDK is a change of its own, for when it would delete code.
 - A Rust application adds one dependency, named as the other two SDKs, and
   writes no event loop, token refresh, catalog reading or LOC packing.
 - The three SDKs publish media through one wrapper over `broadcast`.
-- Robot software in Rust gets `moq_wasm::robotics` from the same crate when
-  the robotics design adds it.
+- Robot software in Rust gets `moq_wasm::robotics` from the same crate.
 
 ### Negative
 - `moqt::client` is now a public surface twice over: through the bindings
