@@ -59,6 +59,10 @@ permissions:
 
 jobs:
   pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        dependencies: [latest, lowest]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -77,7 +81,10 @@ jobs:
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+          # The relay, VTS and moqt are workspace crates; caching them lets a PR that leaves them alone skip their build.
+          cache-workspace-crates: true
+          # Both jobs build the same crates, so one saves the cache they share.
+          save-if: ${{ github.ref == 'refs/heads/master' && matrix.dependencies == 'latest' }}
 
       - name: Setup uv
         # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
@@ -85,25 +92,34 @@ jobs:
         with:
           version: 0.13.4
           checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
-          save-cache: ${{ github.ref == 'refs/heads/master' }}
+          save-cache: ${{ github.ref == 'refs/heads/master' && matrix.dependencies == 'latest' }}
+
+      # The tests start a relay and a VTS built from this workspace. Building them here keeps
+      # their build time out of the test step; the tests' own cargo build then finds them fresh.
+      - name: Build the relay, VTS and auth-token
+        run: |
+          cargo build -p relay -p vts
+          cargo build -p auth-token --features cli
 
       - name: Type-check the Python package
+        if: matrix.dependencies == 'latest'
         working-directory: sdk/python
         run: uv run pyright
 
-      # The tests start a relay and a VTS built from this workspace.
       - name: Run binding tests
+        if: matrix.dependencies == 'latest'
         working-directory: sdk/python
         # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
         run: uv run pytest --basetemp="$RUNNER_TEMP/pytest"
 
       # The extras' lower bounds are what a user may install, so the SDK is also checked on them.
       - name: Type-check and run binding tests on the lowest supported dependencies
+        if: matrix.dependencies == 'lowest'
         working-directory: sdk/python
         run: |
           uv venv -p 3.11 "$RUNNER_TEMP/lowest"
           uv pip install -p "$RUNNER_TEMP/lowest" --resolution lowest-direct ".[pipecat]" "pytest>=8" "pytest-asyncio>=0.24"
-          uv run pyright --pythonpath "$RUNNER_TEMP/lowest/bin/python"
+          uv run -p 3.11 pyright --pythonpath "$RUNNER_TEMP/lowest/bin/python"
           "$RUNNER_TEMP/lowest/bin/python" -m pytest -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest-lowest"
 
       - name: Upload binding test logs
@@ -111,18 +127,22 @@ jobs:
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: python-binding-logs
+          name: python-binding-logs-${{ matrix.dependencies }}
           path: ${{ runner.temp }}/pytest*/**/*.log
           if-no-files-found: ignore
 
+      # The examples run on Python 3.11, the interpreter the lowest job already built the extension module for.
       - name: Run transcriber unit tests
+        if: matrix.dependencies == 'lowest'
         working-directory: examples/python/moq-meeting-transcriber
-        run: uv run pytest
+        run: uv run -p 3.11 pytest
 
       - name: Run System One server unit tests
+        if: matrix.dependencies == 'lowest'
         working-directory: examples/python/system-one-server
-        run: uv run pytest
+        run: uv run -p 3.11 pytest
 
       - name: Run Haas ASR server unit tests
+        if: matrix.dependencies == 'lowest'
         working-directory: examples/python/haas-asr-server
-        run: uv run pytest
+        run: uv run -p 3.11 pytest
