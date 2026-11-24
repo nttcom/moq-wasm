@@ -24,25 +24,37 @@ An open-source, self-hostable **Media over QUIC Transport (MoQT)** stack for low
 ```mermaid
 flowchart LR
     subgraph Clients["Clients & SDKs"]
-        JS["Browser / JS SDK<br/>WebTransport · WebSocket"]
-        PY["Python SDK & AI Bots<br/>QUIC · WebTransport · WebSocket"]
-        RS["Rust SDK / Robots / Edge<br/>QUIC · WebTransport · WebSocket"]
+        JS["Browser (JS SDK)"]
+        PY["Python SDK · AI Bots"]
+        RS["Rust SDK · Robots"]
     end
 
-    subgraph Gateways["OSS Gateways & Services"]
-        IN["ingest-gateway / moqtsink<br/>RTMP · SRT · RTP · RTSP · ONVIF"]
-        OUT["egress-gateway / recorder<br/>RTP · MP4 · MoQ Archive"]
-        SIP["sip-gateway<br/>SIP · SRTP"]
+    RELAY["MoQT Relay<br/>draft-14 & 18 · Cache · VTS"]
+
+    subgraph Gateways["OSS Gateways"]
+        IN["ingest-gateway / moqtsink"]
+        OUT["egress-gateway / recorder"]
+        SIP["sip-gateway"]
     end
 
-    RELAY["MoQT Relay Cluster<br/>draft-14 & draft-18 · Cache · Auth (VTS)"]
-    OTEL["OpenTelemetry (OTLP)<br/>Client + Relay + Gateway Traces/Logs/Metrics"]
+    EXT_IN["OBS · ffmpeg · Cameras"]
+    EXT_OUT["RTP · Storage"]
+    EXT_SIP["SIP Trunk · Phones"]
+    OTEL["OpenTelemetry<br/>Traces · Logs · Metrics"]
 
-    Clients <--> RELAY
-    Gateways <--> RELAY
-    Clients -.-> OTEL
-    RELAY -.-> OTEL
-    Gateways -.-> OTEL
+    JS <-->|"WebTransport<br/>QMux over WS"| RELAY
+    PY <-->|"QUIC · WebTransport<br/>QMux over WS"| RELAY
+    RS <-->|"QUIC · WebTransport<br/>QMux over WS"| RELAY
+
+    RELAY <-->|"MoQT"| IN
+    RELAY <-->|"MoQT"| OUT
+    RELAY <-->|"MoQT"| SIP
+
+    IN <-->|"RTMP · SRT · RTP<br/>RTSP · ONVIF"| EXT_IN
+    OUT -->|"RTP · fMP4<br/>MoQ Archive"| EXT_OUT
+    SIP <-->|"SIP · SRTP"| EXT_SIP
+
+    RELAY -.->|"OTLP<br/>(Client · Relay · Gateway)"| OTEL
 ```
 
 ---
