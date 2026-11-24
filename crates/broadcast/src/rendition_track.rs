@@ -122,10 +122,6 @@ impl RenditionTrack {
                     );
                 }
                 let group = self.boundary(sample.is_keyframe, sample.pts.micros());
-                let cmaf_object = match &mut self.cmaf {
-                    Some(cmaf) => cmaf.push(&sample, group)?,
-                    None => None,
-                };
                 let capture_origin = match self.config.keyframes {
                     RenditionKeyframes::FollowSource => {
                         self.timing.seeded_capture_origin().context(
@@ -133,6 +129,10 @@ impl RenditionTrack {
                         )?
                     }
                     RenditionKeyframes::SameFrames => self.timing.capture_origin(sample.pts),
+                };
+                let cmaf_object = match &mut self.cmaf {
+                    Some(cmaf) => cmaf.push(&sample, group, capture_origin)?,
+                    None => None,
                 };
                 let muxer = LocMuxer::new(capture_origin).with_video_codec(self.video_codec);
                 if let Some(object) = muxer.push(&MediaEvent::Video(sample)) {
@@ -176,26 +176,31 @@ impl RenditionTrack {
 
 #[cfg(test)]
 mod tests {
+    use mediapack::{Timestamp, mp4::Fmp4TrackMuxer};
+
     use super::*;
     use crate::{
         broadcast::SourceTracks,
         broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
         relay_connection::RelayConnection,
-        test_support::{FakeRelay, TEST_TIMEOUT, keyframe_at, vp8_config},
+        test_support::{
+            FakeRelay, TEST_TIMEOUT, VIDEO_TICK_US, decode_times, keyframe_at, vp8_config,
+        },
     };
 
+    fn rendition_config(keyframes: RenditionKeyframes) -> RenditionConfig {
+        RenditionConfig {
+            track: "video_low".to_string(),
+            label: "Low".to_string(),
+            bitrate: None,
+            framerate: None,
+            cmaf: false,
+            keyframes,
+        }
+    }
+
     fn rendition(writer: &BroadcastWriter, keyframes: RenditionKeyframes) -> RenditionTrack {
-        RenditionTrack::new(
-            writer,
-            RenditionConfig {
-                track: "video_low".to_string(),
-                label: "Low".to_string(),
-                bitrate: None,
-                framerate: None,
-                cmaf: false,
-                keyframes,
-            },
-        )
+        RenditionTrack::new(writer, rendition_config(keyframes))
     }
 
     #[tokio::test]
@@ -363,5 +368,41 @@ mod tests {
         // Assert
         let group_id = writer.shared_timing().alignment.keyframe(40_000);
         relay.wait_for_video_group(group_id).await;
+    }
+
+    #[tokio::test]
+    async fn the_cmaf_rendition_decodes_at_the_capture_timestamp_of_its_loc_sample() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("rendition-cmaf-clock");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        let writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+        let mut rendition = RenditionTrack::new(
+            &writer,
+            RenditionConfig {
+                cmaf: true,
+                ..rendition_config(RenditionKeyframes::SameFrames)
+            },
+        );
+        rendition
+            .push(MediaEvent::VideoConfig(vp8_config()))
+            .await
+            .unwrap();
+        let subscription = relay.subscribe("live", "video_low_cmaf").await;
+
+        // Act: a fragment is muxed once the next sample gives its duration
+        rendition.push(keyframe_at(40_000)).await.unwrap();
+        rendition.push(keyframe_at(80_000)).await.unwrap();
+
+        // Assert
+        let fragment = relay.first_object(&subscription).await;
+        let init = Fmp4TrackMuxer::video(vp8_config()).init_segment().unwrap();
+        let decoded = decode_times(&init, &[fragment.payload]);
+        let captured = writer
+            .shared_timing()
+            .seeded_capture_origin()
+            .unwrap()
+            .saturating_add(Timestamp::from_micros(40_000));
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].micros().abs_diff(captured.micros()) <= VIDEO_TICK_US);
     }
 }

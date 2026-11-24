@@ -193,7 +193,8 @@ impl TrackPublisher {
             bytes = sample.data.len(),
             keyframe = sample.is_keyframe
         );
-        let Some(object) = LocMuxer::new(self.timing.capture_origin(sample.pts))
+        let capture_origin = self.timing.capture_origin(sample.pts);
+        let Some(object) = LocMuxer::new(capture_origin)
             .with_video_codec(self.video_codec)
             .push(&MediaEvent::Video(sample.clone()))
         else {
@@ -234,23 +235,24 @@ impl TrackPublisher {
                 keyframe = sample.is_keyframe
             );
         }
-        self.publish_cmaf_video(sample, group).await?;
+        self.publish_cmaf_video(sample, group, capture_origin)
+            .await?;
         let (GroupBoundary::At(group_id), Some(captured_at)) = (group, captured_at) else {
             return Ok(());
         };
-        self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
-            .await
+        self.publish_timeline(group_id, captured_at).await
     }
 
     async fn publish_cmaf_video(
         &mut self,
         sample: &VideoSample,
         group: GroupBoundary,
+        capture_origin: Timestamp,
     ) -> Result<()> {
         let Some(cmaf) = &mut self.video_cmaf else {
             return Ok(());
         };
-        let Some(object) = cmaf.push(sample, group)? else {
+        let Some(object) = cmaf.push(sample, group, capture_origin)? else {
             return Ok(());
         };
         self.broadcast
@@ -259,14 +261,11 @@ impl TrackPublisher {
         Ok(())
     }
 
-    async fn publish_timeline(
-        &mut self,
-        group_id: u64,
-        presentation_us: u64,
-        encoded_at_ms: u64,
-    ) -> Result<()> {
+    /// The group's first sample was captured at `captured_at`, which is also
+    /// its presentation time on the LOC and CMAF tracks.
+    async fn publish_timeline(&mut self, group_id: u64, captured_at: Timestamp) -> Result<()> {
         self.timeline
-            .record(group_id, presentation_us, encoded_at_ms);
+            .record(group_id, captured_at.micros(), captured_at.millis());
         self.broadcast
             .send_object(
                 &timeline_track_name(&self.tracks.video),
@@ -297,8 +296,8 @@ impl TrackPublisher {
         let Some(group) = self.audio_group(sample.pts.micros()) else {
             return Ok(());
         };
-        let Some(object) = LocMuxer::new(self.timing.capture_origin(sample.pts))
-            .push(&MediaEvent::Audio(sample.clone()))
+        let capture_origin = self.timing.capture_origin(sample.pts);
+        let Some(object) = LocMuxer::new(capture_origin).push(&MediaEvent::Audio(sample.clone()))
         else {
             return Ok(());
         };
@@ -327,25 +326,30 @@ impl TrackPublisher {
                 bytes
             );
         }
-        self.publish_cmaf_audio(sample, group).await?;
+        self.publish_cmaf_audio(sample, group, capture_origin)
+            .await?;
         let (GroupBoundary::At(group_id), false, Some(captured_at)) =
             (group, follows_video, captured_at)
         else {
             return Ok(());
         };
-        self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
-            .await
+        self.publish_timeline(group_id, captured_at).await
     }
 
     async fn publish_cmaf_audio(
         &mut self,
         sample: &AudioSample,
         group: GroupBoundary,
+        capture_origin: Timestamp,
     ) -> Result<()> {
         let Some(muxer) = &mut self.audio_cmaf else {
             return Ok(());
         };
-        let Some(fragment) = muxer.push(&MediaEvent::Audio(sample.clone()))? else {
+        let captured = AudioSample {
+            pts: capture_origin.saturating_add(sample.pts),
+            ..sample.clone()
+        };
+        let Some(fragment) = muxer.push(&MediaEvent::Audio(captured))? else {
             return Ok(());
         };
         self.broadcast
@@ -414,7 +418,7 @@ mod tests {
     use crate::{
         broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
         relay_connection::RelayConnection,
-        test_support::{FakeRelay, keyframe_at, vp8_config},
+        test_support::{FakeRelay, VIDEO_TICK_US, decode_times, keyframe_at, vp8_config},
     };
 
     fn publisher() -> TrackPublisher {
@@ -457,6 +461,13 @@ mod tests {
             .collect()
     }
 
+    fn captured_ms(publisher: &TrackPublisher, pts_us: u64) -> u64 {
+        let origin = publisher.timing.seeded_capture_origin().unwrap();
+        origin
+            .saturating_add(Timestamp::from_micros(pts_us))
+            .millis()
+    }
+
     #[tokio::test]
     async fn audio_published_while_video_is_published_asks_for_a_keyframe() {
         // Arrange: a source that keyframes on request has published its video
@@ -492,7 +503,13 @@ mod tests {
 
         // Assert
         let first = publisher.timing.alignment.aligned(0).unwrap();
-        assert_eq!(recorded(&publisher), [(0, first), (1_000, first + 1)]);
+        assert_eq!(
+            recorded(&publisher),
+            [
+                (captured_ms(&publisher, 0), first),
+                (captured_ms(&publisher, 1_000_000), first + 1)
+            ]
+        );
     }
 
     #[tokio::test]
@@ -510,7 +527,13 @@ mod tests {
 
         // Assert
         let keyframe = publisher.timing.alignment.aligned(0).unwrap();
-        assert_eq!(recorded(&publisher), [(0, keyframe), (1_500, keyframe + 1)]);
+        assert_eq!(
+            recorded(&publisher),
+            [
+                (captured_ms(&publisher, 0), keyframe),
+                (captured_ms(&publisher, 1_500_000), keyframe + 1)
+            ]
+        );
     }
 
     #[test]
@@ -738,7 +761,9 @@ mod tests {
                             .boundary(frame.is_keyframe.then(|| alignment.keyframe(video_us)));
                         published.video.push(group);
                         source_keyframes += usize::from(is_keyframe);
-                        if let Some(object) = video_cmaf.push(&frame, group).unwrap() {
+                        if let Some(object) =
+                            video_cmaf.push(&frame, group, Timestamp::ZERO).unwrap()
+                        {
                             published.video_cmaf.push(object.group);
                         }
                         source_frames.push((
@@ -771,7 +796,9 @@ mod tests {
                             published.rendition_misses.push((*source_id, group));
                         }
                         published.rendition.push(group);
-                        if let Some(object) = rendition_cmaf.push(frame, group).unwrap() {
+                        if let Some(object) =
+                            rendition_cmaf.push(frame, group, Timestamp::ZERO).unwrap()
+                        {
                             published.rendition_cmaf.push(object.group);
                         }
                     }
@@ -895,6 +922,62 @@ mod tests {
         // Assert
         let fragment = relay.first_object(&subscription).await;
         assert!(fragment.payload.windows(4).any(|window| window == b"moof"));
+    }
+
+    #[tokio::test]
+    async fn the_cmaf_video_decodes_at_the_capture_timestamp_of_the_loc_video() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("publisher-cmaf-video-clock");
+        let mut publisher = relay_publisher(&relay, SourceTracks::default());
+        publisher
+            .push(&MediaEvent::VideoConfig(vp8_config()))
+            .await
+            .unwrap();
+        let subscription = relay.subscribe("live", "video_cmaf").await;
+
+        // Act
+        publisher.push(&keyframe_at(40_000)).await.unwrap();
+        publisher.push(&video_at(80_000, false)).await.unwrap();
+
+        // Assert
+        let fragment = relay.first_object(&subscription).await;
+        let init = Fmp4TrackMuxer::video(vp8_config()).init_segment().unwrap();
+        let decoded = decode_times(&init, &[fragment.payload]);
+        let captured = publisher
+            .timing
+            .seeded_capture_origin()
+            .unwrap()
+            .saturating_add(Timestamp::from_micros(40_000));
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].micros().abs_diff(captured.micros()) <= VIDEO_TICK_US);
+    }
+
+    #[tokio::test]
+    async fn the_cmaf_audio_decodes_at_the_capture_timestamp_of_the_loc_audio() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("publisher-cmaf-audio-clock");
+        let mut publisher = relay_publisher(&relay, SourceTracks::default());
+        let config = AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1));
+        publisher
+            .push(&MediaEvent::AudioConfig(config.clone()))
+            .await
+            .unwrap();
+        let subscription = relay.subscribe("live", "audio_cmaf").await;
+
+        // Act
+        publisher.push(&audio_at(20_000)).await.unwrap();
+
+        // Assert: 21 µs is one tick of the 48 kHz timescale, rounded up
+        let fragment = relay.first_object(&subscription).await;
+        let init = Fmp4TrackMuxer::audio(config).init_segment().unwrap();
+        let decoded = decode_times(&init, &[fragment.payload]);
+        let captured = publisher
+            .timing
+            .seeded_capture_origin()
+            .unwrap()
+            .saturating_add(Timestamp::from_micros(20_000));
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].micros().abs_diff(captured.micros()) <= 21);
     }
 
     #[tokio::test]

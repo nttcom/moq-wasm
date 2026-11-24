@@ -132,6 +132,10 @@ Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
 and every object is one `moof` + `mdat` fragment holding one sample (§3.3).
+A fragment's decode and presentation times are the sample's time plus the
+writer's capture origin, so a CMAF sample decodes within one tick of its LOC
+sibling's Timestamp (Unix µs). A player can therefore pair LOC video with CMAF
+audio of the same `renderGroup`.
 A fragment starts the group its sample started on the LOC track, rather than
 one looked up by the fragment's presentation time, which the muxer moves one
 tick later when a sample repeats the previous decode time. The LOC and CMAF
@@ -345,8 +349,11 @@ tracks.
 
 At the start of every group of the writer, the writer adds the record
 `[presentation time, [group id, 0], encode wallclock]` of the group's first
-sample and sends the records accumulated so far as one object in a new group
-of the timeline. The video starts the groups while it is published; while it
+sample. Both times are the sample's capture timestamp: msf-02 §7.1.1 makes the
+presentation time the media time of the object the record points at, and the
+LOC Timestamp and the CMAF presentation time are that timestamp. The writer then
+sends the records accumulated so far as one object in a new group of the
+timeline. The video starts the groups while it is published; while it
 is muted or absent the audio does, so a mute leaves no group without a record.
 Records older than the relay's cache retention are dropped and the others are
 kept for as long as the writer publishes; a restarted publisher starts a new
