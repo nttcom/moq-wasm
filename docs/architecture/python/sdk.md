@@ -110,7 +110,8 @@ pipelines.
 ```python
 import moq_wasm
 
-async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh) as session:
+# `dispatcher` is moq-bot-job's `BotDispatcher`: its `refresh` returns a later JWT.
+async with moq_wasm.connect(url, token=await dispatcher.token(), refresh_token=dispatcher.refresh) as session:
     ...
 ```
 
@@ -198,7 +199,8 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   coroutine that starts them in an `asyncio.TaskGroup`, which waits for
   every child's cleanup and raises a child's failure, as a refused
   request, inside an `ExceptionGroup`: a loop that connects again
-  catches every `Exception` with `except*`.
+  catches every `Exception` with `except*`, a token request's
+  `TimeoutError` among them (the README's "Keep a service connected").
   The three subclass `SessionEnded`, which is no
   `RuntimeError`: a request made after the session ended raises what ended
   it, so the loops that retry a refused request (`RemoteBroadcast.follow`)
@@ -632,6 +634,11 @@ pipeline:
 
 ```python
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
+from pipecat.transports.base_transport import VideoInSourceParams
 
 transport = MoqWasmTransport(
     session,
@@ -652,7 +659,13 @@ transport = MoqWasmTransport(
 @transport.event_handler("on_client_connected")
 async def on_client_connected(transport, participant_id): ...
 
-pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
+# An LLM service answers the context the user aggregator builds from the transcriptions.
+context = LLMContextAggregatorPair(
+    LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
+)
+pipeline = Pipeline(
+    [transport.input(), stt, context.user(), llm, tts, transport.output(), context.assistant()]
+)
 ```
 
 - It is a pipecat `BaseTransport` with `input()` and `output()` and the
@@ -719,8 +732,8 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   leaves it unusable, so the pipeline worker's `processor_unusable_policy`
   decides whether the pipeline ends, as for pipecat's `MOQTransport` when
   its relay cannot be reached. pipecat's default, `CONTINUE`, keeps a
-  pipeline running with a room that never opened, so the bots in this
-  repository build their worker with
+  pipeline running with a room that never opened, so the README's bot and
+  the bots in this repository build their worker with
   `ProcessorUnusablePolicy.CANCEL`, which ends it at once (`END` drains it
   first). pipecat routes the frames an output does not handle itself to its
   media sender, which an output whose room never opened has none of, and
