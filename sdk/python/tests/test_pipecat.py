@@ -12,6 +12,7 @@ import time
 import uuid
 import warnings
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -4464,6 +4465,35 @@ async def test_a_closed_decoding_whose_read_waits_on_the_objects_keeps_no_decode
     gate.set()
     with pytest.raises(StopAsyncIteration):
         await within(reading)
+
+
+async def test_a_closed_decoding_keeps_no_decoder_while_a_worker_still_holds_what_it_ran(video_decoders):
+    # Arrange: workers that keep every callable they ran and its future
+    ran = []
+
+    class RetainingExecutor(ThreadPoolExecutor):
+        def submit(self, fn, /, *args, **kwargs):
+            future = super().submit(fn, *args, **kwargs)
+            ran.append((fn, future))
+            return future
+
+    asyncio.get_running_loop().set_default_executor(RetainingExecutor())
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    keyframe = b"".join(encoder.encode(picture(0), SIZE, "RGB"))
+
+    async def objects():
+        yield video_object(0, 0, keyframe)
+
+    pictures = decode_pictures(objects(), "avc1.42e01f")
+    await within(anext(pictures))
+
+    # Act
+    await within(pictures.aclose())
+    gc.collect()
+
+    # Assert
+    assert ran
+    assert [decoder for decoder in video_decoders if decoder() is not None] == []
 
 
 async def test_length_prefixed_h264_decodes_with_the_video_config_of_the_first_keyframe():

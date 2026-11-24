@@ -10,7 +10,7 @@ from pipecat.frames.frames import UserImageRequestFrame
 
 from moq_wasm._errors import SessionEnded
 from moq_wasm._native import Location, Object
-from moq_wasm._once import retrieve, wait_through_cancellation
+from moq_wasm._once import in_thread, retrieve, wait_through_cancellation
 from moq_wasm.codecs import DecodedPicture, OpusDecoder, VideoDecoder, follow_pictures
 from moq_wasm.media import Catalog, CatalogTrack, Following, RemoteBroadcast
 from moq_wasm.media._remote_broadcast import DEFAULT_DELIVERY_TIMEOUT_SECONDS, RESUBSCRIBE_DELAY_SECONDS
@@ -580,7 +580,7 @@ class ParticipantReceiver:
             return
         picture = decoded.picture
         try:
-            rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
+            rgb = await in_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
             size = (picture.width, picture.height)
             passed = await self._sink.push_picture(
                 ReceivedPicture(self.participant_id, source, rgb, size, decoded.location, request)
