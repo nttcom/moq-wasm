@@ -140,7 +140,7 @@ recorder の HTTP API だけを持ち、wasm も `media` も引き込まない�
 
 ## 配信を `crates/broadcast` に寄せる
 
-`crates/broadcast` は、すでに live-ingest、gst-plugin-moqt、onvif-ingest、Live Viewer
+`crates/broadcast` は、すでに ingest-gateway（listen と onvif）、gst-plugin-moqt、Live Viewer
 の MP4 publisher（`sdk/js/src/mp4_broadcast.rs`）向けに MSF broadcast を組み
 立てている。担っているのは、catalog、LOC（と CMAF）の track、media timeline、
 catalog より先の PUBLISH、壁時計から始める group id、`moqt::Origin` による60秒の
@@ -194,10 +194,10 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    `VideoConfig::Avc` を作る。gst-plugin-moqt と MPEG-TS demuxer も同じことをして
    いる。encoder が解像度を変えたら作り直す。
 3. **rendition。** 複数の bitrate で配信するカメラ（meeting の画質切り替え）は、
-   CMSF の switching set である。`live-ingest` は、transcode した rendition を
+   CMSF の switching set である。`ingest-gateway` は、transcode した rendition を
    `GroupAlignment` を使って `Broadcast::send_object` で書いている。ブラウザでは、
    rendition ごとに別の `VideoEncoder` へ同じ `VideoFrame` を渡し、同じフレームで
-   全員に keyframe を要求するので、group id は完全に揃う。live-ingest の経路は
+   全員に keyframe を要求するので、group id は完全に揃う。ingest-gateway の経路は
    `broadcast` の `RenditionTrack` に移し、`MediaBroadcast` はその上に
    `addRendition(name, label, bitrate)` を出す。encoder の出力は順不同で届くので、
    ブラウザの rendition は `RenditionKeyframes::SameFrames` で、source より先に
@@ -227,7 +227,7 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    フィールドではなく、MSF の `label`、`role` に入れる。
 8. **CMAF の opt-in。** 今の `broadcast` は、すべての media track に `_cmaf` の兄弟
    track を作る。`SourceTracks` に CMAF を作るかどうかのフラグを足す。既定は今のまま
-   にして live-ingest などは変えず、ブラウザの配信だけ既定で切る。`addSource` の
+   にして ingest-gateway などは変えず、ブラウザの配信だけ既定で切る。`addSource` の
    `cmaf: true` は、映像と rendition にだけ兄弟 track を作る（Opus の音声には作れない）。
    兄弟 track は LOC の track と encoder を共有し、encoder はどちらかに購読者がいる間
    動く。
@@ -272,7 +272,7 @@ Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がい�
 
 `MediaBroadcast`（wasm）は `Mp4Broadcast` を一般化したものである。`Session` と
 namespace から作り、`addSource` でソースごとに `MediaSource` を作る。
-`MediaSource` は `broadcast::MediaSource`（Python SDK と共有。`BroadcastWriter` を1つ持つ）を包み、onvif-ingest がカメラの profile
+`MediaSource` は `broadcast::MediaSource`（Python SDK と共有。`BroadcastWriter` を1つ持つ）を包み、ingest-gateway onvif がカメラの profile
 ごとにそうしているのと同じく、`SourceTracks` で、source `<name>` の映像と音声を
 `<name>`/`<name>_audio` と名付ける。どのソースの track も、broadcast の
 1つの catalog に載る。`MediaSource` が公開するのは `configureVideo`・`pushVideo`、
@@ -474,7 +474,7 @@ source 名は、その source の映像 track の名前である。`createBroadc
   独自フィールドは足さない（変更7の見送りのまま）。
 - `addSource` は、空の名前、`catalog`、`_audio`・`_cmaf`・`_timeline` で終わる名前、ほかの
   source の track と重なる名前を reject する。
-- `crates/broadcast` を使う配信元（live-ingest、onvif-ingest、gst-plugin-moqt）は
+- `crates/broadcast` を使う配信元（ingest-gateway、gst-plugin-moqt）は
   `video`/`audio` のままにする。受ける側には source `video` として見える。
 
 `RemoteBroadcast` は catalog から次の規則で source を読む。
@@ -1099,7 +1099,7 @@ telemetry の帰属、`RequestError` から draft-14 のコードを持つ `Erro
 その間に答える。これは wasm ではなく
 moqt の役目にする。`ClientConfig::authorization_token` を、固定値と、接続ごとに呼ばれる
 provider の両方を表せる型に変え、`Session` が新しい `Connection` を開くたびに provider
-を呼ぶ。Rust の publisher（live-ingest など）も同じ口を使える。
+を呼ぶ。Rust の publisher（ingest-gateway など）も同じ口を使える。
 
 ### 再接続
 
@@ -1182,7 +1182,7 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
    FETCH による埋め合わせ、再試行の間隔と上限、認証エラー時のトークン取り直しを
    入れる。relay を止めて戻す Rust のテストで確かめる。
 3. **refactor(broadcast): 既存の `moqt::Session` から `RelayConnection` を作る。**
-   `Mp4Broadcast` はページの session を受け取る。live-ingest/onvif のコンストラクタは
+   `Mp4Broadcast` はページの session を受け取る。ingest-gateway/onvif のコンストラクタは
    `MoqtTarget` のまま。
 4. **feat(wasm): handle スタイルの subscribe、fetch、track status、namespace 監視を
    持つ `Session` wasm クラス。** `moqt::Subscriber` の上に、`MOQTClient` と並べて
@@ -1234,7 +1234,7 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
    渡せる。独自フィールドは、使う用途が出るまで見送る（変更7）。
 5. **Audio Level: 含める。** `createBroadcast()` は音声の object ごとにレベルを計算し、LOC の
    Audio Level property として送る（変更5）。
-6. **CMAF の兄弟 track: 作らない。** ブラウザの配信は CMAF を作らない。他の publisher（live-ingest など）の既定は変えない
+6. **CMAF の兄弟 track: 作らない。** ブラウザの配信は CMAF を作らない。他の publisher（ingest-gateway など）の既定は変えない
    （変更8）。
 7. **パッケージ名: `moq-wasm`。** `package.json` の `name` と import パスに使う。
    `docs/architecture/moqt/sdk.md` は3言語の SDK の名前を `moqt` に揃えると決めたので、

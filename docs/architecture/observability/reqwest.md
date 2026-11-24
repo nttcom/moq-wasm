@@ -34,5 +34,5 @@ SQL and returns rows as JSON lines.
 ## Decision
 
 Use `reqwest` over the HTTP interface. It is already in the workspace lock at
-0.13.4 (`relay`, `onvif-ingest`), so no new crate enters the dependency tree,
+0.13.4 (`relay`, `ingest-gateway onvif`), so no new crate enters the dependency tree,
 and the rows serialize with the `serde` derives in `telemetry::relay_stats`.

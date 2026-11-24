@@ -6,7 +6,7 @@ const ALIGNED_TOLERANCE_MICROS = 500_000
 
 export type GroupRange = { start: bigint; end: bigint }
 
-/// Where the audio groups start on the capture timestamp axis. The live-ingest
+/// Where the audio groups start on the capture timestamp axis. The ingest-gateway
 /// bridge and the MP4 publisher start an audio group at every video keyframe
 /// under the id of the video group; the ONVIF bridge rotates audio groups on
 /// its own clock and numbers them independently, so the audio of a review

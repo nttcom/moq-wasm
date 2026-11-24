@@ -8,7 +8,7 @@ import { test } from './recorder-e2e-arrange'
 const PAGE_PATH = '/moq-wasm/tests/playback-group/index.html'
 const PEER_NAMESPACE = `${liveViewerE2EConfig.namespace}-peer`
 const RTMP_ADDRESS = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? '127.0.0.1:1935'
-/// live-ingest announces a stream once it has detected its codecs.
+/// ingest-gateway announces a stream once it has detected its codecs.
 const PEER_START_SECONDS = 5
 /// Long enough for a seek, a player rewinding alone and its return.
 const RECORDED_SECONDS = 30

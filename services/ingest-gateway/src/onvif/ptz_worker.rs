@@ -1,0 +1,206 @@
+use crate::onvif::app_config::Target;
+use crate::onvif::onvif_client::OnvifClient;
+use crate::onvif::onvif_requests;
+use crate::onvif::ptz_config::PtzRange;
+use crate::onvif::soap_client;
+use anyhow::Result;
+use serde::Deserialize;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+/// Deserialized from the viewer's command JSON, e.g. `{"type": "stop"}`.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum Command {
+    Absolute {
+        pan: f32,
+        tilt: f32,
+        zoom: f32,
+        speed: f32,
+    },
+    Relative {
+        pan: f32,
+        tilt: f32,
+        zoom: f32,
+        speed: f32,
+    },
+    Continuous {
+        pan: f32,
+        tilt: f32,
+        zoom: f32,
+        speed: f32,
+    },
+    Stop,
+    Center {
+        speed: f32,
+    },
+}
+pub(crate) fn spawn(target: Target) -> Sender<Command> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || run_worker(target, rx));
+    tx
+}
+fn run_worker(target: Target, rx: Receiver<Command>) {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(err) => return tracing::warn!("PTZ error: tokio runtime init failed: {err}"),
+    };
+    let client = match soap_client::build(&target) {
+        Ok(client) => client,
+        Err(err) => return tracing::warn!("PTZ error: {err}"),
+    };
+    let onvif = match runtime.block_on(OnvifClient::initialize(client, target)) {
+        Ok(onvif) => onvif,
+        Err(err) => return tracing::warn!("PTZ error: ptz init error: {err}"),
+    };
+    let range = onvif.ptz_range();
+    let mut position = Position::new(&range);
+    let speed_range = range.speed_range();
+    for command in rx {
+        let result = match command {
+            Command::Absolute {
+                pan,
+                tilt,
+                zoom,
+                speed,
+            } => {
+                position.set_absolute(pan, tilt, zoom, &range);
+                let speed = speed_range.clamp(speed);
+                let movement = onvif_requests::PtzMoveRequest {
+                    pan: position.pan,
+                    tilt: position.tilt,
+                    zoom: position.zoom,
+                    speed,
+                };
+                let cmd = onvif_requests::absolute_move(
+                    onvif.profile_token(),
+                    movement,
+                    range.absolute_spaces(),
+                );
+                send_ptz_command(&runtime, &onvif, cmd)
+            }
+            Command::Relative {
+                pan,
+                tilt,
+                zoom,
+                speed,
+            } => {
+                let (pan_delta, tilt_delta, zoom_delta) =
+                    position.apply_relative(pan, tilt, zoom, &range);
+                let speed = speed_range.clamp(speed);
+                let movement = onvif_requests::PtzMoveRequest {
+                    pan: pan_delta,
+                    tilt: tilt_delta,
+                    zoom: zoom_delta,
+                    speed,
+                };
+                let cmd = onvif_requests::relative_move(
+                    onvif.profile_token(),
+                    movement,
+                    range.relative_spaces(),
+                );
+                send_ptz_command(&runtime, &onvif, cmd)
+            }
+            Command::Continuous {
+                pan,
+                tilt,
+                zoom,
+                speed,
+            } => {
+                let (pan_range, tilt_range) = range.continuous_pan_tilt_range();
+                let zoom_range = range.continuous_zoom_range();
+                let speed = speed_range.clamp(speed);
+                let pan = pan_range.clamp(pan * speed);
+                let tilt = tilt_range.clamp(tilt * speed);
+                let zoom = zoom_range.clamp(zoom * speed);
+                let velocity = onvif_requests::PtzVelocityRequest { pan, tilt, zoom };
+                let cmd = onvif_requests::continuous_move(
+                    onvif.profile_token(),
+                    velocity,
+                    range.continuous_spaces(),
+                );
+                send_ptz_command(&runtime, &onvif, cmd)
+            }
+            Command::Stop => {
+                let cmd = onvif_requests::stop(onvif.profile_token());
+                send_ptz_command(&runtime, &onvif, cmd)
+            }
+            Command::Center { speed } => {
+                position.center(&range);
+                let speed = speed_range.clamp(speed);
+                let movement = onvif_requests::PtzMoveRequest {
+                    pan: position.pan,
+                    tilt: position.tilt,
+                    zoom: position.zoom,
+                    speed,
+                };
+                let cmd = onvif_requests::absolute_move(
+                    onvif.profile_token(),
+                    movement,
+                    range.absolute_spaces(),
+                );
+                send_ptz_command(&runtime, &onvif, cmd)
+            }
+        };
+        if let Err(err) = result {
+            tracing::warn!("PTZ error: {err}");
+        }
+    }
+}
+fn send_ptz_command(
+    runtime: &tokio::runtime::Runtime,
+    onvif: &OnvifClient,
+    command: onvif_requests::OnvifRequest,
+) -> Result<()> {
+    runtime.block_on(onvif.send_ptz(&command)).map(drop)
+}
+struct Position {
+    pan: f32,
+    tilt: f32,
+    zoom: f32,
+}
+
+impl Position {
+    fn new(range: &PtzRange) -> Self {
+        let (pan_range, tilt_range) = range.absolute_pan_tilt_range();
+        let zoom_range = range.absolute_zoom_range();
+        Self {
+            pan: pan_range.clamp(0.0),
+            tilt: tilt_range.clamp(0.0),
+            zoom: zoom_range.clamp(0.0),
+        }
+    }
+    fn set_absolute(&mut self, pan: f32, tilt: f32, zoom: f32, range: &PtzRange) {
+        let (pan_range, tilt_range) = range.absolute_pan_tilt_range();
+        let zoom_range = range.absolute_zoom_range();
+        self.pan = pan_range.clamp(pan);
+        self.tilt = tilt_range.clamp(tilt);
+        self.zoom = zoom_range.clamp(zoom);
+    }
+
+    fn apply_relative(
+        &mut self,
+        pan: f32,
+        tilt: f32,
+        zoom: f32,
+        range: &PtzRange,
+    ) -> (f32, f32, f32) {
+        let (pan_range, tilt_range) = range.relative_pan_tilt_range();
+        let zoom_range = range.relative_zoom_range();
+        let pan_delta = pan_range.clamp(pan);
+        let tilt_delta = tilt_range.clamp(tilt);
+        let zoom_delta = zoom_range.clamp(zoom);
+        let (abs_pan_range, abs_tilt_range) = range.absolute_pan_tilt_range();
+        let abs_zoom_range = range.absolute_zoom_range();
+        self.pan = abs_pan_range.clamp(self.pan + pan_delta);
+        self.tilt = abs_tilt_range.clamp(self.tilt + tilt_delta);
+        self.zoom = abs_zoom_range.clamp(self.zoom + zoom_delta);
+        (pan_delta, tilt_delta, zoom_delta)
+    }
+    fn center(&mut self, range: &PtzRange) {
+        let (pan_range, tilt_range) = range.absolute_pan_tilt_range();
+        let zoom_range = range.absolute_zoom_range();
+        self.pan = pan_range.clamp(0.0);
+        self.tilt = tilt_range.clamp(0.0);
+        self.zoom = zoom_range.clamp(self.zoom);
+    }
+}

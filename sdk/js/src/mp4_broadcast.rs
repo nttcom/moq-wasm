@@ -10,7 +10,7 @@ use crate::{anyhow_error, js_error, log_sink::SessionScope, mp4::Mp4Index};
 
 /// Publishes the samples of an MP4 file with `crates/broadcast`: the same
 /// catalog, LOC and CMAF tracks, media timeline and FETCH cache as
-/// live-ingest. The page paces the samples; the broadcast adds no pacing of
+/// ingest-gateway. The page paces the samples; the broadcast adds no pacing of
 /// its own. Created with `Session.mp4Broadcast`; it publishes until that
 /// session closes.
 #[wasm_bindgen]

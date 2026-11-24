@@ -43,7 +43,7 @@ pub(crate) enum SourceChoice {
     /// track named `video`, `audio` or `video_<rendition>`, or, as the browser
     /// SDK names a source `camera`, `camera` or `camera_<suffix>`. None while no such
     /// track is listed, unless the catalog has no event timeline, as a
-    /// broadcast outside a meeting such as `onvif-ingest`'s: then its first
+    /// broadcast outside a meeting such as `ingest-gateway onvif`'s: then its first
     /// source.
     Main,
     /// The first source listed besides the main one, such as a meeting
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn without_an_event_timeline_the_first_source_is_the_main_one() {
-        // Arrange: a broadcast outside a meeting, its tracks named as `onvif-ingest` names them
+        // Arrange: a broadcast outside a meeting, its tracks named as `ingest-gateway onvif` names them
         let catalog = catalog(vec![
             in_source(
                 sized_video("video/profile_1", "avc1.42001F", 480, 200_000),

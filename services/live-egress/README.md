@@ -12,7 +12,7 @@ Run each command in a separate terminal from the workspace root:
 
 ```shell
 make relay
-make live-ingest
+make ingest-gateway
 make ffmpeg-srt
 make live-egress
 ```

@@ -10,7 +10,7 @@ unit draft-ietf-moq-msf-02 initiates and ends (§11.3, §11.4): a catalog, LOC a
 CMAF media tracks, a media timeline and a publisher-side FETCH cache. It also
 reads such a broadcast back into media events for `services/live-egress` (see
 "Reading a broadcast").
-`services/live-ingest`, `crates/gst-plugin-moqt`, `services/onvif-ingest`, `moq-cli` and the
+`services/ingest-gateway`, `crates/gst-plugin-moqt`, `services/ingest-gateway`, `moq-cli` and the
 Live Viewer's MP4 publisher, through `sdk/js`, build on it. The track
 layout is summarised in [its README](../../../crates/broadcast/README.md); this
 document records why the tracks are shaped that way.
@@ -18,16 +18,16 @@ document records why the tracks are shaped that way.
 Three types carry the three multiplicities. `RelayConnection` is one session
 to the relay, opened on first use and shared by every broadcast on it: RTMP
 publishes every stream key of one connection through the same session, and
-the live-ingest stats panel reads its transport statistics and stream ledger.
+the ingest-gateway stats panel reads its transport statistics and stream ledger.
 `Broadcast` binds that connection to one namespace: it announces the
 namespace, holds the catalog metadata and sends the objects of its tracks.
 `BroadcastWriter` turns `mediapack::MediaEvent`s into those objects behind a
 queue that never blocks the media source; `BroadcastWriter::push` returns
 `PushOutcome::Dropped` for what that queue drops while the relay does not
 keep up (see "Group alignment"). A `RenditionTrack` writes one
-rendition of a writer's source video into a track of its own; `live-ingest`
+rendition of a writer's source video into a track of its own; `ingest-gateway`
 adds its transcoded renditions this way. A writer writes into `video` and
-`audio` by default; `onvif-ingest` runs one writer per camera profile in one
+`audio` by default; `ingest-gateway onvif` runs one writer per camera profile in one
 broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
 The chat describes the default `video` and `audio`, so the catalog lists it,
 and the `audio` placeholder sent before the AAC config arrives, only while a
@@ -163,7 +163,7 @@ they also update the subscriber signal and the stream ledger.
 This crate decides the policy: which tracks exist, the 60 second retention,
 that the catalog keeps only its newest object, which tracks are published
 eagerly and which wait for a SUBSCRIBE, and that a SUBSCRIBE for anything
-else is rejected. The stream ledger behind the live-ingest stats panel is
+else is rejected. The stream ledger behind the ingest-gateway stats panel is
 updated from the write outcomes `Origin` reports.
 
 The catalog is the exception to the 60 seconds: its newest object is kept for
@@ -288,7 +288,7 @@ tracks starts a new group on each. The `BroadcastWriter` queue also
 notifies it when it starts dropping media because the relay is not keeping up,
 and again whenever it drops a keyframe, so video resumes once the queue drains
 rather than at the source's next periodic keyframe. The browser sets it (`MediaBroadcast`'s
-`onKeyframeRequest`); `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`
+`onKeyframeRequest`); `ingest-gateway` and `gst-plugin-moqt`
 cannot ask their encoders for a keyframe and leave it unset. The same
 `Notify` is registered for a video's CMAF sibling, so it has dynamic groups
 exactly when its LOC track does.

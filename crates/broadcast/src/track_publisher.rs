@@ -824,7 +824,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_video_is_listed_with_its_source_s_tracks() {
-        // Arrange: the source is a camera profile, as `onvif-ingest` names it
+        // Arrange: the source is a camera profile, as `ingest-gateway onvif` names it
         let mut relay = FakeRelay::spawn("publisher-catalog");
         let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
         broadcast

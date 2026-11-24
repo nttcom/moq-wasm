@@ -248,7 +248,7 @@ await call.hangUp() // writes hangup on the control track
 ### Media
 - **Phone to MoQT.** Each RTP packet (20 ms) is decoded from G.711, resampled
   to 48 kHz and encoded to one Opus frame, published as one LOC object.
-  `broadcast` builds the catalog and the track, as for `live-ingest`. The
+  `broadcast` builds the catalog and the track, as for `ingest-gateway`. The
   capture timestamp is the RTP time mapped to wall clock through RTCP sender
   reports when the trunk sends them, else arrival time.
 - **MoQT to phone.** The peer's audio is read through the `BroadcastReader`

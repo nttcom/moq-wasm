@@ -39,7 +39,7 @@ type TrackReport = {
 test('every sample the bridge publishes while the viewer watches reaches it', async ({ browser }) => {
   test.skip(
     !bridgeLog,
-    'set DELIVERY_BRIDGE_LOG to the live-ingest log written with RUST_LOG=broadcast::delivery=debug'
+    'set DELIVERY_BRIDGE_LOG to the ingest-gateway log written with RUST_LOG=broadcast::delivery=debug'
   )
   // Arrange
   const context = await browser.newContext({ ignoreHTTPSErrors: true })

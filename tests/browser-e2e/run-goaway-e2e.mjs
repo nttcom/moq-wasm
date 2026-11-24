@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-// Two relays sharing a Redis route registry, live-ingest publishing an RTMP
+// Two relays sharing a Redis route registry, ingest-gateway publishing an RTMP
 // stream to relay A and the live viewer watching it there. The spec stops
 // relay A with SIGINT, which makes it send GOAWAY naming relay B. Relay A is
 // then restarted and drained again with recorder serve and a meeting
@@ -26,7 +26,7 @@ import {
 import {
   assertE2EPrerequisites,
   buildBinaries,
-  buildLiveIngestFfmpegArgs,
+  buildIngestGatewayFfmpegArgs,
   getDefaultBaseUrl,
   getDefaultWebPort,
   jsDir,
@@ -107,7 +107,7 @@ async function main() {
 
   try {
     // The recorder spec runs target/debug/recorder and target/debug/bot-dispatcher.
-    buildBinaries(["relay", "live-ingest", "recorder", "bot-dispatcher"]);
+    buildBinaries(["relay", "ingest-gateway", "recorder", "bot-dispatcher"]);
     // A Redis of its own: relays registered in a shared one would be
     // candidates for the GOAWAY target.
     const redis = spawnProcess(
@@ -143,9 +143,10 @@ async function main() {
     ]);
 
     const bridge = spawnProcess(
-      "live-ingest",
-      `${repoRoot}/target/debug/live-ingest`,
+      "ingest-gateway",
+      `${repoRoot}/target/debug/ingest-gateway`,
       [
+        "listen",
         "--rtmp-addr",
         rtmpAddress,
         "--srt-addr",
@@ -157,11 +158,11 @@ async function main() {
       { cwd: repoRoot },
     );
     childProcesses.push(bridge);
-    await waitForOutput(bridge, /RTMP listener started/, "live-ingest", 60_000);
+    await waitForOutput(bridge, /RTMP listener started/, "ingest-gateway", 60_000);
     const ffmpeg = spawnProcess(
       "ffmpeg",
       "ffmpeg",
-      buildLiveIngestFfmpegArgs("rtmp", rtmpAddress, namespace),
+      buildIngestGatewayFfmpegArgs("rtmp", rtmpAddress, namespace),
       {
         cwd: repoRoot,
       },
@@ -170,7 +171,7 @@ async function main() {
     await waitForOutput(
       bridge,
       /PUBLISH_NAMESPACE_OK received/,
-      "live-ingest publish",
+      "ingest-gateway publish",
       60_000,
     );
 

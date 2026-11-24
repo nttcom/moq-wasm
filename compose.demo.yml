@@ -60,14 +60,15 @@ services:
     depends_on:
       - vts
 
-  live-ingest:
-    image: moqt-live-ingest:local
+  ingest-gateway:
+    image: moqt-ingest-gateway:local
     build:
       context: .
-      dockerfile: services/live-ingest/Dockerfile
+      dockerfile: services/ingest-gateway/Dockerfile
     profiles:
       - live
     command:
+      - listen
       - --moqt-url=https://relay:4433
       - --insecure-skip-tls-verify
     depends_on:
@@ -84,10 +85,10 @@ services:
       -f lavfi -i sine=frequency=1000:sample_rate=48000
       -c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p -g 60 -sc_threshold 0
       -c:a aac -ar 48000 -ac 2
-      -f mpegts srt://live-ingest:9000?streamid=anon/live/test
+      -f mpegts srt://ingest-gateway:9000?streamid=anon/live/test
     restart: on-failure
     depends_on:
-      - live-ingest
+      - ingest-gateway
 
   # The voice agent page asks temporary-apps for its bot, which bot-dispatcher launches as a local process.
   temporary-apps:
