@@ -173,21 +173,23 @@ in a container as the trunk:
   `allow=ulaw,alaw` and `dtmf_mode=rfc4733`;
 - a dialplan that stands in for the phone network: one number answers with
   `Echo()`, one plays a 1 kHz tone, one is busy, one hangs up two seconds
-  after answering;
+  after answering, one hangs up once it hears the DTMF digit 5;
 - an AOR for the gateway's listener on the host, so `channel originate`
   calls the app's number as a phone that echoes what it hears.
 
 `run.sh` starts it with a VTS, a relay and the gateway, and a Rust client
 acts as the page: it publishes a 700 Hz tone as the peer, checks the call's
-states, hears the tone back from the echo, hangs up by closing its session,
-and checks `486` and a hangup from the phone. It also serves the app's call
+states, hears the tone back from the echo, hangs up with `hangup` on its
+`control` track, checks `486` and a hangup from the phone, and sends the DTMF
+digit the phone waits for. It also serves the app's call
 webhook: it has the trunk call the app's number, answers with the room,
 hears its tone back, and declines a second call. Then the phone example
 (`examples/browser/examples/phone`) runs in Chromium on `PhoneCall`, with
 `app-server.mjs` as its app server (it signs the page's and the call's
 tokens, places the calls and answers the webhook with the room of the page
-that takes the call): it calls the echo, hears it and hangs up, gets `486`
-from the busy number, and answers a call to the app's number.
+that takes the call): it calls the echo, hears it and hangs up, presses the
+digit the DTMF number waits for, gets `486` from the busy number, and answers
+a call to the app's number.
 
 ### The `call` track
 A JSON object per state change, each a group of its own whose stream ends at
@@ -210,11 +212,16 @@ The page's `control` track carries one JSON object per command, each a group
 of its own: `{"event":"hangup"}`, and `{"event":"dtmf","digit":"1"}`, which
 the gateway sends to the phone as an RFC 4733 event. The gateway reads it from
 its current group on, so a `hangup` written before the gateway subscribed
-still ends the call. The page hangs up with `hangup` rather than by ending
-its broadcast: `LocalBroadcast` keeps its namespace announced until the
-session closes, and a page's session carries its other broadcasts too. A
-page whose session closes (the tab closed, or lost) ends its broadcast, and
-the gateway hangs up on the PUBLISH_NAMESPACE_DONE.
+still ends the call; a digit in that group is stale and skipped. A digit is a
+100 ms tone: five packets in the place of the audio, in the same RTP stream
+and with the payload type the SDP gave `telephone-event/8000`, then the final
+packet (E bit) three times (RFC 4733 §2.5.1.4). With a trunk that accepts no
+`telephone-event` the digits are dropped; DTMF is never sent in-band. The
+page hangs up with `hangup` rather than by ending its broadcast:
+`LocalBroadcast` keeps its namespace announced until the session closes, and
+a page's session carries its other broadcasts too. A page whose session
+closes (the tab closed, or lost) ends its broadcast, and the gateway hangs up
+on the PUBLISH_NAMESPACE_DONE.
 
 ### Browser SDK
 `moq-wasm/media` gains `PhoneCall`, which publishes the peer broadcast, plays
@@ -293,6 +300,7 @@ media/
   transcoder     GStreamer G.711 ⇄ Opus
   playout        the 40–120 ms buffer in front of the 20 ms RTP clock
   g711           PCMU/PCMA payload types, caps, silence
+  dtmf           RFC 4733 telephone-event packets of one digit
 ```
 
 ### Settings

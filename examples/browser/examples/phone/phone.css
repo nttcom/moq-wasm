@@ -37,3 +37,9 @@
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  gap: 8px;
+}

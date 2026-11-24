@@ -30,6 +30,7 @@ const ROOM: &str = "sip-e2e/room";
 const ECHO: &str = "+819000000001";
 const BUSY: &str = "+819000000003";
 const HANGS_UP: &str = "+819000000004";
+const HEARS_DTMF: &str = "+819000000005";
 const NOT_ALLOWED: &str = "+12025550100";
 /// The app's number (`apps.json`) and the phone that calls it (`pjsip.conf`).
 const APP_NUMBER: &str = "+81300000001";
@@ -74,6 +75,8 @@ async fn main() -> Result<()> {
     println!("ok: a busy phone ends the call with 486");
     the_phone_hangs_up(&env).await?;
     println!("ok: the phone hangs up");
+    the_phone_hears_a_dtmf_digit(&env).await?;
+    println!("ok: the phone hears a DTMF digit");
     the_page_answers_a_call_to_the_app_s_number(&env, &webhook).await?;
     println!("ok: the page answers a call to the app's number");
     a_call_the_webhook_declines_never_reaches_the_room(&env, &webhook).await?;
@@ -257,6 +260,24 @@ impl Webhook {
     }
 }
 
+async fn the_phone_hears_a_dtmf_digit(env: &Env) -> Result<()> {
+    let peer = format!("{ROOM}/alice/dtmf");
+    let page = connect(env).await?;
+    let peer_session = connect(env).await?;
+    let tone = ToneBroadcast::run(&peer_session, &peer).await?;
+    let call = CallObserver::place(env, &page, HEARS_DTMF, &peer).await?;
+    call.until_state("answered").await?;
+
+    // The phone hangs up only on the right digit.
+    tone.send_dtmf('5').await?;
+    let reason = call.until_state("ended").await?;
+    ensure!(reason == "hangup", "ended with {reason}");
+    call.until_gone().await?;
+    drop(tone);
+    peer_session.close().await;
+    Ok(())
+}
+
 async fn connect(env: &Env) -> Result<Arc<client::Session>> {
     Ok(Arc::new(
         client::Session::connect(
@@ -427,6 +448,14 @@ impl ToneBroadcast {
             control,
             _writer_task: writer_task,
         })
+    }
+
+    async fn send_dtmf(&self, digit: char) -> Result<()> {
+        let command = json!({ "event": "dtmf", "digit": digit.to_string() });
+        self.control
+            .write_group(Bytes::from(serde_json::to_vec(&command)?))
+            .await?;
+        Ok(())
     }
 
     async fn hang_up(&self) -> Result<()> {
