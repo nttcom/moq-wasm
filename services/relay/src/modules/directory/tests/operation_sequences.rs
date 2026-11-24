@@ -250,7 +250,6 @@ struct Harness {
     producers: BTreeMap<(usize, SessionId), (u64, ProducerOrigin)>,
     consumers: Vec<ModelConsumer>,
     upstream_subscribes: Vec<UpstreamSubscribe>,
-    blocked_publishes: BTreeSet<(SessionId, usize)>,
     malformed_tracks: BTreeSet<usize>,
     draining: bool,
 }
@@ -276,7 +275,6 @@ impl Harness {
             producers: BTreeMap::new(),
             consumers: Vec::new(),
             upstream_subscribes: Vec::new(),
-            blocked_publishes: BTreeSet::new(),
             malformed_tracks: BTreeSet::new(),
             draining: false,
         }
@@ -487,12 +485,6 @@ impl Harness {
                 );
                 self.namespace_subscriptions
                     .remove(&(session_id, prefix, interest));
-                if INTERESTS[interest].includes_tracks() {
-                    self.blocked_publishes.retain(|(subscriber, track)| {
-                        *subscriber != session_id
-                            || !namespace_has_prefix(NAMESPACES[TRACKS[*track].0], PREFIXES[prefix])
-                    });
-                }
                 if peer == SessionPeer::Client && no_clients_remain {
                     self.directory
                         .purge_relay_publish_namespaces(PREFIXES[prefix]);
@@ -650,8 +642,6 @@ impl Harness {
                     .retain(|(publisher, _), _| *publisher != session_id);
                 self.namespace_subscriptions
                     .retain(|(subscriber, _, _), _| *subscriber != session_id);
-                self.blocked_publishes
-                    .retain(|(subscriber, _)| *subscriber != session_id);
                 self.check_session_forgotten(session_id)?;
                 self.slots[slot].session_id = self.next_session_id;
                 self.next_session_id += 1;
@@ -863,7 +853,6 @@ impl Harness {
             .directory
             .offers_track(session_id, &subscription, &track_key)
             || self.directory.track_state(&track_key).is_none()
-            || self.directory.is_publish_blocked(session_id, &track_key)
         {
             return;
         }
@@ -873,27 +862,26 @@ impl Harness {
         else {
             return;
         };
-        // PUBLISH_BLOCKED is a draft-18 answer, to a SUBSCRIBE_TRACKS.
+        // PUBLISH_BLOCKED answers only a draft-18 SUBSCRIBE_TRACKS; moqt
+        // refuses later PUBLISHes of the track (draft-18 §6.1).
         if blocked && subscription.interest == NamespaceInterest::Tracks {
-            self.directory.block_publish(session_id, &track_key);
-            self.blocked_publishes.insert((session_id, track));
-        } else {
-            let request_id = self.request_id();
-            if let Some(signals) = self.directory.register_downstream_subscription(
-                forwarding.entry(),
-                session_id,
+            return;
+        }
+        let request_id = self.request_id();
+        if let Some(signals) = self.directory.register_downstream_subscription(
+            forwarding.entry(),
+            session_id,
+            request_id,
+            peer,
+            downstream_subscription(track_key, None),
+            delivery_control(subscription.forward),
+        ) {
+            self.consumers.push(ModelConsumer {
+                subscriber_session_id: session_id,
                 request_id,
-                peer,
-                downstream_subscription(track_key, None),
-                delivery_control(subscription.forward),
-            ) {
-                self.consumers.push(ModelConsumer {
-                    subscriber_session_id: session_id,
-                    request_id,
-                    track,
-                    stop_receiver: signals.stop_receiver,
-                });
-            }
+                track,
+                stop_receiver: signals.stop_receiver,
+            });
         }
     }
 
@@ -942,14 +930,6 @@ impl Harness {
         prop_assert!(
             !subscribes_namespace,
             "removed session {session_id} still subscribes a namespace"
-        );
-        let blocked = directory
-            .blocked_publishes()
-            .iter()
-            .any(|(subscriber, _)| *subscriber == session_id);
-        prop_assert!(
-            !blocked,
-            "removed session {session_id} still has a blocked PUBLISH"
         );
         Ok(())
     }
@@ -1067,15 +1047,6 @@ impl Harness {
             })
             .collect();
         prop_assert_eq!(&namespace_subscriptions, &self.namespace_subscriptions);
-
-        // A PUBLISH stays blocked while the namespace subscription it was blocked
-        // on lasts.
-        let blocked: BTreeSet<_> = directory
-            .blocked_publishes()
-            .iter()
-            .map(|(session_id, track_key)| (*session_id, track_of(track_key)))
-            .collect();
-        prop_assert_eq!(&blocked, &self.blocked_publishes);
 
         // A consumer leaves the directory only with PUBLISH_DONE, unless its
         // subscriber ended it or left, or its track is malformed.
