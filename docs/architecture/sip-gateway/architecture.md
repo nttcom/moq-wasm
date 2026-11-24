@@ -252,7 +252,9 @@ await call.hangUp() // writes hangup on the control track
   capture timestamp is the RTP time mapped to wall clock through RTCP sender
   reports when the trunk sends them, else arrival time.
 - **MoQT to phone.** The peer's audio is read through the `BroadcastReader`
-  moved into `broadcast`, decoded, resampled to 8 kHz, encoded to the codec
+  moved into `broadcast`, with `VideoChoice::Off`: a meeting participant
+  encodes a video rendition only while it has a subscriber. The audio is
+  decoded, resampled to 8 kHz, encoded to the codec
   the SDP answer chose, and sent every 20 ms from a playout buffer. While the
   buffer is empty the gateway sends comfort silence, so the trunk never sees a
   gap in RTP (some trunks hang up on RTP inactivity).
