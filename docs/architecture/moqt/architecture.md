@@ -810,8 +810,12 @@ forward from their own cache through the raw stream senders.
   application can stop producing a track nobody takes.
 - `end_track(namespace, name)` ends every outlet of the track with
   PUBLISH_DONE (TRACK_ENDED, draft-14 §9.12) and keeps its numbering and
-  cache, so a later `publish` or SUBSCRIBE takes it up again at the next
-  group without reusing a location. Each outlet's open group is finished with
+  cache. Until `ensure_track` or `publish` takes the track up again, a new
+  SUBSCRIBE or TRACK_STATUS finds no track, as for a track never
+  registered: `handle` returns the SUBSCRIBE to its caller and
+  `accept_subscribe` fails. FETCH is still served from the cache. A track
+  taken up again continues at the next group without reusing a location.
+  Each outlet's open group is finished with
   End of Group before PUBLISH_DONE, which may not precede the close of any
   stream of the subscription, and its Stream Count is the number of streams
   the outlet's `TrackWriter` opened. The send task ends its outlet after the
