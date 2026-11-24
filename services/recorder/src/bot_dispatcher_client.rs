@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use reqwest::StatusCode;
@@ -39,6 +39,8 @@ pub(crate) struct BotDispatcherClient {
     bot_type: String,
     id: String,
     key: Option<String>,
+    /// Sent with every heartbeat once set.
+    output: OnceLock<Value>,
 }
 
 impl BotDispatcherClient {
@@ -56,6 +58,7 @@ impl BotDispatcherClient {
             bot_type,
             id,
             key,
+            output: OnceLock::new(),
         }
     }
 
@@ -80,9 +83,18 @@ impl BotDispatcherClient {
         }
     }
 
+    /// Makes every later heartbeat report `recording_id` as what the bot
+    /// produces; a later call is ignored.
+    pub(crate) fn set_recording_id(&self, recording_id: &str) {
+        let _ = self.output.set(json!({ "recording_id": recording_id }));
+    }
+
     /// `true` when `bot-dispatcher` asks the bot to stop, or takes it as ended.
     pub(crate) async fn heartbeat(&self, state: BotState, error: Option<&str>) -> Result<bool> {
-        let body = json!({ "state": state.as_str(), "error": error });
+        let mut body = json!({ "state": state.as_str(), "error": error });
+        if let Some(output) = self.output.get() {
+            body["output"] = output.clone();
+        }
         let (status, body) = self.post("heartbeat", Some(body)).await?;
         if status == StatusCode::GONE {
             return Ok(true);
@@ -123,16 +135,17 @@ impl BotDispatcherClient {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use http_server::{HttpServer, error_response, json_response};
+    use http_server::{HttpServer, error_response, json_response, read_json};
     use hyper::{StatusCode as HttpStatus, header::AUTHORIZATION};
     use tokio::net::TcpListener;
 
     use super::*;
 
-    type Calls = Arc<Mutex<Vec<(String, String)>>>;
+    type Calls = Arc<Mutex<Vec<(String, String, Value)>>>;
 
     /// A `bot-dispatcher` that answers every heartbeat `410 Gone` and every token call
-    /// with `jwt`, and keeps the path and the `Authorization` of each call.
+    /// with `jwt`, and keeps the path, the `Authorization` and the body
+    /// (`Null` when none) of each call.
     async fn bot_dispatcher() -> (BotDispatcherClient, Calls, HttpServer) {
         let calls: Calls = Arc::default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -146,8 +159,14 @@ mod tests {
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or_default()
                 .to_string();
-            seen.lock().unwrap().push((path.clone(), authorization));
+            let seen = Arc::clone(&seen);
             async move {
+                let body = read_json::<Value, _>(request.into_body())
+                    .await
+                    .unwrap_or_default();
+                seen.lock()
+                    .unwrap()
+                    .push((path.clone(), authorization, body));
                 if path.ends_with("/heartbeat") {
                     error_response(HttpStatus::GONE, "ended")
                 } else {
@@ -174,18 +193,39 @@ mod tests {
         // Assert
         assert_eq!(token.as_deref(), Some("jwt"));
         assert!(stop);
+        let calls = calls.lock().unwrap();
+        let seen: Vec<_> = calls
+            .iter()
+            .map(|(path, authorization, _)| (path.as_str(), authorization.as_str()))
+            .collect();
         assert_eq!(
-            *calls.lock().unwrap(),
+            seen,
             [
-                (
-                    "/bots/recorder/b1/token".to_string(),
-                    "Bearer key".to_string()
-                ),
-                (
-                    "/bots/recorder/b1/heartbeat".to_string(),
-                    "Bearer key".to_string()
-                ),
+                ("/bots/recorder/b1/token", "Bearer key"),
+                ("/bots/recorder/b1/heartbeat", "Bearer key"),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeats_report_the_recording_once_it_exists() {
+        // Arrange
+        let (client, calls, _server) = bot_dispatcher().await;
+
+        // Act
+        client
+            .heartbeat(BotState::Failed, Some("early"))
+            .await
+            .unwrap();
+        client.set_recording_id("r1");
+        client.heartbeat(BotState::Running, None).await.unwrap();
+
+        // Assert
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0].2, json!({ "state": "failed", "error": "early" }));
+        assert_eq!(
+            calls[1].2,
+            json!({ "state": "running", "error": null, "output": { "recording_id": "r1" } })
         );
     }
 }
