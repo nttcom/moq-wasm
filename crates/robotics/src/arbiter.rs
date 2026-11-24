@@ -189,11 +189,19 @@ impl Arbiter {
 
     /// Opens an episode. With `policy_enabled` the policy drives whenever no
     /// operator does until `end_episode`; an episode already open is
-    /// replaced.
+    /// replaced. Emits a `control` even when the driver stays, so that the
+    /// records of an episode start with its driver.
     pub fn start_episode(&mut self, now_ms: u64, policy_enabled: bool) -> Vec<Output> {
         let before = self.driver_owned();
         self.policy_may_drive = policy_enabled;
-        self.settle(now_ms, before, ControlReason::Episode)
+        let mut outputs = self.settle(now_ms, before, ControlReason::Episode);
+        if outputs.is_empty() {
+            outputs.push(Output::Control(Control {
+                driver: self.driver_owned(),
+                reason: ControlReason::Episode,
+            }));
+        }
+        outputs
     }
 
     /// Closes the episode: the policy stops driving.
@@ -465,26 +473,29 @@ mod tests {
     }
 
     #[test]
-    fn an_episode_without_the_policy_changes_nothing() {
+    fn an_episode_without_the_policy_reports_that_nobody_drives() {
         // Arrange
         let mut arbiter = arbiter();
 
         // Act / Assert
         assert_eq!(
             (arbiter.start_episode(1000, false), arbiter.driver()),
-            (Vec::new(), None)
+            (vec![control(None, ControlReason::Episode)], None)
         );
     }
 
     #[test]
-    fn an_episode_start_keeps_the_operator_driving() {
+    fn an_episode_start_keeps_the_operator_driving_and_reports_it() {
         // Arrange
         let mut arbiter = driven_by(ALICE);
 
         // Act / Assert
         assert_eq!(
             (arbiter.start_episode(1010, true), arbiter.driver()),
-            (Vec::new(), Some(ALICE))
+            (
+                vec![control(Some(ALICE), ControlReason::Episode)],
+                Some(ALICE)
+            )
         );
     }
 
@@ -1174,7 +1185,7 @@ mod tests {
             }
 
             #[test]
-            fn control_is_emitted_exactly_when_the_driver_changes_or_goes_stale(
+            fn control_is_emitted_exactly_when_the_driver_changes_or_goes_stale_and_at_each_episode_start(
                 (start_ms, steps) in steps(),
             ) {
                 // Act
@@ -1202,6 +1213,8 @@ mod tests {
                             }
                         };
                         vec![Control { driver: traced.after.clone(), reason }]
+                    } else if matches!(traced.event, Event::StartEpisode(_)) {
+                        vec![Control { driver: traced.after.clone(), reason: ControlReason::Episode }]
                     } else if matches!(traced.event, Event::Tick) && !controls.is_empty() {
                         prop_assert!(traced.after.is_some(), "{:?}", traced);
                         vec![Control { driver: traced.after.clone(), reason: ControlReason::Stale }]
