@@ -112,8 +112,9 @@ jobs:
       - name: Run binding tests
         if: matrix.dependencies == 'latest'
         working-directory: sdk/python
-        # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
-        run: uv run pytest --basetemp="$RUNNER_TEMP/pytest"
+        # A fixed basetemp so the relay, VTS and Redis logs can be uploaded. Each xdist worker starts its
+        # own relay and VTS on free ports.
+        run: uv run pytest -n auto --basetemp="$RUNNER_TEMP/pytest"
 
       # The extras' lower bounds are what a user may install, so the SDK is also checked on them.
       - name: Type-check and run binding tests on the lowest supported dependencies
@@ -121,9 +122,9 @@ jobs:
         working-directory: sdk/python
         run: |
           uv venv -p 3.11 "$RUNNER_TEMP/lowest"
-          uv pip install -p "$RUNNER_TEMP/lowest" --resolution lowest-direct ".[pipecat]" "pytest>=8" "pytest-asyncio>=0.24"
+          uv pip install -p "$RUNNER_TEMP/lowest" --resolution lowest-direct ".[pipecat]" "pytest>=8" "pytest-asyncio>=0.24" "pytest-xdist>=3.6"
           uv run -p 3.11 pyright --pythonpath "$RUNNER_TEMP/lowest/bin/python"
-          "$RUNNER_TEMP/lowest/bin/python" -m pytest -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest-lowest"
+          "$RUNNER_TEMP/lowest/bin/python" -m pytest -p no:cacheprovider -n auto --basetemp="$RUNNER_TEMP/pytest-lowest"
 
       - name: Upload binding test logs
         if: failure()
