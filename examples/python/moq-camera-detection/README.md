@@ -1,7 +1,6 @@
 # moq-camera-detection
 
-ブラウザの MoQ Camera Detection ページ（`examples/browser/examples/moq-camera-detection`）が配信したカメラ映像を pipecat の bot が受け取り、決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) でページの質問（最大 8 個）に答えます。
-質問は、選択肢から 1 つを選ぶ「選択式」と、探すものを枠で示す「枠」の 2 種類です。答えは MSF の event timeline として publish され、ページが表示します。
+`examples/browser/examples/moq-camera-detection` のカメラ映像を [d1-2B](https://huggingface.co/LiquidAI/d1-2B) で判定し、選択式（`choice`）および領域検出（`boxes`）の質問（最大 8 問）への回答を MSF event timeline で返す Pipecat bot です。
 
 ```mermaid
 sequenceDiagram
@@ -9,29 +8,25 @@ sequenceDiagram
     participant R as Relay
     participant P as pipecat bot
     participant D as d1-2B (Cloud Run)
-    B->>R: prompt（質問）、catalog、camera（H.264）
+    B->>R: prompt, catalog, camera (H.264)
     R->>P: 全オブジェクト
-    P->>P: 0.1 秒ごとに UserImageRequestFrame で 1 枚もらい（MoqWasmTransport が H.264 を復号）、JPEG に
-    P->>D: /v1/systemone 画像 + 全質問
-    D-->>P: 選んだ選択肢、枠
+    P->>P: 0.1 秒ごとに 1 枚取得・H.264 復号・JPEG 化
+    P->>D: /v1/systemone (画像 + 全質問)
+    D-->>P: 選択肢・枠
     P->>R: eventtimeline
-    R->>B: 質問ごとの答え
+    R->>B: 質問ごとの回答
 ```
 
 ## d1-2B
 
-d1-2B は Cloud Run サービス `moqt-system-one`（asia-southeast1、他の bot と共用）の `/v1/systemone` で答えます。
-IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。手元では `--gcloud-auth`、Cloud Run や GCE では `--metadata-auth` で ID トークンを送ります。
-デプロイ手順は [d1-2B を Cloud Run にデプロイする](../system-one-on-cloud-run.md) にあります。
+Cloud Run `moqt-system-one`（asia-southeast1、他 bot と共用）の `/v1/systemone` を呼び出します（デプロイ手順: [system-one-on-cloud-run.md](../system-one-on-cloud-run.md)）。
+IAM 認証（`roles/run.invoker`）が必須のため、ローカルでは `--gcloud-auth`、Cloud Run/GCE では `--metadata-auth` を指定します。
 
 ## 起動
 
-bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-dispatcher/architecture.md)）が、ルームごとに `camera-detection` 型の bot として起動します。
-一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/camera-detection` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。
-ルームは URL の `room` で決まり、同じ URL を開くと同じルームに入ります。Public モードのページでは bot は動きません。
+一時アプリで Join 後「bot を参加させる」を押すと、[`bot-dispatcher`](../../../services/bot-dispatcher/README.md) が `camera-detection` として起動します（Public モード不可。参加者がいない状態が 30 秒続くか、最大 1 時間で終了）。
 
-手元では、`uv sync` で `.venv` を作り、`bot-dispatcher` の `BOT_DISPATCHER_TYPES` に次を足します（`bot-dispatcher` の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
-System One は 1 度に 1 つの問いにしか答えないので、同時に動かす bot は 1 つです。
+ローカルでは `uv sync`（Rust ツールチェーン必須）後、`BOT_DISPATCHER_TYPES` に追加します（System One は並列 1 件のため `max_running: 1`）。共通オプションは [moq-bot-job](../moq-bot-job/README.md) を参照してください:
 
 ```json
 {
@@ -46,25 +41,22 @@ System One は 1 度に 1 つの問いにしか答えないので、同時に動
 }
 ```
 
-- bot は `moq-wasm` を `sdk/python` からビルドするので、Rust のツールチェーンが要ります。
-- 起動のオプションは [moq-bot-job](../moq-bot-job/README.md) の「bot サービスから起動される bot」にあります。
-
 ## トラック
 
-`{app}` は一時アプリの appId（`temp-…`）です。
+`{app}` は一時アプリの appId（`temp-…`）。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `{app}/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`（1〜8 個）。選択式は `{"type": "choice", "question", "choices"}`、枠は `{"type": "boxes", "target"}` |
-| `{app}/moq-camera-detection/{room}/camera` | `catalog`、`camera` | ブラウザ | MSF catalog と H.264 の映像。キーフレームごとに group を始める |
-| `{app}/moq-camera-detection/{room}/bots/camera-detection` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`L` で判定したフレーム、`data.answers` で質問の順の答え（枠は `[[left, top, right, bottom], ...]`）を示す |
+| `{app}/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`（1〜8 問）。`{"type": "choice", "question", "choices"}` または `{"type": "boxes", "target"}` |
+| `{app}/moq-camera-detection/{room}/camera` | `catalog`, `camera` | ブラウザ | MSF catalog と H.264（キーフレームで group 開始） |
+| `{app}/moq-camera-detection/{room}/bots/camera-detection` | `eventtimeline` | bot | `draft-ietf-moq-msf-02` §8 の event timeline。`L` で対象フレーム、`data.answers` で質問順の回答（枠は `[[left, top, right, bottom], ...]`） |
 
-- 判定が追いつかない間の画像と、デコードから 2 秒以上たった画像は捨てます。
-- relay とのセッションが閉じると、bot は 2 秒後に接続し直します。
+- 推論待ち中のフレームおよび復号後 2 秒超過フレームは破棄します。
+- セッション切断時は 2 秒後に再接続します。
 
 ## テスト
 
 ```shell
 uv run pytest
-node tests/browser-e2e/run-camera-detection-e2e.mjs   # E2E。リポジトリのルートで実行する
+node tests/browser-e2e/run-camera-detection-e2e.mjs   # リポジトリルートで実行
 ```

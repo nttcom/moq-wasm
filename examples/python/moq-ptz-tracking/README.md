@@ -1,7 +1,6 @@
 # moq-ptz-tracking
 
-`ingest-gateway pull` が配信する ONVIF カメラの映像を pipecat の bot が受け取り、ブラウザの MoQ PTZ Tracking ページ（`examples/browser/examples/moq-ptz-tracking`）で指定した対象（最大 16）の位置を、決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) に枠で尋ねます。
-ページは枠を映像に重ねて描きます。枠が画面の端からはみ出しそうになると、bot は `ingest-gateway pull` に ContinuousMove と Stop を送り、すべての枠が画面に収まるようにカメラを向けます。
+`ingest-gateway pull` のカメラ映像から [d1-2B](https://huggingface.co/LiquidAI/d1-2B) で指定対象（最大 16 個）を検出し、全枠が画面内に収まるよう PTZ コマンド（`ContinuousMove` / `Stop`）を送る Pipecat bot です。ブラウザ（`examples/browser/examples/moq-ptz-tracking`）が枠を重ねて表示します。
 
 ```mermaid
 sequenceDiagram
@@ -13,32 +12,27 @@ sequenceDiagram
     B->>R: prompt {"targets": ["人", "椅子"], "video": "video/profile_1"}
     O->>R: video/profile_1
     R->>P: 全オブジェクト
-    P->>D: /v1/systemone 画像 + 対象ごとの boxes
+    P->>D: /v1/systemone (画像 + boxes)
     D-->>P: 対象ごとの枠
-    P->>R: eventtimeline（枠）
+    P->>R: eventtimeline (枠)
     R->>B: 枠
-    P->>R: command {"type": "continuous", ...}、続いて {"type": "stop"}
-    R->>O: ContinuousMove、Stop
+    P->>R: command (continuous → stop)
+    R->>O: ContinuousMove, Stop
 ```
 
-## 追従のしかた
+## 追従ロジック
 
-- すべての枠を囲む枠が、画面の各辺から `--margin`（既定 0.1）より内側に収まっている軸は動かしません。はみ出した軸は、囲み枠の中心を画面の中央へ寄せます。
-- カメラは、中心のずれに比例した時間だけ速度 0.5 の ContinuousMove で動かし、Stop で止めます。動かす時間は ずれ ÷ `--pan-per-second`（`--tilt-per-second`）秒です。
-- 判定は 1 枚ずつ行い、カメラを動かしている間は判定しません。
-- 対象を見失ったら、直前に動いていた向きへ 3 秒回しながら探します。見つからなければ (0, 0) に戻し、横へパンし続けながら探します。
-- 1 回の判定は、Apple M1 Pro（MPS）で対象 1 つなら約 0.9 秒、1 つ増えるごとに約 0.45 秒増えます。
-
-`--pan-per-second` と `--tilt-per-second` は、速度 0.5 で 1 秒動かしたときに映像が動く量（画面の幅・高さに対する割合）です。既定値は Tapo C2xx で測った `0.27` と `0.38` です。正のパンで左に回るカメラでは `--pan-per-second` を負にします。
+- 全枠の外接矩形が各辺から `--margin`（既定 `0.1`）の内側にある軸は動かさず、はみ出した軸だけ中央へ寄せます。
+- 速度 `0.5` の `ContinuousMove` を `ずれ ÷ --pan-per-second`（または `--tilt-per-second`）秒送り、`Stop` で止めます（カメラ移動中は推論しません）。
+- `--pan-per-second` / `--tilt-per-second` は速度 `0.5` で 1 秒あたりの画面比移動量（既定 `0.27` / `0.38`、Tapo C2xx 実測値。正パンで左回転する機種は負値を指定）。
+- 見失った場合は直前の向きへ 3 秒探索し、見つからなければ `(0, 0)` に戻して横パン探索を続けます。
+- 推論速度の目安（Apple M1 Pro MPS）: 対象 1 つで約 0.9 秒、+1 ごとに約 +0.45 秒。
 
 ## 起動
 
-bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-dispatcher/architecture.md)）が、一時アプリごとに `ptz-tracking` 型の bot として起動します。
-一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/ptz-tracking` を呼び、bot はページが 30 秒いないか 1 時間たつと抜けます。
-ルームはアプリに 1 つ（`{app}/moq-ptz-tracking`）で、カメラもそのルームに配信します。Public モードのページでは bot は動きません。
+一時アプリ（ルーム `{app}/moq-ptz-tracking`、Public モード不可）で Join 後「bot を参加させる」を押すと、[`bot-dispatcher`](../../../services/bot-dispatcher/README.md) が `ptz-tracking` を起動します（参加者がいない状態が 30 秒続くか、最大 1 時間で終了）。
 
-ONVIF カメラは手元のネットワークにあるため、`ingest-gateway pull` は常に手元で起動します。リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定し、
-PTZ Tracking ページの共有リンクの `#jwt=` のトークンと、その appId（`temp-…`）でルームに配信します。
+LAN 上のカメラを繋ぐため `ingest-gateway pull` は手元で起動します。ルート `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定し、共有リンクの `#jwt=` トークンと `appId` を渡します（トークンは 1 時間で切れるため、切れたらページの新しい共有リンクのトークンで起動し直します）:
 
 ```shell
 make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
@@ -47,8 +41,7 @@ make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
   ONVIF_SUBSCRIBE_NAMESPACE=<appId>/moq-ptz-tracking/bots/ptz-tracking/command
 ```
 
-- トークンは 1 時間で切れます。切れたらページの新しい共有リンクのトークンで起動し直します。
-- 手元の relay と bot で試すときは、`uv sync` で `.venv` を作り、`bot-dispatcher` の `BOT_DISPATCHER_TYPES` に次を足します（`bot-dispatcher` の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。d1-2B の認証は [moq-camera-detection](../moq-camera-detection/README.md#d1-2b) と同じです。
+ローカルで bot も動かす場合は `uv sync` 後、`BOT_DISPATCHER_TYPES` に追加します（d1-2B 認証: [moq-camera-detection](../moq-camera-detection/README.md#d1-2b)、共通オプション: [moq-bot-job](../moq-bot-job/README.md)）:
 
 ```json
 {
@@ -65,14 +58,14 @@ make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
 
 ## トラック
 
-`{room}` は `{app}/moq-ptz-tracking`、`{app}` は一時アプリの appId（`temp-…`）です。
+`{room}` = `{app}/moq-ptz-tracking`（`{app}` は `temp-…`）。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `{room}/page/viewer` | `prompt` | ブラウザ | `{"targets": ["...", ...], "video": "<映像トラック名>"}` で追従を始め、`{"targets": []}` で止める。対象は 1〜16 個 |
-| `{room}/onvif/client` | `video/profile_N` | `ingest-gateway pull` | H.264 の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
-| `{room}/bots/ptz-tracking/command` | `command` | bot | `ingest-gateway pull` の PTZ コマンド。1 回の動きを 1 group にし、`continuous` と `stop` を順に送る |
-| `{room}/bots/ptz-tracking` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`data.boxes` は `[[対象の番号, [left, top, right, bottom]], ...]`、どの対象も映っていなければ `"not visible"` |
+| `{room}/page/viewer` | `prompt` | ブラウザ | `{"targets": [...], "video": "<track>"}`（1〜16 個、空配列で停止） |
+| `{room}/onvif/client` | `video/profile_N` | `ingest-gateway pull` | H.264 LOC（追従中のみ購読） |
+| `{room}/bots/ptz-tracking/command` | `command` | bot | PTZ コマンド（1 動作 1 group で `continuous` → `stop`） |
+| `{room}/bots/ptz-tracking` | `eventtimeline` | bot | `draft-ietf-moq-msf-02` §8 の event timeline。`data.boxes` に `[[idx, [l, t, r, b]], ...]`、どの対象も映っていなければ `"not visible"` |
 | `{room}/bots/ptz-tracking` | `status` | bot | d1-2B の起動状態 |
 
 ## テスト

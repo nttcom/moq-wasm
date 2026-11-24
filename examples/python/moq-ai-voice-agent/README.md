@@ -1,42 +1,36 @@
 # moq-ai-voice-agent
 
-MoQ AI Voice Agent（`examples/browser/examples/moq-ai-voice-agent`）のページに HTTP で呼ばれてルームに入り、音声で会話する pipecat の bot です。
-音声認識・応答・音声合成をそれぞれ Gemini で行うカスケード構成で、音声は [`moq_wasm.pipecat.MoqWasmTransport`](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/pipecat.html#MoqWasmTransport) で送受信します。
+`examples/browser/examples/moq-ai-voice-agent` と音声会話する Pipecat bot です。STT・LLM・TTS に Gemini を使い、音声は [`MoqWasmTransport`](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/pipecat.html#MoqWasmTransport) で送受信します。
 
 ```mermaid
 flowchart LR
     P[Page] -->|マイク| I[transport.input]
-    I --> F[話す相手の音声だけ通す]
+    I --> F[先頭参加者の音声のみ]
     F --> S[GeminiSTTService]
-    S --> U[発話の区切り<br>Silero VAD]
+    S --> U[Silero VAD]
     U --> L[GoogleLLMService]
     L --> T[GeminiTTSService]
     T --> O[transport.output]
     O -->|声| P
     U -.->|発話| X[transcript track]
-    O -.->|再生し始めた文| X
+    O -.->|再生開始文| X
     X -.-> P
 ```
 
-| 役割 | pipecat のサービス | モデル |
+| 役割 | Pipecat サービス | モデル |
 | --- | --- | --- |
 | 音声認識 | `GeminiSTTService` | `gemini-3.5-transcribe-live` |
-| 応答 | `GoogleLLMService`（Vertex AI では `GoogleVertexLLMService`） | `gemini-3.6-flash` |
-| 音声合成 | `GeminiTTSService` | `gemini-3.1-flash-tts-preview`、声は `Kore` |
+| 応答 | `GoogleLLMService`（Vertex AI は `GoogleVertexLLMService`） | `gemini-3.6-flash` |
+| 音声合成 | `GeminiTTSService` | `gemini-3.1-flash-tts-preview`（声: `Kore`） |
 
-Gemini は、Gemini API を `GOOGLE_API_KEY` で呼ぶか、`--vertex-project` で指定したプロジェクトの Vertex AI（global）をアプリケーションのデフォルト認証情報で呼びます。pipecat の Gemini STT と TTS は Gemini API にしかつながらないので、Vertex AI では bot が Vertex AI のクライアントに差し替えます。
-
-bot が聞くのは、ルームにいる参加者のうち最も早く入った 1 人です。その人が抜けると、次に早く入った人を聞きます。複数人の声を 1 本の音声認識に混ぜると、話者を区別できないためです。
-
-誰もいないルームに人が入ると、bot から先に挨拶します。入った人に、話しかけてよいことがわかるようにするためです。
+- Gemini API（`GOOGLE_API_KEY`）または Vertex AI（`--vertex-project` + ADC）を使用します（Vertex AI 時は STT/TTS のクライアントを差し替えます）。
+- 話者分離のため最も早く入室した 1 人の音声のみ処理し、退出時に次の参加者へ切り替えます。最初の入室時には bot から挨拶します。
 
 ## 起動
 
-bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-dispatcher/architecture.md)）が、ルームごとに `voice-agent` 型の bot として起動します。
-一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/voice-agent` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。Public モードのページでは bot は動きません。
+一時アプリで Join 後「bot を参加させる」を押すと、[`bot-dispatcher`](../../../services/bot-dispatcher/README.md) が `voice-agent` として起動します（Public モード不可。参加者がいない状態が 30 秒続くか、最大 1 時間で終了）。
 
-手元では、[Google AI Studio](https://aistudio.google.com/apikey) で Gemini API キーを取得して `uv sync` で `.venv` を作り、`bot-dispatcher` の `BOT_DISPATCHER_TYPES` に次を足します（`bot-dispatcher` の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
-`bot-dispatcher` は自分の環境変数を bot に引き継ぐので、`bot-dispatcher` を `GOOGLE_API_KEY=<API キー>` で起動します。
+ローカルでは [Google AI Studio](https://aistudio.google.com/apikey) で Gemini API キーを取得し、`uv sync`（Rust ツールチェーン必須）のうえ `GOOGLE_API_KEY=<key>` 付きで `bot-dispatcher` を起動して `BOT_DISPATCHER_TYPES` に追加します:
 
 ```json
 {
@@ -50,26 +44,25 @@ bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-di
 }
 ```
 
-- Vertex AI で動かすときは、`GOOGLE_API_KEY` の代わりに `args` に `--vertex-project <プロジェクト ID>` を足します。手元では `gcloud auth application-default login` の認証情報を使います。
-- `moq-wasm` のビルドに Rust のツールチェーンが要ります。
+Vertex AI を使う場合は `GOOGLE_API_KEY` の代わりに `args` へ `--vertex-project <プロジェクト ID>` を足します（ローカルは `gcloud auth application-default login`）。
 
 ## オプション
 
-bot サービスが付ける引数と、接続先・TLS のオプションは [moq-bot-job](../moq-bot-job/README.md) を参照してください。`args` にはさらに次を書けます。
+共通オプションは [moq-bot-job](../moq-bot-job/README.md) を参照してください。
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
-| `--vertex-project` | なし | Gemini をこのプロジェクトの Vertex AI で呼ぶ。なければ Gemini API を `GOOGLE_API_KEY` で呼ぶ |
+| `--vertex-project` | なし | 指定プロジェクトの Vertex AI を使用（未指定時は `GOOGLE_API_KEY`） |
 
 ## トラック
 
-`{app}` は一時アプリの appId（`temp-…`）です。
+`{app}` は一時アプリの appId（`temp-…`）。
 
 | namespace | track | 内容 |
 | --- | --- | --- |
-| `{app}/moq-ai-voice-agent/{room}/{user}` | `catalog`、`mic_audio` | ページが publish するマイク |
-| `{app}/moq-ai-voice-agent/{room}/bots/voice-agent` | `catalog`、`audio` | bot の声 |
-| `{app}/moq-ai-voice-agent/{room}/bots/voice-agent` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"T": ms, "data": {"role": "user" か "assistant", "text", "turn"}}`。bot の返答は、1 文が再生され始めるごとにそこまでの全文を送る。同じ返答のレコードは同じ `turn`（最初のレコードの ms）を持つ |
+| `{app}/moq-ai-voice-agent/{room}/{user}` | `catalog`, `mic_audio` | ページのマイク音声 |
+| `{app}/moq-ai-voice-agent/{room}/bots/voice-agent` | `catalog`, `audio` | bot の音声 |
+| `{app}/moq-ai-voice-agent/{room}/bots/voice-agent` | `transcript` | `draft-ietf-moq-msf-02` §8 の event timeline。`{"T": ms, "data": {"role": "user"\|"assistant", "text", "turn"}}`。返答は文の再生ごとに累積全文を同一 `turn`（最初のレコードの ms）で送信 |
 
 ## テスト
 

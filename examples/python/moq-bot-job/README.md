@@ -1,29 +1,24 @@
 # moq-bot-job
 
-[bot サービス](../../../docs/architecture/bot-dispatcher/architecture.md)（`services/bot-dispatcher`）が 1 つのルームのために起動する Python bot の共通部分です。
-Meeting の書き起こし、MoQ Chat Moderation、MoQ Camera Detection、MoQ PTZ Tracking、MoQ AI Voice Agent の bot が使います。
+[`bot-dispatcher`](../../../services/bot-dispatcher/README.md) が起動する Python bot 向けの共通ランナーです（transcriber / chat-moderation / camera-detection / ptz-tracking / voice-agent で共用）。
 
-`bot_job.add_bot_job_arguments` がサービスの付ける引数（`--bot-type`、`--bot-id`、`--bot-dispatcher-url`、`--namespace-prefix`、`--grace-seconds`、`--max-seconds`、`--options`）とテレメトリ、relay のオプションを足し、`bot_job.serve_bot_job` がルームを動かします。
+`bot_job.add_bot_job_arguments` で共通引数を定義し、`bot_job.serve_bot_job` でルーム接続・heartbeat・終了報告を処理します。
 
-- bot は relay のトークンを `Bots.token` でサービスから受け取り、`Bots.refresh` で更新します。自分のブロードキャストは、トークンが publish を許す `<room>/bots/<type>`（`BotJob.broadcast`）に置きます。
-- 5 秒ごとに heartbeat を送ります。サービスが停止を求めたら（アプリの `DELETE` か最長時間）、ルームを抜けます。
-- ルームから人がいなくなって bot が抜けたとき、停止を求められたとき、SIGTERM を受けたときは `finished` を、例外で止まったときは `failed` を報告します。
-- ローカルで起動された bot は環境変数 `BOT_DISPATCHER_BOT_KEY` の鍵で、Cloud Run Job ではメタデータサーバーの ID トークンでサービスに名乗ります。
+- **認証と publish**: `Bots.token` / `Bots.refresh` で relay トークンを取得・更新し、`<room>/bots/<type>`（`BotJob.broadcast`）に publish します。ローカル起動時は `BOT_DISPATCHER_BOT_KEY`、Cloud Run Job ではメタデータサーバの ID トークンで `bot-dispatcher` に認証します。
+- **ライフサイクル**: 5 秒ごとに heartbeat を送り、停止要求（`DELETE` / `--max-seconds`）・無人終了・`SIGTERM` で `finished`、例外終了で `failed` を報告します。
 
 ## オプション
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
-| `--telemetry-url` | relay がローカルなら `http://localhost:8095`、それ以外は `https://observability.moqt.research.skyway.io` | `INFO` 以上のログを 10 秒ごとに送る observability サーバー |
-| `--no-telemetry` | なし | ログを送らない |
-| `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
-| `--insecure` | なし | relay の TLS 検証を省く |
+| `--telemetry-url` | ローカル relay: `http://localhost:8095` / それ以外: `https://observability.moqt.research.skyway.io` | `INFO` 以上を 10 秒ごとに送信する observability サーバ |
+| `--no-telemetry` | なし | テレメトリ送信を無効化 |
+| `--relay-url` | `https://127.0.0.1:4433` | 接続先 relay |
+| `--insecure` | なし | TLS 証明書検証をスキップ |
 
-bot は自分のオプションに、次の関数で ID トークンのオプションを足せます。
+`bot-dispatcher` が自動付与する引数: `--bot-type`, `--bot-id`, `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds`, `--options`。
 
-| 関数 | 足すオプション |
-| --- | --- |
-| `identity_token.add_identity_token_arguments` | `--gcloud-auth` と `--metadata-auth`。`identity_token_from_arguments` がそれに応じた ID トークンを返す |
+ID トークンが必要な bot 向けヘルパー: `identity_token.add_identity_token_arguments`（`--gcloud-auth` / `--metadata-auth`）と `identity_token_from_arguments`。
 
 ## テスト
 

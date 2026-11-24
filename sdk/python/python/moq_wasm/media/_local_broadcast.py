@@ -24,13 +24,12 @@ MEDIA_RETENTION_SECONDS = 60.0
 
 
 class LocalBroadcast:
-    """A namespace this session publishes with its tracks. The tracks added before the first
-    `await` inside `async with` are registered before the namespace is published, since the relay
-    may forward a SUBSCRIBE at once; a track added later is registered on its own, and what is
-    written to it before that is dropped. Once the broadcast was left, adding a track or a media
-    source raises RuntimeError. When the namespace or the batch cannot be published, every track
-    of the broadcast, one registered before included, raises that failure from its writes, and
-    leaving a block that exited normally raises it unless it was raised to the caller before."""
+    """A namespace and its tracks published by this session (use with `async with`).
+
+    Tracks added before the first `await` inside `async with` are registered before `PUBLISH_NAMESPACE`;
+    later tracks register individually (writes before registration are dropped).
+    If publishing fails, all tracks raise that error on write, and normal exit re-raises it if not yet raised.
+    """
 
     def __init__(self, session: Session, namespace: list[str]):
         # Immutable, so a caller changing a list cannot redirect the withdrawal.
@@ -71,17 +70,12 @@ class LocalBroadcast:
         datagram: bool = False,
         priority: int = DEFAULT_PRIORITY,
     ) -> TrackWriter:
-        """A track the session answers SUBSCRIBE and FETCH for, keeping what is written for
-        `retention_seconds`; with `datagram`, sent in datagrams; `priority` is its Publisher
-        Priority, as in `moq_wasm.Session.publish_track`. It takes no `publish`: the tracks
-        declared before the first `await` are registered before the namespace is published, and a
-        PUBLISH must follow the namespace. Raises RuntimeError once the broadcast was left, and
-        while another writer of the broadcast publishes the track; once the broadcast was entered,
-        while another writer of the session does. A track declared before that is the session's
-        only once entering it succeeded, which raises RuntimeError while another writer of the
-        session publishes it. With a `retention_seconds` other than the one the track was
-        registered with first in the session, or the other `datagram` than the one the track sent
-        its objects with, its registration fails with ValueError, which `registered()` raises."""
+        """Add a data track (`retention_seconds`, `datagram`, `priority` match `Session.publish_track`).
+
+        Tracks added before the first `await` register before `PUBLISH_NAMESPACE` (so `publish` is not supported).
+        Raises `RuntimeError` if the broadcast has exited or the track name is already claimed;
+        `registered()` raises `ValueError` if `retention_seconds` or `datagram` conflicts with a prior registration.
+        """
         self._raise_if_left()
         if self._publishing is not None:
             writer = self._session._track_writer(
@@ -145,21 +139,12 @@ class LocalBroadcast:
         cmaf: bool = False,
         on_demand: bool = True,
     ) -> MediaSource:
-        """A source of encoded video and audio on the tracks `video` and `audio`, listed in the
-        broadcast's MSF catalog (`catalog`) with the media timeline `<video>_timeline`, and with
-        `cmaf`, `<video>_cmaf` and `<audio>_cmaf`; `cmaf` and `on_demand` as in
-        `_native.MediaBroadcast.add_source`. With the default `video` or `audio`, the catalog also
-        lists the `chat` track, and with the default `video` an `audio` placeholder while no source
-        has an `audio`: the broadcast claims them as well, and ends them once the catalog no longer
-        lists them. Add it before the first `await` inside `async with`, since the media broadcast
-        publishes the namespace; raises RuntimeError after that, once the broadcast was left, and
-        while another track of the broadcast, or once it was entered of the session, has the name
-        of one of its tracks. Raises ValueError for a track the session registered before in
-        datagrams, which the media broadcast's subscribers cannot read by group, or with another
-        retention than the media broadcast gives it (the newest object for the catalog, 60 s for
-        the others), as the native origin keeps both, for a negative `video_bitrate` or
-        `video_framerate`, or one too large, and TypeError for an option of another type, such as
-        a float `video_framerate`."""
+        """Add an encoded video/audio source listed in `catalog` with `<video>_timeline` (and `_cmaf` siblings when `cmaf=True`).
+
+        Must be called before the first `await` inside `async with` (default `"video"`/`"audio"` also claim `chat` and an `audio` placeholder).
+        Raises `RuntimeError` if called too late, after exit, or on track-name collision;
+        `ValueError` for invalid bitrate/framerate or conflicting prior session registrations; `TypeError` for wrong option types.
+        """
         self._raise_if_left()
         if self._failure is not None:
             raise RuntimeError("the broadcast was not published") from self._failure

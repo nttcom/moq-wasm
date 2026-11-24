@@ -79,36 +79,19 @@ impl OutgoingObject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteOutcome {
     Sent(Placement),
-    /// A peer stopped the subgroup stream and no other session sent the
-    /// object; the object stays cached and the track resumes at the next
-    /// group.
+    /// Peer stopped the subgroup stream and no other session sent the object; cached, resumes next group.
     Stopped(Placement),
-    /// Dropped because no group is open for a `Within` object, or numbered and
-    /// cached only: no session has a writer for the track, or every writer starts
-    /// after the object or waits for the next group after a stopped stream. For
-    /// a track sent in datagrams, also when every session dropped the object as
-    /// larger than its maximum datagram size (draft-14 §10.3).
+    /// Dropped (no open group for `Within`), cached only (no writer, every writer starts after the object, or all wait for the next group after a stopped stream), or for datagram tracks, larger than every session's max datagram size (draft-14 §10.3).
     NotSent,
 }
 
-/// Objects are numbered and cached once per track, from the first one handed
-/// over, whether or not anything takes the track yet, so the cache and the
-/// live streams agree on ids. Each subscription to the track (a SUBSCRIBE a
-/// peer sent or a PUBLISH this endpoint sent) gets an outlet with its own
-/// writer, and a write goes to every outlet; during a migration the old and
-/// the new server each subscribe on their own. A PUBLISH sends from the next
-/// group; a SUBSCRIBE sends from its filter's Start Location
-/// (draft-ietf-moq-transport-14 §9.7), so a Largest Object filter takes the
-/// rest of the open group. Content Exists reports the largest cached object,
-/// the last one FETCH can serve.
+/// Manages published tracks, numbering and caching objects from the first write (even with no subscribers) so cache and live streams share IDs.
+/// Each subscription (`SUBSCRIBE` or `PUBLISH`) gets an outlet and writes fan out to every outlet (during migration, old and new servers subscribe independently).
+/// `PUBLISH` sends from the next group, `SUBSCRIBE` follows its filter's Start Location (draft-14 §9.7; Largest Object takes the remainder of the open group), and `Content Exists` reports the largest cached object (`FETCH`able).
 #[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
-    /// Makes `publish` calls run one at a time while `state` is not held across
-    /// the PUBLISH_OK wait, so two calls cannot both send PUBLISH.
-    /// `lock_state_knowing` waits on it for a request `state` does not know
-    /// yet, and `end_track` for a PUBLISH in flight. Taken before `state`,
-    /// never while holding it.
+    /// Serializes `publish` across the `PUBLISH_OK` await while `state` is unlocked; also awaited by `lock_state_knowing` and `end_track`. Taken before `state`, never while holding it.
     publishing: Arc<Mutex<()>>,
 }
 

@@ -1,9 +1,6 @@
 # VTS (Verify Token Service)
 
-Verifies the JWT a MoQT client presents in `CLIENT_SETUP` and returns the
-claims the relay authorizes requests against. The relay never holds signing
-secrets; it calls this service once per session.
-Design: [architecture document](../../docs/architecture/vts/architecture.md).
+Verifies MoQT JWTs on authenticated `CLIENT_SETUP` and on each in-session token refresh, returning their claims to the relay while keeping signing secrets off the relay. Design: [architecture.md](../../docs/architecture/vts/architecture.md).
 
 ## API
 
@@ -21,34 +18,27 @@ Content-Type: application/json
 GET /healthz -> 200 { "status": "ok" }
 ```
 
-The VTS answers one question: was this token signed with the secret of a
-registered app, and is that app a relay? What the claims mean, `exp` and the
-maximum lifetime included, is decided by the relay.
+VTS only checks whether the token is a valid HS256 JWT signed by a registered app (and whether that app is a relay); claim semantics (`exp`, max TTL, namespace permissions) are enforced by the relay.
 
-`error` values, in the order they are checked: `malformed_token`,
-`unknown_app`, `invalid_signature` (also for any algorithm other than HS256).
+`error` values (in check order): `malformed_token`, `unknown_app`, `invalid_signature` (including non-HS256 algorithms).
 
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VTS_APPS_FILE` | `/etc/vts/apps.json` | Registered apps in a local file |
-| `VTS_REGISTRY_BUCKET` | unset | Read the registered apps from this Cloud Storage bucket instead |
-| `VTS_REGISTRY_OBJECT` | `registry.json` | Object in `VTS_REGISTRY_BUCKET` |
-| `STORAGE_EMULATOR_HOST` | unset | Cloud Storage emulator URL, e.g. `http://localhost:4443` |
-| `VTS_TEMPORARY_APP_SECRET` | unset | Secret of every temporary app; unset disables them |
+| `VTS_APPS_FILE` | `/etc/vts/apps.json` | Local app registry JSON file |
+| `VTS_REGISTRY_BUCKET` | unset | Cloud Storage bucket for the app registry |
+| `VTS_REGISTRY_OBJECT` | `registry.json` | Object name in `VTS_REGISTRY_BUCKET` |
+| `STORAGE_EMULATOR_HOST` | unset | Cloud Storage emulator URL (e.g. `http://localhost:4443`) |
+| `VTS_TEMPORARY_APP_SECRET` | unset | Signing secret for `temp-*` apps (unset disables them) |
 | `VTS_PORT` | `8081` | Listen port |
-| `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER`, `VTS_LOG_FILTER` | `vts=info` | `tracing` filters for stdout, OpenTelemetry traces and OpenTelemetry logs |
+| `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER`, `VTS_LOG_FILTER` | `vts=info` | `tracing` filters for stdout, OTLP traces, and OTLP logs |
 
-OTLP export follows the standard `OTEL_*` variables
-(`docs/architecture/telemetry/architecture.md`).
+OTLP export uses standard `OTEL_*` variables ([telemetry architecture](../../docs/architecture/telemetry/architecture.md)).
 
-Set `VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET`, not both. The VTS reads the
-registered apps at startup and again on every `/verify`, so a new app, a
-rotated secret or a deleted app takes effect without a restart.
+Set either `VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET` (not both). VTS reloads the registry on startup and on every `/verify`, so app changes apply without restart.
 
-The registered apps are a JSON array, the format `app-registry` reads.
-`apps.example.json` holds local development values; never commit a real file.
+Registry format (`app-registry`; see `apps.example.json` for local dev — never commit real secrets):
 
 ```json
 [
@@ -57,42 +47,25 @@ The registered apps are a JSON array, the format `app-registry` reads.
 ]
 ```
 
-Tokens are HS256 JWTs signed with the app's `secret` (UTF-8 bytes) by the
-`auth-token` CLI ([`crates/auth-token/README.md`](../../crates/auth-token/README.md));
-the VTS only verifies. Generate secrets with e.g. `openssl rand -base64 32`.
-
-An `appId` starting with `temp-` names a temporary app: it is not in the
-registry, and its tokens are signed with `VTS_TEMPORARY_APP_SECRET` by
-whoever issues them (`services/temporary-apps`). A temporary app is never a
-relay.
+Sign HS256 tokens with the UTF-8 bytes of `secret` using [`auth-token`](../../crates/auth-token/README.md) (generate secrets with e.g. `openssl rand -base64 32`). Temporary apps (`temp-*`) bypass the registry, verify against `VTS_TEMPORARY_APP_SECRET`, and are never relays.
 
 ## Running
 
-```
+```shell
 VTS_APPS_FILE=./services/vts/apps.example.json cargo run -p vts
 ```
 
-`docker compose up -d` starts the VTS with `apps.example.json` and points
-both relays at it. The relays authenticate to each other with development
-relay tokens, the compose defaults for `AUTH_RELAY_TOKEN`, each minted from
-the relay row of `apps.example.json` with its relay's `RELAY_ID`:
+`docker compose up -d` runs VTS with `apps.example.json` and connects both relays using dev `AUTH_RELAY_TOKEN` values minted from the relay entry:
 
-```
+```shell
 AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "11111111-2222-3333-4444-555555555555") | .secret' services/vts/apps.example.json)" \
   cargo run -p auth-token --features cli -- --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 3650d --relay-id relay-a
 ```
 
-To run the stack against your own apps, set `VTS_APPS_FILE` and
-`AUTH_RELAY_TOKEN` in `.env`.
+To use your own apps in Compose, override `VTS_APPS_FILE` and mint a distinct token per relay (`--relay-id relay-a` and `--relay-id relay-b`) via a Compose override rather than a single `AUTH_RELAY_TOKEN` in `.env` (which would apply the same token to both relays).
 
 ## Deployment
 
-- The VTS must be reachable only from the relays: put it on their private
-  network and do not publish its port. Point each relay at it with
-  `AUTH_VTS_URL=http://<vts-host>:8081/verify`.
-- The registered apps contain every signing secret, so keep the file in a
-  secret store (for example GCP Secret Manager) and mount it into the
-  container, or use a Cloud Storage bucket only the VTS and the console can
-  read.
-- Tokens signed with a replaced secret fail with `invalid_signature` from the
-  next connection; sessions already established stay up until their `exp`.
+- Keep VTS on a private network reachable only by relays (`AUTH_VTS_URL=http://<vts-host>:8081/verify`) and services that verify tokens (such as `bot-dispatcher` and `recorder serve`).
+- Store the registry in a secret store (e.g. GCP Secret Manager) or a GCS bucket readable only by VTS, console, and (when deployed) `bot-dispatcher` (read-only).
+- Tokens signed with a replaced secret fail with `invalid_signature` on the next connection; active sessions remain up until their `exp`.

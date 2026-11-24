@@ -24,16 +24,13 @@ Dial = Callable[[str | None], Awaitable[_native.Session]]
 
 
 class SessionClosed(SessionEnded):
-    """The session was closed with `close()`: raised by `Session.run` and by a request made
-    afterwards."""
+    """Raised by `Session.run` and subsequent requests after `close()` was called."""
 
 
 class ConnectionLost(SessionEnded):
-    """The relay connection ended, other than by `close()`, and the native session could not
-    replace it: it stopped retrying after 60 s, or the relay closed it with a termination code other
-    than EXPIRED_AUTH_TOKEN, or with EXPIRED_AUTH_TOKEN for a session connected without
-    `refresh_token`. `close_info` is how the last connection closed. Raised by `Session.run`,
-    `Session.closed` and the requests made afterwards."""
+    """Raised by `Session.run`, `Session.closed`, and subsequent requests when the relay connection ended
+    (other than by `close()`) and could not be restored within 60 s, closed with a non-`EXPIRED_AUTH_TOKEN`
+    code, or expired without `refresh_token`."""
 
     def __init__(self, message: str, close_info: _native.CloseInfo):
         super().__init__(message)
@@ -112,17 +109,15 @@ class NamespaceWatch(AsyncIterator[NamespaceEvent]):
 
 
 class TrackWriter:
-    """A track the session publishes. What is written before the track is registered is dropped.
-    The writer ends for good at the first of its `close()`, the session ending, the failure of its
-    registration, the failure to publish the namespace of the broadcast it belongs to and the
-    failure or cancellation of the opening written once it is registered, as an event timeline's,
-    which closes it: from then on, writing raises what ended it (RuntimeError after `close()`), at
-    once and before any native call, so nothing reaches the native origin's cache any more, a write
-    waiting for its turn included. Writes are sent one at a time, in the order they were made; a
-    send that started runs to its end even when its caller is cancelled, as by a timeout, and the
-    next write waits for it. `close()` is final: it waits for a registration and a send under way
-    and ends its track. A track has one writer in a session, from its creation until its `close()`
-    finished or its registration failed. Objects carry no extension headers (LOC properties)."""
+    """Publishes objects to a single track (no LOC extension headers).
+
+    Writes are serialized in call order; an in-flight native send finishes even if its caller is cancelled.
+    Objects written before registration completes are dropped.
+    Ends permanently on `close()`, session end, track registration failure, its broadcast's namespace publish
+    failure, or failure/cancellation of its opening write once registered (e.g. an event timeline). Thereafter,
+    pending and future writes raise the ending error immediately before any native call (`RuntimeError` after
+    `close()`). Only one active writer may own a track at a time.
+    """
 
     def __init__(
         self,
@@ -638,20 +633,19 @@ class Session:
         datagram: bool = False,
         priority: int = DEFAULT_PRIORITY,
     ) -> TrackWriter:
-        """Registers a track that the session answers SUBSCRIBE and FETCH for
-        (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
-        a SUBSCRIBE at once; with `publish`, announce first. `priority` is the Publisher Priority:
-        among the session's tracks, a lower value is sent first. Raises what ended the session once
-        it ended, RuntimeError while another writer of the session publishes the track, until its
-        `close()` finished, ValueError when `retention_seconds` is not the one the track was
-        registered with first in the session, which it keeps (the newest object for a media
-        broadcast's catalog or 60 s for its other tracks, for a track a media broadcast published),
-        when the track has an object and `datagram` is not the delivery it sent it with, which it
-        keeps, and for an invalid `retention_seconds`, which registers nothing, and OverflowError
-        for a `priority` outside 0-255. Cancelled before it returns, it ends the track once
-        registered, and keeps the track its own until then: a later `publish_track` of the track
-        waits for that, and another owner of the track, such as a broadcast, is refused
-        meanwhile."""
+        """Register a track to serve `SUBSCRIBE` and `FETCH` (`_native.Session.publish_track`).
+
+        Register before `announce()` when `publish=False`; announce first when `publish=True`.
+        `priority` is Publisher Priority (0–255; lower goes first).
+        If cancelled mid-call, the track is ended once registered before any later caller can claim it.
+
+        Raises:
+            SessionEnded: session already ended.
+            RuntimeError: another writer owns the track.
+            ValueError: invalid `retention_seconds` (nothing is registered), or `retention_seconds`/`datagram`
+                conflicts with a prior registration (media broadcasts use `0` for `catalog`, `60` s for other tracks).
+            OverflowError: `priority` outside 0–255.
+        """
         self._raise_if_ended()
         await self._released(_published_track_key(tuple(namespace), name))
         self._raise_if_ended()
@@ -822,17 +816,13 @@ class Session:
         )
 
     async def run(self, work: Awaitable[T]) -> T:
-        """Awaits `work`, cancelling it when the session ends and waiting for it to finish its
-        cleanup, such as a pipeline's. Raises what ended the session, such as `ConnectionLost` or
-        `moq_wasm.TokenExpired`, or `SessionClosed` after `close()`; called once the session ended,
-        it raises that without starting `work`, closing it when it is a coroutine, and cancelling
-        it, and waiting for its cleanup, when it is a task or a future already scheduled. Cancelled,
-        it cancels `work` and raises the cancellation once `work` finished, even when cancelled again
-        while `work` cleans up. The wait covers `work` itself, not what it started: a future that
-        finishes before its children, as `asyncio.gather`'s does once one of them ended cancelled,
-        leaves the others cleaning up, so run several workers in one coroutine that starts them in
-        an `asyncio.TaskGroup`, which waits for every one and raises their failures inside an
-        `ExceptionGroup`, which `except*` catches."""
+        """Await `work`, cancelling it and waiting for its cleanup if the session ends or this call is cancelled.
+
+        Raises the session-ending error (`ConnectionLost`, `TokenExpired`, or `SessionClosed`).
+        If the session already ended, an unstarted coroutine is closed immediately, while an already-scheduled
+        task or future is cancelled and awaited through cleanup before raising.
+        For multiple concurrent tasks, run them inside an `asyncio.TaskGroup` so cleanup waits for every task.
+        """
         if self._done.done():
             if asyncio.iscoroutine(work):
                 work.close()
@@ -1058,22 +1048,18 @@ def connect(
     refresh_token: RefreshToken | None = None,
     versions: list[str] | None = None,
 ) -> _Connecting:
-    """Connects to a relay: `moqt://` over raw QUIC, `https://` over WebTransport, presenting
-    `token` (a JWT) in CLIENT_SETUP. Use it with `async with`, or await it and call `close()`.
-    A failure to connect raises RuntimeError, as does a relay that does not open the transport, or
-    answer CLIENT_SETUP once it is open, within 30 s. Without `refresh_token`, the session ends with
-    `ConnectionLost` once the relay closes it at the token's expiry.
+    """Connect to a MoQT relay (`moqt://` QUIC, `https://` WebTransport) with optional JWT `token`.
 
-    `refresh_token`, given with `token`, takes the current token and returns a later one of the
-    same app. The session calls it five minutes before the token's `exp`, or halfway through a
-    shorter lifetime. A call that raises, takes over 30 s or past the token's expiry together with
-    the relay's answer to its token (even one that caught its timeout and returned), or returns a
-    token of another app, one that does not expire later or one the relay refuses is retried with
-    the current token after 30 s, or half the time left, until the token expired; the session then
-    ends with `TokenExpired`. A call that ends cancelled while the session is not, as one awaiting a
-    shared future another task cancelled, is retried as well. A call is given up at its deadline,
-    however long its cleanup takes. `versions` lists the drafts to offer, most preferred first;
-    without it draft-18, then draft-14, are offered."""
+    Use with `async with` or `await` + `close()`. Raises `RuntimeError` on failure or 30 s handshake timeout.
+    `versions` lists drafts to offer, most preferred first (default: draft-18 then draft-14).
+
+    With `refresh_token` (requires `token`, else `ValueError`), the callback runs 5 min before `exp`
+    (or halfway through shorter lifetimes) with the current token and must return a token for the same
+    `appId` with a later `exp`. Refresh has a `min(30 s, remaining lifetime)` deadline across the callback
+    and relay handover; any failed, timed-out, cancelled (while alive), or rejected refresh retries with
+    the current token every 30 s (or half the remaining lifetime) until expiry, ending with `TokenExpired`
+    (`ConnectionLost` without `refresh_token`).
+    """
     if refresh_token is not None and token is None:
         raise ValueError("refresh_token needs a token")
     if refresh_token is not None and token is not None:

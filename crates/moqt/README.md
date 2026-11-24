@@ -1,27 +1,28 @@
 # moqt
 
-Publish and subscribe to tracks over QUIC or WebTransport. Clients offer
-MoQT draft-18 first, then draft-14. See the [protocol design](../../docs/architecture/moqt/architecture.md).
+Low-level Media over QUIC Transport (MoQT) implementation over QUIC, WebTransport, and browser WebTransport/WebSocket. Clients offer draft-18 first, then draft-14.
+
+> **Building an application or bot?** Start with the [`moq-wasm` Rust SDK](https://github.com/nttcom/moq-wasm/blob/master/sdk/rust/README.md) for automatic reconnects, token refresh, and MSF broadcasts (or the [JavaScript](https://github.com/nttcom/moq-wasm/blob/master/sdk/js/js/README.md) / [Python](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/README.md) SDKs). Use `moqt` directly when you need low-level protocol control or are building a server/relay.
 
 ## Install
 
-Pin the git dependency to a commit. For the native example below, add these
-dependencies to a Rust binary project:
+Pin to a commit in `Cargo.toml`:
 
 ```toml
 [dependencies]
 moqt = { git = "https://github.com/nttcom/moq-wasm", rev = "<commit>" }
+
+# For native targets (omit `rt-multi-thread` on wasm32):
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-On `wasm32`, build with `RUSTFLAGS="--cfg web_sys_unstable_apis"`.
-For JavaScript, see the [browser SDK](../../sdk/js/js/README.md).
+- **Optional feature**: `self-signed-cert` enables self-signed certificate generation (for local/test servers).
+- **WebAssembly (`wasm32`)**: build with `RUSTFLAGS="--cfg web_sys_unstable_apis"`.
 
-## Send and receive a message
+## Quickstart: Send and receive a message
 
-Run `make relay` from the repository root. Put this in your project's
-`src/main.rs`. Both sessions trust the local relay's certificate and use the
-public namespace `anon/room`. Subscribe before writing to receive the live message.
+Start a local relay (`make relay`), then run this example with `services/relay/keys/cert.pem` — it prints `hello` (subscribe before writing because live subscriptions receive objects published afterwards):
 
 ```rust,no_run
 use moqt::{CertificateVerification, ClientConfig, client::Session};
@@ -51,19 +52,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Run `cargo run -- /path/to/moq-wasm/services/relay/keys/cert.pem` from your
-project. It prints `hello`. Use `https://` for WebTransport.
+Run `cargo run -- /path/to/moq-wasm/services/relay/keys/cert.pem`. Use `moqt://` for raw QUIC or `https://` for WebTransport.
 
 ## Modules
 
-| Path | Contents |
+| Path | Use for |
 | --- | --- |
-| `moqt::client` | Client sessions, track writers and subscriptions |
-| `moqt::` | `Endpoint`, `Session`, `Publisher`, `Subscriber`, `TrackWriter` / `TrackReader`, transport markers |
-| `moqt::subscribe` | SUBSCRIBE, SUBSCRIBE_UPDATE, UNSUBSCRIBE and TRACK_STATUS |
-| `moqt::publish` | PUBLISH and PUBLISH_DONE |
-| `moqt::fetch` | FETCH and FETCH_CANCEL |
-| `moqt::namespace` | PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE |
+| `moqt::client` | High-level client `Session`, track writers, subscriptions, and event handlers |
+| `moqt::*` | Protocol primitives (`Endpoint`, `Session`, `Publisher`, `Subscriber`, `TrackWriter`/`TrackReader`, transport markers) |
+| `moqt::subscribe` | `SUBSCRIBE`, `SUBSCRIBE_UPDATE`, `UNSUBSCRIBE`, `TRACK_STATUS` |
+| `moqt::publish` | `PUBLISH`, `PUBLISH_DONE`, `Origin` fan-out and retention |
+| `moqt::fetch` | `FETCH`, `FETCH_CANCEL` |
+| `moqt::namespace` | `PUBLISH_NAMESPACE`, `SUBSCRIBE_NAMESPACE` |
 | `moqt::object` | Object model and subgroup stream / datagram senders and receivers |
-| `moqt::server` | Accepting sessions |
-| `moqt::wire` | Draft-14 numeric error codes for bindings that expose them |
+| `moqt::executor` | Cross-target task spawning, sleep, and monotonic clock (Tokio on native, browser runtime on `wasm32`) |
+| `moqt::server` | Accepting inbound server/relay sessions |
+| `moqt::wire` | Draft-14 numeric error codes for language bindings |
+
+Design: [docs/architecture/moqt/architecture.md](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/moqt/architecture.md).

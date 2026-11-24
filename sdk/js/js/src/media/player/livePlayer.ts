@@ -76,36 +76,18 @@ export type LivePlayerOptions = {
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
-  /// Keeps the live subscriptions forwarding and the live picture playing
-  /// behind a review, so `goLive` shows the live picture at once instead of
-  /// waiting for the next group; it costs the live bandwidth and decoding
-  /// while reviewing.
+  /// Keep live subscriptions and decoding running during review so `goLive()` switches immediately.
   keepLiveWhileReviewing?: boolean
-  /// The DELIVERY TIMEOUT, in milliseconds, of the SUBSCRIBEs of the selected
-  /// video and audio track, of the media timeline and of tracks added with
-  /// `addAudioTrack` (`MoqSubscribeOptions.deliveryTimeoutMs`); 2000 by
-  /// default, `null` for none. On a link that cannot carry the tracks, the
-  /// relay stops sending a group once one of its objects is this old, instead
-  /// of sending it late. The catalog, captions and `addTextTrack` tracks never
-  /// get one. The constructor throws a `RangeError` unless it is `null` or an
-  /// integer from 1 to 4294967295.
+  /// `DELIVERY TIMEOUT` in ms for selected video/audio, timeline, and `addAudioTrack` subscriptions (default `2000`; `null` disables timeout-based resets).
+  /// Measured from relay receipt; on expiry the relay stops sending that subgroup. Never applied to catalog, captions, or `addTextTrack`. Throws `RangeError` unless `null` or an integer from 1 to 4294967295.
   deliveryTimeoutMs?: number | null
-  /// The Group Order of the same SUBSCRIBEs (`MoqSubscribeOptions.groupOrder`),
-  /// `'ascending'` by default. `'descending'` lets a congested link carry the
-  /// newest group first: the picture jumps ahead instead of falling behind.
+  /// `Group Order` for the same `SUBSCRIBE`s: `'ascending'` (default; older groups first, delay grows on congestion) or `'descending'` (newest first, older groups arrive late or drop with `deliveryTimeoutMs`).
   groupOrder?: 'ascending' | 'descending'
-  /// Plays only this source of the catalog; without it, every video and audio
-  /// track is a choice.
+  /// Restrict playback to a single catalog source; otherwise every video and audio track is selectable.
   source?: LiveSource
-  /// Plays the live LOC sound through this context instead of one the player
-  /// opens, so players on a page can share one context and output device.
-  /// The page owns it: it resumes it after a user gesture, and the player
-  /// only disconnects its nodes and never suspends or closes it. Review and
-  /// CMAF sound do not play through it.
+  /// Shared `AudioContext` for live LOC audio (ignored for review and CMAF). The caller owns it, resumes it after a user gesture, and the player only disconnects its nodes (never suspends or closes it).
   audioContext?: AudioContext
-  /// How much the live video may fall behind before the automatic quality
-  /// steps down; `'low'` by default. Use `'high'` for a shared screen whose
-  /// text has to stay readable. See `setLatencyTolerance`.
+  /// Tolerance before ABR steps down on lag (`'low'` default; use `'high'` for screen shares). See `setLatencyTolerance`.
   latencyTolerance?: LatencyTolerance
 }
 

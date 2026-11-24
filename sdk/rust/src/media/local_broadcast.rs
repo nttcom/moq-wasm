@@ -33,16 +33,14 @@ pub fn create_broadcast(session: &Session, namespace: &[impl AsRef<str>]) -> Bro
     }
 }
 
-/// The tracks registered before the PUBLISH_NAMESPACE, so that a SUBSCRIBE
-/// the relay forwards at once finds them.
+/// Builder for registering tracks before `PUBLISH_NAMESPACE` so immediate `SUBSCRIBE`s succeed.
 pub struct BroadcastBuilder {
     tracks: BroadcastTracks,
 }
 
 impl BroadcastBuilder {
-    /// A track the session answers SUBSCRIBE and FETCH for. Fails when
-    /// `options.publish` is set: a PUBLISH must follow PUBLISH_NAMESPACE, so
-    /// publish such a track on the `LocalBroadcast`.
+    /// Register a track to serve `SUBSCRIBE` and `FETCH`. Fails if `options.publish` is true
+    /// (publish tracks after `announce()`).
     pub async fn publish_track(
         &self,
         name: &str,
@@ -74,10 +72,8 @@ impl BroadcastBuilder {
     }
 }
 
-/// A published namespace; a media source's tracks reach subscribers through
-/// the MSF catalog. `add_media_source` and dropping it without `close` spawn
-/// tasks (the latter withdraws the namespace), so call both inside the tokio
-/// runtime.
+/// Published namespace with MSF media sources. `add_media_source` and dropping without `close`
+/// spawn tasks (the latter withdraws the namespace), so call both inside the tokio runtime.
 pub struct LocalBroadcast {
     tracks: BroadcastTracks,
     ended_sender: watch::Sender<bool>,

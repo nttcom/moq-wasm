@@ -1,10 +1,6 @@
 # temporary-apps
 
-Issues the tokens of temporary apps to anyone, without an account. A
-temporary app (`appId` starting with `temp-`) is a namespace root of its own:
-the examples use one so that only the people a page's link is shared with
-join its room, instead of the public `anon` root.
-Design: [architecture document](../../docs/architecture/temporary-apps/architecture.md).
+Issues temporary-app tokens (`appId` starting with `temp-`) to anyone without an account, giving shared demo links their own namespace root instead of `anon`. Design: [architecture.md](../../docs/architecture/temporary-apps/architecture.md).
 
 ## API
 
@@ -23,32 +19,27 @@ Content-Type: application/json
 GET /healthz -> 200 { "status": "ok" }
 ```
 
-- Every token is valid for one hour and may publish and subscribe anywhere
-  under its app.
-- A refresh needs an unexpired token this service signed, so an app lives as
-  long as someone keeps refreshing it.
-- `POST /tokens` is limited to 30 new apps per client address per hour.
-- `/bots/{type}` passes a page's call on to `bot-dispatcher` as the app server of its
-  temporary app; `POST` is limited to 10 calls per client address per hour.
+- Tokens last 1 hour with full publish/subscribe access under their `appId`.
+- Refreshing requires an unexpired token issued by this service, keeping an app alive while refreshed.
+- Rate limits per client IP: 30 `POST /tokens` per hour; 10 `POST /bots/{type}` per hour.
+- `/bots/{type}` proxies bot requests to `bot-dispatcher` for the caller's temporary app.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TEMPORARY_APPS_SECRET` | — | Secret the tokens are signed with; the VTS's `VTS_TEMPORARY_APP_SECRET` must be the same value |
-| `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that append to `X-Forwarded-For`; `0` takes the connection's peer address |
-| `TEMPORARY_APPS_BOT_DISPATCHER_URL` | — | Base URL of `bot-dispatcher` the pages reach through `/bots/{type}`; without it those routes are `404` |
-| `TEMPORARY_APPS_BOT_TYPES` | — | Comma-separated bot types a temporary app may start, e.g. `recorder` |
+| `TEMPORARY_APPS_SECRET` | — | Token signing secret (must match VTS `VTS_TEMPORARY_APP_SECRET`) |
+| `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` | `0` | Number of trusted proxies appending to `X-Forwarded-For` (`0` = direct peer IP) |
+| `TEMPORARY_APPS_BOT_DISPATCHER_URL` | — | `bot-dispatcher` base URL for `/bots/{type}` (unset returns `404`) |
+| `TEMPORARY_APPS_BOT_TYPES` | — | Comma-separated bot types allowed for temporary apps (e.g. `recorder`) |
 | `PORT` | `8083` | Listen port |
 
-Logging and OTLP export follow `crates/telemetry-otlp` (`TEMPORARY_APPS_STDOUT_FILTER`
-and the standard `OTEL_*` variables).
+Logging/OTLP use `TEMPORARY_APPS_STDOUT_FILTER` and standard `OTEL_*` variables (`crates/telemetry-otlp`).
 
 ## Running
 
-```
+```shell
 TEMPORARY_APPS_SECRET=development-temporary-app-secret cargo run -p temporary-apps
 ```
 
-`docker compose up -d` starts it on port 8083 with the VTS sharing the same
-development secret.
+`docker compose up -d` starts it on port 8083 sharing the dev secret with VTS.

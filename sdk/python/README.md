@@ -1,29 +1,38 @@
 # moq-wasm for Python
 
-Send a message through a MoQT relay and read it back in a second session.
+Async Python SDK for Media over QUIC Transport (MoQT). Connect to a relay over QUIC or WebTransport to exchange raw data tracks, publish or decode media broadcasts, and build Pipecat AI bots interoperable with the [JavaScript](https://github.com/nttcom/moq-wasm/blob/master/sdk/js/js/README.md) and [Rust](https://github.com/nttcom/moq-wasm/blob/master/sdk/rust/README.md) SDKs.
+
+## Choose what to install
+
+| Package              | Module              | Use for                                                                                        |
+| -------------------- | ------------------- | ---------------------------------------------------------------------------------------------- |
+| `moq-wasm`           | `moq_wasm`, `.media` | Relay sessions, raw tracks, MSF broadcasts, and event timelines                                |
+| `moq-wasm[codecs]`   | `moq_wasm.codecs`   | PyAV helpers: Opus encode/decode, video decode (H.264/H.265/VP8/VP9/AV1), video encode (H.264/VP8) |
+| `moq-wasm[pipecat]`  | `moq_wasm.pipecat`  | `MoqWasmTransport` and `MoqWasmParticipantInput` for Pipecat bots                              |
+
+## Core concepts
+
+- **Session (`connect`)**: Connects via `moqt://` (QUIC) or `https://` (WebTransport), follows `GOAWAY`, and auto-reconnects for up to 60 s.
+- **Namespace & track**: A `namespace` is a list of path segments (e.g. `["anon", "room-1"]`). Public demo namespaces start with `"anon"`; authenticated apps use a JWT whose `appId` is the first segment.
+- **Broadcast (MSF)**: A namespace carrying a `catalog` track plus video, audio, or event timeline tracks (`create_broadcast` / `watch_broadcasts`).
 
 ## Install
 
-In a Python 3.11+ virtual environment, install the wheel for Linux
-(x86_64 or aarch64, glibc 2.28+) or macOS (Apple silicon):
+Requires Python 3.11+ on Linux (x86_64/aarch64, glibc 2.28+) or macOS (Apple silicon):
 
 ```shell
 python -m pip install "moq-wasm==0.0.1" \
   --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1
 ```
 
-This README describes the SDK on `master`. 0.0.1 runs "Send and receive a
-message", but the sections after it use what the next release adds:
-`moq_wasm.SessionEnded`, `MoqWasmParticipantInput`, and the transport's
-`empty_timeout` and `on_room_empty`. Until that release, build the package
-from a checkout of this repository, with a Rust toolchain:
-`python -m pip install "./sdk/python[pipecat]"`.
+Replace `"moq-wasm==0.0.1"` with `"moq-wasm[codecs]==0.0.1"` or `"moq-wasm[pipecat]==0.0.1"` to include an extra.
 
-## Send and receive a message
+> **Release note:** This README tracks `master`. `0.0.1` runs the Quickstart below; later sections use unreleased APIs (`SessionEnded`, `MoqWasmParticipantInput`, `empty_timeout`, `on_room_empty`). To install from a repository checkout now (requires a Rust toolchain):
+> `python -m pip install "./sdk/python[pipecat]"`
 
-Save this as `hello.py`. It uses the public demo relay and picks a fresh
-namespace on each run. Subscribe before writing because a live subscription
-receives new messages.
+## Quickstart: Send and receive a message
+
+Save as `hello.py` and run `python hello.py`. It connects two sessions to the public demo relay on a fresh namespace and prints `hello` (subscribe before writing because live subscriptions receive objects published afterwards):
 
 ```python
 import asyncio
@@ -47,29 +56,19 @@ async def main():
 asyncio.run(main())
 ```
 
-Run `python hello.py`. It prints `hello` and closes both sessions.
-
 ## Keep a service connected
 
-A session replaces a lost connection by itself for up to 60 s, carrying its
-subscriptions and published tracks over. When it cannot, or when its token
-expires, it ends, and the work running under `session.run` is cancelled. All
-the ways a session ends subclass `moq_wasm.SessionEnded`:
+A session automatically replaces a dropped connection for up to 60 s, restoring its subscriptions and published tracks. If reconnection fails or the token expires, the session ends: `session.run(...)` cancels its workload and raises a `moq_wasm.SessionEnded` subclass:
 
-| Exception | When |
-| --- | --- |
-| `ConnectionLost` | the relay connection could not be replaced, as when the token expired without `refresh_token`; `close_info` says how it closed |
-| `TokenExpired` | `refresh_token` kept failing until the token expired |
-| `SessionClosed` | `close()` was called |
+| Exception        | Cause                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `ConnectionLost` | Connection could not be restored (including token expiry without `refresh_token`); see `close_info` |
+| `TokenExpired`   | `refresh_token` kept failing until the token expired                                   |
+| `SessionClosed`  | `close()` was called                                                                   |
 
-A refused request raises `moq_wasm.RequestError` (a `RuntimeError`) with the
-draft's `message_type`, `code` and `reason`; failing to connect raises
-`RuntimeError`. A long-running service connects again itself. Its workers
-run in an `asyncio.TaskGroup`, which raises a worker's failure inside an
-`ExceptionGroup`, so the loop catches with `except*`. It catches every
-`Exception`, as a supervisor cannot list every transient failure of its
-token endpoint and workers (a `TimeoutError` among them), while
-`KeyboardInterrupt` and cancellation, which are no `Exception`, still end it:
+Rejected MoQT requests raise `moq_wasm.RequestError` (a `RuntimeError` with `message_type`, `code`, and `reason`); initial connection failures raise `RuntimeError`.
+
+For a long-running service, wrap `connect(...)` in a reconnect loop and run concurrent workers inside an `asyncio.TaskGroup`. Catching `except* Exception` retries transient worker and token-endpoint failures (such as `TimeoutError`), while `KeyboardInterrupt` and cancellation — which are not `Exception` — still stop the service:
 
 ```python
 import asyncio
@@ -79,27 +78,26 @@ import moq_wasm
 
 
 async def publish(session: moq_wasm.Session) -> None:
-    ...  # publish a broadcast
+    ...
 
 
 async def follow(session: moq_wasm.Session) -> None:
-    ...  # subscribe, follow broadcasts
+    ...
 
 
 async def serve(session: moq_wasm.Session) -> None:
-    # Several workers run in a TaskGroup, not asyncio.gather: `session.run` waits for
-    # `serve` to clean up, and a TaskGroup waits for every worker's cleanup.
+    # TaskGroup ensures session.run waits for every worker's cleanup (unlike asyncio.gather).
     async with asyncio.TaskGroup() as workers:
         workers.create_task(publish(session))
         workers.create_task(follow(session))
 
 
 async def fetch_token(current: str | None = None) -> str:
-    ...  # a token of your app from your app server; `current` is the one it replaces
+    ...  # fetch a JWT for your app (`current` is the expiring token)
 
 
 async def main():
-    moq_wasm.init(log_level="info")  # the native module's logs go to `logging`
+    moq_wasm.init(log_level="info")  # forward native logs to Python's `logging`
     while True:
         try:
             token = await asyncio.wait_for(fetch_token(), 30)
@@ -111,17 +109,11 @@ async def main():
         await asyncio.sleep(2)
 ```
 
-`refresh_token` is called five minutes before the token's `exp` (halfway
-through a shorter lifetime) and retried until the token expires; `connect`
-reads `app_id` and `exp` from the token without verifying it, and refuses a
-refreshed token of another app.
+Token refresh runs 5 minutes before `exp` (or halfway through shorter lifetimes) and retries until expiry. `connect` reads `appId` and `exp` from the JWT without verifying the signature and rejects a refreshed token from a different `appId`.
 
-## A pipecat voice bot
+## Build a Pipecat voice bot
 
-With `moq-wasm[pipecat]`, `MoqWasmTransport` joins a room: every broadcast
-one level under `room` is a participant, and the bot publishes its own
-broadcast `[*room, participant_id]`, which browser pages play with the
-JavaScript SDK.
+With `moq-wasm[pipecat]`, `MoqWasmTransport` joins a room where every direct child namespace under `room` is a participant, and publishes the bot at `[*room, participant_id]` (playable from browsers via the JS SDK):
 
 ```python
 import moq_wasm
@@ -135,7 +127,7 @@ from pipecat.workers.runner import WorkerRunner
 
 
 def make_services():
-    ...  # new stt, llm and tts pipecat services
+    ...  # create fresh STT, LLM, and TTS services per session
 
 
 async def talk(session: moq_wasm.Session, room: list[str]) -> None:
@@ -156,8 +148,7 @@ async def talk(session: moq_wasm.Session, room: list[str]) -> None:
     async def on_room_empty(transport):
         await runner.cancel()
 
-    # The user aggregator turns the STT's transcriptions into the LLM's context, which an LLM
-    # service answers; transcriptions alone it ignores.
+    # Converts STT transcriptions into LLM context frames.
     context = LLMContextAggregatorPair(
         LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
     )
@@ -166,31 +157,23 @@ async def talk(session: moq_wasm.Session, room: list[str]) -> None:
     )
     worker = PipelineWorker(
         pipeline,
-        # `on_room_empty` ends the bot; pipecat's idle timeout would end it after 5 quiet minutes.
+        # Exit via `on_room_empty` instead of Pipecat's 5-minute idle timeout.
         idle_timeout_secs=None,
-        # A room the relay refuses leaves the transport's processors unusable; pipecat's
-        # default policy would keep the pipeline running without it.
+        # Stop the pipeline if the relay rejects the room.
         processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
     await runner.add_workers(worker)
     await runner.run()
 ```
 
-`make_services` builds the pipecat services of your choice on every call, as a
-session that ends cancels them with the pipeline, and `SileroVADAnalyzer`
-needs `pipecat-ai[silero]`. Run it as the `serve` above:
-`session.run(talk(session, [app_id, "my-room"]))`, where `app_id` is your
-token's app (`anon` without a token). Participants' audio arrives as
-`UserAudioRawFrame` with the participant id as `user_id`; mix several
-speakers into one STT only if it can tell them apart, or run a pipeline per
-participant with `MoqWasmParticipantInput`.
+Notes:
 
-## Media and bots
+- Run `talk` inside the supervisor loop above as `session.run(talk(session, [app_id, "my-room"]))` (`app_id` is `"anon"` without a token).
+- Build fresh services in `make_services()` on every session (ending a session cancels the pipeline). `SileroVADAnalyzer` requires `pipecat-ai[silero]`.
+- Participant audio arrives as `UserAudioRawFrame` tagged with `user_id`. In multi-speaker rooms where STT cannot separate speakers, run one pipeline per participant with `MoqWasmParticipantInput`.
 
-- [Media API](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/media.html) — follow room broadcasts or publish encoded audio and video.
-- [Codec helpers](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/codecs.html) — install `moq-wasm[codecs]` for Opus, H.264 and VP8.
-- [Pipecat transport](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/pipecat.html) — install `moq-wasm[pipecat]` to build a bot. The [voice agent example](https://github.com/nttcom/moq-wasm/tree/master/examples/python/moq-ai-voice-agent) includes a working pipeline and uv configuration.
+## Reference & examples
 
-For source builds and SDK internals, see the [package design](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/python/sdk.md#package)
-and [native type signatures](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/python/moq_wasm/_native.pyi).
-See the [changelog](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/CHANGELOG.md) for release notes.
+- **API docs**: [Media](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/media.html) · [Codecs](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/codecs.html) · [Pipecat](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/pipecat.html)
+- **Full example**: [AI voice agent](https://github.com/nttcom/moq-wasm/tree/master/examples/python/moq-ai-voice-agent) (working pipeline + `uv` setup)
+- **Internals & releases**: [Package design](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/python/sdk.md#package) · [Native stubs](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/python/moq_wasm/_native.pyi) · [Changelog](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/CHANGELOG.md)

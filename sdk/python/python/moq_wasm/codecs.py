@@ -70,13 +70,8 @@ VIDEO_DECODERS = {
     "vp09": ("vp9", "libvpx-vp9"),
     "av01": ("libdav1d", "libaom-av1"),
 }
-# The decoders that decode on one thread. dav1d's worker threads release a packet's payload and
-# its opaque value, the object's Location, as they finish a frame, which takes the GIL; freeing the
-# decoder holds the GIL and waits for those threads, so the process deadlocks. The other decoders
-# may keep a packet's payload or opaque value past the call that decodes it, as FFmpeg's VP9 does,
-# but release it on the thread that calls them, which holds the GIL already: FFmpeg's own ones
-# thread by slice, which PyAV defaults to, and libvpx and libaom decode synchronously. So their
-# threads stay, and dav1d alone decodes slower.
+# Decoders forced to single-threaded mode: dav1d worker threads release packet payloads/opaque
+# references asynchronously while acquiring the GIL, deadlocking against decoder teardown under GIL.
 THREADLESS_DECODERS = ("libdav1d",)
 
 
@@ -286,12 +281,11 @@ class OpusEncoder:
 
 
 class VideoDecoder:
-    """Decodes one group of a LOC video track into pictures. A group starts at a keyframe, so
-    each group gets a decoder of its own; a group joined in the middle decodes to nothing. A
-    codec with reordered frames (H.264 B-frames) returns a picture a few objects after the one it
-    was decoded from, and its last ones from `flush`; each comes with the Location given with
-    its object. `config` is the track's LOC Video Config, the codec's extradata, which
-    length-prefixed H.264 and H.265 need (an avcC or hvcC record)."""
+    """Decodes one LOC video group into pictures (create one per group; mid-group joins yield nothing).
+
+    With B-frames, frames may be delayed and finalized by `flush()`, each paired with its input `Location`.
+    `config` is the LOC Video Config extradata (e.g. H.264 `avcC` / H.265 `hvcC`).
+    """
 
     def __init__(self, codec: str, config: bytes | None = None):
         name = _decoder_name(codec)
@@ -335,18 +329,15 @@ class VideoDecoder:
 
 
 class _Group:
-    """The decoding of one group of a video track, with the LOC Video Config it started with. An
-    object carrying another Video Config, a keyframe whose parameters changed, starts a decoder with
-    it, after the pictures the previous one held back. A group joined at its keyframe, its object 0,
-    should decode: the decoder refusing `MAX_REFUSED_OBJECTS` of its objects in a row, or the group
-    ending without a picture after it refused one, raises the decoder's error. A group joined midway
-    decodes to nothing, which is expected. An H.264 or H.265 object of a group without a Video
-    Config is read as Annex B when it starts with a start code, 4-byte or 3-byte, and else as 4-byte
-    length prefixes; one that reads either way is read as the group's earlier objects were. Length
-    prefixes are rewritten as start codes once the group carried its parameter sets in band (an
-    SPS), as `avc3` and `hev1` may. One readable neither way, or length-prefixed before the group's
-    parameter sets, is skipped without being decoded, which could make garbage of it, and, in a
-    group joined at its keyframe, which would have carried them, `unconfigured` is called."""
+    """Decoder state for one video group.
+
+    - Re-initializes the decoder when an object carries a new LOC Video Config.
+    - For groups joined at object 0 (keyframe), raises `FFmpegError` after `MAX_REFUSED_OBJECTS`
+      consecutive decode errors or if the group flushes with zero frames after a refusal.
+    - Without a Video Config, H.264/H.265 payloads are detected as Annex B (3/4-byte start code) or
+      4-byte length-prefixed (rewritten to Annex B once in-band SPS arrives; unconfigured frames
+      before SPS are skipped and trigger `unconfigured`).
+    """
 
     def __init__(self, codec: str, config: bytes | None, from_keyframe: bool, unconfigured: Callable[[], None]):
         self._codec = codec
@@ -458,64 +449,21 @@ class DecodedPicture:
 def decode_pictures(
     objects: AsyncIterable[Object], codec: str, *, interval: float = 0.0, config: bytes | None = None
 ) -> Following[DecodedPicture]:
-    """Decodes the objects of one subscription to a LOC video track, such as one that
-    `RemoteBroadcast.subscriptions(name)` yields, in a thread and yields every picture, in
-    presentation order within its group, or at most one every `interval` seconds. A track followed
-    across its subscriptions is decoded with `follow_pictures`, which gives each subscription a
-    `decode_pictures` of its own: the groups of the next subscription, as of a publisher that took
-    over, may start at 0 again, which one `decode_pictures` takes as groups it already decoded. Each
-    group gets a `VideoDecoder` of its own, since it starts at a keyframe and the objects of groups
-    in flight may interleave; a group joined midway decodes to nothing. A group's decoder is flushed
-    at its End of Group status object, when `MAX_OPEN_GROUPS` newer groups opened since (the objects
-    of that group arriving later are skipped), and at the end of `objects`.
+    """Decode a single LOC video subscription in a worker thread, yielding pictures in presentation order
+    within each group (throttled to at most one every `interval` seconds; overlapping subgroups or
+    config-change re-decodes can interleave or repeat across groups). Use `follow_pictures()` across resubscriptions.
 
-    A group's decoder takes the LOC Video Config its first object carries; a later object of the
-    group carrying another one, a keyframe whose parameters changed, starts a new decoder with it. A
-    group without a Video Config of its own takes the one the group before it decoded with last:
-    until that group arrives, the group holds its objects. Taken while that group is open, the Video
-    Config is provisional until the group decoded `MAX_HELD_OBJECTS` objects or `MAX_HELD_BYTES`
-    bytes: a later keyframe of that group changing it, arriving late as the groups' streams race,
-    decodes the group's objects again with the new one, and their pictures are given again; past
-    that, the group keeps decoding with the old one, but the groups after it that inherit its Video
-    Config take the new one. So do they when the group before it, arriving after it started, brings
-    a Video Config other than the one it took, and so do the groups after a group that has not
-    arrived, as a lost one, which took the Video Config of the newest earlier group that had one: a
-    group between the two arriving late passes its own on to them, until the next group with a Video
-    Config of its own, even one equal to the one that group inherited. A held object carrying a
-    Video Config of its own starts the group at it, the objects held before it dropped. A group
-    stops holding once the group before it arrives or closes, and, the group before it taken as late
-    or lost, once it holds `MAX_HELD_OBJECTS` objects or `MAX_HELD_BYTES` bytes, a later group
-    opens, it ends or `objects` end; it then decodes with the Video Config of the newest earlier
-    group that had one, or else `config`. `config` is the track's Video Config as the reader knows
-    it beforehand, such as from the catalog (`moq_wasm.media.Catalog.init_data`): the groups without
-    one of their own and without an earlier group that had one decode with it. A group decodes
-    without holding while no object of the track carried a Video Config, as one with its parameter
-    sets in band, and when no earlier group arrived, as the first group of a subscription.
-
-    Raises ValueError at once when no decoder takes `codec`; its reads raise the decoder's
-    `av.error.FFmpegError` when a group joined at its keyframe does not decode: the decoder refused
-    `MAX_REFUSED_OBJECTS` of its objects in a row, or the group ended without a picture after it
-    refused one. An H.264 or H.265 object of a group without a Video Config is Annex B when it
-    starts with a start code, 4-byte or 3-byte, and else length-prefixed; one that reads either way,
-    its start code followed by bytes that 4-byte lengths would cover exactly, is read as the group's
-    earlier objects were. A length-prefixed object decodes once the group carried its parameter sets
-    (SPS and PPS) in band, as an `avc3` or `hev1` track may. A length-prefixed object before them,
-    as of a track whose only Video Config came before the subscription joined, is skipped without
-    being decoded, with one warning logged when its group was joined at its keyframe, until a group
-    carrying a Video Config arrives; give the track's Video Config as `config` to decode it.
-    `follow_pictures` joins at the start of the current group, so it gets that group's Video Config
-    when the group carries one.
-
-    `objects` stays the caller's: each read advances it in the reader's own task and context, and
-    neither closing nor dropping the decoding cancels or closes it. A read cancelled, as by
-    `asyncio.wait_for` timing out, does not end the decoding: the object being decoded in a thread
-    goes on for the next read, as a `Following`'s state does; but a cancellation that reaches a
-    read of `objects` reaches `objects` itself, which an async generator does not survive. Read
-    `RemoteBroadcast.subscriptions()`'s objects, a `moq_wasm.Subscription` or `follow_pictures`
-    to read with a timeout. `aclose()` stops the decoding at once: a read waiting on `objects`
-    raises StopAsyncIteration once `objects` gives it its object, which is dropped, and no read
-    reads `objects` after it. Closed, the decoding keeps no decoder or picture, once a decode in
-    flight in a worker finished, also while a read still waits on `objects`."""
+    - **Config**: groups inherit the previous group's LOC Video Config (holding up to `MAX_HELD_OBJECTS` /
+      `MAX_HELD_BYTES` while waiting for an out-of-order predecessor, falling back to `config`, e.g.
+      `Catalog.init_data`) and re-decode if a provisional config changes. Length-prefixed H.264/H.265
+      frames arriving before parameter sets or a config are skipped with one warning.
+    - **Errors**: raises `ValueError` immediately for unsupported `codec`, and `av.error.FFmpegError` on
+      read if a keyframe-joined group fails to decode.
+    - **Lifecycle**: each group gets its own `VideoDecoder` (flushed on End-of-Group, after
+      `MAX_OPEN_GROUPS` newer groups, or at EOF). Does not close `objects`; timing out a read can cancel
+      an async generator (use `Subscription`, `RemoteBroadcast.subscriptions()`, or `follow_pictures()`
+      with timeouts). `aclose()` stops reads immediately and frees decoders once any in-flight worker step finishes.
+    """
     return _DecodedPictures(objects, codec, interval, config)
 
 
@@ -787,20 +735,13 @@ def follow_pictures(
     on_subscribed: Callable[[], Awaitable[None]] | None = None,
     config: bytes | None = None,
 ) -> "FollowedPictures":
-    """The pictures of the LOC video track `name` of `remote`, followed as `RemoteBroadcast.follow`
-    follows it, with `namespace` and `on_subscribed` as there, each subscription starting at the
-    current group's first object (`RemoteBroadcast.subscriptions` with `from_group_start`), so its
-    keyframe and the Video Config it may alone carry are decoded: each subscription is decoded by a
-    `decode_pictures` of its own, at most one picture every `interval` seconds, so the pictures its
-    decoders hold back come as it ends, and the next one carries no state of it but the track's
-    Video Config: each `decode_pictures` starts with the one the newest object of the subscriptions
-    before it carried, as one the publisher writes only when it changes, or else `config`, as
-    `decode_pictures` takes it. Raises ValueError at once when no decoder takes `codec`; its reads
-    raise what ended the session, as `follow()` does, and the decoder's error as `decode_pictures`
-    does. A read cancelled, as by a timeout, does not end it; read it in `contextlib.aclosing`, as
-    `follow()`; closed, it keeps no decoder or picture, only the Video Config it learned. A reader
-    that follows the track again, as after a decoder error, passes the Video Config this one learned
-    (`FollowedPictures.config`) on as `config`."""
+    """Follow and decode LOC video track `name` across resubscriptions (`from_group_start=True`).
+
+    Runs a fresh `decode_pictures()` per subscription while carrying forward the newest learned Video
+    Config (accessible via `FollowedPictures.config`, falling back to `config`).
+    Raises `ValueError` for unsupported `codec`; reads raise `SessionEnded` or `FFmpegError`.
+    Use with `contextlib.aclosing`.
+    """
     return FollowedPictures(remote, name, codec, namespace, interval, on_subscribed, config)
 
 

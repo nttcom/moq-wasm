@@ -1,31 +1,38 @@
 # broadcast
 
-Publishes an MSF broadcast, a catalog and its media tracks, into a MoQT
-relay. It is the publishing side shared by `ingest-gateway`, `moqtsink`,
-`ingest-gateway pull`, `moq-cli` and the Live Viewer's in-browser MP4 publisher, so
-one player plays and rewinds all of them.
+Publishes and reads MSF broadcasts (`catalog` + LOC/CMAF tracks + timelines) over `moqt` using `mediapack::MediaEvent` streams. Shared by `ingest-gateway`, `moqtsink`, `egress-gateway`, Live Viewer's MP4 publisher, and the SDKs so one player works across all of them.
 
-## Tracks
+> **Building a standalone Rust application?** Use [`sdk/rust`](../../sdk/rust/README.md) (`moq-wasm`) for reconnects, token refresh, and a simpler broadcast API.
+
+## Main entry points
+
+| Type | Role |
+| --- | --- |
+| `RelayConnection`, `MoqtTarget` | Connects to a relay (or wraps an existing `moqt::Session`) and owns shared broadcast state |
+| `Broadcast` | Namespace-scoped handle to announce, declare tracks, wait for subscribers, and send objects |
+| `BroadcastWriter` | Push `mediapack::MediaEvent`s (`push()`) to publish LOC/CMAF tracks, media timelines, and catalog updates with backpressure handling |
+| `MediaSource` | Pre-encoded frame/rendition publisher with optional `on_demand` publishing (used by the browser, Python, and Rust SDKs) |
+| `BroadcastReader` | Subscribes to the LOC video and audio tracks selected by `TrackChoice`, yielding aligned `mediapack::MediaEvent`s |
+
+## Track layout
 
 | Track | Packaging | Content |
 | --- | --- | --- |
-| `catalog` | MSF (draft-ietf-moq-msf-02) | Track list; `initDataList` carries the AAC config and the CMAF init segments |
-| `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-04) | H.264 Annex-B with in-band parameter sets and the capture timestamp |
-| `audio` | LOC | Raw AAC, G.711 A-law, Opus or MP3 frames |
-| `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample; AAC only for audio |
-| `<video>_timeline` | MSF media timeline | Per group: presentation time, location and encode wallclock |
-| `chat`, offered event timelines | MSF event timeline | Records the publisher writes, indexed by wallclock or by media time |
+| `catalog` | MSF (`draft-ietf-moq-msf-02`) | Track list; `initDataList` holds AAC config and CMAF init segments |
+| `video`, `video_<height>p` | LOC (`draft-ietf-moq-loc-04`) | H.264 Annex-B with in-band SPS/PPS and capture timestamp |
+| `audio` | LOC | Raw AAC, G.711 A-law, Opus, or MP3 frames |
+| `<track>_cmaf` | CMAF (`draft-ietf-moq-cmsf-01`) | One `moof` + `mdat` fragment per sample (AAC only for audio) |
+| `<video>_timeline` | MSF media timeline | Per-group presentation time, location, and encode wallclock |
+| `chat`, event timelines | MSF event timeline | Publisher records indexed by wallclock or media time |
 
-`video_720p` / `video_480p` / `video_360p` appear when the publisher
-transcodes (`crates/transcode`). A publisher can name its tracks otherwise
-(`SourceTracks`), as `ingest-gateway pull` does per camera profile.
+`video_720p` / `video_480p` / `video_360p` are added when transcoding ([`crates/transcode`](../transcode/README.md)). Customise track names via `SourceTracks` (e.g. `ingest-gateway pull` per camera profile).
 
 ## Behaviour
 
-- Groups start at video keyframes, and audio joins the group of the preceding keyframe, so one group id names the same instant on every track.
-- Group ids come from the wall clock, so a restarted publisher never reuses a location.
-- Tracks are sent with PUBLISH without waiting for a subscriber; CMAF tracks only while the relay subscribes to them.
-- Objects are kept for 60 s to answer FETCHes the relay cannot cover from its cache.
-- The catalog is re-sent when it changes and every 30 s.
+- Video keyframes open new groups; audio joins the current video group so group IDs align across tracks.
+- Group IDs are wall-clock based so publisher restarts never reuse locations.
+- LOC tracks are pushed with `PUBLISH` immediately (or only while subscribed when `on_demand` is enabled); CMAF tracks are served only while the relay subscribes to them.
+- Media objects are retained for 60 s to answer relay `FETCH` misses; `catalog` keeps only the newest object (`Retention::NewestOnly`).
+- `catalog` is re-sent on change and at least every 30 s.
 
-Design: [architecture document](../../docs/architecture/broadcast/architecture.md).
+Design: [architecture.md](../../docs/architecture/broadcast/architecture.md).

@@ -13,15 +13,9 @@ Publish and subscribe to live video, audio and data over Media over QUIC Transpo
 
 ## Run the demos locally
 
-Each demo builds and starts the browser examples on `http://localhost:5173`, a
-relay on `https://127.0.0.1:4433` and the services the demo needs with Docker
-Compose. You need Docker, Google Chrome, Node.js and OpenSSL.
+Each demo uses Docker Compose to run the browser examples (`http://localhost:5173`), a local relay (`https://127.0.0.1:4433`), and any required services. Prerequisites: Docker, Google Chrome, Node.js, and OpenSSL.
 
-`make chrome` opens the examples in a Chrome that trusts the relay's
-self-signed certificate, which the relay writes to `services/relay/keys/` on
-its first start. On Linux, run `make chrome:linux` and open
-`http://localhost:5173/moq-wasm/`. Stop a demo with
-`docker compose -f compose.demo.yml --profile <profile> down`.
+`make chrome` launches Chrome trusting the relay's self-signed certificate (generated in `services/relay/keys/` on first start). On Linux, run `make chrome:linux` and open `http://localhost:5173/moq-wasm/`. Stop any demo with `docker compose -f compose.demo.yml --profile <profile> down`.
 
 ### Meeting
 
@@ -30,8 +24,7 @@ docker compose -f compose.demo.yml up
 make chrome
 ```
 
-Open **Meeting**, select **Relay** › **Local** › **relay-a** and join. Join the
-same room from another tab of that Chrome to meet yourself.
+Open **Meeting**, select **Relay** › **Local** › **relay-a**, and join. Open another tab in the same Chrome window and join the same room to test with yourself.
 
 ### Live streaming
 
@@ -45,8 +38,7 @@ docker compose -f compose.demo.yml --profile live up
 make chrome
 ```
 
-Open **Live Viewer**, enter `anon/live/test` and press **Watch**. You should
-see the ffmpeg test pattern.
+Open **Live Viewer**, enter `anon/live/test`, and press **Watch** to see the ffmpeg test pattern.
 
 ### AI voice agent
 
@@ -57,10 +49,7 @@ GOOGLE_API_KEY=<API key> docker compose -f compose.demo.yml --profile voice-agen
 MOQT_FAKE_MEDIA=0 make chrome
 ```
 
-Select **一時トークン** at the top right of the example list, open **AI Voice
-Agent**, join and talk to the agent: only the page of a temporary app starts
-the bot. `MOQT_FAKE_MEDIA=0` gives the page your microphone instead of Chrome's
-test tone.
+Select **一時トークン** at the top right of the example list, open **AI Voice Agent**, join, and speak (only a temporary app's page starts a bot). `MOQT_FAKE_MEDIA=0` uses your real microphone instead of Chrome's test tone.
 
 ### Remote monitoring
 
@@ -69,24 +58,21 @@ docker compose -f compose.demo.yml --profile monitoring up
 make chrome BROWSER_EXAMPLE_PATH='/moq-wasm/examples/remote-monitoring/index.html?location=demo'
 ```
 
-Press **接続**. Three cameras, each an ffmpeg test pattern published with
-`moq-cli`, appear under the location `demo`.
+Press **接続** to view three ffmpeg test-pattern cameras published via `moq-cli` under location `demo`.
 
 ### Observability
 
-Add `-f compose.observability.yml` to any demo, in `up` and in `down`:
+Add `-f compose.observability.yml` to `up` and `down` on any demo:
 
 ```shell
 docker compose -f compose.demo.yml -f compose.observability.yml --profile live up
 ```
 
-Open **Observability** for the relay's sessions and tracks, and HyperDX on
-`http://localhost:8080` for the logs and traces of the relay and the pages.
+Open **Observability** for relay sessions and tracks, or HyperDX at `http://localhost:8080` for logs and traces.
 
 ## Development
 
-To change the code, run the services from source instead
-(`nix develop`, then `npm ci`), each command in its own terminal:
+To run services from source (`nix develop`, then `npm ci`), start each command in its own terminal:
 
 ```shell
 make relay          # relay on https://127.0.0.1:4433 and a local VTS

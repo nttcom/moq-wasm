@@ -1,36 +1,19 @@
 # gst-plugin-moqt
 
-GStreamer plugin with a `moqtsink` element that publishes H.264 video and AAC
-audio into a MoQT relay, as the tracks described in
-[`crates/broadcast`](../broadcast/README.md).
+GStreamer sink plugin (`moqtsink`) that publishes H.264 video and AAC audio as an MSF broadcast ([`crates/broadcast`](../broadcast/README.md)) to a MoQT relay.
 
-Needs GStreamer 1.20+ with `gst-plugins-base`, `-good` and `-bad`
-(`brew install gstreamer` on macOS).
+## Build & verify
+
+Requires GStreamer 1.20+ with `gst-plugins-base`, `-good`, and `-bad` (`brew install gstreamer` on macOS; `pkg-config`, `libgstreamer1.0-dev`, `gstreamer1.0-tools`, `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad` on Debian/Ubuntu). The SRT sender step below also uses `ffmpeg`:
 
 ```shell
 make gst-plugin
-gst-inspect-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib moqtsink
+gst-inspect-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib moqtsink  # Linux: libgstmoqt.so
 ```
 
-## Element
+## Quickstart: Publish an SRT stream
 
-| Request sink pad | Caps | Put in front |
-| --- | --- | --- |
-| `video` | `video/x-h264, stream-format=byte-stream, alignment=au` | `h264parse config-interval=-1`, so every keyframe carries its SPS/PPS |
-| `audio` | `audio/mpeg, mpegversion=4, stream-format=raw` | `aacparse`, so the caps carry `codec_data` |
-
-| Property | Meaning |
-| --- | --- |
-| `relay-url` | `moqt://host:port` for QUIC or `https://host:port` for WebTransport (required) |
-| `namespace` | Slash-separated track namespace, e.g. `anon/live/test` (required) |
-| `auth-token` | JWT presented to the relay in CLIENT_SETUP |
-| `insecure-skip-tls-verify` | Skip TLS certificate verification, for a local relay with a self-signed certificate only |
-
-- Connects when the pipeline goes to PAUSED, so a wrong relay URL fails the pipeline start.
-- Buffers about three seconds of media; when the relay does not keep up, it drops media until the next keyframe fits and logs the counts at WARN.
-- Logs through `tracing` at `info`; `RUST_LOG` changes it.
-
-## SRT to MoQT
+Run each command in its own terminal from the repository root, then watch `anon/live/test` in Live Viewer:
 
 ```shell
 make relay
@@ -38,7 +21,7 @@ make gst-srt-publish          # SRT listener on 0.0.0.0:9000 -> anon/live/test
 make ffmpeg-srt-bbb-local     # or make ffmpeg-srt
 ```
 
-`make gst-srt-publish` runs:
+`make gst-srt-publish` runs (override with `GST_MOQT_URL`, `GST_SRT_ADDR`, and `GST_NAMESPACE`):
 
 ```shell
 gst-launch-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib -e \
@@ -48,8 +31,23 @@ gst-launch-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib -e \
   moqtsink name=moqt relay-url=https://127.0.0.1:4433 insecure-skip-tls-verify=true namespace=anon/live/test
 ```
 
-`GST_MOQT_URL`, `GST_SRT_ADDR` and `GST_NAMESPACE` override the relay, the SRT
-listen address and the namespace.
+## Pads, properties & behaviour
+
+| Request sink pad | Caps | Required upstream element |
+| --- | --- | --- |
+| `video` | `video/x-h264, stream-format=byte-stream, alignment=au` | `h264parse config-interval=-1` (in-band SPS/PPS on keyframes) |
+| `audio` | `audio/mpeg, mpegversion=4, stream-format=raw` | `aacparse` (provides `codec_data`) |
+
+| Property | Required | Meaning |
+| --- | --- | --- |
+| `relay-url` | yes | `moqt://host:port` (QUIC) or `https://host:port` (WebTransport) |
+| `namespace` | yes | `/`-separated namespace, e.g. `anon/live/test` |
+| `auth-token` | no | JWT presented in `CLIENT_SETUP` (needed outside `anon/**`) |
+| `insecure-skip-tls-verify` | no | Skip TLS verification (local self-signed relays only) |
+
+- Connects on `PAUSED`, failing pipeline startup immediately if the relay is unreachable.
+- Buffers ~3 s of media; under backpressure, drops frames until the next keyframe fits and logs drop counts at `WARN`.
+- Logs via `tracing` at `info` (override with `RUST_LOG`).
 
 ## E2E
 

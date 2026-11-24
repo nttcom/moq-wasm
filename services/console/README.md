@@ -1,36 +1,30 @@
 # console
 
-Backend of the internal MoQ console. It runs behind IAP on Cloud Run, takes
-the employee's identity (`sub`) from the IAP assertion and serves their apps
-from the app registry.
-Design: [architecture document](../../docs/architecture/console/architecture.md).
+Backend for the internal MoQ console. Runs behind IAP on Cloud Run, reads user identity (`sub`) from the IAP assertion, and manages apps in `app-registry`. Design: [architecture.md](../../docs/architecture/console/architecture.md).
 
 ## API
 
-| Route | Body | Answer |
+| Route | Body | Response |
 | --- | --- | --- |
 | `GET /api/me` | | `{ "email": …, "relayUrl": … }` |
 | `GET /api/apps` | | `{ "apps": [{ "appId", "name", "createdAt", "rotatedAt" }] }` |
-| `POST /api/apps` | `{ "name": "camera site 1" }` | `201 { "app": …, "secret": … }`, `400` beyond 20 apps per employee |
+| `POST /api/apps` | `{ "name": "camera site 1" }` | `201 { "app": …, "secret": … }` (`400` above 20 apps per user) |
 | `POST /api/apps/{appId}/tokens` | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }` |
-| `POST /api/apps/{appId}/secret` | | `{ "app": …, "secret": … }`; tokens issued before stop working |
+| `POST /api/apps/{appId}/secret` | | `{ "app": …, "secret": … }` (invalidates earlier tokens) |
 | `DELETE /api/apps/{appId}` | | `204` |
 
-Requests other than `GET` must carry `X-Console-Request`. Only creating an
-app and rotating its secret return the `secret`, once.
+Non-`GET` requests require `X-Console-Request`. The app `secret` is returned only on creation and rotation.
 
 ## Signing tokens on your own server
 
-A service that hands out tokens signs them itself with the app's secret: a
-compact JWS with the header `{"alg":"HS256"}`, keyed by the UTF-8 bytes of the
-secret string as shown (do not base64-decode it), and these claims:
+Sign a compact HS256 JWS (`{"alg":"HS256"}`) keyed by the raw UTF-8 bytes of the app secret (do not base64-decode it):
 
 | Claim | Value |
 | --- | --- |
-| `appId` | The app's `appId` |
-| `publish` | Path under the app the token may publish to; `""` for the whole app; omitted for none |
-| `subscribe` | The same for subscribing |
-| `iat`, `exp` | Unix seconds; the relay refuses `exp - iat` over 24 hours |
+| `appId` | App's `appId` |
+| `publish` | Allowed publish prefix under `appId` (`""` for whole app; omit to deny) |
+| `subscribe` | Allowed subscribe prefix under `appId` (`""` for whole app; omit to deny) |
+| `iat`, `exp` | Unix seconds (`exp - iat` must be ≤ 24 h) |
 
 ```python
 import base64, hashlib, hmac, json, time
@@ -46,24 +40,20 @@ def sign(app_id: str, secret: str, publish: str, ttl: int) -> str:
     return signing_input + "." + b64url(signature)
 ```
 
-To start a recorder or an AI bot in a room, your server signs a launch token
-the same way and calls `bot-dispatcher` ([its README](../bot-dispatcher/README.md)).
+For starting bots, sign a launch token the same way and call `bot-dispatcher` ([README](../bot-dispatcher/README.md)).
 
 ## Running locally
 
-Without IAP, give the console a fixed identity and a registry file, then open
-the pages through the Vite dev server, which forwards `/api` to the console:
+Set a dev `sub` and local registry file, then run the Vite dev server (which proxies `/api`):
 
-```
+```shell
 CONSOLE_DEV_SUB=dev CONSOLE_REGISTRY_FILE=services/vts/apps.example.json cargo run -p console
 npm --prefix services/console/web install
 npm --prefix services/console/web run dev
 ```
 
-On Cloud Run, set `CONSOLE_IAP_AUDIENCE` and `CONSOLE_REGISTRY_BUCKET`
-instead; `CONSOLE_DEV_SUB` is refused there. The image serves the built pages
-itself (`CONSOLE_STATIC_DIR`):
+On Cloud Run, set `CONSOLE_IAP_AUDIENCE` and `CONSOLE_REGISTRY_BUCKET` instead (`CONSOLE_DEV_SUB` is rejected). The container serves built frontend assets from `CONSOLE_STATIC_DIR`:
 
-```
+```shell
 docker build -f services/console/Dockerfile -t moqt-console .
 ```

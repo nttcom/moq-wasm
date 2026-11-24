@@ -63,11 +63,8 @@ impl fmt::Display for MediaSourceError {
 
 impl std::error::Error for MediaSourceError {}
 
-/// One source of a broadcast fed with frames encoded elsewhere, the shape
-/// the browser and Python SDKs share: a video track with its renditions and
-/// an audio track, published as LOC with the catalog and media timeline the
-/// `BroadcastWriter` builds. Creating one spawns its publish task, so it
-/// needs the runtime `moqt::executor` spawns on.
+/// Publishes pre-encoded video/audio LOC tracks, renditions, catalog, and media timeline to a `Broadcast`.
+/// `new` spawns a publish task; call inside `moqt::executor`'s runtime (Tokio on native).
 pub struct MediaSource {
     writer: BroadcastWriter,
     /// Reads a frame as it reads a received LOC object: into the track's
@@ -183,10 +180,8 @@ impl MediaSource {
         }))
     }
 
-    /// A rendition of the video in the track `<video>_<name>`, whose groups
-    /// start on the same frames and take the same group ids as the video's
-    /// (draft-ietf-moq-cmsf-01 §3.2). It joins the video's switching set, so
-    /// a rendition in another codec is an alternative to the video.
+    /// Add a video rendition `<video>_<name>` in the video's switching set (`draft-ietf-moq-cmsf-01` §3.2).
+    /// Feed the same pictures and keyframe positions as the primary video (`bitrate` in bits/s).
     pub fn add_rendition(
         &mut self,
         name: &str,
@@ -217,11 +212,8 @@ impl MediaSource {
         MediaRendition { task, video: None }
     }
 
-    /// Ends the video or the audio with PUBLISH_DONE and sends the catalog
-    /// without it; removing the video removes its renditions. Stop pushing
-    /// its media first: configuring it again and pushing publishes it again.
-    /// The future does not borrow the source, so the other kind can be
-    /// pushed meanwhile.
+    /// End video (plus renditions) or audio with `PUBLISH_DONE` and update the catalog.
+    /// Stop pushing first; re-configure and push to resume.
     pub fn remove_track(
         &self,
         kind: TrackKind,
