@@ -51,11 +51,12 @@ def launch_token(app_id: str, secret: str, bots: str = "") -> str:
 
 ## API
 
-Pass the launch token as `Authorization: Bearer <token>` on all `/bots/*` routes (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific):
+Pass the launch token as `Authorization: Bearer <token>` on `/bots` and `/bots/*` routes (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific):
 
 | Route | Response |
 | --- | --- |
 | `POST /bots/{type}` `{"namespace_prefix", "options"}` | `201` bot record |
+| `GET /bots?namespace_prefix=` | `200 {"bots": […]}` latest bot of each configured type that had one in that room (type-name order; `[]` if none) |
 | `GET /bots/{type}?namespace_prefix=` | `200` latest bot for that room/type, or `404` |
 | `GET /bots/{type}/{id}` | `200` bot record |
 | `DELETE /bots/{type}/{id}` | `202` (stops on next heartbeat) |
