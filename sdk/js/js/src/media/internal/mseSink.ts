@@ -82,7 +82,11 @@ export class MseSink {
     this.seekingToNewestRange = true
   }
 
+  /// `undefined` once closed as well, when the SourceBuffers are gone.
   bufferedEnd(): number | undefined {
+    if (this.closed) {
+      return undefined
+    }
     const buffered = this.video?.sourceBuffer.buffered
     return buffered && buffered.length > 0 ? buffered.end(buffered.length - 1) : undefined
   }
@@ -100,10 +104,20 @@ export class MseSink {
     URL.revokeObjectURL(this.objectUrl)
   }
 
+  /// Detaching the MediaSource removes its SourceBuffers, whose `buffered`
+  /// then throws.
+  private get closed(): boolean {
+    return this.mediaSource.readyState === 'closed'
+  }
+
   private attach(source: MseTrackSource): Buffered {
     const sourceBuffer = this.mediaSource.addSourceBuffer(source.mimeType)
     const buffered: Buffered = { sourceBuffer, queue: [] }
+    // A close aborts the append in progress, which still ends with `updateend`.
     sourceBuffer.addEventListener('updateend', () => {
+      if (this.closed) {
+        return
+      }
       this.startWhenBuffered()
       this.seekToNewestRangeWhenBuffered()
       this.evictBehindPlayhead(buffered)
