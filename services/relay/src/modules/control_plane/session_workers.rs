@@ -202,6 +202,7 @@ mod tests {
             self.register_session(session_id).await;
             self.local_pub_sub_directory.register_publish_namespace(
                 session_id,
+                0,
                 track_namespace.to_string(),
                 SessionPeer::Client,
             );

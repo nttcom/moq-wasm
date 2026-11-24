@@ -732,10 +732,11 @@ mod tests {
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(
             PUBLISHER_SESSION,
+            0,
             "ns/alice".to_string(),
             SessionPeer::Client,
         );
-        table.register_publish_namespace(BOB_SESSION, "ns/bob".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(BOB_SESSION, 0, "ns/bob".to_string(), SessionPeer::Client);
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let (session, subscriber) = recorded_session_holding_publish_namespace(gate.clone());
         let ctx = Arc::new(downstream_publish_context_with_session(
@@ -767,7 +768,7 @@ mod tests {
 
         // Act: the other namespace is withdrawn while the first PUBLISH_NAMESPACE is held
         ctx.table
-            .unregister_publish_namespace(withdrawn_session, withdrawn);
+            .unregister_publish_namespace(withdrawn_session, None, withdrawn);
         PublishNamespaceDone::notify_local_subscribers(
             withdrawn_session,
             true,
@@ -814,6 +815,7 @@ mod tests {
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(
             PUBLISHER_SESSION,
+            0,
             "ns/alice".to_string(),
             SessionPeer::Client,
         );
@@ -869,11 +871,13 @@ mod tests {
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(
             PUBLISHER_SESSION,
+            0,
             "ns/alice".to_string(),
             SessionPeer::Client,
         );
         table.register_publish_namespace(
             PUBLISHER_RELAY_SESSION,
+            0,
             "ns/bob".to_string(),
             SessionPeer::Relay,
         );
@@ -1001,7 +1005,12 @@ mod tests {
     async fn a_tracks_subscription_is_sent_only_tracks_that_arrived_by_publish() {
         // Arrange: the track is known from an upstream SUBSCRIBE to a PUBLISH_NAMESPACE publisher
         let table = Arc::new(table_with_upstream(ProducerOrigin::Subscribe).0);
-        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            0,
+            "ns".to_string(),
+            SessionPeer::Client,
+        );
         let ctx = downstream_publish_context(table, || Ok(true)).await;
         let handler = MockSubscribeNamespaceHandler {
             interest: NamespaceInterest::Tracks,
@@ -1199,6 +1208,7 @@ mod tests {
         );
         table.register_publish_namespace(
             PUBLISHER_SESSION,
+            0,
             "room/alice".to_string(),
             SessionPeer::Client,
         );
@@ -1295,7 +1305,7 @@ mod tests {
         )
         .await;
         ctx.table
-            .unregister_publish_namespace(PUBLISHER_SESSION, "room/alice");
+            .unregister_publish_namespace(PUBLISHER_SESSION, None, "room/alice");
 
         // Act
         PublishNamespaceDone::notify_local_subscribers(

@@ -32,7 +32,7 @@ impl PublishNamespaceDone {
             "PUBLISH_NAMESPACE_DONE received"
         );
 
-        let removal = table.unregister_publish_namespace(session_id, track_namespace);
+        let removal = table.unregister_publish_namespace(session_id, None, track_namespace);
         let is_origin_client = super::is_origin_client(session_id, forwarder).await;
         // A relay session may withdraw a namespace this relay never registered
         // for it, so only a client's DONE requires its own registration.
@@ -273,7 +273,7 @@ mod tests {
     ) -> InMemoryLocalPubSubDirectory {
         let table = InMemoryLocalPubSubDirectory::new();
         for &(publisher, peer) in publishers {
-            table.register_publish_namespace(publisher, NAMESPACE.to_string(), peer);
+            table.register_publish_namespace(publisher, 0, NAMESPACE.to_string(), peer);
         }
         table.register_subscribe_namespace(
             NAMESPACE_SUBSCRIBER,
@@ -321,7 +321,7 @@ mod tests {
             (LEAVING_PUBLISHER, SessionPeer::Client),
             (REMAINING_PUBLISHER, SessionPeer::Relay),
         ] {
-            table.register_publish_namespace(publisher, NAMESPACE.to_string(), peer);
+            table.register_publish_namespace(publisher, 0, NAMESPACE.to_string(), peer);
         }
         table.register_subscribe_namespace(
             NAMESPACE_SUBSCRIBER,
@@ -349,6 +349,7 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(
             LEAVING_PUBLISHER,
+            0,
             NAMESPACE.to_string(),
             SessionPeer::Relay,
         );
@@ -379,6 +380,7 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(
             PUBLISHER_RELAY,
+            0,
             NAMESPACE.to_string(),
             SessionPeer::Relay,
         );
@@ -456,6 +458,7 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(
             LEAVING_PUBLISHER,
+            0,
             NAMESPACE.to_string(),
             SessionPeer::Client,
         );

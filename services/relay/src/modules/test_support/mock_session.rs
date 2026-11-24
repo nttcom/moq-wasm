@@ -1441,6 +1441,9 @@ impl PublishNamespaceHandler for MockPublishNamespaceHandler {
     fn trace_context(&self) -> Option<&moqt::TraceContext> {
         None
     }
+    fn request_id(&self) -> u64 {
+        0
+    }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

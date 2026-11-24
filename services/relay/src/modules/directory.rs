@@ -112,11 +112,19 @@ pub(crate) struct RegisteredPublish {
     handler: Arc<dyn PublishHandler>,
 }
 
-// Client publishers own the Redis route for their namespace, so the
-// directory tracks the peer to detect when the last client leaves.
-type PeersByNamespace = DashMap<String, DashMap<SessionId, SessionPeer>>;
+/// One PUBLISH_NAMESPACE: the session that sent it and its Request ID.
+/// A session's earlier PUBLISH_NAMESPACE of a namespace can be withdrawn
+/// after its later one was accepted.
+type NamespacePublication = (SessionId, u64);
 
-fn has_client(peers: &DashMap<SessionId, SessionPeer>) -> bool {
+/// A namespace's publications and the peer of each. Client publishers own
+/// the Redis route for their namespace, so the directory tracks the peer to
+/// detect when the last client leaves.
+type NamespacePublishers = DashMap<NamespacePublication, SessionPeer>;
+
+type PeersByNamespace = DashMap<String, NamespacePublishers>;
+
+fn has_client(peers: &NamespacePublishers) -> bool {
     peers
         .iter()
         .any(|peer| *peer.value() == SessionPeer::Client)
@@ -129,9 +137,9 @@ fn remove_peer_from_namespaces(
 ) -> Vec<String> {
     let mut withdrawn = Vec::new();
     namespaces.retain(|namespace, publishers| {
-        let withdraw = match publishers.remove(&session_id) {
-            Some((_, SessionPeer::Client)) => !has_client(publishers),
-            Some((_, SessionPeer::Relay)) => publishers.is_empty(),
+        let withdraw = match remove_session_publications(publishers, session_id) {
+            Some(SessionPeer::Client) => !has_client(publishers),
+            Some(SessionPeer::Relay) => publishers.is_empty(),
             None => false,
         };
         if withdraw {
@@ -167,16 +175,36 @@ pub(crate) enum PeerRemoval {
     NoClientsRemain,
 }
 
+/// Removes every publication of the session; returns its peer when it had one.
+fn remove_session_publications(
+    publishers: &NamespacePublishers,
+    session_id: SessionId,
+) -> Option<SessionPeer> {
+    let mut removed = None;
+    publishers.retain(|&(publisher_session_id, _), peer| {
+        if publisher_session_id != session_id {
+            return true;
+        }
+        removed = Some(*peer);
+        false
+    });
+    removed
+}
+
 fn unregister_peer(
     namespaces: &PeersByNamespace,
     session_id: SessionId,
+    request_id: Option<u64>,
     namespace: &str,
 ) -> PeerRemoval {
     let Some(peers) = namespaces.get(namespace) else {
         return PeerRemoval::NotRegistered;
     };
 
-    let removed = peers.remove(&session_id).is_some();
+    let removed = match request_id {
+        Some(request_id) => peers.remove(&(session_id, request_id)).is_some(),
+        None => remove_session_publications(&peers, session_id).is_some(),
+    };
     let clients_remain = has_client(&peers);
     let is_empty = peers.is_empty();
     drop(peers);
@@ -193,7 +221,7 @@ fn unregister_peer(
 }
 
 pub(crate) struct InMemoryLocalPubSubDirectory {
-    pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, SessionPeer>>,
+    pub(crate) publisher_namespaces: DashMap<TrackNamespace, NamespacePublishers>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, NamespaceSubscriptions>,
     pub(crate) published_handlers: RwLock<Vec<RegisteredPublish>>,
     pub(crate) upstream_tracks: DashMap<TrackKey, Track>,
@@ -360,33 +388,42 @@ impl InMemoryLocalPubSubDirectory {
         level = "debug",
         name = "relay.local_pub_sub_directory.register_publish_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace, session_peer = peer.kind())
+        fields(session_id = %session_id, request_id = request_id, track_namespace = %track_namespace, session_peer = peer.kind())
     )]
     pub(crate) fn register_publish_namespace(
         &self,
         session_id: SessionId,
+        request_id: u64,
         track_namespace: String,
         peer: SessionPeer,
     ) {
         self.publisher_namespaces
             .entry(track_namespace)
             .or_default()
-            .insert(session_id, peer);
+            .insert((session_id, request_id), peer);
     }
 
+    /// Withdraws the session's PUBLISH_NAMESPACE `request_id`, or all of its
+    /// PUBLISH_NAMESPACEs of the namespace when `request_id` is `None`.
     /// `NoClientsRemain` tells the caller it may clean up the Redis route.
     #[tracing::instrument(
         level = "debug",
         name = "relay.local_pub_sub_directory.unregister_publish_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace = %track_namespace)
+        fields(session_id = %session_id, request_id = ?request_id, track_namespace = %track_namespace)
     )]
     pub(crate) fn unregister_publish_namespace(
         &self,
         session_id: SessionId,
+        request_id: Option<u64>,
         track_namespace: &str,
     ) -> PeerRemoval {
-        unregister_peer(&self.publisher_namespaces, session_id, track_namespace)
+        unregister_peer(
+            &self.publisher_namespaces,
+            session_id,
+            request_id,
+            track_namespace,
+        )
     }
 
     pub(crate) fn has_namespace_publishers(&self, track_namespace: &str) -> bool {
@@ -435,19 +472,20 @@ impl InMemoryLocalPubSubDirectory {
                 continue;
             }
 
-            let relay_session_ids: Vec<SessionId> = entry
+            let relay_publications: Vec<NamespacePublication> = entry
                 .value()
                 .iter()
-                .filter(|session| *session.value() == SessionPeer::Relay)
-                .map(|session| *session.key())
+                .filter(|publication| *publication.value() == SessionPeer::Relay)
+                .map(|publication| *publication.key())
                 .collect();
-            for relay_session_id in relay_session_ids {
+            for (relay_session_id, request_id) in relay_publications {
                 tracing::info!(
                     session_id = %relay_session_id,
+                    request_id,
                     track_namespace = %entry.key(),
                     "purged relay-origin publish namespace"
                 );
-                entry.value().remove(&relay_session_id);
+                entry.value().remove(&(relay_session_id, request_id));
             }
             if entry.value().is_empty() {
                 empty_namespaces.push(entry.key().clone());
@@ -732,8 +770,8 @@ impl InMemoryLocalPubSubDirectory {
             publishers.extend(
                 namespace_publishers
                     .iter()
-                    .filter(|session| *session.value() == SessionPeer::Client)
-                    .map(|session| *session.key()),
+                    .filter(|publication| *publication.value() == SessionPeer::Client)
+                    .map(|publication| publication.key().0),
             );
         }
         publishers.extend(
@@ -1441,7 +1479,7 @@ mod tests {
     async fn a_track_keeps_a_publisher_while_another_session_publishes_its_namespace() {
         // Arrange: session 1 serves the track, session 2 publishes the namespace
         let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_publish_namespace(2, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "ns".to_string(), SessionPeer::Client);
 
         // Act
         table.remove_session(PUBLISHER_SESSION);
@@ -1535,11 +1573,11 @@ mod tests {
     fn a_namespace_is_published_by_a_client_only_while_a_client_session_publishes_it() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "ns".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(2, "ns".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(1, 0, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "ns".to_string(), SessionPeer::Relay);
 
         // Act
-        table.unregister_publish_namespace(1, "ns");
+        table.unregister_publish_namespace(1, None, "ns");
 
         // Assert
         assert!(!table.has_client_namespace_publisher("ns"));
@@ -1563,8 +1601,8 @@ mod tests {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
 
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Client);
         table.register_subscribe_namespace(
             1,
             "room".to_string(),
@@ -1618,8 +1656,8 @@ mod tests {
             "room".to_string(),
             namespaces_and_tracks(SessionPeer::Client),
         );
-        table.register_publish_namespace(2, "room1/member".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(3, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "room1/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(3, 0, "room/member".to_string(), SessionPeer::Client);
 
         // Act
         let subscribers =
@@ -1877,7 +1915,12 @@ mod tests {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         for track_namespace in ["APP/site1/cam1", "APP/site10", "APP/site10/cam1"] {
-            table.register_publish_namespace(1, track_namespace.to_string(), SessionPeer::Client);
+            table.register_publish_namespace(
+                1,
+                0,
+                track_namespace.to_string(),
+                SessionPeer::Client,
+            );
             table.register_publish(
                 1,
                 SessionPeer::Client,
@@ -1956,8 +1999,8 @@ mod tests {
     fn remove_session_reports_publish_namespace_when_last_client_publisher_leaves() {
         // Arrange: Register one client-origin publisher and one relay-origin publisher.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Relay);
 
         // Act: Disconnect the client-origin publisher.
         let removed = table.remove_session(1);
@@ -1971,7 +2014,7 @@ mod tests {
             table
                 .publisher_namespaces
                 .get("room/member")
-                .is_some_and(|publishers| publishers.contains_key(&2))
+                .is_some_and(|publishers| publishers.contains_key(&(2, 0)))
         );
     }
 
@@ -1979,8 +2022,8 @@ mod tests {
     fn remove_session_reports_a_relay_namespace_when_its_last_publisher_leaves() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Relay);
-        table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Relay);
 
         // Act
         let first = table.remove_session(1);
@@ -1996,8 +2039,8 @@ mod tests {
         // Arrange: A relay-origin namespace learned over an inter-relay session,
         // alongside a local client publisher in another namespace.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(10, "research/ghost".to_string(), SessionPeer::Relay);
-        table.register_publish_namespace(1, "research/local".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(10, 0, "research/ghost".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(1, 0, "research/local".to_string(), SessionPeer::Client);
 
         // Act: The last client subscriber for the prefix is gone.
         table.purge_relay_publish_namespaces("research");
@@ -2011,7 +2054,7 @@ mod tests {
     fn purge_relay_publish_namespaces_keeps_entries_covered_by_client_prefix() {
         // Arrange: A relay-origin namespace still watched via another client prefix.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(10, "research/ghost".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(10, 0, "research/ghost".to_string(), SessionPeer::Relay);
         table.register_subscribe_namespace(
             2,
             "research".to_string(),
@@ -2029,12 +2072,12 @@ mod tests {
     fn unregister_publish_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client publishers for the same namespace.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Client);
 
         // Act: Remove publishers one by one.
-        let first = table.unregister_publish_namespace(1, "room/member");
-        let last = table.unregister_publish_namespace(2, "room/member");
+        let first = table.unregister_publish_namespace(1, None, "room/member");
+        let last = table.unregister_publish_namespace(2, None, "room/member");
 
         // Assert: Only the final withdrawal reports that no client remains.
         assert_eq!(first, PeerRemoval::ClientsRemain);
@@ -2043,14 +2086,46 @@ mod tests {
     }
 
     #[test]
+    fn unregister_publish_namespace_withdraws_only_the_named_request() {
+        // Arrange: one session published the namespace twice
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(1, 2, "room/member".to_string(), SessionPeer::Client);
+
+        // Act
+        let earlier = table.unregister_publish_namespace(1, Some(0), "room/member");
+        let later = table.unregister_publish_namespace(1, Some(2), "room/member");
+
+        // Assert
+        assert_eq!(earlier, PeerRemoval::ClientsRemain);
+        assert_eq!(later, PeerRemoval::NoClientsRemain);
+        assert!(table.publisher_namespaces.get("room/member").is_none());
+    }
+
+    #[test]
+    fn unregister_publish_namespace_without_a_request_withdraws_all_of_the_sessions() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(1, 2, "room/member".to_string(), SessionPeer::Client);
+
+        // Act
+        let removal = table.unregister_publish_namespace(1, None, "room/member");
+
+        // Assert: draft-14's PUBLISH_NAMESPACE_DONE names only the namespace
+        assert_eq!(removal, PeerRemoval::NoClientsRemain);
+        assert!(table.publisher_namespaces.get("room/member").is_none());
+    }
+
+    #[test]
     fn unregister_publish_namespace_reports_a_session_that_never_published_it() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Relay);
 
         // Act
-        let unknown_namespace = table.unregister_publish_namespace(2, "room/other");
-        let other_publisher = table.unregister_publish_namespace(2, "room/member");
+        let unknown_namespace = table.unregister_publish_namespace(2, None, "room/other");
+        let other_publisher = table.unregister_publish_namespace(2, None, "room/member");
 
         // Assert: the relay publisher is left registered
         assert_eq!(unknown_namespace, PeerRemoval::NotRegistered);
@@ -2059,7 +2134,7 @@ mod tests {
             table
                 .publisher_namespaces
                 .get("room/member")
-                .is_some_and(|publishers| publishers.contains_key(&1))
+                .is_some_and(|publishers| publishers.contains_key(&(1, 0)))
         );
     }
 
@@ -2067,11 +2142,11 @@ mod tests {
     fn unregister_publish_namespace_ignores_remaining_relay_publishers() {
         // Arrange: Register a client publisher alongside a relay publisher.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Relay);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Relay);
 
         // Act: Withdraw the final client publisher while the relay publisher remains.
-        let removal = table.unregister_publish_namespace(1, "room/member");
+        let removal = table.unregister_publish_namespace(1, None, "room/member");
 
         // Assert: Route cleanup is allowed while the relay publisher stays registered.
         assert_eq!(removal, PeerRemoval::NoClientsRemain);
@@ -2079,7 +2154,7 @@ mod tests {
             table
                 .publisher_namespaces
                 .get("room/member")
-                .is_some_and(|publishers| publishers.contains_key(&2))
+                .is_some_and(|publishers| publishers.contains_key(&(2, 0)))
         );
     }
 
@@ -2088,8 +2163,8 @@ mod tests {
         // Arrange: Register multiple publishers for the same namespace and track.
         let table = InMemoryLocalPubSubDirectory::new();
 
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
-        table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Client);
         table.register_publish(
             1,
             SessionPeer::Client,
@@ -2825,7 +2900,7 @@ mod tests {
     async fn finds_the_upstream_track_separately_from_publishers() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
         let track_key = TrackKey::new("room/member", "video");
         table.register_upstream_subscription(
             track_key.clone(),

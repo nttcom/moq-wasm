@@ -407,6 +407,7 @@ impl Harness {
                 };
                 self.directory.register_publish_namespace(
                     session_id,
+                    0,
                     NAMESPACES[namespace].to_string(),
                     peer,
                 );
@@ -435,8 +436,11 @@ impl Harness {
                 {
                     return Ok(Vec::new());
                 }
-                self.directory
-                    .unregister_publish_namespace(session_id, NAMESPACES[namespace]);
+                self.directory.unregister_publish_namespace(
+                    session_id,
+                    None,
+                    NAMESPACES[namespace],
+                );
             }
             Operation::SubscribeNamespace {
                 slot,
@@ -926,10 +930,12 @@ impl Harness {
             !indexed,
             "removed session {session_id} still indexes a consumer"
         );
-        let publishes_namespace = directory
-            .publisher_namespaces
-            .iter()
-            .any(|entry| entry.value().contains_key(&session_id));
+        let publishes_namespace = directory.publisher_namespaces.iter().any(|entry| {
+            entry
+                .value()
+                .iter()
+                .any(|publication| publication.key().0 == session_id)
+        });
         prop_assert!(
             !publishes_namespace,
             "removed session {session_id} still publishes a namespace"
@@ -1076,7 +1082,7 @@ impl Harness {
                 entry
                     .value()
                     .iter()
-                    .map(|publisher| ((*publisher.key(), namespace), *publisher.value()))
+                    .map(|publisher| ((publisher.key().0, namespace), *publisher.value()))
                     .collect::<Vec<_>>()
             })
             .collect();

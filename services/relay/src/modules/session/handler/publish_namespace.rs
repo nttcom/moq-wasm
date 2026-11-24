@@ -6,6 +6,7 @@ use crate::logging::mark_current_span_failed;
 #[async_trait]
 pub(crate) trait PublishNamespaceHandler: 'static + Send + Sync {
     fn trace_context(&self) -> Option<&moqt::TraceContext>;
+    fn request_id(&self) -> u64;
     fn track_namespace(&self) -> &str;
     fn track_namespace_tuple(&self) -> &[String];
     async fn ok(&self) -> Result<(), moqt::TransportSendError>;
@@ -20,6 +21,9 @@ pub(crate) trait PublishNamespaceHandler: 'static + Send + Sync {
 impl PublishNamespaceHandler for moqt::namespace::PublishNamespaceHandler {
     fn trace_context(&self) -> Option<&moqt::TraceContext> {
         moqt::namespace::PublishNamespaceHandler::trace_context(self)
+    }
+    fn request_id(&self) -> u64 {
+        moqt::namespace::PublishNamespaceHandler::request_id(self)
     }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
