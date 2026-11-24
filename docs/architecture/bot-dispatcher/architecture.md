@@ -164,7 +164,7 @@ visible to a bot, a room of listeners who publish nothing counts as empty. A
 registered app's server that knows when its room ends may opt out per launch
 with `stay_when_empty: true` (default `false`; not stored or returned on the
 bot record): `bot-dispatcher` then passes the type's `max_seconds` as
-`--grace-seconds`, so the bot ends on `DELETE`, at `max_seconds`, or on SIGTERM.
+`--grace-seconds`, so an empty room does not end the bot before its longest run.
 `services/temporary-apps` refuses `stay_when_empty: true` with `403 forbidden`.
 
 ### Launchers
