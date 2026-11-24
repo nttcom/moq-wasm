@@ -10,8 +10,10 @@ Accepted
 
 ## What
 
-Add `base64` as a dependency of `egress-gateway`. The broadcast reader decodes
-the audio track's AudioSpecificConfig from its catalog `initDataList` entry.
+`broadcast` depends on `base64`. The writer encodes a LOC audio track's
+AudioSpecificConfig and the CMAF init segments into the catalog
+(`broadcast.rs`), and the reader decodes the AudioSpecificConfig
+(`selection.rs`).
 
 ## Context
 
@@ -22,11 +24,10 @@ decoded bytes, and the LOC objects themselves do not repeat them.
 
 ## Alternatives
 
-- Decode Base64 by hand. A second implementation of a routine `broadcast`,
-  `mediapack` and three other crates already take from `base64`.
+- Decode Base64 by hand. A second implementation of a routine `mediapack`
+  and other crates already take from `base64`.
 - Have `msf` decode `initDataList` entries. Moves a decoding concern into the
-  catalog model crate for one caller; `broadcast`, which encodes the entries,
-  does so itself as well.
+  catalog model crate.
 
 ## Decision
 
