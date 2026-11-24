@@ -5,6 +5,7 @@ import { encoderConfigForInput } from './audioInputFormat'
 import { pcmFrames } from './pcmCapture'
 import { EncoderSamplePosition } from './encoderSamplePosition'
 import { workerLog } from '../../../core/log'
+import type { AudioInput } from './publishStats'
 
 const TARGET = 'moq-wasm::media::audio_encoder'
 
@@ -66,7 +67,14 @@ async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) 
       return
     }
     captureTimestamps.recordCapture(samplePosition.take(audio))
-    pendingAudioLevel = louderAudioLevel(pendingAudioLevel, measureAudioLevel(audio))
+    const audioLevel = measureAudioLevel(audio)
+    pendingAudioLevel = louderAudioLevel(pendingAudioLevel, audioLevel)
+    const input: AudioInput = {
+      sampleRate: audio.sampleRate,
+      numberOfChannels: audio.numberOfChannels,
+      level: audioLevel.level
+    }
+    self.postMessage({ type: 'input', input })
     encoder.encode(audio)
     audio.close()
   }

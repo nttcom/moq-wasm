@@ -4,7 +4,9 @@ use crate::otlp::{
     Kind::{self, Counter, Gauge},
     Metrics, string_attribute, time_unix_nano,
 };
-use telemetry::client_report::{ClientLog, ClientReport, ClientSpan, PlayerStatValues};
+use telemetry::client_report::{
+    AudioPublisherStatValues, ClientLog, ClientReport, ClientSpan, PlayerStatValues,
+};
 
 const SCOPE_NAME: &str = "client-telemetry";
 const SPAN_KIND_INTERNAL: u8 = 1;
@@ -13,7 +15,7 @@ const STATUS_CODE_ERROR: u8 = 2;
 /// Attributes the server sets; a log or span field of the same name is dropped.
 const RESERVED_ATTRIBUTES: [&str; 3] = ["app_id", "client_id", "target"];
 
-/// Name, unit, kind and value of one player data point.
+/// Name, unit, kind and value of one data point.
 type Measurement = (&'static str, &'static str, Kind, Option<f64>);
 
 fn player_measurements(values: &PlayerStatValues) -> [Measurement; 9] {
@@ -65,6 +67,48 @@ fn player_measurements(values: &PlayerStatValues) -> [Measurement; 9] {
     ]
 }
 
+fn audio_publisher_measurements(values: &AudioPublisherStatValues) -> [Measurement; 6] {
+    let input = &values.input;
+    [
+        (
+            "client.publisher.audio_input_frames",
+            "{frame}/s",
+            Gauge,
+            input.frames_per_second,
+        ),
+        (
+            "client.publisher.audio_input_sample_rate",
+            "Hz",
+            Gauge,
+            input.sample_rate,
+        ),
+        (
+            "client.publisher.audio_input_channels",
+            "{channel}",
+            Gauge,
+            input.number_of_channels,
+        ),
+        (
+            "client.publisher.audio_input_level_min",
+            "dBov",
+            Gauge,
+            input.min_level_dbov,
+        ),
+        (
+            "client.publisher.audio_input_level_mean",
+            "dBov",
+            Gauge,
+            input.mean_level_dbov,
+        ),
+        (
+            "client.publisher.audio_encoded",
+            "kbit/s",
+            Gauge,
+            values.encoded_kbps,
+        ),
+    ]
+}
+
 /// The OTLP/JSON `ExportLogsServiceRequest` body, or `None` when the report has no logs.
 pub(super) fn logs_request(report: &ClientReport, app_id: &str) -> Option<Value> {
     if report.logs.is_empty() {
@@ -85,36 +129,20 @@ pub(super) fn logs_request(report: &ClientReport, app_id: &str) -> Option<Value>
 
 /// The OTLP/JSON `ExportMetricsServiceRequest` body, or `None` when the report has no stats.
 pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Value> {
-    if report.stats.is_empty() {
+    if report.stats.is_empty() && report.publisher_stats.is_empty() {
         return None;
     }
     let mut metrics = Metrics::default();
     for stats in &report.stats {
-        let mut identity = vec![
-            string_attribute("app_id", app_id),
-            string_attribute("client_id", report.client_id.as_str()),
-        ];
-        identity.extend(
-            [
-                ("track_namespace", &stats.track_namespace),
-                ("media_source", &stats.media_source),
-            ]
-            .into_iter()
-            .filter_map(|(key, label)| Some(string_attribute(key, label.as_deref()?))),
+        let identity = identity(
+            app_id,
+            &report.client_id,
+            &stats.track_namespace,
+            &stats.media_source,
         );
         let time_unix_nano = time_unix_nano(stats.time_ms);
-        let mut add = |(name, unit, kind, value): Measurement, attributes: &[Value]| {
-            if let Some(value) = value.filter(|value| value.is_finite()) {
-                let point = json!({
-                    "timeUnixNano": time_unix_nano,
-                    "asDouble": value,
-                    "attributes": attributes,
-                });
-                metrics.add(name, unit, kind, point);
-            }
-        };
         for measurement in player_measurements(&stats.values) {
-            add(measurement, &identity);
+            add_point(&mut metrics, &time_unix_nano, measurement, &identity);
         }
         let values = &stats.values;
         let per_media_kind = [
@@ -134,8 +162,25 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
             for (media_kind, value) in [("video", per_kind.video), ("audio", per_kind.audio)] {
                 let mut attributes = identity.clone();
                 attributes.push(string_attribute("media_kind", media_kind));
-                add((name, unit, Gauge, value), &attributes);
+                add_point(
+                    &mut metrics,
+                    &time_unix_nano,
+                    (name, unit, Gauge, value),
+                    &attributes,
+                );
             }
+        }
+    }
+    for stats in &report.publisher_stats {
+        let identity = identity(
+            app_id,
+            &report.client_id,
+            &stats.track_namespace,
+            &stats.media_source,
+        );
+        let time_unix_nano = time_unix_nano(stats.time_ms);
+        for measurement in audio_publisher_measurements(&stats.audio) {
+            add_point(&mut metrics, &time_unix_nano, measurement, &identity);
         }
     }
     Some(json!({
@@ -144,6 +189,43 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
             "scopeMetrics": [{ "scope": { "name": SCOPE_NAME }, "metrics": metrics.into_otlp() }],
         }],
     }))
+}
+
+fn identity(
+    app_id: &str,
+    client_id: &str,
+    track_namespace: &Option<String>,
+    media_source: &Option<String>,
+) -> Vec<Value> {
+    let mut identity = vec![
+        string_attribute("app_id", app_id),
+        string_attribute("client_id", client_id),
+    ];
+    identity.extend(
+        [
+            ("track_namespace", track_namespace),
+            ("media_source", media_source),
+        ]
+        .into_iter()
+        .filter_map(|(key, label)| Some(string_attribute(key, label.as_deref()?))),
+    );
+    identity
+}
+
+fn add_point(
+    metrics: &mut Metrics,
+    time_unix_nano: &str,
+    (name, unit, kind, value): Measurement,
+    attributes: &[Value],
+) {
+    if let Some(value) = value.filter(|value| value.is_finite()) {
+        let point = json!({
+            "timeUnixNano": time_unix_nano,
+            "asDouble": value,
+            "attributes": attributes,
+        });
+        metrics.add(name, unit, kind, point);
+    }
 }
 
 /// The OTLP/JSON `ExportTraceServiceRequest` body, or `None` when the report has no spans.
@@ -534,6 +616,68 @@ mod tests {
                 { "key": "client_id", "value": { "stringValue": "c1" } },
                 { "key": "track_namespace", "value": { "stringValue": "anon/meeting/room/alice" } },
                 { "key": "media_source", "value": { "stringValue": "screenshare" } },
+            ])
+        );
+    }
+
+    #[test]
+    fn publisher_audio_stats_become_points_of_the_source() {
+        // Arrange
+        let report = report(json!({
+            "clientId": "c1",
+            "page": "meeting",
+            "publisherStats": [{
+                "timeMs": 1000,
+                "trackNamespace": "anon/meeting/room/alice",
+                "mediaSource": "camera",
+                "audio": {
+                    "encodedKbps": 32.5,
+                    "encoderErrors": 0,
+                    "input": {
+                        "framesPerSecond": 100,
+                        "sampleRate": 48000,
+                        "numberOfChannels": 1,
+                        "minLevelDbov": -127,
+                        "meanLevelDbov": -42.5,
+                    },
+                },
+            }],
+        }));
+
+        // Act
+        let request = metrics_request(&report, "anon").unwrap();
+
+        // Assert
+        let point = |name| metric(&request, name)["gauge"]["dataPoints"][0].clone();
+        assert_eq!(
+            point("client.publisher.audio_input_frames")["asDouble"],
+            100.0
+        );
+        assert_eq!(
+            point("client.publisher.audio_input_sample_rate")["asDouble"],
+            48000.0
+        );
+        assert_eq!(
+            point("client.publisher.audio_input_channels")["asDouble"],
+            1.0
+        );
+        assert_eq!(
+            point("client.publisher.audio_input_level_min")["asDouble"],
+            -127.0
+        );
+        assert_eq!(
+            point("client.publisher.audio_input_level_mean")["asDouble"],
+            -42.5
+        );
+        let encoded = point("client.publisher.audio_encoded");
+        assert_eq!(encoded["asDouble"], 32.5);
+        assert_eq!(
+            encoded["attributes"],
+            json!([
+                { "key": "app_id", "value": { "stringValue": "anon" } },
+                { "key": "client_id", "value": { "stringValue": "c1" } },
+                { "key": "track_namespace", "value": { "stringValue": "anon/meeting/room/alice" } },
+                { "key": "media_source", "value": { "stringValue": "camera" } },
             ])
         );
     }

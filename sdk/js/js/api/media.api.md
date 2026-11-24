@@ -43,6 +43,15 @@ export type AddedTextTrackListener = {
 };
 
 // @public (undocumented)
+export type AudioInputStats = {
+    framesPerSecond: number;
+    sampleRate: number | undefined;
+    numberOfChannels: number | undefined;
+    minLevelDbov: number | undefined;
+    meanLevelDbov: number | undefined;
+};
+
+// @public (undocumented)
 export type AudioLevel = {
     level: number;
     voiceActivity: boolean;
@@ -51,6 +60,7 @@ export type AudioLevel = {
 // @public (undocumented)
 export type AudioPublishStats = EncodedRateStats & {
     encoderErrors: number;
+    input: AudioInputStats;
 };
 
 // @public (undocumented)

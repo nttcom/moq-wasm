@@ -9,8 +9,9 @@ pub(super) fn parse_report(body: &[u8]) -> anyhow::Result<ClientReport> {
     ensure!(
         report.logs.len() <= MAX_RECORDS
             && report.stats.len() <= MAX_RECORDS
+            && report.publisher_stats.len() <= MAX_RECORDS
             && report.spans.len() <= MAX_RECORDS,
-        "a report carries at most {MAX_RECORDS} logs, stats and spans each"
+        "a report carries at most {MAX_RECORDS} logs, stats, publisher stats and spans each"
     );
     // A malformed id makes the collector reject the whole batch.
     let span_ids = report.spans.iter().flat_map(|span| {
@@ -33,13 +34,20 @@ pub(super) fn parse_report(body: &[u8]) -> anyhow::Result<ClientReport> {
             "id {id:?} is not {len} hex digits"
         );
     }
-    let stats_labels = report
+    let player_labels = report
         .stats
         .iter()
-        .flat_map(|stats| {
+        .map(|stats| (&stats.track_namespace, &stats.media_source));
+    let publisher_labels = report
+        .publisher_stats
+        .iter()
+        .map(|stats| (&stats.track_namespace, &stats.media_source));
+    let stats_labels = player_labels
+        .chain(publisher_labels)
+        .flat_map(|(track_namespace, media_source)| {
             [
-                ("trackNamespace", &stats.track_namespace),
-                ("mediaSource", &stats.media_source),
+                ("trackNamespace", track_namespace),
+                ("mediaSource", media_source),
             ]
         })
         .filter_map(|(name, label)| Some((name, label.as_ref()?)));
@@ -142,6 +150,16 @@ mod tests {
         // Arrange
         let stats = json!({ "timeMs": 1, "trackNamespace": "n".repeat(129), "values": {} });
         let body = json!({ "clientId": "c1", "page": "p", "stats": [stats] });
+
+        // Act / Assert
+        assert!(parse_report(body.to_string().as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_publisher_s_media_source_over_the_label_limit_is_rejected() {
+        // Arrange
+        let stats = json!({ "timeMs": 1, "mediaSource": "s".repeat(129), "audio": {} });
+        let body = json!({ "clientId": "c1", "page": "p", "publisherStats": [stats] });
 
         // Act / Assert
         assert!(parse_report(body.to_string().as_bytes()).is_err());

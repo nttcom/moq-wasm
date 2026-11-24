@@ -20,8 +20,23 @@ export type VideoPublishStats = EncodedVideoStats & {
   renditions: Record<string, EncodedVideoStats>
 }
 
+/// What the audio track gave the encoder over the last second.
+export type AudioInputStats = {
+  /// The `AudioData` the track delivered per second, each about 10 ms.
+  framesPerSecond: number
+  /// Of the latest `AudioData`; undefined until the first one arrives.
+  sampleRate: number | undefined
+  numberOfChannels: number | undefined
+  /// The quietest RFC 6464 level of the `AudioData`, and the level of their
+  /// mean power, in dBov: 0 the loudest, -127 silence. Undefined when no
+  /// `AudioData` arrived in the last second.
+  minLevelDbov: number | undefined
+  meanLevelDbov: number | undefined
+}
+
 export type AudioPublishStats = EncodedRateStats & {
   encoderErrors: number
+  input: AudioInputStats
 }
 
 /// A kind is undefined while the source has no track of it. Counts are since
@@ -106,15 +121,55 @@ export class VideoEncodeStats {
   }
 }
 
+/// One `AudioData` the encoder worker read, with its RFC 6464 level in -dBov.
+export type AudioInput = { sampleRate: number; numberOfChannels: number; level: number }
+
+class AudioInputs {
+  private readonly inputs: { atMs: number; level: number }[] = []
+  private format: { sampleRate: number; numberOfChannels: number } | undefined
+
+  add({ sampleRate, numberOfChannels, level }: AudioInput, nowMs: number): void {
+    this.inputs.push({ atMs: nowMs, level })
+    this.format = { sampleRate, numberOfChannels }
+    this.prune(nowMs)
+  }
+
+  stats(nowMs: number): AudioInputStats {
+    this.prune(nowMs)
+    const levels = this.inputs.map(({ level }) => -level)
+    return {
+      framesPerSecond: (levels.length * 1000) / RATE_WINDOW_MS,
+      sampleRate: this.format?.sampleRate,
+      numberOfChannels: this.format?.numberOfChannels,
+      minLevelDbov: levels.length > 0 ? Math.min(...levels) : undefined,
+      meanLevelDbov:
+        levels.length > 0
+          ? 10 * Math.log10(levels.reduce((sum, level) => sum + 10 ** (level / 10), 0) / levels.length)
+          : undefined
+    }
+  }
+
+  private prune(nowMs: number): void {
+    while (this.inputs.length > 0 && this.inputs[0].atMs <= nowMs - RATE_WINDOW_MS) {
+      this.inputs.shift()
+    }
+  }
+}
+
 export class AudioEncodeStats {
   encoderErrors = 0
   private readonly rate = new EncodedRate()
+  private readonly inputs = new AudioInputs()
 
   add(chunk: EncodedAudioChunk, nowMs = performance.now()): void {
     this.rate.add(chunk.byteLength, nowMs)
   }
 
+  addInput(input: AudioInput, nowMs = performance.now()): void {
+    this.inputs.add(input, nowMs)
+  }
+
   stats(nowMs = performance.now()): AudioPublishStats {
-    return { ...this.rate.stats(nowMs), encoderErrors: this.encoderErrors }
+    return { ...this.rate.stats(nowMs), encoderErrors: this.encoderErrors, input: this.inputs.stats(nowMs) }
   }
 }

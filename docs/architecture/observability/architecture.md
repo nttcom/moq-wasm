@@ -432,6 +432,22 @@ report to OTLP/JSON and forwards it (`client_telemetry`). The body is
 | `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
 | `client.player.arrival_delay` | ms | gauge, `media_kind` attribute; includes the publisher-to-viewer clock offset, which the audio-video difference cancels | `arrivalDelayMs` |
 
+The browser SDK also sends one sample per source of a `LocalBroadcast` that
+publishes audio, in the report's `publisherStats`, under the token of the
+broadcast's session, with `trackNamespace` and `mediaSource` (the source's
+name). Its `audio` is the source's `AudioPublishStats`; every value covers
+the last second before the sample except the format, which is the latest
+input's:
+
+| Metric | Unit | Kind | `AudioPublishStats` field |
+| --- | --- | --- | --- |
+| `client.publisher.audio_input_frames` | {frame}/s | gauge | `input.framesPerSecond`, the `AudioData` the track gave the encoder |
+| `client.publisher.audio_input_sample_rate` | Hz | gauge | `input.sampleRate` |
+| `client.publisher.audio_input_channels` | {channel} | gauge | `input.numberOfChannels` |
+| `client.publisher.audio_input_level_min` | dBov | gauge, -127 is silence | `input.minLevelDbov` |
+| `client.publisher.audio_input_level_mean` | dBov | gauge, the level of the mean power of the `AudioData` | `input.meanLevelDbov` |
+| `client.publisher.audio_encoded` | kbit/s | gauge | `encodedKbps` |
+
 A collector that does not accept the export answers 502.
 
 ## Browser page (`examples/browser/examples/observability`)

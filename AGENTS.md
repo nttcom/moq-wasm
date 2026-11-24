@@ -97,7 +97,8 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `message_type` | The control message a log is about, when the log cannot name it in its message |
 | `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
-| `media_source` | The source of a broadcast a browser plays, named by its video track (`camera`, `screen`, …) |
+| `media_source` | The source of a broadcast a browser plays or publishes, named by its video track (`camera`, `screen`, …) |
+| `ready_state` | A `MediaStreamTrack`'s `readyState` (`live` or `ended`) when one of its events is logged |
 | `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
 | `track_alias` | The track alias on the session the log is about |
 | `group_id` / `subgroup_id` / `object_id` | The Group ID, Subgroup ID and Object ID of the object the event is about |

@@ -3,8 +3,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
-/// The observability server rejects a report carrying more logs, stats or
-/// spans than this, each kind counted separately.
+/// The observability server rejects a report carrying more logs, stats,
+/// publisher stats or spans than this, each kind counted separately.
 pub const MAX_RECORDS: usize = 100;
 
 /// Unknown keys are ignored.
@@ -20,6 +20,8 @@ pub struct ClientReport {
     pub logs: Vec<ClientLog>,
     #[serde(default)]
     pub stats: Vec<PlayerStats>,
+    #[serde(default)]
+    pub publisher_stats: Vec<PublisherStats>,
     #[serde(default)]
     pub spans: Vec<ClientSpan>,
 }
@@ -119,6 +121,36 @@ pub struct PlayerStatValues {
     pub max_arrival_gap_ms: PerMediaKind,
     #[serde(default)]
     pub arrival_delay_ms: PerMediaKind,
+}
+
+/// One sample of a published source's `stats()`. `mediaSource` is the
+/// source's name, which is the name of its video track.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublisherStats {
+    pub time_ms: u64,
+    pub track_namespace: Option<String>,
+    pub media_source: Option<String>,
+    pub audio: AudioPublisherStatValues,
+}
+
+/// The fields of `AudioPublishStats` that become metrics; a missing one produces no data point.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioPublisherStatValues {
+    pub encoded_kbps: Option<f64>,
+    #[serde(default)]
+    pub input: AudioInputStatValues,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInputStatValues {
+    pub frames_per_second: Option<f64>,
+    pub sample_rate: Option<f64>,
+    pub number_of_channels: Option<f64>,
+    pub min_level_dbov: Option<f64>,
+    pub mean_level_dbov: Option<f64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
