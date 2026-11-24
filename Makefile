@@ -4,7 +4,7 @@ MOQT_URL ?= https://127.0.0.1:4433
 RESOLVED_MOQT_URL = $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
 LOCAL_MOQT_URL ?= $(RESOLVED_MOQT_URL)
 INGEST_GATEWAY_MOQT_URL ?= $(LOCAL_MOQT_URL)
-LIVE_EGRESS_MOQT_URL ?= $(LOCAL_MOQT_URL)
+EGRESS_GATEWAY_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # For the PTZ tracking page, set ONVIF_PUBLISH_NAMESPACE to `<appId>/moq-ptz-tracking/onvif/client`,
 # ONVIF_SUBSCRIBE_NAMESPACE to `<appId>/moq-ptz-tracking/bots/ptz-tracking/command` and
@@ -21,23 +21,23 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 LOOPBACK_RELAY_URLS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
 LOCAL_RELAY_URLS = $(LOOPBACK_RELAY_URLS) $(if $(filter $(LOOPBACK_RELAY_URLS),$(MOQT_URL)),$(RESOLVED_MOQT_URL))
 INGEST_GATEWAY_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(INGEST_GATEWAY_MOQT_URL)),--insecure-skip-tls-verify)
-LIVE_EGRESS_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_EGRESS_MOQT_URL)),--insecure-skip-tls-verify)
+EGRESS_GATEWAY_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(EGRESS_GATEWAY_MOQT_URL)),--insecure-skip-tls-verify)
 ONVIF_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
 RECORDER_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(RECORDER_MOQT_URL)),--insecure-skip-tls-verify)
 GST_TLS_PROPERTIES = $(if $(filter $(LOCAL_RELAY_URLS),$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 INGEST_GATEWAY_RTP_SDP ?= assets/rtp.sdp
 INGEST_GATEWAY_RTP_NAMESPACE ?= anon/live/test
-LIVE_EGRESS_NAMESPACE ?= anon/live/test
-LIVE_EGRESS_DESTINATION ?= 127.0.0.1
+EGRESS_GATEWAY_NAMESPACE ?= anon/live/test
+EGRESS_GATEWAY_DESTINATION ?= 127.0.0.1
 # Not 5004/5006: ingest-gateway-rtp listens there, and sending to it would loop the output back in.
-LIVE_EGRESS_VIDEO_PORT ?= 5014
-LIVE_EGRESS_AUDIO_PORT ?= 5016
-LIVE_EGRESS_SDP ?= assets/egress.sdp
+EGRESS_GATEWAY_VIDEO_PORT ?= 5014
+EGRESS_GATEWAY_AUDIO_PORT ?= 5016
+EGRESS_GATEWAY_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
+.PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp egress-gateway gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -83,15 +83,15 @@ ingest-gateway-stats: ingest-gateway
 ingest-gateway-rtp: INGEST_GATEWAY_RTP_FLAGS := --rtp-sdp $(INGEST_GATEWAY_RTP_SDP) --rtp-namespace $(INGEST_GATEWAY_RTP_NAMESPACE)
 ingest-gateway-rtp: ingest-gateway
 
-# MoQT to RTP: play the result with `ffplay -protocol_whitelist file,udp,rtp $(LIVE_EGRESS_SDP)`.
-live-egress:
-	mkdir -p $(dir $(LIVE_EGRESS_SDP))
-	cargo run -p live-egress -- \
-		--moqt-url $(LIVE_EGRESS_MOQT_URL) $(LIVE_EGRESS_TLS_FLAGS) \
-		--namespace $(LIVE_EGRESS_NAMESPACE) \
-		--destination $(LIVE_EGRESS_DESTINATION) \
-		--video-port $(LIVE_EGRESS_VIDEO_PORT) --audio-port $(LIVE_EGRESS_AUDIO_PORT) \
-		--sdp-out $(LIVE_EGRESS_SDP)
+# MoQT to RTP: play the result with `ffplay -protocol_whitelist file,udp,rtp $(EGRESS_GATEWAY_SDP)`.
+egress-gateway:
+	mkdir -p $(dir $(EGRESS_GATEWAY_SDP))
+	cargo run -p egress-gateway -- \
+		--moqt-url $(EGRESS_GATEWAY_MOQT_URL) $(EGRESS_GATEWAY_TLS_FLAGS) \
+		--namespace $(EGRESS_GATEWAY_NAMESPACE) \
+		--destination $(EGRESS_GATEWAY_DESTINATION) \
+		--video-port $(EGRESS_GATEWAY_VIDEO_PORT) --audio-port $(EGRESS_GATEWAY_AUDIO_PORT) \
+		--sdp-out $(EGRESS_GATEWAY_SDP)
 
 # GStreamer plugin (crates/gst-plugin-moqt): `moqtsink` publishes H.264/AAC into MoQT.
 gst-plugin:

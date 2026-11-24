@@ -79,10 +79,10 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
-        service_name: "live-egress",
+        service_name: "egress-gateway",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &[
-            "live_egress=info",
+            "egress_gateway=info",
             "broadcast=info",
             "moqt=info",
             "msf=info",
@@ -167,7 +167,7 @@ mod tests {
     fn takes_the_stream_identities_and_rtcp_port_from_the_command_line() {
         // Arrange
         let args = Args::parse_from([
-            "live-egress",
+            "egress-gateway",
             "--moqt-url",
             "moqt://127.0.0.1:4433",
             "--namespace",
@@ -199,7 +199,7 @@ mod tests {
     fn rejects_static_payload_types() {
         // Act
         let parsed = Args::try_parse_from([
-            "live-egress",
+            "egress-gateway",
             "--moqt-url",
             "moqt://127.0.0.1:4433",
             "--namespace",

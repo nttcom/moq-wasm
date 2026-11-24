@@ -270,7 +270,7 @@ broadcast.close().await?;
   tracks are `msf::Track`, re-exported as `CatalogTrack`.
 
 Left out until an application asks: reading a broadcast back into media
-events (`broadcast::BroadcastReader`, what `live-egress` uses), the CMAF
+events (`broadcast::BroadcastReader`, what `egress-gateway` uses), the CMAF
 copies of a media source's tracks (`cmaf`), the server side, and any codec.
 
 ### No codec

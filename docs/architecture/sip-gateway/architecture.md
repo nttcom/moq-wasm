@@ -11,7 +11,7 @@ A new service `services/sip-gateway` that places and answers telephone calls
 through a SIP trunk and bridges each call's audio to a MoQT broadcast, and the
 changes it brings to:
 
-- `crates/broadcast`, which gains the reading side that `services/live-egress`
+- `crates/broadcast`, which gains the reading side that `services/egress-gateway`
   keeps privately today (`BroadcastReader`).
 - `crates/auth-token`, which gains the claim a call request carries.
 - `crates/app-registry`, which gains the phone numbers of an app.
@@ -260,7 +260,7 @@ await call.hangUp() // writes hangup on the control track
   `mulawenc`/`alawenc`), already in the workspace through `transcode` and
   `live-translate`.
 - **Latency.** The audio is subscribed from the largest object with a short
-  DELIVERY TIMEOUT, as `live-egress` does, and the playout buffer targets
+  DELIVERY TIMEOUT, as `egress-gateway` does, and the playout buffer targets
   40-60 ms.
 
 ### Session timers and teardown
@@ -372,7 +372,7 @@ WARN, since at INFO they carry every message whole, SRTP keys included.
 ## Plan
 Each step is its own pull request, stacked:
 
-1. `broadcast`: move `BroadcastReader` from `live-egress` into the crate (lower
+1. `broadcast`: move `BroadcastReader` from `egress-gateway` into the crate (lower
    layer, refactor only).
 2. `auth-token` / `app-registry`: the `calls` claim, the app's numbers, number
    patterns and webhook URL.

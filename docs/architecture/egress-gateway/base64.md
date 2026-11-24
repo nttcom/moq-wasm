@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-Add `base64` as a dependency of `live-egress`. The broadcast reader decodes
+Add `base64` as a dependency of `egress-gateway`. The broadcast reader decodes
 the audio track's AudioSpecificConfig from its catalog `initDataList` entry.
 
 ## Context
