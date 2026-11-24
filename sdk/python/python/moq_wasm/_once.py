@@ -34,6 +34,38 @@ class Once(Generic[T]):
         return awaited
 
 
+def in_thread(work: Callable[[], T]) -> asyncio.Future[T]:
+    """Like `loop.run_in_executor(None, work)`, but once the future resolves no worker reaches
+    `work` or its result: a worker can still hold the callable it ran and its future after the
+    loop has resolved it, so both pass through lists emptied on the way."""
+    loop = asyncio.get_running_loop()
+    finished: asyncio.Future[T] = loop.create_future()
+    works = [work]
+    futures = [finished]
+
+    def run() -> None:
+        outcome: list = []
+        try:
+            outcome.append((True, works.pop()()))
+        except BaseException as error:
+            outcome.append((False, error))
+        loop.call_soon_threadsafe(_settle, futures, outcome)
+
+    loop.run_in_executor(None, run).add_done_callback(retrieve)
+    return finished
+
+
+def _settle(futures: list[asyncio.Future], outcome: list) -> None:
+    future = futures.pop()
+    succeeded, value = outcome.pop()
+    if future.cancelled():
+        return
+    if succeeded:
+        future.set_result(value)
+    else:
+        future.set_exception(value)
+
+
 def retrieve(future: asyncio.Future) -> None:
     """Marks the failure of `future` retrieved, so one nobody awaits any more does not warn."""
     if not future.cancelled():

@@ -18,7 +18,7 @@ from av.error import FFmpegError
 from av.video.frame import PictureType
 
 from moq_wasm._native import Location, Object
-from moq_wasm._once import retrieve
+from moq_wasm._once import in_thread, retrieve
 from moq_wasm.media import Following, RemoteBroadcast
 from moq_wasm.media._remote_broadcast import DEFAULT_DELIVERY_TIMEOUT_SECONDS, _Objects
 
@@ -554,7 +554,9 @@ class _DecodedPictures(Following[DecodedPicture]):
                 if decoder is None or self._closing.started:
                     raise StopAsyncIteration
                 step = decoder.finish if video_object is None else functools.partial(decoder.take, video_object)
-                decoding = self._decoding = _in_thread(step)
+                decoding = self._decoding = in_thread(step)
+                # Its failure goes to the read, and to nobody once the decoding was dropped.
+                decoding.add_done_callback(retrieve)
                 # The read may wait on the next object once this one gave no picture: it holds no
                 # decoder meanwhile, so closing the decoding frees it.
                 del decoder, step
@@ -571,13 +573,6 @@ class _DecodedPictures(Following[DecodedPicture]):
         self._decoder = None
         self._decoding = None
         self._pictures.clear()
-
-
-def _in_thread(step: Callable[[], list[DecodedPicture]]) -> asyncio.Future[list[DecodedPicture]]:
-    decoding = asyncio.get_running_loop().run_in_executor(None, step)
-    # Its failure goes to the read, and to nobody once the decoding was dropped.
-    decoding.add_done_callback(retrieve)
-    return decoding
 
 
 class _PictureDecoder:
