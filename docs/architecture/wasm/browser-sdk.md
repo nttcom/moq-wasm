@@ -504,7 +504,7 @@ renderGroup（§5.2.12）を使わない理由は「足す機能」の節と同�
 | `source.setVideo(input \| false)` / `source.setAudio(input \| false)` | デバイスの切り替え。`false` はデバイスを離す |
 | `source.setMuted(kind, muted)` / `source.isMuted(kind)` | デバイスを掴んだまま、送るのを止める |
 | `source.stream` | 送っている track の `MediaStream`。自分のプレビューに使う。track を替えても同じ stream の中で差し替える |
-| `source.stats()` | `publish()` の `SourcePublication.stats()` と同じ（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数） |
+| `source.stats()` | `publish()` の `SourcePublication.stats()` と同じ（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数）。音声は encoder に入った `AudioData` の直近1秒の数、最新のサンプルレートと ch 数、RFC 6464 の音量（dBov）の最小とパワー平均も持つ。encoder worker が `AudioData` ごとに `{ type: 'input' }` を postMessage して数える |
 | `source.listen({ onTrackEnded, onEnded })` | `onTrackEnded(kind)` は SDK が取ったその kind の track が終わった（デバイスが抜かれた）とき、`onEnded` は source の track がすべて終わった（ブラウザの「共有を停止」）とき。SDK は track や source を外してから呼ぶ。ページが渡した track の終了はページが扱う（取り直して `setAudio` で差し替えるなど） |
 
 `input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` である。
@@ -903,6 +903,10 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
     `registerPlayerStats` で `core/telemetry.ts` に自分を登録し、`dispose` で外す。`start` 前と
     `stop` 後は何も返さない。session のトークンはログと同じく `core/log.ts` の `sessionToken` で
     引くので、統計はログと同じ app に入る。`telemetry.playerStats: false` で止める（既定は送る）。
+  - 同じく、音声を持つ `LocalBroadcast` の source ごとに `source.stats().audio`
+    （`AudioPublishStats`）を、broadcast の `trackNamespace` と `mediaSource`（source 名）とともに、
+    broadcast の session のトークンのレポートの `publisherStats` に入れる。source は生成時に
+    `registerPublisherStats` で登録し、`removeSource` と `close` で外す。
   - `telemetry.stats` を渡すと、送るたびに呼び、返った stats
     （`{ trackNamespace?, mediaSource?, values }`）をトークンなしのレポートの `stats` に入れる。
     `LivePlayer` 以外の統計を足すためのもの。

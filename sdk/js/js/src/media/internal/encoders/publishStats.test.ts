@@ -20,7 +20,40 @@ test('the rates count only the chunks of the last second', () => {
   const audio = stats.stats(1500)
 
   // Assert
-  expect(audio).toEqual({ encodedKbps: 8, encodedFramesPerSecond: 2, encoderErrors: 0 })
+  expect(audio).toMatchObject({ encodedKbps: 8, encodedFramesPerSecond: 2, encoderErrors: 0 })
+})
+
+test('the audio input counts the frames of the last second and keeps the latest format', () => {
+  // Arrange: the 44.1 kHz stereo frame leaves the window; two mono 48 kHz frames stay in it
+  const stats = new AudioEncodeStats()
+  stats.addInput({ sampleRate: 44100, numberOfChannels: 2, level: 10 }, 0)
+  stats.addInput({ sampleRate: 48000, numberOfChannels: 1, level: 30 }, 600)
+  stats.addInput({ sampleRate: 48000, numberOfChannels: 1, level: 127 }, 1200)
+
+  // Act
+  const { input } = stats.stats(1500)
+
+  // Assert: the mean is of the power, so the silent frame lowers it by about 3 dB
+  expect(input).toMatchObject({ framesPerSecond: 2, sampleRate: 48000, numberOfChannels: 1, minLevelDbov: -127 })
+  expect(input.meanLevelDbov).toBeCloseTo(-33.01, 2)
+})
+
+test('an audio input without a frame in the last second has no level', () => {
+  // Arrange
+  const stats = new AudioEncodeStats()
+  stats.addInput({ sampleRate: 48000, numberOfChannels: 1, level: 30 }, 0)
+
+  // Act
+  const { input } = stats.stats(2000)
+
+  // Assert: the format stays the last one seen
+  expect(input).toEqual({
+    framesPerSecond: 0,
+    sampleRate: 48000,
+    numberOfChannels: 1,
+    minLevelDbov: undefined,
+    meanLevelDbov: undefined
+  })
 })
 
 test('the frame size is the last one an encoder configuration reported', () => {

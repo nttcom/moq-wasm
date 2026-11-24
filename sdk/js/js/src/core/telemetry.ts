@@ -1,8 +1,9 @@
 import type { LiveStats } from '../media/player/locLive'
+import type { AudioPublishStats } from '../media/internal/encoders/publishStats'
 import type { LogRecord, SpanRecord } from './init'
 import { type LogSession, sessionToken } from './log'
 
-/// The observability server takes at most this many logs, stats and spans each per report.
+/// The observability server takes at most this many logs, stats, publisher stats and spans each per report.
 const MAX_RECORDS = 100
 const FLUSH_INTERVAL_MS = 10_000
 
@@ -46,7 +47,30 @@ export function registerPlayerStats(sample: () => PlayerStatsSample | undefined)
   return () => players.delete(sample)
 }
 
-type Batch = { logs: LogRecord[]; stats: (TelemetryStatsSample & { timeMs: number })[]; spans: SpanRecord[] }
+/// `mediaSource` is the source's name.
+export type PublisherStatsSample = {
+  session: LogSession
+  trackNamespace: string
+  mediaSource: string
+  audio: AudioPublishStats
+}
+
+const publishers = new Set<() => PublisherStatsSample | undefined>()
+
+/// `registerPlayerStats` for a published source.
+export function registerPublisherStats(sample: () => PublisherStatsSample | undefined): () => void {
+  publishers.add(sample)
+  return () => publishers.delete(sample)
+}
+
+type Timed<T> = T & { timeMs: number }
+
+type Batch = {
+  logs: LogRecord[]
+  stats: Timed<TelemetryStatsSample>[]
+  publisherStats: Timed<Omit<PublisherStatsSample, 'session'>>[]
+  spans: SpanRecord[]
+}
 /// Resolves to the response's HTTP status, or `undefined` when there is none to read.
 type Send = (url: string, body: string, beacon: boolean) => Promise<number | undefined>
 
@@ -79,6 +103,9 @@ export class ClientTelemetry {
         keepNewest(this.batch(sessionToken(session)).stats, { timeMs, ...sample })
       }
     }
+    for (const { session, ...sample } of [...publishers].flatMap((publisher) => publisher() ?? [])) {
+      keepNewest(this.batch(sessionToken(session)).publisherStats, { timeMs, ...sample })
+    }
     for (const sample of this.options.stats?.() ?? []) {
       keepNewest(this.batch(undefined).stats, { timeMs, ...sample })
     }
@@ -86,12 +113,20 @@ export class ClientTelemetry {
     this.batches = new Map()
     const url = typeof this.options.url === 'string' ? this.options.url : this.options.url()
     const endpoint = `${url.replace(/\/+$/, '')}/api/client-telemetry`
-    for (const [batchToken, { logs, stats, spans }] of batches) {
-      if (logs.length === 0 && stats.length === 0 && spans.length === 0) {
+    for (const [batchToken, { logs, stats, publisherStats, spans }] of batches) {
+      if (logs.length === 0 && stats.length === 0 && publisherStats.length === 0 && spans.length === 0) {
         continue
       }
       const token = batchToken !== undefined && this.rejectedTokens.has(batchToken) ? undefined : batchToken
-      const body = JSON.stringify({ token, clientId: this.clientId, page: this.options.page, logs, stats, spans })
+      const body = JSON.stringify({
+        token,
+        clientId: this.clientId,
+        page: this.options.page,
+        logs,
+        stats,
+        publisherStats,
+        spans
+      })
       void this.send(endpoint, body, beacon).then((status) => {
         if (status === 401 && token !== undefined) {
           this.rejectedTokens.add(token)
@@ -113,7 +148,7 @@ export class ClientTelemetry {
   private batch(token: string | undefined): Batch {
     let batch = this.batches.get(token)
     if (!batch) {
-      batch = { logs: [], stats: [], spans: [] }
+      batch = { logs: [], stats: [], publisherStats: [], spans: [] }
       this.batches.set(token, batch)
     }
     return batch

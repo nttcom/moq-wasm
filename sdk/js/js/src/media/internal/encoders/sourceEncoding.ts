@@ -8,7 +8,7 @@ import {
   type VideoCodecName,
   videoEncoderConfig
 } from './videoEncoderConfig'
-import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
+import { type AudioInput, AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
 import { type LogSession, receiveWorkerLog } from '../../../core/log'
 import { type Rendition, renditionEncoderConfigs } from './rendition'
 
@@ -453,10 +453,15 @@ function encodeAudio(
   worker.onmessage = (
     event: MessageEvent<
       | (ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel })
+      | { type: 'input'; input: AudioInput }
       | { type: 'configError' | 'encoderError' }
     >
   ) => {
     if (receiveWorkerLog(event.data, session)) {
+      return
+    }
+    if (event.data.type === 'input') {
+      stats.addInput(event.data.input)
       return
     }
     if (event.data.type === 'configError' || event.data.type === 'encoderError') {

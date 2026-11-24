@@ -60,6 +60,7 @@ export { type LiveStats, formatLiveStats } from './player/locLive'
 export type { DeliveryObserver, Playhead, StreamKind } from './player/deliveryObserver'
 export type { AudioLevel } from './internal/loc'
 export type {
+  AudioInputStats,
   AudioPublishStats,
   EncodedRateStats,
   EncodedVideoStats,

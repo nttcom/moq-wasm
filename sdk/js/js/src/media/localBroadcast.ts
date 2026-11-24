@@ -1,6 +1,7 @@
 import type { MoqSession } from '../core/session'
 import type { MediaBroadcast } from '../../pkg/moqt'
 import { forwardSdkLog, sdkLog } from '../core/log'
+import { registerPublisherStats } from '../core/telemetry'
 import { audioTrackName, rejectedName, sourceTrackNames } from './sourceNames'
 import { noteOwnBroadcast } from './ownBroadcasts'
 import {
@@ -228,7 +229,9 @@ class Broadcast implements LocalBroadcast {
       this.report,
       this.session
     )
-    return new Source(name, trackNames, encoding, tracks, () => this.removeSource(name))
+    return new Source({ session: this.session, namespace: this.namespace, name }, trackNames, encoding, tracks, () =>
+      this.removeSource(name)
+    )
   }
 
   source(name: string): LocalSource | undefined {
@@ -335,22 +338,39 @@ async function captureInputs(inputs: Partial<Record<MediaKind, TrackInput>>): Pr
   return [...given, ...owned(await navigator.mediaDevices.getUserMedia(constraints))]
 }
 
+/// Where a source publishes, which its stats are about.
+type SourceIdentity = { session: MoqSession; namespace: string[]; name: string }
+
 class Source implements LocalSource {
   readonly stream = new MediaStream()
+  readonly name: string
   private readonly tracks = new Map<MediaKind, CapturedTrack>()
   private readonly listeners = new Set<LocalSourceListener>()
+  private readonly unregisterStats: () => void
   private closed = false
 
   constructor(
-    readonly name: string,
+    private readonly identity: SourceIdentity,
     readonly trackNames: string[],
     private readonly encoding: SourceEncoding,
     tracks: CapturedTrack[],
     private readonly removeFromBroadcast: () => Promise<void>
   ) {
+    this.name = identity.name
     for (const track of tracks) {
       this.attach(track)
     }
+    this.unregisterStats = registerPublisherStats(() => {
+      const audio = this.encoding.stats().audio
+      return (
+        audio && {
+          session: identity.session,
+          trackNamespace: identity.namespace.join('/'),
+          mediaSource: identity.name,
+          audio
+        }
+      )
+    })
   }
 
   setVideo(input: TrackInput | false): Promise<void> {
@@ -384,6 +404,7 @@ class Source implements LocalSource {
 
   async close(): Promise<void> {
     this.closed = true
+    this.unregisterStats()
     await this.encoding.close()
     for (const kind of [...this.tracks.keys()]) {
       this.detach(kind)

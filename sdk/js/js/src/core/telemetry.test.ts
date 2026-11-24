@@ -2,7 +2,15 @@ import { expect, test } from '@playwright/test'
 import type { LiveStats } from '../media/player/locLive'
 import type { LogRecord, SpanRecord } from './init'
 import { bindLogToken } from './log'
-import { ClientTelemetry, type PlayerStatsSample, type TelemetryOptions, registerPlayerStats } from './telemetry'
+import type { AudioPublishStats } from '../media/internal/encoders/publishStats'
+import {
+  ClientTelemetry,
+  type PlayerStatsSample,
+  type PublisherStatsSample,
+  type TelemetryOptions,
+  registerPlayerStats,
+  registerPublisherStats
+} from './telemetry'
 
 type Sent = {
   url: string
@@ -34,6 +42,15 @@ function sessionWithToken(token: string): object {
 
 function playerSample(session: object | undefined, mediaSource: string): PlayerStatsSample {
   return { session, trackNamespace: 'app/meeting/room/alice', mediaSource, values: { bufferMs: 120 } as LiveStats }
+}
+
+function publisherSample(session: object | undefined): PublisherStatsSample {
+  return {
+    session,
+    trackNamespace: 'app/meeting/room/alice',
+    mediaSource: 'camera',
+    audio: { encodedKbps: 32 } as AudioPublishStats
+  }
 }
 
 function span(name: string): SpanRecord {
@@ -127,6 +144,22 @@ test('playerStats false sends no player stats', () => {
 
   // Assert
   expect(sent).toEqual([])
+})
+
+test("a flush sends each published source's stats under its session's token", () => {
+  // Arrange
+  const { telemetry: subject, sent } = telemetry()
+  const unregister = registerPublisherStats(() => publisherSample(sessionWithToken('jwt-a')))
+
+  // Act
+  subject.flush()
+  unregister()
+
+  // Assert: the session itself is not sent
+  const { session: _, ...sample } = publisherSample(undefined)
+  expect(sent.map(({ body }) => [body.token, body.publisherStats])).toEqual([
+    ['jwt-a', [{ timeMs: expect.any(Number), ...sample }]]
+  ])
 })
 
 test('a registered player is sent until it unregisters', () => {
