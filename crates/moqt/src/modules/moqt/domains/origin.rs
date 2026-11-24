@@ -126,6 +126,10 @@ struct OriginSubscription {
 }
 
 impl OriginState {
+    fn live_track_mut(&mut self, key: &TrackKey) -> Option<&mut OriginTrack> {
+        self.tracks.get_mut(key).filter(|track| !track.ended)
+    }
+
     fn track_mut(&mut self, key: &TrackKey) -> Result<&mut OriginTrack> {
         self.tracks.get_mut(key).with_context(|| {
             format!(
@@ -158,6 +162,9 @@ struct OriginTrack {
     /// The track's Object Forwarding Preference is Datagram (draft-14 §10).
     datagrams: bool,
     publisher_priority: u8,
+    /// Set by `end_track`, cleared by `ensure_track` and `publish`; while set,
+    /// a SUBSCRIBE or TRACK_STATUS finds no track.
+    ended: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -211,6 +218,7 @@ impl OriginTrack {
             demand: None,
             datagrams: false,
             publisher_priority: DEFAULT_PRIORITY,
+            ended: false,
         }
     }
 
@@ -288,6 +296,8 @@ impl Outlet {
 }
 
 impl Origin {
+    /// Registers the track, or makes a track that `end_track` ended
+    /// subscribable again, keeping its numbering and cache.
     pub async fn ensure_track(
         &self,
         namespace: &str,
@@ -300,7 +310,8 @@ impl Origin {
             .await
             .tracks
             .entry(track_key(namespace, track_name))
-            .or_insert_with(|| OriginTrack::new(first_group_id, retention));
+            .or_insert_with(|| OriginTrack::new(first_group_id, retention))
+            .ended = false;
     }
 
     /// Gives the track dynamic groups (draft-18 §12.6): its PUBLISH and
@@ -441,6 +452,7 @@ impl Origin {
         };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
+        track.ended = false;
         let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         track.outlets.push(Outlet {
             request,
@@ -534,15 +546,15 @@ impl Origin {
     /// Answers a SUBSCRIBE to a track registered with `ensure_track`, the
     /// UNSUBSCRIBE of a subscription it serves, FETCH, FETCH_CANCEL and
     /// TRACK_STATUS, logging a failed answer. Returns every other event for the
-    /// caller to answer, including a SUBSCRIBE to an unregistered track and an
-    /// UNSUBSCRIBE of a request it does not serve. A SUBSCRIBE_UPDATE is
+    /// caller to answer, including a SUBSCRIBE to an unregistered or ended
+    /// track, and an UNSUBSCRIBE of a request it does not serve. A SUBSCRIBE_UPDATE is
     /// returned too, after its Forward State and NEW_GROUP_REQUEST were
     /// applied to the subscription it updates.
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         match event {
             SessionEvent::Subscribe(handler) => {
                 let key = (handler.track_namespace.clone(), handler.track_name.clone());
-                if !self.state.lock().await.tracks.contains_key(&key) {
+                if self.state.lock().await.live_track_mut(&key).is_none() {
                     return Some(SessionEvent::Subscribe(handler));
                 }
                 if let Err(err) = self.accept_subscribe(handler).await {
@@ -601,14 +613,17 @@ impl Origin {
         }
     }
 
-    /// Serves the SUBSCRIBE on the session it arrived on.
+    /// Serves the SUBSCRIBE on the session it arrived on. Fails without
+    /// answering when the track is unregistered or ended.
     pub async fn accept_subscribe(&self, mut handler: SubscribeHandler) -> Result<()> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
         // Hold the lock until the outlet is registered: the peer can act on
         // SUBSCRIBE_OK before then, and an `end_track` or `write` in that gap
         // would miss this subscription.
         let mut state = self.state.lock().await;
-        let track = state.track_mut(&key)?;
+        let track = state
+            .live_track_mut(&key)
+            .with_context(|| format!("track {}/{} is not published by the origin", key.0, key.1))?;
         let largest = track.numbering.largest();
         handler
             .track_properties
@@ -714,9 +729,11 @@ impl Origin {
     /// Ends every subscription to the track with PUBLISH_DONE (TRACK_ENDED,
     /// draft-ietf-moq-transport-14 §9.12). Does nothing for a track that is
     /// not registered. Waits for a `publish` in flight, whose subscription is
-    /// then ended too. The track keeps its numbering and cache, so `publish`
-    /// or a SUBSCRIBE takes it up again at the next group. A track published
-    /// on demand reports no demand until `publish_on_demand` is called again.
+    /// then ended too. A new SUBSCRIBE or TRACK_STATUS then finds no track
+    /// until `ensure_track` or `publish` takes it up again, with its numbering
+    /// and cache, at the next group; FETCH still serves the cache. A track
+    /// published on demand reports no demand until `publish_on_demand` is
+    /// called again.
     pub async fn end_track(&self, namespace: &str, track_name: &str) -> Result<()> {
         let key = track_key(namespace, track_name);
         let ended = {
@@ -736,6 +753,7 @@ impl Origin {
             // A producer that publishes the track again must produce its first
             // objects whatever a SUBSCRIBE to the ended track asks for.
             track.demand = None;
+            track.ended = true;
             for request in requests {
                 state.subscriptions.remove(&request);
             }
@@ -834,8 +852,7 @@ impl Origin {
             .state
             .lock()
             .await
-            .tracks
-            .get(&key)
+            .live_track_mut(&key)
             .map(|track| track.numbering.largest());
         match largest {
             // Its SUBSCRIBE_OK carries no Track Properties either.
@@ -1342,8 +1359,11 @@ mod tests {
             update_forward(&peers, &accepted, true).await;
             while demand_receiver.try_recv().is_ok() {}
 
-            // Act: a SUBSCRIBE comes and goes on the ended track, then another stays while it is published again
+            // Act: a SUBSCRIBE comes and goes on the ended track registered again, then another stays while it is published again
             end_track(&peers).await;
+            origin
+                .ensure_track(NAMESPACE, TRACK, FIRST_GROUP_ID, RETENTION)
+                .await;
             let early = subscribe(&peers, FilterType::LargestObject).await;
             unsubscribe(&peers, &early).await;
             let ended_reports = std::iter::from_fn(|| demand_receiver.try_recv().ok()).count();
@@ -3076,6 +3096,95 @@ mod tests {
                 RequestErrorCode::TrackDoesNotExist
             );
         }
+    }
+
+    #[tokio::test]
+    async fn handle_returns_a_subscribe_to_an_ended_track() {
+        for version in DRAFTS {
+            // Arrange
+            let peers =
+                origin_with_track("origin-handle-ended-subscribe", RETENTION, version).await;
+            peers.origin.end_track(NAMESPACE, TRACK).await.unwrap();
+            let mut subscriber = peers.server.subscriber();
+
+            // Act
+            let (subscription, returned) = within(async {
+                tokio::join!(
+                    subscriber.subscribe(
+                        NAMESPACE.to_string(),
+                        TRACK.to_string(),
+                        subscribe_option(FilterType::NextGroupStart)
+                    ),
+                    async {
+                        let event = next_event(&peers.client).await;
+                        let Some(SessionEvent::Subscribe(handler)) =
+                            peers.origin.handle(event).await
+                        else {
+                            return false;
+                        };
+                        handler
+                            .error(RequestErrorCode::TrackDoesNotExist, "ended".to_string())
+                            .await
+                            .unwrap();
+                        true
+                    }
+                )
+            })
+            .await;
+
+            // Assert
+            assert!(returned, "the origin served a SUBSCRIBE to an ended track");
+            assert_eq!(
+                rejection(subscription).code,
+                RequestErrorCode::TrackDoesNotExist
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ended_track_registered_again_is_subscribed_to_from_the_next_group() {
+        // Arrange
+        let peers =
+            origin_with_track("origin-ended-registered-again", RETENTION, Version::Draft14).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        peers.origin.end_track(NAMESPACE, TRACK).await.unwrap();
+
+        // Act
+        peers
+            .origin
+            .ensure_track(NAMESPACE, TRACK, FIRST_GROUP_ID, RETENTION)
+            .await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+            .await
+            .unwrap();
+        let received = next_object(&peers, &subscription).await;
+
+        // Assert
+        assert_eq!(
+            (received.group_id, received.payload),
+            (FIRST_GROUP_ID + 1, Bytes::from_static(b"b"))
+        );
+    }
+
+    #[tokio::test]
+    async fn track_status_of_an_ended_track_is_track_does_not_exist() {
+        // Arrange
+        let peers =
+            origin_with_track("origin-ended-track-status", RETENTION, Version::Draft14).await;
+        peers.origin.end_track(NAMESPACE, TRACK).await.unwrap();
+
+        // Act
+        let status = track_status(&peers, TRACK).await;
+
+        // Assert
+        assert_eq!(rejection(status).code, RequestErrorCode::TrackDoesNotExist);
     }
 
     #[tokio::test]

@@ -601,11 +601,15 @@ mod tests {
             Some(Bytes::from_static(b"first"))
         );
 
-        // Act
+        // Act: the track is registered again as soon as it ends, for the second announcement
         let _second = within(publisher.announce(NAMESPACE)).await.unwrap();
         let early_subscribe =
             tokio::time::timeout(Duration::from_millis(200), subscribes.recv()).await;
         within(publisher.origin().end_track(&NAMESPACE.join("/"), TRACK))
+            .await
+            .unwrap();
+        let writer = publisher
+            .publish_track(NAMESPACE, TRACK, PublishTrackOptions::default())
             .await
             .unwrap();
         let left = within(follower.next()).await;
