@@ -17,7 +17,7 @@ use futures::FutureExt;
 use tokio::sync::Notify;
 use tokio_util::codec::Decoder;
 use tracing::{
-    Event,
+    Event, Span,
     field::{Field, Visit},
     span::{Attributes, Id, Record},
     subscriber::DefaultGuard,
@@ -36,7 +36,9 @@ use crate::modules::transport::{
     application_protocol::ApplicationProtocols,
     connect_target::ConnectTarget,
     native::native_connection_creator::NativeConnectionCreator,
+    qmux::{in_memory, qmux_connection::QmuxConnection, stream_id::Role},
     server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
+    transport_addresses::TransportAddresses,
     transport_connection::{BoxedConnection, BoxedReceiveStream, BoxedSendStream},
     transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
     websocket::websocket_listener::WebSocketListener,
@@ -53,11 +55,17 @@ use crate::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
             object_datagram::ObjectDatagram,
         },
-        domains::{connection::IncomingObjectNotification, session_context::SessionContext},
+        domains::{
+            connection::{Connection, IncomingObjectNotification},
+            session_context::SessionContext,
+            session_events,
+        },
         runtime::dispatch::incoming_object::{
             IncomingDatagram, IncomingObject, IncomingObjectReceiver,
         },
-        version::{DEFAULT_VERSIONS, Version, application_protocols, server_application_protocols},
+        version::{
+            self, DEFAULT_VERSIONS, Version, application_protocols, server_application_protocols,
+        },
     },
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
@@ -708,6 +716,61 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     scheme: &str,
 ) -> (Session, Session) {
     connected_sessions_over(name, Version::Draft18, scheme).await
+}
+
+/// Returns (client, server). For a test that pauses the clock: over a socket
+/// the runtime idles while a packet is in flight, so auto-advance jumps the
+/// paused clock to quinn's next timer until the idle timeout closes the
+/// connection. Channels deliver before the runtime idles.
+pub(crate) async fn in_memory_draft18_sessions() -> (Session, Session) {
+    init_test_tracing();
+    let versions = [Version::Draft18];
+    let alpn = application_protocols(&versions).unwrap().quic_alpns[0];
+    let ((client_sink, client_source), (server_sink, server_source)) = in_memory::link();
+    let (client_transport, server_transport) = tokio::join!(
+        QmuxConnection::establish(
+            client_sink,
+            client_source,
+            Role::Client,
+            Some(alpn.into()),
+            TransportAddresses::default(),
+        ),
+        QmuxConnection::establish(
+            server_sink,
+            server_source,
+            Role::Server,
+            Some(alpn.into()),
+            TransportAddresses::default(),
+        ),
+    );
+    let client_transport: BoxedConnection = Box::new(client_transport.unwrap());
+    let server_transport: BoxedConnection = Box::new(server_transport.unwrap());
+    let target = ConnectTarget::parse("moqt://localhost").unwrap();
+    let client = async {
+        let (control, control_receiver) =
+            version::connect(&client_transport, &versions, None, &target).await?;
+        let (event_sender, event_receiver) = session_events::channel();
+        let connection = Connection::new(client_transport, control, false, 0, event_sender.clone());
+        anyhow::Ok(Session::new(
+            control_receiver,
+            SessionContext::new(connection, event_sender, false),
+            event_receiver,
+            None,
+            None,
+            Span::current(),
+        ))
+    };
+    let server = async {
+        let setup = version::accept(&server_transport, &versions).await?;
+        Handshake {
+            transport_connection: server_transport,
+            setup,
+        }
+        .accept(&Span::current())
+        .await
+    };
+    let (client, server) = within(async { tokio::join!(client, server) }).await;
+    (client.unwrap(), server.unwrap())
 }
 
 async fn connected_sessions_over(name: &str, version: Version, scheme: &str) -> (Session, Session) {
