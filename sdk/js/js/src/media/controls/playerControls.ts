@@ -6,6 +6,7 @@ import { formatElapsed } from '../player/mediaTimeline'
 import type { LogLevel } from '../player/trackContext'
 import { CONTROLS_MARKUP } from './controlsMarkup'
 import { getErrorMessage } from '../internal/status'
+import { callPage } from '../internal/callPage'
 import type { MediaCatalogTrack } from '../catalog'
 
 const MICROS_PER_SECOND = 1_000_000
@@ -14,6 +15,7 @@ const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight:
 const POINTER_IDLE_MS = 2_500
 
 /// The arrow keys skip wherever the focus is, so a page holds one of these.
+/// What `onLog` throws is reported with `reportError`.
 export class PlayerControls {
   readonly seekbar: HTMLInputElement
   private seeking = false
@@ -30,7 +32,7 @@ export class PlayerControls {
   ) {
     this.onLog = (level, message) => {
       forwardSdkLog(undefined, level, 'moq-wasm::media::player_controls', message)
-      onLog(level, message)
+      callPage(() => onLog(level, message))
     }
     container.classList.add('viewer-stage')
     const template = document.createElement('template')

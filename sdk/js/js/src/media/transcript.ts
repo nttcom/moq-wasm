@@ -1,6 +1,7 @@
 import type { MoqLocation, MoqSession, PublishDone, ReceivedObject } from '../core/session'
 import { sdkLog } from '../core/log'
 import { botNamespace } from './bots'
+import { callPage } from './internal/callPage'
 import { getErrorMessage } from './internal/status'
 import { TranscriptTimeline, type TranscriptRecord } from './internal/transcriptTimeline'
 
@@ -24,7 +25,9 @@ export type TranscriptSubscription = {
 /// `onRecords` with every record of the timeline, in the order the transcriber
 /// published them, each time they change; a record that came with history from
 /// the joining FETCH is not `live`.
-/// A malformed object or record is skipped. Rejects with the session's
+/// A malformed object or record is skipped. What `onRecords` throws is
+/// reported with `reportError`, as an exception of an event listener is, and
+/// the later records are still delivered. Rejects with the session's
 /// `RequestError` when the relay rejects the SUBSCRIBE, as it does while the
 /// transcriber is not in the room, so call it once `watchBroadcasts`'s
 /// `onBotChange` or `botTypeOf` tells the transcriber arrived.
@@ -46,7 +49,8 @@ export async function subscribeTranscript(
       }
       const live = !isAtOrBefore(object, subscription.largest)
       if (timeline.add(object.groupId, object.objectId, object.objectPayload, live)) {
-        onRecords(timeline.records())
+        const records = timeline.records()
+        callPage(() => onRecords(records))
       }
     }
   })().catch((error: unknown) =>

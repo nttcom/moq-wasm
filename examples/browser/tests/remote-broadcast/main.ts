@@ -1,5 +1,12 @@
 import { MoqSession } from 'moq-wasm'
-import { type BroadcastWatch, RemoteBroadcast, type SourceView, createBroadcast, watchBroadcasts } from 'moq-wasm/media'
+import {
+  type BroadcastWatch,
+  LivePlayer,
+  RemoteBroadcast,
+  type SourceView,
+  createBroadcast,
+  watchBroadcasts
+} from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import { connectOptions } from '../../utils/access'
 
@@ -61,7 +68,87 @@ async function startWatching(url: string, prefix: string[], own: string[], bot: 
   })
 }
 
-const api = { start, snapshot, move, events: () => [...events], startWatching, watched: () => [...watched] }
+/// How many times `reportError` reported each throwing callback, by callback name.
+const reported = new Map<string, number>()
+/// What the recording listener received, and how often the throwing `LivePlayer`
+/// callbacks ran before they threw.
+const heard = { events: [] as string[], audioLevels: 0, liveFrames: 0, playerAudioLevels: 0 }
+let player: LivePlayer | undefined
+
+class PageBug extends Error {}
+
+addEventListener('error', (event) => {
+  if (event.error instanceof PageBug) {
+    reported.set(event.error.message, (reported.get(event.error.message) ?? 0) + 1)
+    event.preventDefault()
+  }
+})
+
+function bug(callback: string): never {
+  throw new PageBug(callback)
+}
+
+/// Plays the broadcast as `start` does, through a listener whose every
+/// callback throws ahead of one that records, and through a `LivePlayer`
+/// whose every callback throws.
+async function startThrowing(url: string, namespace: string[]): Promise<void> {
+  const session = await MoqSession.connect(url, connectOptions())
+  remote = new RemoteBroadcast(session, namespace, { onLog: () => bug('RemoteBroadcastOptions.onLog') })
+  remote.listen({
+    onSourceAdd: (view) => {
+      document.getElementById('first')?.append(view.element)
+      view.listen({ onChange: () => bug('onChange'), onPlayerChange: () => bug('onPlayerChange') })
+      bug('onSourceAdd')
+    },
+    onSourceRemove: () => bug('onSourceRemove'),
+    onAudioLevel: () => bug('onAudioLevel')
+  })
+  remote.listen({
+    onSourceAdd: (view) => heard.events.push(`add ${view.name}`),
+    onSourceRemove: (view) => heard.events.push(`remove ${view.name}`),
+    onAudioLevel: () => {
+      heard.audioLevels += 1
+    }
+  })
+  // Its own session: `remote` already subscribes to this broadcast's catalog on
+  // `session`, and a session subscribes to a track once.
+  const playerSession = await MoqSession.connect(url, connectOptions())
+  player = new LivePlayer({
+    container: document.getElementById('player') as HTMLElement,
+    callbacks: {
+      onStateChange: () => bug('LivePlayer.onStateChange'),
+      onLiveFrame: () => {
+        heard.liveFrames += 1
+        bug('LivePlayer.onLiveFrame')
+      },
+      onLog: () => bug('LivePlayer.onLog'),
+      onAudioLevel: () => {
+        heard.playerAudioLevels += 1
+        bug('LivePlayer.onAudioLevel')
+      }
+    }
+  })
+  await player.start(playerSession, namespace)
+}
+
+function throwing() {
+  return {
+    reported: Object.fromEntries(reported),
+    heard: { ...heard, events: [...heard.events] },
+    playerVideoObjects: player?.stats().videoObjects ?? 0
+  }
+}
+
+const api = {
+  start,
+  snapshot,
+  move,
+  events: () => [...events],
+  startWatching,
+  watched: () => [...watched],
+  startThrowing,
+  throwing
+}
 
 declare global {
   interface Window {

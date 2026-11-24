@@ -1,9 +1,12 @@
 import { readLocHeader } from '../internal/loc'
+import { callPage } from '../internal/callPage'
 import { subscribeAddedTrack } from './addedTrack'
 import type { LivePlayout } from './livePlayout'
 import type { TrackContext } from './trackContext'
 import { TEXT_PRIORITY } from './trackPriority'
 
+/// What `onText` throws is reported with `reportError`, as an exception of an
+/// event listener is, and the later texts are still delivered.
 export type AddedTextTrackListener = {
   /// The payload of an object, as UTF-8 text, when the sound captured with it
   /// plays, in the order received. `lateMs` is how long after that time it is
@@ -44,7 +47,7 @@ export class AddedTextTrack {
         const text = decoder.decode(object.objectPayload)
         const timer = setTimeout(() => {
           added.timers.delete(timer)
-          listener.onText(text, lateMs)
+          callPage(() => listener.onText(text, lateMs))
         }, added.lastDeliveryMs - nowMs)
         added.timers.add(timer)
       },

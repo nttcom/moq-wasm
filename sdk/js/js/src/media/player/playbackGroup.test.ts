@@ -3,6 +3,7 @@ import { type GroupLink, type GroupMember, type PlayableRange, registerGroupMemb
 import type { LivePlayer } from './livePlayer'
 import { PlaybackGroup } from './playbackGroup'
 import { FakeMediaEnvironment } from './testing/fakeMediaEnvironment'
+import { collectReportedErrors } from '../internal/testing/reportedErrors'
 
 const SECOND = 1_000_000
 const T0 = 1_759_924_100_000_000
@@ -84,6 +85,7 @@ function groupOf(...members: FakeMember[]): PlaybackGroup {
   return group
 }
 
+const reported = collectReportedErrors()
 let environment: FakeMediaEnvironment
 
 test.beforeEach(() => {
@@ -291,4 +293,25 @@ test('a player that loses its place, as when its range is evicted, is placed aga
 
   // Assert
   expect(member.last).toEqual({ kind: 'hold', positionMicros: T0 + 30 * SECOND })
+})
+
+test('an onStateChange that throws is reported, and the group still places its players and ends', () => {
+  // Arrange
+  const error = new Error('onStateChange bug')
+  const member = new FakeMember(vod(0, 1))
+  const group = new PlaybackGroup({
+    onStateChange: () => {
+      throw error
+    }
+  })
+  group.add(fakePlayer(member))
+
+  // Act
+  group.seek(T0 + 0.5 * SECOND)
+  advanceSeconds(1)
+
+  // Assert: told on the add, the seek and the end; the player is held past its end
+  expect(reported).toEqual([error, error, error])
+  expect(member.kinds.slice(-2)).toEqual(['align', 'hold'])
+  expect(group.state).toMatchObject({ ended: true, paused: true })
 })

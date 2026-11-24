@@ -4,6 +4,7 @@ import { forwardSdkLog, sdkLog } from '../core/log'
 import { registerPublisherStats } from '../core/telemetry'
 import { audioTrackName, rejectedName, sourceTrackNames } from './sourceNames'
 import { noteOwnBroadcast } from './ownBroadcasts'
+import { callPage } from './internal/callPage'
 import {
   type MediaKind,
   type SourceEncoding,
@@ -41,7 +42,8 @@ export type LocalBroadcastOptions = {
   eventTimelines?: EventTimelineOffer[]
   /// Receives the encoders' failures. Skips a failure whose `String()` equals
   /// the previous one, such as the "media publishing stopped" every chunk
-  /// fails with after publishing stops.
+  /// fails with after publishing stops. What it throws is reported with
+  /// `reportError`.
   onError?: (error: unknown) => void
 }
 
@@ -62,6 +64,10 @@ export type SourceInput = Omit<SourceOptions, 'videoLabel'> & {
   display?: true | DisplayMediaStreamOptions
 }
 
+/// What a listener throws is reported with `reportError`, as an exception of an
+/// event listener is, and the source goes on as if it had returned: the
+/// other listeners are still told and a source whose tracks all ended is still
+/// removed from the broadcast.
 export type LocalSourceListener = {
   /// The device of `kind` the SDK captured was unplugged or its capture
   /// stopped; the source no longer publishes it. A track the page gave is the
@@ -148,7 +154,7 @@ function reporter(session: MoqSession, onError: ((error: unknown) => void) | und
     lastReported = message
     if (onError) {
       forwardSdkLog(session, 'error', TARGET, 'publish failed', { error })
-      onError(error)
+      callPage(() => onError(error))
     } else {
       sdkLog(session, 'error', TARGET, 'publish failed', { error })
     }
@@ -494,14 +500,14 @@ class Source implements LocalSource {
     }
     this.detach(captured.kind)
     for (const listener of this.listeners) {
-      listener.onTrackEnded?.(captured.kind)
+      callPage(() => listener.onTrackEnded?.(captured.kind))
     }
     if (this.tracks.size > 0) {
       return
     }
     await this.removeFromBroadcast()
     for (const listener of this.listeners) {
-      listener.onEnded?.()
+      callPage(() => listener.onEnded?.())
     }
   }
 }

@@ -2,6 +2,9 @@ import { expect, test } from '@playwright/test'
 import { createBroadcast, type LocalSource } from './localBroadcast'
 import { FakeCaptureEnvironment, FakeTrack } from './testing/fakeCaptureEnvironment'
 import { settle } from '../testing/settle'
+import { collectReportedErrors } from './internal/testing/reportedErrors'
+
+const reported = collectReportedErrors()
 
 let environment: FakeCaptureEnvironment
 
@@ -112,4 +115,49 @@ test('createBroadcast offers each event timeline it is given, in order', async (
     ['action', 'io.example.action.v1', 0],
     ['notes', 'io.example.notes.v1', undefined]
   ])
+})
+
+test('an onTrackEnded that throws is reported, the other listener is told and the source is still removed', async () => {
+  // Arrange
+  const broadcast = await createBroadcast(environment.session, ['room'])
+  const source = await broadcast.addSource('camera', { video: true })
+  const error = new Error('onTrackEnded bug')
+  const heard: string[] = []
+  source.listen({
+    onTrackEnded: () => {
+      throw error
+    }
+  })
+  source.listen({ onTrackEnded: (kind) => heard.push(`track ${kind}`), onEnded: () => heard.push('ended') })
+
+  // Act
+  environment.capturedTracks[0].end()
+  await settle()
+
+  // Assert
+  expect(reported).toEqual([error])
+  expect(heard).toEqual(['track video', 'ended'])
+  expect(broadcast.source('camera')).toBeUndefined()
+})
+
+test('an onError that throws is reported and the later failures still reach it', async () => {
+  // Arrange
+  const error = new Error('onError bug')
+  const heard: unknown[] = []
+  const broadcast = await createBroadcast(environment.session, ['room'], {
+    onError: (failure) => {
+      heard.push(String(failure))
+      throw error
+    }
+  })
+  await broadcast.addSource('camera', { video: new FakeTrack('video') as unknown as MediaStreamTrack })
+  const encoder = environment.workers[0] as unknown as { onmessage(event: { data: object }): void }
+
+  // Act
+  encoder.onmessage({ data: { type: 'encoderError', rendition: 0, message: 'first' } })
+  encoder.onmessage({ data: { type: 'encoderError', rendition: 0, message: 'second' } })
+
+  // Assert
+  expect(reported).toEqual([error, error])
+  expect(heard).toEqual(['Error: video encoder 0: encoderError: first', 'Error: video encoder 0: encoderError: second'])
 })

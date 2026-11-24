@@ -1,11 +1,14 @@
 import { type GroupLink, type GroupMember, type PlayableRange, groupMemberOf } from './groupMember'
 import type { LivePlayer } from './livePlayer'
+import { callPage } from '../internal/callPage'
 import { ReviewClock } from './reviewClock'
 
 const MICROS_PER_SECOND = 1_000_000
 /// How often the group checks which players' ranges cover its position.
 const PLACE_INTERVAL_MS = 250
 
+/// What a callback throws is reported with `reportError`, as an exception of
+/// an event listener is, and the group goes on as if it had returned.
 export type PlaybackGroupCallbacks = {
   /// Called when the mode, the pause or the end changes, and on every seek;
   /// the position moves on without a call.
@@ -264,7 +267,7 @@ export class PlaybackGroup {
   }
 
   private changed(): void {
-    this.callbacks?.onStateChange()
+    callPage(() => this.callbacks?.onStateChange())
   }
 }
 
