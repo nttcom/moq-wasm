@@ -345,7 +345,11 @@ Each sequence owns the relay-side protocol logic for one message
   keeps PUBLISH_NAMESPACE ordered before a later PUBLISH_NAMESPACE_DONE for
   the same subscriber. The fan-out includes the originating session when it
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
-  to its sender; draft-18 §6.1 echoes NAMESPACE too).
+  to its sender; draft-18 §6.1 echoes NAMESPACE too), and so does the fan-out
+  of its PUBLISH_NAMESPACE_DONE (draft-14 §9.28, draft-18 §10.18): the
+  announcement stays recorded on a session until it is withdrawn there, by
+  the relay and on draft-18 by moqt too, and would hide the namespace's next
+  publisher from it.
 - `InMemoryLocalPubSubDirectory` (`directory.rs`) — the relay's in-memory
   registry of publish/subscribe namespaces and tracks. Namespaces and
   prefixes are kept `/`-joined, and a prefix matches a namespace field by
