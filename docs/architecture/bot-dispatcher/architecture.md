@@ -149,9 +149,7 @@ reserved elements `bots` and `recordings` (the recorder's replays).
 
 ### When a bot ends
 Every bot ends by itself once the room has had no human member for its type's
-grace period, counted from its start too. This generalises what both bots
-already do: the recorder's `AutoStop` (`--grace-seconds`) and the Python
-bots' "unpublished for the grace period". The grace period differs by type
+grace period, counted from its start too. The grace period differs by type
 because a room that empties for a reload or a break should not split a
 recording:
 
@@ -166,23 +164,24 @@ visible to a bot, a room of listeners who publish nothing counts as empty.
 
 ### Launchers
 Each bot type names its launcher. The first and only one is a Cloud Run Job
-execution with overridden arguments, moved from `recorder::launcher`, with the
-same local child-process variant for development. The recorder's composite
-job keeps launching through the same code, which therefore moves to a crate
-both use instead of being copied. A type that needs to start faster than a
+execution with overridden arguments, with a local child-process variant for
+development. The recorder's composite job launches through the same code,
+which lives in a crate both use. A type that needs to start faster than a
 job (an AI bot joining a live meeting) can get another launcher later without
 changing the API.
 
 ### State
 `bot-dispatcher` keeps no state in memory. As `recorder serve` does, it keeps one small
-JSON object per bot in a store (`gs://` or `file://`), and a lock per
-`(type, room)` taken with `PutMode::Create` and released with a conditional
-delete, so one room runs at most one bot of each type and any number of
+JSON object per bot in a store (`gs://` or `file://`), and a holder per
+`(type, room)` naming the room's latest bot of that type. It is created with
+`PutMode::Create`, replaced only at the version that was read once its bot
+is no longer active, and never deleted, so one room runs at most one bot of
+each type and any number of
 instances answer alike. The object is written by `bot-dispatcher` alone, from the
 launch request and from the bot's heartbeats (`starting`, `running`,
 `stopping`, `finished`, `failed`). A bot that has not sent a heartbeat for
-90 s, or 5 min before its first one, is reported `failed` and its lock is
-released: the first execution of a job after its image changed imports the
+90 s, or 5 min before its first one, is reported `failed` and the next start
+may replace it as the room's holder: the first execution of a job after its image changed imports the
 image before the bot starts, which took almost 2 min for the AI bots' image. The recorder keeps its own recording state (members, files,
 composite) in its store for `recorder serve`'s read API.
 
@@ -213,7 +212,7 @@ tokens is the app. The temporary-apps service, which holds the temporary app sec
 becomes the app server of all of them, so `bot-dispatcher` handles a temporary app the
 same way as a registered one:
 
-- The temporary-apps service gains the same `/bots/{type}` routes,
+- The temporary-apps service serves the same `/bots/{type}` routes,
   which a page calls with its own token as `Authorization: Bearer`. The mint
   verifies the token as `POST /tokens/refresh` does (signed by it, temporary,
   not expired), signs a launch token whose `bots` claim is the page's
@@ -256,10 +255,11 @@ finds its key in `BOT_DISPATCHER_BOT_KEY`.
 The service reads `PORT` (8098), `BOT_DISPATCHER_PUBLIC_URL` (the URL bots call back,
 and the audience of their ID tokens), `BOT_DISPATCHER_VTS_URL`, `BOT_DISPATCHER_STORE_URL`,
 `BOT_DISPATCHER_REGISTRY_FILE` or `BOT_DISPATCHER_REGISTRY_BUCKET` (with
-`BOT_DISPATCHER_REGISTRY_OBJECT`), `BOT_DISPATCHER_TEMPORARY_APP_SECRET`, and
+`BOT_DISPATCHER_REGISTRY_OBJECT`), `BOT_DISPATCHER_TEMPORARY_APP_SECRET`,
 `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT`, the comma-separated service accounts the bot
 types' jobs run as, without which only locally launched bots can
-authenticate. `BOT_DISPATCHER_INSECURE_SKIP_AUTH=true`, for a relay without
+authenticate, and `BOT_DISPATCHER_GOOGLE_CERTS_URL`, the JWKS their ID tokens
+are checked against (Google's by default). `BOT_DISPATCHER_INSECURE_SKIP_AUTH=true`, for a relay without
 authorization only (local development and the E2E tests), accepts every
 request for the app its room starts with, reads no registry, and answers a
 bot's token call with `null`, so the bot joins with no token.
@@ -302,27 +302,11 @@ on each token signature.
   `aws-lc-rs`, already a dependency of `auth-token`).
 - An AI bot started as a Cloud Run Job waits for the execution to start,
   about 12 s for the recorder, longer than a request to a warm service.
-- The pages change twice: the recorder's start moves from `recorder serve` to
-  the temporary-apps service, and the AI bot pages drop the held event stream.
-
-## Rollout
-1. `auth-token`: the `bots` claim.
-2. `bot-dispatcher` with the recorder as its only type; `recorder record` takes its bot
-   id, fetches its token and reports heartbeats; the recorder publishes
-   `bots/recorder`.
-3. Temporary-apps service `/bots/{type}`; the Meeting starts and stops the recorder through
-   it and shows REC from `bots/recorder`.
-4. Remove start and stop from `recorder serve`, with `--token` and
-   `--temporary-apps-url` of `recorder record`.
-5. The AI bots, one at a time: a `run` entry point that serves one room,
-   their presence under `<room>/bots/<type>`, the common end rule, and their
-   pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one;
-   what the bots keep of it (their calls to `bot-dispatcher`, ID tokens, telemetry) becomes `moq-bot-job`.
 
 ## Alternatives Considered
 
 ### Keep forwarding the page's token
-The current shape. It needs no app server, but leaves all four problems
+It needs no app server, but leaves all four problems
 above.
 
 ### Let the bot join with the launch token

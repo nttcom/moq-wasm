@@ -20,9 +20,9 @@ layout of its own and follows the one `crates/broadcast` publishes (see
 [its README](../../../crates/broadcast/README.md)).
 
 It is the first half of persisting what flows through a relay. The second
-half, the relay spilling its object cache to disk and answering FETCH from
-there, is a relay change and does not depend on this crate; once it exists,
-`--from-cache` reaches back as far as the relay keeps.
+half, the relay spilling its object cache to disk (`RELAY_DISK_CACHE_DIR`)
+and answering FETCH from there, lives in the relay and does not depend on
+this crate; with it on, `--from-cache` reaches back as far as the relay keeps.
 
 ## Why the LOC tracks and not the CMAF siblings
 The CMAF siblings are already fMP4, and copying their fragments into a file
@@ -73,7 +73,9 @@ both tracks into one init segment and one fragment stream.
    "Tracks that come and go"). With
    `--list-tracks` it prints the first catalog object's LOC tracks
    (`track_list::track_table`) to stdout and exits instead.
-3. The video track is subscribed with `NextGroupStart`, so the recording
+3. The video track is subscribed from the start of a group
+   (`relay::subscribe_group_start`: the current group is fetched, or a new
+   one is requested when the current one is 60 objects in), so the recording
    begins on a keyframe, and the audio track with `LargestObject`
    (`relay::subscribe_audio`): an audio object decodes alone, and a meeting
    participant who sends the audio as a single stream never starts a new
@@ -136,8 +138,7 @@ Neither MSF nor the catalog says which source is a camera and which a
 screen share, and no field of our own was added for it (see 「録画を
 `LivePlayer` で再生する」 in the browser SDK's architecture). The room
 recording still keeps the two apart, for the composite's focus and the
-archive layout, and the default source's track names stand in for it, as
-draft-ietf-moq-msf-02 is to drop the chat's `depends` that did before.
+archive layout, and the default source's track names stand in for it.
 
 ## Tracks that come and go
 A publisher's first catalog often lacks the audio a later one lists:
@@ -190,7 +191,7 @@ video therefore follows the catalog like the audio: `record_live` drops the
 subscription once a catalog no longer lists the track, or once it ends, and
 while the recording reads no video, each catalog object goes through
 `broadcast::selection::select_video`, the same choice as at start. The track it
-returns is subscribed with `NextGroupStart` and added with
+returns is subscribed with `relay::subscribe_group_start` and added with
 `Recording::add_video`.
 
 While no video is read, the audio is recorded alone and leads the file: it
@@ -288,7 +289,7 @@ The room watcher ignores namespaces under `<room>/recordings/<id>/` so that
 replayed recordings do not become participants of a new recording, and
 those under `<room>/bots/`, which are bots, the recorder's own presence among
 them; of these only an MoQ recording reads `<room>/bots/transcriber`, as a
-transcript.
+transcript, and `<room>/bots/policy`, a robot's policy.
 `bot-dispatcher` starts and stops room recordings (see "Started by `bot-dispatcher`"): each runs
 as a `recorder bot` job and each composite as a `recorder composite` job.
 `recorder serve` is an HTTP API (`api_server::ApiServer` on
@@ -318,7 +319,7 @@ holds the room for the `recorder` type.
 
 | Object | Writer | Holds |
 | --- | --- | --- |
-| `state/<id>.json` | the recording job | `room_state::RoomRecord`: prefix, layout, whether to composite, state, members, `updated_at_ms` |
+| `state/<id>.json` | the recording job | `room_state::RoomRecord`: id, prefix, layout, format (`mp4` or `moq`), whether to composite, state, members, `updated_at_ms` |
 | `state/<id>.composite.json` | the composite job, or the recording job when it cannot start one | the composite's state |
 | `rooms/<prefix>/<id>` | the recording job | an empty marker, so a room's recordings are listed without reading the others |
 | `<app>/<id>/<namespace>/...`, `<app>/<id>/manifest.json` | the recording job | the files and the manifest, under the app, the first element of the room's prefix, so that an app's recordings are listed without reading the others |
@@ -573,7 +574,7 @@ without the player closing it. The number of active publications per instance
 is capped by `--max-replays`; recording jobs remain independent and their
 stored state stays shared.
 
-`examples/recording-player` plays a replay with the SDK alone: `openRecording`
+`examples/browser/examples/recording-player` plays a replay with the SDK alone: `openRecording`
 holds the answer and gives the prefix, SUBSCRIBE_NAMESPACE on the prefix finds
 each participant's camera and screen share namespaces, and each plays in a
 `LivePlayer`, all in one `PlaybackGroup` on one position. The page puts a

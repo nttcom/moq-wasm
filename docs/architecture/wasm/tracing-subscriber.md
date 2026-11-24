@@ -8,15 +8,15 @@ Accepted
 
 ## Context
 `moqt`, `broadcast` and `wasm` log through `tracing`, but the browser build installs no subscriber, so every
-event inside the wasm module is discarded. Pages need these logs: a `tracing::warn!` in
-`sdk/js/src/media_broadcast.rs` is the only report of a dropped frame, and the browser telemetry plan forwards
+event inside the wasm module was discarded. Pages need these logs: a `tracing::warn!` in
+`sdk/js/src/media_broadcast.rs` was the only report of a dropped frame, and the browser telemetry forwards
 client logs to ClickStack.
 
 The SDK should hand each event to the page as a structured record (`{ timeMs, level, target, message, fields }`)
 through `init({ onLog, logLevel })`, so the page decides whether to print, buffer or send it.
 
 ## Decision
-Add **`tracing-subscriber`** (0.3, already in the workspace) to `wasm` with `default-features = false,
+Add **`tracing-subscriber`** (0.3, already in the workspace) to `wasm`, for wasm32 only, with `default-features = false,
 features = ["registry", "std"]`.
 
 On wasm32, `setLogSink` installs `registry()` with a `LevelFilter` and one custom `Layer` as the global default

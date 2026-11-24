@@ -12,8 +12,7 @@ Accepted
 
 Add `reqwest` (with the `rustls` feature, no default features) as a direct
 dependency of the `observability` crate. `src/clickhouse.rs` uses it to run the
-schema statements, insert snapshot rows (`INSERT … FORMAT JSONEachRow` with
-`async_insert`) and read query results (`FORMAT JSONEachRow`) through
+schema statements and read query results (`FORMAT JSONEachRow`) through
 ClickHouse's HTTP interface.
 
 ## Context
@@ -33,6 +32,5 @@ SQL and returns rows as JSON lines.
 
 ## Decision
 
-Use `reqwest` over the HTTP interface. It is already in the workspace lock at
-0.13.4 (`relay`, `ingest-gateway pull`), so no new crate enters the dependency tree,
-and the rows serialize with the `serde` derives in `telemetry::relay_stats`.
+Use `reqwest` over the HTTP interface. It is already in the workspace lock
+(`ingest-gateway pull`), so no new crate enters the dependency tree.

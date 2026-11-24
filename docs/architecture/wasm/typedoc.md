@@ -9,12 +9,12 @@ Accepted
 ## Context
 The browser SDK (`sdk/js/js`) is documented by its README and its TSDoc comments, which only someone reading
 the source or the `.d.ts` files sees. The Example site on GitHub Pages should serve both as pages: the README as a
-guide and every exported class, function and type of the `moq-wasm`, `moq-wasm/media` and `moq-wasm/recording`
-entry points as a reference.
+guide and every exported class, function and type of the `moq-wasm`, `moq-wasm/media`, `moq-wasm/recording` and
+`moq-wasm/element` entry points as a reference.
 
 ## Decision
 Add **`typedoc`** in `sdk/js/js/typedoc/`, a package with its own lock file outside the npm workspace.
-`typedoc.json` there takes the three entry points and the README; `npm run docs` in `examples/browser` writes the
+`typedoc.json` there takes the four entry points and the README; `npm run docs` in `examples/browser` writes the
 HTML to `examples/browser/public/docs/js`, which Vite serves and copies into the site.
 
 ## Consequences

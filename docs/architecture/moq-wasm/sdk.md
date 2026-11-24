@@ -1,7 +1,7 @@
 # Design: the Rust SDK `moq-wasm`
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-11-20
@@ -11,7 +11,8 @@ A Rust SDK for applications outside this repository, robots under remote
 operation first, released like the Python SDK
 ([python/sdk.md](../python/sdk.md)): a new crate `sdk/rust` that a
 Rust application adds as its only dependency on this repository. This
-document fixes the crate, its API and its release. Robot-specific features
+document fixes the crate, its API and its release. The services in this
+repository keep `moqt` and `broadcast`. Robot-specific features
 (command expiry, dead-man stop, the track layout of a
 robot) are designed separately; "Robotics" below says how they reach this
 crate.
@@ -25,8 +26,7 @@ client: `Session` with `subscribe`, `subscribe_current_group`,
 `subscribe_group_start`, `fetch`, `track_status`, `watch_namespaces`,
 `announce` and `publish_track` (with `datagram`), shaped after the browser
 SDK's `MoqSession`. The browser and Python SDKs bind it. It chose `moqt`
-as the Rust SDK and left media to `broadcast`, and its release steps for
-Rust (README, changelog, `rust-v*` workflow) were not started.
+as the Rust SDK and left media to `broadcast`.
 
 A Rust application today therefore writes what the Python SDK gives a bot:
 
@@ -40,11 +40,8 @@ A Rust application today therefore writes what the Python SDK gives a bot:
 | Publish encoded H.264/Opus as an MSF broadcast | `LocalBroadcast.add_media_source` over `_native.MediaBroadcast` | `broadcast::Broadcast` and `BroadcastWriter` with `mediapack` events built by hand |
 | Write an MSF event timeline | `EventTimeline` | by hand |
 
-The media source is already written twice: `sdk/js/src/media_broadcast.rs`
-and `sdk/python/src/media_broadcast.rs` wrap `broadcast::Broadcast` with the
-same `configure_video`, `push_video`, `configure_audio`, `push_audio`,
-`add_rendition`, `remove_track`, keyframe request and demand change, about
-400 lines each.
+`sdk/js/src/media_broadcast.rs` and `sdk/python/src/media_broadcast.rs` both
+call `broadcast::MediaSource`, which the Rust SDK uses too.
 
 The layer that closes these gaps depends on `moqt`, `broadcast` and `msf`.
 `moqt` cannot hold it, since `broadcast` depends on `moqt`.
@@ -63,7 +60,7 @@ The layer that closes these gaps depends on `moqt`, `broadcast` and `msf`.
   does not: the browser and Python SDKs are clients too, and the tags tell
   the three apart.
 - **One dependency.** The crate re-exports `moqt::client` and the `moqt`
-  types its signatures name (`ClientConfig`, `CertificateVerification`,
+  types its signatures name (`CertificateVerification`, `Version`,
   `FilterType`, `GroupOrder`, `Location`, `ExtensionHeaders`,
   `TransportClose`, `RequestErrorCode`, …), and nothing else of `moqt`, so
   an application never adds `moqt`, `broadcast` or `msf` itself and cannot
@@ -72,7 +69,7 @@ The layer that closes these gaps depends on `moqt`, `broadcast` and `msf`.
   change to `moqt::client` is a change to this SDK and is written in its
   changelog.
 - **`sdk/python` keeps `[lib] name = "moq_wasm"`** for its extension
-  module and gains `doc = false`, so `cargo doc --workspace` writes one
+  module and sets `doc = false`, so `cargo doc --workspace` writes one
   `moq_wasm`.
 - Native targets only, on tokio. The browser uses the browser SDK.
 
@@ -133,8 +130,8 @@ tokio::select! {
 
 - **`connect(url, ConnectOptions)`** builds the endpoint and returns a
   `Session`. `ConnectOptions` holds `token`, `refresh_token`,
-  `certificate_verification` and the `ClientConfig` fields an application
-  sets. A failure to connect is the `Err`.
+  `certificate_verification` and `versions` (the drafts offered; draft-18,
+  then draft-14, when empty). A failure to connect is the `Err`.
 - **`Session`** owns a `moqt::client::Session` and the token refresh task,
   and dereferences to the `moqt::client::Session`, so its request methods
   keep their names and arguments without a copy of each: `subscribe`,
@@ -228,7 +225,7 @@ broadcast.close().await?;
   and the `on_demand` option. `MediaSourceOptions::new(label)` takes the
   catalog label, which has no default, as the Python SDK's `label` has
   none. Its implementation is the wrapper
-  `sdk/js` and `sdk/python` share after "Migration" step 2, so the
+  `sdk/js` and `sdk/python` share, so the
   three SDKs publish the same catalog.
 - **`watch_broadcasts(session, prefix, WatchOptions, handler)`** runs
   `handler` on a tokio task for each broadcast published under `prefix` that
@@ -295,13 +292,11 @@ config)` runs `robotics::Robot` on an announced `LocalBroadcast` named
 re-exports `Robot`, `Command`, `HoldReason` and `ArbiterConfig`. The driver
 side is `offer_actions(broadcast)`, which lists `action` on a driver's
 announced `LocalBroadcast` and returns `robotics::Driver`; with `State` and
-`decode_object` it is what a policy bot uses. The Rust
-SDK has it first; the Python SDK's module follows when a Python robot needs
-it. It is not behind a Cargo feature: `robotics` adds record types and
+`decode_object` it is what a policy bot uses. It is not behind a Cargo feature: `robotics` adds record types and
 logic, not a heavy dependency, and a feature would split the tested builds.
 The robotics design needs two things of the general API, both above:
 - `priority` in `PublishTrackOptions`, the Publisher Priority per track that
-  `moqt` gains in that design's step 1; this crate exposes it through the
+  `moqt` provides; this crate exposes it through the
   re-export without code of its own.
 - Event timelines in both directions: `EventTimeline` to write, and
   `RemoteBroadcast::event_timeline` to read.
@@ -356,31 +351,6 @@ break the API, as theirs may. crates.io stays out for the reasons
   their catalog, events and video. It stays domain-neutral; a robot's
   tracks belong to `robotics`.
 
-## Migration
-One step per PR, each stacked on the one before.
-
-1. **docs: this design.** [moqt/sdk.md](../moqt/sdk.md) marks decisions 2 and
-   3 and its Rust release steps 9 and 10 as replaced by this document.
-2. **refactor(broadcast): one media source.** Move the wrapper
-   `sdk/js/src/media_broadcast.rs` and
-   `sdk/python/src/media_broadcast.rs` share into `broadcast`, and make
-   both bindings call it. The browser unit tests, pytest and the media E2E
-   guard it; neither SDK's API changes.
-3. **feat(moq-wasm): core.** The crate, `connect`, `Session`, token refresh,
-   `SessionEnd`, the re-exports, the README; AGENTS.md gains the crate in its
-   component table; `sdk/python` gains `doc = false`.
-4. **feat(moq-wasm): publish a broadcast.** `create_broadcast`,
-   `LocalBroadcast`, `EventTimeline`, `MediaSource`.
-5. **feat(moq-wasm): follow broadcasts.** `watch_broadcasts`,
-   `RemoteBroadcast` (with `event_timeline`), `Catalog`.
-6. **docs(examples): a Rust example.** `examples/rust/moq-broadcast`.
-7. **ci: release.** `rust-sdk-release.yml`, the `release-rust-sdk` skill,
-   `CHANGELOG.md`, the Rust reference on GitHub Pages. Then
-   `rust-sdk-v0.0.1`.
-
-The services in this repository keep `moqt` and `broadcast`. Moving one onto
-the SDK is a change of its own, for when it would delete code.
-
 ## Consequences
 
 ### Positive
@@ -391,7 +361,7 @@ the SDK is a change of its own, for when it would delete code.
 
 ### Negative
 - `moqt::client` is now a public surface twice over: through the bindings
-  and as re-exports. Its changes need a changelog entry.
+  and as re-exports.
 - Token refresh, `watch_broadcasts`, `follow` and `Catalog.select` exist in
   Python and in Rust; the two must keep the same behaviour.
 - `moq_wasm` names two library targets in the workspace, told apart only by

@@ -10,16 +10,16 @@ Accepted
 
 ## What
 
-Add `hyper` (`http1`, `server`), `hyper-util` (`tokio`) and `http-body-util`
-to `services/recorder`. `src/api_server.rs` serves the API of
-`recorder serve`, which starts, stops and reports room recordings for the
-meeting example.
+Add `hyper` (`http1`, `server`) and `http-body-util` to `services/recorder`;
+the accept loop is `http-server`'s. `src/api_server.rs` serves the API of
+`recorder serve`, which lists room recordings, signs the URLs of their files
+and publishes their replays.
 
 ## Context
 
-A browser page has to start and stop a recording, so the recorder needs an
-HTTP server: four JSON endpoints, a small request body, and the CORS answers a
-browser asks for. `observability` already serves its API with the same three
+A browser page has to list and replay recordings, so the recorder needs an
+HTTP server: a few JSON endpoints, a small request body, and the CORS answers
+a browser asks for. `observability` already serves its API with the same
 crates (see `docs/architecture/observability/hyper.md`), so they are in the
 workspace's lock file.
 

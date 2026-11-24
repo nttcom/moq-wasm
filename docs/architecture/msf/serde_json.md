@@ -36,5 +36,5 @@ the check needs the JSON document before it becomes a `Catalog`.
 ## Decision
 
 Parse in `msf`, the crate that owns the catalog format, with `serde_json`.
-Every reader already depends on it, so no new crate enters the dependency
+It is already in the workspace lock, so no new crate enters the dependency
 tree.

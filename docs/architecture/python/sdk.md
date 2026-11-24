@@ -1,7 +1,7 @@
 # Design: the Python SDK `moq-wasm`
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-11-13
@@ -11,17 +11,16 @@ Turns the bindings of `sdk/python` ([architecture.md](architecture.md))
 into an SDK for bots, like the browser SDK in `sdk/js/js`
 ([browser-sdk.md](../wasm/browser-sdk.md)): a core layer that keeps a relay
 session up, a media layer that follows and publishes MSF broadcasts, and a
-pipecat transport. This document fixes the API; its implementation, the
-switch of the bots under `examples/python/`, and the release workflow follow
-in later changes.
+pipecat transport. This document fixes the API that `sdk/python`, its release
+workflow and the bots under `examples/python/` implement.
 
 ## Context
 The bindings expose MoQT requests one to one (`connect`, `subscribe`,
 `publish_track`, `watch_namespaces`, `parse_catalog`), named after the
-browser SDK's `MoqSession`. Every bot under
-`examples/python/` builds the same things on top of them:
+browser SDK's `MoqSession`. Before the SDK, every bot under
+`examples/python/` built the same things on top of them:
 
-| Pattern | Where |
+| Pattern | Where it was |
 | --- | --- |
 | Reconnect two seconds after the session closes, and keep the token fresh meanwhile | `moq_system_one_bot/relay.py` `stay_connected`, and again in the transcriber's `Room.run` |
 | Run a task while a namespace is published, and cancel it when it is withdrawn | `moq_system_one_bot/namespace.py`, the transcriber's participant map |
@@ -33,9 +32,9 @@ browser SDK's `MoqSession`. Every bot under
 
 pipecat ships `MOQTransport`, built on moq-rs. Its catalog and its JSON
 streams are moq-rs's own formats, so it cannot talk to this repository's
-relay or browser SDK. A pipecat pipeline that wants to use this relay has to
+relay or browser SDK. A pipecat pipeline that wanted to use this relay had to
 drop the transport and write the subscription code above by hand, as the
-transcriber does.
+transcriber did.
 
 ## Decision
 
@@ -44,15 +43,16 @@ transcriber does.
   name, like the browser SDK. It does not use WebAssembly; the name follows
   the repository, not the technology. `-python` is left out: a Python
   package is installed by pip or uv, so the suffix says nothing.
-- `sdk/python` becomes a mixed maturin project. The PyO3 module is
+- `sdk/python` is a mixed maturin project. The PyO3 module is
   `moq_wasm._native` and keeps the bindings of architecture.md. The SDK is
   Python under `sdk/python/python/moq_wasm/`. asyncio's cancellation,
   `async with` and task groups are what the SDK is made of, and they are
   plain in Python and awkward through PyO3. The browser SDK splits its Rust
   and TypeScript the same way.
 - The SDK depends on nothing beyond the native module. `moq_wasm.codecs` is
-  the `codecs` extra (`moq-wasm[codecs]`), which adds `av` (PyAV, for Opus,
-  H.264 and VP8) and `numpy`. The pipecat transport is the `pipecat` extra
+  the `codecs` extra (`moq-wasm[codecs]`), which adds `av` (PyAV: Opus;
+  H.264 and VP8 encoding; H.264, H.265, VP8, VP9 and AV1 decoding) and
+  `numpy`. The pipecat transport is the `pipecat` extra
   (`moq-wasm[pipecat]`), which adds `pipecat-ai` and the `codecs` extra.
 - The package is released on GitHub only, as abi3 wheels for Python 3.11+
   on Linux x86_64, Linux aarch64 and macOS arm64 attached to a
@@ -101,9 +101,9 @@ flowchart TB
 ```
 
 The same split as the browser SDK's `moq-wasm` and `moq-wasm/media`. What
-the demo apps need beyond MoQT stays in `examples/python/`: `BotRoom` and
-`serve_rooms`, the temporary-apps service client, the System One clients, and the
-pipelines.
+the demo apps need beyond MoQT stays in `examples/python/`: `BotJob`,
+`BotDispatcher` and `serve_bot_job` (`moq-bot-job`), the System One clients,
+and the pipelines.
 
 ### Core: `moq_wasm`
 
@@ -165,8 +165,7 @@ async with moq_wasm.connect(url, token=await dispatcher.token(), refresh_token=d
   over. A call that ends cancelled while the session is not, as one
   awaiting a shared future another task cancelled, counts as a failed call
   and is retried, instead of stopping the refresh. Getting the token stays
-  the caller's job, as in architecture.md "Authorization tokens". The
-  native session also presents the latest token when it reconnects.
+  the caller's job, as in architecture.md "Authorization tokens".
 - **Lifetime.** Leaving the `async with` block closes the session; awaiting
   `connect` instead leaves `close()` to the caller. Entering one `connect()`
   result again while it is entered raises RuntimeError before dialing, since
@@ -399,8 +398,7 @@ SDK's `init({ logLevel, onLog, onSpan })`:
   (`moq_wasm.native.moqt.modules.client.routes`), so
   `logging.getLogger("moq_wasm")` configures them with the SDK's own logs,
   at the matching level (`trace` is 5, named `TRACE`), its fields appended
-  to the message and kept in `record.moq_fields`. Without `init` no
-  subscriber is installed.
+  to the message and kept in `record.moq_fields`.
 - **`on_log` and `on_span`** receive the records in the shape the browser
   SDK's callbacks and the observability server's `/api/client-telemetry`
   take (`crates/telemetry-report`). With `on_span`, the requests a session
@@ -506,8 +504,7 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   failed, its writes raise the failure. `LocalBroadcast.publish_track`
   takes `datagram` and `priority` but not `publish`: the batch is
   registered before the namespace is published, and a PUBLISH must follow
-  the namespace. This replaces the register-then-publish rule each bot
-  comments.
+  the namespace.
 - **`EventTimeline`** writes a draft-ietf-moq-msf-02 §8 event timeline as
   one group: it opens with an empty record list once the track is
   registered, at once on the writer `Session.publish_track` returned
@@ -520,7 +517,7 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   leaving the broadcast while it is sent, closes the track, so nothing is
   appended without it; the broadcast keeps the track until that close
   finished, so leaving it waits for the close and the session may publish
-  the track again once it was left. It replaces the two copies.
+  the track again once it was left.
 - **`watch_broadcasts(session, prefix, handler, *, filter=None,
   empty_timeout=None)`** runs `handler` as a task for each broadcast
   published under `prefix` that `filter` accepts, cancels it when the
@@ -671,7 +668,8 @@ pipeline = Pipeline(
 - It is a pipecat `BaseTransport` with `input()` and `output()` and the
   events of `MOQTransport` (`on_connected`, `on_disconnected`,
   `on_client_connected`, `on_client_disconnected`, `on_track_subscribed`,
-  `on_error`), so a pipeline changes its import and its params. The session
+  `on_error`) plus `on_room_empty`, so a pipeline changes its import and its
+  params. The session
   comes from `moq_wasm.connect`, which owns the connection and tokens, instead
   of the transport dialing the relay. The input and the output processors
   share one room: the first `StartFrame` publishes the transport's broadcast
@@ -1363,8 +1361,7 @@ The browser SDK encodes with WebCodecs and hands the encoded samples to
 `sdk/js`'s `MediaBroadcast`, which wraps `broadcast::Broadcast`: the
 MSF catalog, the LOC tracks with their Timestamp property
 (draft-ietf-moq-loc-04), the media timeline, the cache for FETCH and the
-NEW_GROUP_REQUEST callback. The bindings gain the same wrapper over the same
-crate, so Python writes no catalog or LOC header of its own. The media layer
+NEW_GROUP_REQUEST callback. The bindings wrap the same crate the same way, so Python writes no catalog or LOC header of its own. The media layer
 uses it through `LocalBroadcast.add_media_source`:
 
 ```python
@@ -1380,7 +1377,7 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
 ```
 
 - `_native.Session.media_broadcast(namespace)` builds a `broadcast::Broadcast`
-  on a `RelayConnection::with_session` that shares the session's origin, and
+  on a `RelayConnection::with_client_session` that shares the session's origin, and
   the session's event loop passes each event to these connections before the
   origin (architecture.md "One event loop per session"). The tracks a bot
   writes itself (`publish_track`, `event_timeline`) stay in that origin and
@@ -1502,8 +1499,6 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   its end even when its caller is cancelled, as by a timeout, and a call
   while it runs awaits it, so no rendition stays in the catalog.
 
-Encoding stays in Python with PyAV, through `moq_wasm.codecs`.
-
 ### No codec in the wheel
 The `moq-wasm` wheel holds this repository's code (MIT) and Rust crates
 under permissive licenses, and no codec: it packs encoded H.264 and Opus
@@ -1529,7 +1524,6 @@ release, and is not done.
   so their catalogs and LOC tracks cannot drift apart.
 
 ### Negative
-- The import changes from `moqt` to `moq_wasm` in every bot.
 - An outage longer than the native session's 60 s ends the session, and the
   bot's room with it.
 - The `pipecat` extra follows pipecat's transport API, which pipecat may

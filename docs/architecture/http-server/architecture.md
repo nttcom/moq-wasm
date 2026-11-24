@@ -8,7 +8,8 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 
 `http-server` is the HTTP/1 server part every HTTP service shares: `console`,
-`vts`, `temporary-apps`, `observability`, `live-translate` and `recorder`. Each
+`vts`, `temporary-apps`, `observability`, `live-translate`, `recorder`,
+`bot-dispatcher` and `sip-gateway`. Each
 service keeps its own routing and state; this crate accepts connections,
 reads JSON bodies, bearer tokens and query strings, and builds responses.
 

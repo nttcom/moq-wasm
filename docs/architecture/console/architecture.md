@@ -118,8 +118,6 @@ or opened, because the recorder signs each one with a call to IAM.
   add `X-Console-Request` without a CORS preflight the console never grants.
 - The `sub` comes only from a verified assertion or, outside Cloud Run, from
   `CONSOLE_DEV_SUB`. A request never names its own `sub`.
-- The development identity cannot start on Cloud Run, where `K_SERVICE` is
-  always set.
 - Of the IAP claims the console stores only `sub`. `email` is returned to the
   caller by `/api/me` and never stored; the rest are discarded.
 - Every response carries a Content-Security-Policy that allows only

@@ -14,7 +14,7 @@ Run every rustls connection on the `aws-lc-rs` crypto provider: `quinn`,
 `web-transport-quinn` and `tokio-rustls` take their `aws-lc-rs` features,
 `install_default_crypto_provider` installs `rustls::crypto::aws_lc_rs`, and
 `rcgen` signs the self-signed certificate with it. `moqt` also adds `rustls`
-as a direct dependency for one feature, `prefer-post-quantum`; `telemetry`
+as a direct dependency for one feature, `prefer-post-quantum`; `telemetry-otlp`
 does the same for the services that do not link `moqt`.
 
 ## Context

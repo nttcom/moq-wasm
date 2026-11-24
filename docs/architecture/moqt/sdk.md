@@ -1,14 +1,12 @@
 # Python SDK と Rust SDK の設計
 
 ## ステータス
-提案。「決定事項」の3点は決めた。実装は「移行計画」の手順で行い、手順 1〜8
-と 11 は済んだ。「現状」は手順 1 の前の状態を書いている。採用後は、
-`moqt::client` の公開 API、Python モジュールの公開 API、配布の手順を変える変更で、
-このファイルも同時に更新する。
+実装済み。`moqt::client` の公開 API、Python モジュールの公開 API、配布の手順を変える
+変更で、このファイルも同時に更新する。
 
-Rust について、決定事項の 2 と 3、tag の表の Rust の行、移行計画の手順 9 と 10 は
-`docs/architecture/moq-wasm/sdk.md` に置き換えた。Rust の SDK は `moqt::client` を
-re-export する crate `moq-wasm`（`sdk/rust`）で、tag は `rust-sdk-v*` である。
+Rust の SDK は `moqt::client` を re-export する crate `moq-wasm`（`sdk/rust`）で、
+設計は `docs/architecture/moq-wasm/sdk.md` にある。Python の SDK（core の上の再接続、
+media、pipecat の transport）は `docs/architecture/python/sdk.md` にある。
 
 ## 目標
 ブラウザ SDK（`docs/architecture/wasm/browser-sdk.md`）と同じことを、Python と Rust
@@ -16,67 +14,40 @@ re-export する crate `moq-wasm`（`sdk/rust`）で、tag は `rust-sdk-v*` で
 namespace を監視する。基準は JS の `MoqSession`（`sdk/js/js/src/core/session.ts`）
 で、3言語のメソッドは名前と引数の意味をそろえる。
 
-範囲は core API（session、購読、FETCH、配信、namespace）だけにする。JS の
-`moq-wasm/media`（`publish()`、`LivePlayer`）はブラウザの capture と描画に結びついて
-いるので、Rust には同じものを作らない。Rust でメディアを配信するときは、今と同じく
-`crates/broadcast` を使う。Python の SDK（core の上の再接続、media、pipecat の
-transport）は `docs/architecture/python/sdk.md` で設計する。
-
-## 現状
-
-| 言語 | 入口 | 状態 |
-| --- | --- | --- |
-| JS | `moq-wasm` の `MoqSession` | SDK として完成した。tag `js-sdk-v<version>` の GitHub Release で配っている |
-| Python | `sdk/python`（PyO3 + maturin、配布名 `moq-wasm`、モジュール `moq_wasm._native`、abi3-py311） | Meeting の transcriber と AI bot が要るものだけがある。`fetch`、`track_status`、トークン、購読のオプションが無い。bot は path 依存で、利用者は Rust でビルドする |
-| Rust | `crates/moqt` | 制御メッセージ単位の API（`Session`、`Subscriber`、`Publisher`、`publish::Origin`、`namespace::NamespaceWatchers`）。`README.md` は commit を指す git 依存を案内している |
-
-`MoqSession` 相当の処理は、Rust の中で2か所に重複している。
-
-- `sdk/js/src/session_routes.rs` の `SessionRoutes`
-- `sdk/python/src/session.rs` の `route_events`
-
-どちらも `moqt::Session::receive_event` を1本のループで読む。そして、配信している
-track への SUBSCRIBE、FETCH、TRACK_STATUS を `Origin::handle` へ、PUBLISH_NAMESPACE を
-`NamespaceWatchers::handle` へ渡し、残りの SUBSCRIBE と PUBLISH を拒否する。wasm だけは、
-PUBLISH_DONE を該当する購読に届ける処理と、`broadcast::RelayConnection` への振り分けも
-持つ。Rust の利用者は、配信と購読を1つの session で行うなら、同じループを自分で書く
-ことになる。
+このファイルの範囲は core API（session、購読、FETCH、配信、namespace）である。
 
 ## 3言語の API の対応
 
-左が JS（基準）、中が今の Python と Rust で、どう書くか、足りないものを示す。
-Rust の列は `moqt` の今の API で同じことをする方法である。
-
-| JS（`MoqSession`） | Python（今） | Rust（今の `moqt`） |
+| JS（`MoqSession`） | Python（`moq_wasm.Session`） | Rust（`moqt::client::Session`） |
 | --- | --- | --- |
-| `MoqSession.connect(url, { token })` | `moqt.connect(url, verify_certificate=)`。**トークンが無い** | `Endpoint::create_client(&ClientConfig { authorization_token, .. })` → `connect(url).await?.await?`。イベントループは自分で書く |
-| `subscribe(ns, track, { filter, forward, priority })` | `subscribe(ns, name)`。**filter、forward、priority が無い** | `Subscriber::subscribe(ns, name, SubscribeOption)` → `accept_data_receiver` → `TrackReader::new` |
-| `subscribeCurrentGroup(ns, track, options?)` | `subscribe(ns, name, current_group=True)` | `Subscriber::subscribe_current_group` が `(Subscription, TrackReader)` を返す |
-| `subscribeGroupStart(ns, track, newGroupAfter, options?)`、`MoqSubscription.requestNewGroup(largestGroup)` | **無い** | `Subscriber::subscribe_group_start`、`Subscriber::request_new_group` |
-| `fetch(ns, track, start, end)` → `MoqFetch` | **無い** | `Subscriber::fetch` → `accept_fetch_receiver` |
-| `trackStatus(ns, track)` → `MoqLocation \| undefined` | **無い** | `Subscriber::track_status` の `content_exists` |
-| `watchNamespaces(prefix)` → `MoqNamespaceWatch` | `subscribe_namespace(prefix)` → `NamespaceEvents`。**止める手段が無い** | `NamespaceWatchers::watch` → `Subscriber::subscribe_namespace`。`unsubscribe_namespace` で止める。振り分けは自分で書く |
-| `announce(ns)` → `Announcement.close()` | `publish_namespace(ns)`。**取り下げ（PUBLISH_NAMESPACE_DONE）が無い** | `Publisher::publish_namespace` / `publish_namespace_done` |
-| `publishTrack(ns, track, { retentionMs, publish })` → `TrackWriter` | `track(ns, name, retention_seconds=)` → `TrackPublication`。**PUBLISH が無い** | `Origin::ensure_track`、`Origin::publish`。SUBSCRIBE と FETCH への応答は `Origin::handle` をループで呼ぶ |
-| `TrackWriter.write(payload, newGroup, locHeader)` / `writeGroup(payload)` | `write(payload, new_group=)`。**`write_group` と拡張ヘッダーが無い** | `Origin::write(OutgoingObject)` / `Origin::write_group` |
-| `TrackWriter.nextSubscriber()` | **無い** | ループの中で、`Origin::handle` が SUBSCRIBE を引き受けたかを見る |
-| `MoqSubscription` の async iteration | `Track` の async iteration | `TrackReader::next_object` |
-| `MoqSubscription.groups()` → `MoqGroup` | **無い** | `StreamDataReceiverFactory` |
-| `MoqSubscription.largest` | **無い** | `Subscription::content_exists`（SUBSCRIBE_OK の Largest Location） |
-| `MoqSubscription.done`（PUBLISH_DONE） | **無い**（iterator が終わるだけ） | `SessionEvent::PublishDone` をループで受ける |
-| `setForward(forward)` / `setPriority(priority)` / `endBeforeGroup(group)` | **無い** | `client::Subscription::set_forward` / `set_priority` / `end_before_group` |
-| `MoqSubscription.close()`（UNSUBSCRIBE） | `Track.unsubscribe()` | `Subscriber::unsubscribe` |
-| `ReceivedObject` の `groupId`、`subgroupId`、`objectId`、`objectStatus`、`objectPayload`、`locHeader` | `Object` の `group_id`、`object_id`、`payload`。**subgroup、status、拡張ヘッダーが無い** | `TrackObject` |
-| `RequestError`（draft のエラーコード） | **無い**（`RuntimeError` の文字列） | `RequestFailure::Rejected { code, .. }` |
-| `closed` → `CloseInfo` | `closed()`。**code と reason が無い** | `Session::closed` → `TransportClose` |
-| `close()` | `close()` | `Session::close`（NO_ERROR で閉じ、`Endpoint::wait_idle` まで待つ） |
-| `broadcast(ns)` → `MediaBroadcast` | 範囲外 | `broadcast::RelayConnection` と `BroadcastWriter` |
+| `MoqSession.connect(url, { token, versions })` | `moq_wasm.connect(url, token=, refresh_token=, verify_certificate=, versions=)` | `Session::connect(url, &ClientConfig)` |
+| `subscribe(ns, track, { filter, forward, priority })` | `subscribe(ns, name, filter=, forward=, priority=, delivery_timeout=, group_order=)` | `subscribe(ns, name, SubscribeOptions)` |
+| `subscribeCurrentGroup(ns, track, options?)` | `subscribe_current_group(ns, name, …)` | `subscribe_current_group` |
+| `subscribeGroupStart(ns, track, newGroupAfter, options?)`、`MoqSubscription.requestNewGroup(largestGroup)` | `subscribe_group_start(ns, name, new_group_after, …)`、`Subscription.request_new_group` | `subscribe_group_start`、`Subscription::request_new_group` |
+| `fetch(ns, track, start, end)` → `MoqFetch` | `fetch(ns, name, start, end)` → `Fetch` | `fetch` → `Fetch` |
+| `trackStatus(ns, track)` → `MoqLocation \| undefined` | `track_status(ns, name)` → `Location \| None` | `track_status` |
+| `watchNamespaces(prefix)` → `MoqNamespaceWatch` | `watch_namespaces(prefix)` → `NamespaceWatch` | `watch_namespaces` → `NamespaceWatch` |
+| `announce(ns)` → `Announcement.close()` | `announce(ns)` → `Announcement.close()` | `announce` → `Announcement::close` |
+| `publishTrack(ns, track, { retentionMs, publish })` → `TrackWriter` | `publish_track(ns, name, retention_seconds=, publish=, datagram=, priority=)` → `TrackWriter` | `publish_track(ns, name, PublishTrackOptions)` → `TrackWriter` |
+| `TrackWriter.write(payload, newGroup, locHeader)` / `writeGroup(payload)` | `write(payload, new_group=)` / `write_group(payload)` | `write(payload, new_group, ExtensionHeaders)` / `write_group` |
+| `TrackWriter.nextSubscriber()` | `next_subscriber()` | `next_subscriber` |
+| `MoqSubscription` の async iteration | `Subscription` の async iteration | `Subscription::next` |
+| `MoqSubscription.groups()` → `MoqGroup` | `groups()` → `Group` | `next_group` → `Group` |
+| `MoqSubscription.largest` | `largest` | `largest` |
+| `MoqSubscription.done`（PUBLISH_DONE） | `done()` | `done` |
+| `setForward(forward)` / `setPriority(priority)` / `endBeforeGroup(group)` | `set_forward` / `set_priority` / `end_before_group` | `set_forward` / `set_priority` / `end_before_group` |
+| `MoqSubscription.close()`（UNSUBSCRIBE） | `close()` | `close` |
+| `ReceivedObject` の `groupId`、`subgroupId`、`objectId`、`objectStatus`、`objectPayload`、`locHeader` | `Object` の `group_id`、`subgroup_id`、`object_id`、`status`、`payload`、`extension_headers`、`timestamp_micros` | `ReceivedObject` |
+| `RequestError`（draft のエラーコード） | `RequestError` の `message_type`、`code`、`reason` | `RequestError` |
+| `closed` → `CloseInfo` | `closed()`。失敗で終わったときは例外を送出する | `closed` → `TransportClose` |
+| `close()` | `close()` | `close`（NO_ERROR で閉じ、`Endpoint::wait_idle` まで待つ） |
+| `broadcast(ns)` → `MediaBroadcast` | `moq_wasm.media.create_broadcast` | `moq_wasm::media::create_broadcast` |
 
 ## `moqt::client`: Rust の入口
 
-`moqt` に `client` module を足し、`MoqSession` と同じ形の `Session` を置く。
-`SessionRoutes` と `route_events` の振り分けはここに移し、wasm と Python はその上の
-薄い binding にする。
+`moqt` の `client` module に、`MoqSession` と同じ形の `Session` を置く。イベントの
+振り分け（`modules/client/routes.rs` の `Routes`）はここにあり、wasm と Python は
+その上の薄い binding である。
 
 ```rust
 use bytes::Bytes;
@@ -137,29 +108,24 @@ session.close().await;
   thread から使うためである。wasm32 でも同じ型を使う。中の表は `std::sync::Mutex`
   で持ち、lock を `.await` の間は握らない。task は `executor::spawn` で起こす。
 - イベントループが知らない SUBSCRIBE には TRACK_DOES_NOT_EXIST を、PUBLISH には
-  UNINTERESTED を返す（今の wasm と Python と同じ）。
-- 再接続と GOAWAY は、今と同じく `moqt::Session` が行う。`client` は何も足さない。
+  UNINTERESTED を返す。
+- 再接続と GOAWAY は `moqt::Session` が行う。`client` は何も足さない。
 
 ### `broadcast` への振り分け
 
-wasm の `SessionRoutes` は、イベントを `Origin` より先に、ページの各
-`broadcast::RelayConnection` に渡している。`broadcast` は `moqt` に依存するので、
-`moqt::client` は `broadcast` を知ることができない。ただ、`Origin::handle`、
-`NamespaceWatchers::handle`、`RelayConnection::handle` は、どれも
-`async fn handle(&self, SessionEvent) -> Option<SessionEvent>`（引き受けなければ
-イベントを返す）という同じ形をしている。そこで、この形を `client::EventHandler`
-trait にし、`Session::add_handler` で `Origin` より前に並べられるようにする。
-`add_handler` が返す `HandlerId` を `remove_handler` に渡すと外れる（Python の
-`MediaBroadcast.close` が使う）。
-`broadcast` は `RelayConnection` にこの trait を実装し、`client::Session` から
-`RelayConnection` を作る関数を足す（今の `with_session(session, origin)` の
-引数を、`client::Session` が渡す）。
+`broadcast` は `moqt` に依存するので、`moqt::client` は `broadcast` を知ることが
+できない。そこで `async fn handle(&self, SessionEvent) -> Option<SessionEvent>`
+（引き受けなければイベントを返す）を `client::EventHandler` trait にし、
+`Session::add_handler` で `Origin` より前に並べる。`add_handler` が返す `HandlerId`
+を `remove_handler` に渡すと外れる（Python の `MediaBroadcast.close` が使う）。
+`broadcast::RelayConnection` はこの trait を実装し、
+`RelayConnection::with_client_session` で `client::Session` から作る。
 
 ### Rust の入口を `moqt` の中に置く理由
 
 | 案 | 良い点 | 悪い点 |
 | --- | --- | --- |
-| A. `moqt` をそのまま SDK にする | 何も足さない | 配信と購読を1つの session で行う利用者が、イベントループを自分で書く。wasm と Python の重複が残る |
+| A. `moqt` をそのまま SDK にする | 何も足さない | 配信と購読を1つの session で行う利用者が、イベントループを自分で書く。wasm と Python が同じループを別々に持つ |
 | B. 入口の crate を新しく作る | `moqt` の公開 API が増えない | 利用者は `moqt` とは別の名前の crate を足す。外向けの名前（`client` は一般的すぎる）を別に決める必要がある |
 | **C. `moqt::client` module（採用）** | 利用者が足すのは `moqt` だけで、名前が3言語で揃う。重複が1か所になる | `moqt` の公開 API が増え、draft-18 への移行でも守る面が広がる |
 
@@ -167,84 +133,11 @@ B の利点だった「`broadcast` への振り分けを持てる」は、`Event
 満たせる。Python の binding が wasm と同じ Rust の型を包むので、3言語の振る舞いの
 違いは binding の層の型変換だけになる。
 
-## Python SDK に足す API
+## Python の API
 
-`moqt.pyi` を、JS の `MoqSession` に合わせて次の形にする。async のメソッドは今と同じ
-く asyncio の awaitable を返す。
-
-```python
-async def connect(
-    url: str,
-    *,
-    token: str | Callable[[], Awaitable[str]] | None = None,
-    verify_certificate: bool = True,
-) -> Session: ...
-
-class Session:
-    async def subscribe(
-        self, namespace: list[str], name: str, *,
-        filter: Literal["largest_object", "next_group_start"] = "largest_object",
-        forward: bool = True,
-        priority: int = 128,
-    ) -> Subscription: ...
-    async def subscribe_current_group(self, namespace: list[str], name: str) -> Subscription: ...
-    async def fetch(self, namespace: list[str], name: str, start: Location, end: Location) -> Fetch: ...
-    async def track_status(self, namespace: list[str], name: str) -> Location | None: ...
-    async def watch_namespaces(self, prefix: list[str]) -> NamespaceWatch: ...
-    async def announce(self, namespace: list[str]) -> Announcement: ...
-    async def publish_track(
-        self, namespace: list[str], name: str, *,
-        retention_seconds: float = 60.0,
-        publish: bool = False,
-    ) -> TrackWriter: ...
-    async def closed(self) -> CloseInfo: ...
-    async def close(self) -> None: ...
-
-class Subscription(AsyncIterator[Object]):   # async with で抜けると UNSUBSCRIBE
-    largest: Location | None
-    async def done(self) -> PublishDone | None: ...
-    def groups(self) -> AsyncIterator[Group]: ...
-    async def set_forward(self, forward: bool) -> None: ...
-    async def end_before_group(self, group_id: int) -> None: ...
-    async def close(self) -> None: ...
-
-class TrackWriter:
-    async def write(self, payload: bytes, *, new_group: bool = False) -> int | None: ...
-    async def write_group(self, payload: bytes) -> int | None: ...
-    async def next_subscriber(self) -> bool: ...
-
-class Object:
-    group_id: int
-    subgroup_id: int
-    object_id: int
-    status: int | None
-    payload: bytes
-
-class RequestError(Exception):
-    message_type: str   # "SUBSCRIBE" など
-    code: int           # draft-14 のエラーコード
-    reason: str
-```
-
-今の API から変わるもの:
-
-- **名前を JS に合わせる。** `subscribe_namespace` → `watch_namespaces`、
-  `publish_namespace` → `announce`、`track` → `publish_track`、`Track` →
-  `Subscription`、`TrackPublication` → `TrackWriter`、`unsubscribe` → `close`。
-  `current_group=True` は `subscribe_current_group` にする。`current_group` は
-  filter を Largest Object に決めるので、`filter=` と同じメソッドに並べると矛盾する
-  組み合わせができる（JS が別のメソッドにしているのも同じ理由）。
-- **足すもの。** トークン（固定値か async 関数。関数は moqt の
-  `AuthorizationTokenSource::provider` から、接続のたびに Python の event loop で
-  呼ぶ）、購読のオプション、`fetch`、`track_status`、`Subscription` の `done`・
-  `groups`・`largest`・`set_forward`・`end_before_group`、`Announcement.close`、
-  `publish_track(publish=True)`、`write_group`、`next_subscriber`、`RequestError`、
-  `CloseInfo`、`Object` の `subgroup_id` と `status`。
-- **見送るもの。** LOC の拡張ヘッダー（JS の `locHeader`）。読む bot も書く bot も
-  まだ無い。足すときは JS と同じく LOC の property として出し、変換は `mediapack`
-  の `loc` module に任せる。
-
-`examples/python` の bot は、名前を変える PR で一緒に書き換える。
+`sdk/python/python/moq_wasm/_native.pyi`（PyO3 の binding）と `_session.py`（その上の
+`Session`）が定義する。名前は JS の `MoqSession` に合わせ、async のメソッドは asyncio
+の awaitable を返す。設計は `docs/architecture/python/sdk.md` の「Core」にある。
 
 ## 配布
 
@@ -253,36 +146,17 @@ class RequestError(Exception):
 ある。
 
 ### tag の名前
-言語ごとに版を刻むので、tag には言語を付ける。JS は `sdk-v*` で 0.6.0 まで出した後、
-`js-sdk-v*` に改め、0.6.0 だけを `js-sdk-v0.6.0` として出し直した。
+言語ごとに版を刻むので、tag には言語を付ける。
 
 | 言語 | tag | Release に付けるもの |
 | --- | --- | --- |
 | JS | `js-sdk-v<version>` | `npm pack` の tarball |
 | Python | `python-sdk-v<version>` | wheel |
-| Rust | `rust-v<version>` | なし（tag そのものが依存先） |
+| Rust | `rust-sdk-v<version>` | なし（tag そのものが依存先） |
 
 ### Rust
-利用者は tag を指す git 依存で入れる。今の README は commit（`rev`）を案内している
-ので、tag に変える。
-
-```toml
-[dependencies]
-moqt = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-v0.1.0" }
-```
-
-リリースの手順:
-
-1. `crates/moqt/Cargo.toml` の version を上げ、`crates/moqt/CHANGELOG.md` にその
-   version の節を足す。
-2. `rust-v<version>` の tag を push する。
-3. CI（`.github/workflows/rust-release.yml`）が、tag と version の一致と changelog の
-   節を確かめる。そして `cargo update` のあとで `cargo test -p moqt` を回し、changelog
-   の該当部分を本文にした GitHub Release を作る。
-
-`cargo update` を挟むのは、git 依存の利用者にはこのリポジトリの `Cargo.lock` が
-効かないからである。利用者は、依存の semver の範囲で最新の版を引く。CI でも同じ
-解決をしてテストする。`cargo update` は runner の中だけで行い、commit しない。
+`docs/architecture/moq-wasm/sdk.md` の「Release」に書く。利用者は crate `moq-wasm`
+（`sdk/rust`）を、tag を指す git 依存で入れる。
 
 ### Python
 `docs/architecture/python/sdk.md` の「Package」に書く。wheel は Linux x86_64、
@@ -309,8 +183,8 @@ Linux aarch64、macOS arm64 の abi3 wheel（Python 3.11 以上）で、
 
 - **SDK の名前はリポジトリ名の `moq-wasm`。** npm のパッケージは今のまま
   `moq-wasm`、Python の配布名も `moq-wasm`（import は `moq_wasm`）にする。Python は
-  WebAssembly を使わないが、名前は技術ではなくリポジトリに揃える。Rust の crate は
-  今のまま `moqt` にする。
+  WebAssembly を使わないが、名前は技術ではなくリポジトリに揃える。Rust の SDK の
+  crate も `moq-wasm`（`sdk/rust`）である。
 - **名前はレジストリに公開するまで変えられる。** 今の利用者は、tarball の URL と
   import を書き換えれば移れる。リポジトリ名（`moq-wasm`）を変えるかどうかも、公開を
   決めるときに一緒に決める。GitHub は、改名後も旧 URL を転送する。
@@ -323,53 +197,14 @@ Linux aarch64、macOS arm64 の abi3 wheel（Python 3.11 以上）で、
 
 1. **Python の wheel: Linux x86_64、Linux aarch64、macOS arm64。** ほかの
    プラットフォームは、git source からのソースビルドで使える（動作の保証はしない）。
-2. **Rust の入口: `moqt` の中の `client` module。** 新しい crate は作らない。
-   （`docs/architecture/moq-wasm/sdk.md` で置き換えた。）
-3. **名前: JS と Python の SDK は `moq-wasm`、Rust の crate は `moqt`。**
-   （Rust も `moq-wasm` にした。`docs/architecture/moq-wasm/sdk.md` を参照。）
-
-## 移行計画
-1手順を1 PR にする。リファクタの PR は、それに依存する機能の PR より先に出し、依存
-するものは stacked PR にする。
-
-1. **feat(moqt): `client` module。** `SessionRoutes` の振り分けと wasm の
-   `Session`・`Subscription`・`FetchStream`・`NamespaceWatch`・`TrackWriter` の
-   中身を、言語に依存しない Rust の型として足す。`EventHandler` もここで足す。
-   `SessionRoutes` のテストを移し、Rust でユニットテストする。利用者はまだ無い。
-2. **refactor(broadcast): `RelayConnection` に `client::EventHandler` を実装し、
-   `client::Session` から作れるようにする。**
-3. **refactor(wasm): wasm の `Session` を `moqt::client` の binding にする。**
-   `session_routes.rs` を消す。JS の API は変えない。ブラウザの unit test と E2E
-   （`run-media-e2e.mjs`、`run-meeting-e2e.mjs`）で守る。
-4. **refactor(python): Python の `Session` を `moqt::client` の binding にする。**
-   `route_events` を消す。Python の API は変えない。pytest で守る。
-5. **refactor(python): 名前を JS に合わせる。** 配布名を `moq-wasm` にし、
-   「Python SDK に足す API」の名前の変更と、`examples/python` の bot の書き換え。
-   手順 1〜4 より先に済ませた。
-6. **feat(python): 購読と取得の API。** 購読のオプション、`fetch`、`track_status`、
-   `Subscription` の `done`・`groups`・`largest`・`set_forward`・`end_before_group`、
-   `Object` の `subgroup_id` と `status`。
-7. **feat(python): 配信の API。** `Announcement.close`、`publish_track(publish=True)`、
-   `write_group`、`next_subscriber`。
-8. **feat(python): トークンと `RequestError`、`CloseInfo`。**
-9. **docs(moqt): Rust SDK の README と changelog。** README の例を
-   `moqt::client` にし、依存の書き方を tag にする。`crates/moqt/CHANGELOG.md` を
-   始める。
-10. **ci: `rust-release.yml`（`rust-v*`）。**
-11. **ci: `python-release.yml`（`python-sdk-v*`）。** wheel の matrix と、wheel での
-    pytest。`sdk/python/CHANGELOG.md` を始め、README に wheel の入れ方を書く。
-
-1〜4 は重複を1か所にする部分で、5〜8 は Python の機能を JS に追いつかせる部分で
-ある。9〜11 の配布は、それぞれの機能がそろってから出す。
-
-各 PR では、変える component の architecture document（`moqt/architecture.md`、
-`python/architecture.md`、`wasm/browser-sdk.md`）も同時に更新する。
+2. **Rust の入口: `moqt` の中の `client` module。** SDK の crate `moq-wasm` は
+   これを re-export する（`docs/architecture/moq-wasm/sdk.md`）。
+3. **名前: 3言語とも SDK は `moq-wasm`。**
 
 ## 範囲外
 
-- **レジストリへの公開。** 「配布」に理由を書いた。core API が 1.0 になったときに、
-  名前（crates.io の `moqt` が使えないこと、リポジトリ名）と一緒に決める。
-- **Rust のメディア API。** JS の `moq-wasm/media` に当たるもの。Rust は
-  `broadcast` を使う。Python のものは `python/sdk.md` で設計する。
+- **レジストリへの公開。** 理由と時期は「配布」と「名前と版」に書いた。
+- **メディア API。** JS の `moq-wasm/media` に当たるもの。Python は `python/sdk.md`、
+  Rust は `moq-wasm/sdk.md` で設計する。
 - **Windows の wheel。** 必要になったら matrix に足す。Windows は
   `moqt` を動かしたことが無いので、足す前に CI で pytest を回せるようにする。

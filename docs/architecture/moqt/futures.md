@@ -35,8 +35,9 @@ concurrently that does not depend on a multi-task runtime.
 ## Decision
 
 Use `FuturesUnordered` driven by `tokio::select!` next to the stream accept
-loop. `futures` is already in the workspace lock (`sdk/js` and
-`services/ingest-gateway` depend on it), so no new crate enters the dependency
-tree. `TrackReader` is used by `moq-cli` only; the relay has its own data
+loop. `futures` is already in the workspace lock
+(`services/ingest-gateway` depends on it), so no new crate enters the dependency
+tree. `TrackReader` is used by clients (`broadcast`, `recorder`,
+`live-translate`, `moq-cli`); the relay has its own data
 path, so moving the readers from separate tasks into one task does not affect
 relay throughput.

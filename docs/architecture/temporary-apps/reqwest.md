@@ -25,4 +25,4 @@ for them.
 ## Decision
 
 Use `reqwest`, already the workspace's HTTP client (`recorder`, `bot-dispatcher`,
-`metadata-token`).
+`google-cloud`).

@@ -61,8 +61,9 @@ sequenceDiagram
 - An expired token cannot be refreshed, so a link holding it stops working an
   hour after it was signed even while the app lives on through refreshes made
   by the pages still using it.
-- Only `POST /tokens` is rate limited. A refresh needs a valid token, and
-  refreshing does not create an app.
+- Only `POST /tokens` and `POST /bots/{type}` are rate limited, each with its
+  own count. A refresh needs a valid token, and refreshing does not create an
+  app.
 - The client address is the `X-Forwarded-For` entry that the outermost of the
   trusted proxies (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`) appended; entries the client wrote before it are
   ignored, so a client cannot pose as another address. Without the header, or

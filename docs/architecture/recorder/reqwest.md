@@ -12,9 +12,10 @@ Accepted
 
 Add `reqwest` (`default-features = false`, `json` and `rustls`) to
 `services/recorder` as a direct dependency. `bot_job::composite_launcher` hands
-its client to `JobLauncher::CloudRun` to start a Cloud Run Job execution with
-`POST https://run.googleapis.com/v2/<job>:run`, with an access token that
-`google-cloud`'s `MetadataToken` reads from the GCE metadata server.
+its client to `JobLauncher::CloudRun` (`job-launcher`), which starts a Cloud
+Run Job execution with `POST https://run.googleapis.com/v2/<job>:run` and an
+access token that `google-cloud`'s `MetadataToken` reads from the GCE
+metadata server. The recorder also calls `bot-dispatcher` with it.
 
 ## Context
 
@@ -37,7 +38,7 @@ OAuth token of the service's service account.
 
 ## Decision
 
-Use `reqwest` with the same features as `services/relay`. It is already in the
+Use `reqwest` with the same features as `job-launcher`. It is already in the
 lock file through `object_store`'s `gcp` feature, so the addition brings no new
 crate into the build. The token is requested per launch: launches are rare
 (one per recording and per composite), so caching it is not worth the code.

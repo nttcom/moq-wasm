@@ -12,8 +12,9 @@ Accepted
 
 Add `hyper` and `http-body-util` as direct dependencies of the `observability`
 crate; the accept loop is `http-server`'s. `src/api_server.rs` serves
-`GET /api/snapshots` (newest snapshot per relay, or the ones at `?at=` and `&previous=`) and
-`GET /api/series` (one metric family over a time range) to the topology page.
+`GET /api/snapshots` (newest snapshot per relay, or the ones at `?at=` and `&previous=`),
+`GET /api/series` (one metric family over a time range), `GET /api/namespaces`
+and `GET /api/usage` to the topology page, and `POST /api/client-telemetry`.
 
 ## Context
 

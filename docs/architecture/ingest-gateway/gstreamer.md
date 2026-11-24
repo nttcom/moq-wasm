@@ -48,8 +48,7 @@ Use GStreamer. `h264parse config-interval=-1` inserts SPS/PPS before every IDR,
 including those taken from the SDP, so every group starts decodable whatever
 the camera does, and the byte-stream output carries no avcC. `rtspsrc` handles
 RTSP over TCP, authentication and the RTP jitter buffer. The bridge still runs
-`ParameterSetTracker` on the access units for the codec string and, in
-`--payload-format avcc` mode, the avcC, as `transcode` does.
+`ParameterSetTracker` on the access units for the codec string.
 
 ## Consequences
 

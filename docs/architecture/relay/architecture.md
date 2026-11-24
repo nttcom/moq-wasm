@@ -29,7 +29,9 @@ optionally cascades across relays via a Redis-backed route registry.
 
 Dependencies point downwards in this order: `control_plane` → `cascading` →
 `directory` → `data_plane` → `session`, `auth` → `domain`. `observability` only reads
-`session`, `directory`, `data_plane` and `domain` state. `auth` and `session` reference
+`session`, `directory`, `data_plane`, `cascading` (the relays this one dialed) and
+`domain` state; `cascading::route_registry::redis` takes `unix_millis_now` from it.
+`auth` and `session` reference
 each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 ## Startup path
@@ -60,12 +62,11 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    `DataPlaneConfig`; the data plane reads no environment variable itself.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::NATIVE>(port)` — client-facing endpoint
-     accepting both WebTransport and raw QUIC on one port, for the drafts in
+     accepting WebTransport and raw QUIC on the UDP port and QMux over
+     WebSocket on the TCP port of the same number, for the drafts in
      `moqt_versions`.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint
-     for the same drafts. `InterRelayConnectionManager` offers them when it
-     dials an inner endpoint, so two relays that both enable draft-18 cascade
-     in draft-18, and one that does not is reached in draft-14.
+     for the same drafts.
    - `spawn_stats_exporter(relay_id, event_logger, process_gauges)`, with OTLP on — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
@@ -99,7 +100,8 @@ the inner endpoint keeps accepting) and calls
    or none standalone / when every other relay is draining;
 3. sends GOAWAY to every `SessionPeer::Client` session with the target in the
    scheme the client connected with (`moqt://host` for raw QUIC,
-   `https://host` for WebTransport, from `Session::url_scheme`), or with
+   `https://host` for WebTransport, `wss://host` for WebSocket, from
+   `Session::url_scheme`), or with
    an empty URI when there is no target, which tells the client to reconnect
    to the same URI once the relay is back;
 4. from the GOAWAY on, releases the PUBLISH-initiated upstream
@@ -228,7 +230,8 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   ordered. The worker holds the session id, its span and `WorkerDeps`;
   everything else about the session (the token, the peer) it reads from the
   repository entry when a request needs it. A relay-internal event (`SessionEvent`: `MalformedTrackDetected`,
-  `ProtocolViolationDetected`, `GoAwaySent`, `DownstreamSubscriptionEnded`)
+  `UpstreamForwardChanged`, `ProtocolViolationDetected`, `GoAwaySent`,
+  `DownstreamSubscriptionEnded`)
   is sent to the target session's mailbox, whose sender the sender captured
   when it was created (ingress hands the publisher's mailbox to its readers,
   egress keeps the subscriber's for its runner) or looks up in the repository
@@ -256,9 +259,11 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   request: a tracing span closes only after its children, so a long-lived
   child would hold the request's trace open, unexported, for as long as it
   lives. The task behind such a span only borrows the request span to link
-  it; keeping a `Span` handle would hold the request span open the same way. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
-  `VerifiedToken` (looked up once when the worker starts and replaced when a
-  TRACK_STATUS token refresh succeeds). PUBLISH, PUBLISH_NAMESPACE and
+  it; keeping a `Span` handle would hold the request span open the same way.
+  The spans of a draft-18 SUBSCRIBE_NAMESPACE update and of PUBLISH_BLOCKED
+  (`relay.session.event`) are children of the session span instead. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
+  `VerifiedToken`, read from the repository entry for each event, so a
+  TRACK_STATUS token refresh applies from the next request. PUBLISH, PUBLISH_NAMESPACE and
   PUBLISH_NAMESPACE_DONE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
   standalone FETCH and a TRACK_STATUS status query (no AUTHORIZATION TOKEN)
   need `subscribe`; a token-refresh TRACK_STATUS, joining FETCH and every other
@@ -679,7 +684,7 @@ update the draft forbids returns `UpdateVerdict::CloseSession`, which the
 session worker closes the session for): the UNSUBSCRIBE sequence removes the
 registration, handing its runner PUBLISH_DONE UPDATE_FAILED, which it sends
 once its streams are done, and releases the upstream subscriptions left
-unneeded. The relay itself never branches on the draft.
+unneeded.
 
 ### NEW_GROUP_REQUEST sequence
 A subscriber asks the Original Publisher for a new group with
@@ -846,9 +851,6 @@ its downstream subscribers.
 
 ## Authentication and authorization (`modules/auth`)
 
-Building blocks; the session intake wiring is described above, the
-per-request authorization gate under "Event pipeline".
-
 - `verified_token.rs` — `VerifiedToken`, the claims returned by the Verify
   Token Service (VTS): `app_id`, optional `publish` / `subscribe` namespace
   paths (already split on `/`; the empty claim `""` is the app root, i.e. an
@@ -872,19 +874,23 @@ per-request authorization gate under "Event pipeline".
   ttl (relay tokens are exempt), and checks the `publish` / `subscribe` path
   shape; the relay then splits the paths and keeps `exp` so its expiry task
   and its acceptance decision share one clock.
-- `vts_token_verifier.rs` — `reqwest` implementation: `POST {AUTH_VTS_URL}`
-  with `{"token"}`. The VTS only vouches for the signature and the appId; 200
-  carries `{ appId, isRelay, claims }` with the raw JWT payload, which is
-  handed to `build_verified_token`. 401 → `Unauthorized`, anything else or a
-  transport error → `Unavailable`. 3 s timeout. The call runs in a
-  `relay.vts.verify` span whose context goes out as a W3C `traceparent`
-  header and its copy `x-original-traceparent`, so the VTS's spans join the
-  relay's trace.
+- `vts_token_verifier.rs` — `VtsTokenVerifier`, the `TokenVerifier` around
+  `auth_token::VtsClient` (feature `vts-client`), which does `POST
+  {AUTH_VTS_URL}` with `{"token"}`. The VTS only vouches for the signature
+  and the appId; 200 carries `{ appId, isRelay, claims }` with the raw JWT
+  payload, which is handed to `build_verified_token`. 401 → `Unauthorized`,
+  anything else or a transport error → `Unavailable`. 3 s timeout. The call
+  runs in a `relay.vts.verify` span whose context `VtsClient` sends as a W3C
+  `traceparent` header and its copy `x-original-traceparent`, so the VTS's
+  spans join the relay's trace.
 - `session_authenticator.rs` — `SessionAuthenticator`, built from
   `AuthConfig` around a `TokenVerifier`; combines the pieces above into the
   CLIENT_SETUP decision described under "Session intake".
 - `request_gate.rs` — `authorize_request` / `reject_unauthorized`, the
   per-request gate described under "Event pipeline".
+- `anonymous_root.rs` — serves an anonymous session's SUBSCRIBE_NAMESPACE
+  for the root as one for `anon`, so a client that subscribes to the root
+  unconditionally still discovers anonymous broadcasts.
 - `token_refresh.rs` — `refresh_token(verifier, current_token, tokens)`: the
   decision behind the TRACK_STATUS token refresh described under "Session
   intake"; returns the new `VerifiedToken` or the TRACK_STATUS_ERROR code and
@@ -1578,12 +1584,12 @@ no list of relays and no session to each.
   entry carrying the track cache's counters, and a subscription reports the
   track's newest publisher.
 - Counters are cumulative. `IngressStats` lives in `TrackCache` and counts
-  every object inserted (live or fetch fill), the subgroups closed without
-  `finish`, and the longest gap between live inserts; reading it resets only
-  that gap. `DeliveryStats` belongs to the downstream registration (it also
-  supplies PUBLISH_DONE's stream count) and counts the streams, objects,
-  bytes and resets egress sent, plus the `received_at` of the newest object
-  sent, from which the collector derives how far the subscriber trails the
+  the payload bytes of every object inserted (live or fetch fill) and the
+  longest gap between live inserts; reading it resets only that gap.
+  `DeliveryStats` belongs to the downstream registration (it also supplies
+  PUBLISH_DONE's stream count) and counts the streams opened and reset, the
+  bytes sent and the datagrams dropped for exceeding the session's limit,
+  plus the `received_at` of the newest object sent, from which the collector derives how far the subscriber trails the
   newest object the track received.
 - `RemoteAddressWatchTask` (`session/remote_address_watch_task.rs`) runs for
   every session, with or without OTLP: quinn reports no event when the peer
@@ -1667,8 +1673,7 @@ no list of relays and no session to each.
 
 ## Design direction
 
-The relay was reshaped in November 2026 so that fewer parts carry the same
-state. Three aggregates and a registry:
+Three aggregates and a registry:
 
 - `Track` owns the session↔track edges — a `Producer` per upstream
   subscription (its `moqt` handle, origin, peer and the ingest task) and a
@@ -1676,14 +1681,13 @@ state. Three aggregates and a registry:
   stats and the signals its egress runner lives by) — and with them the
   draft-14 §8.2 lifetime rules (see "`modules/control_plane/sequences`").
 - Waits on another session's answer are state of the `Track`: an upstream
-  SUBSCRIBE is a pending producer counted on the track, whose `Creating`
-  state replaced the former creation serializer, and a forwarded PUBLISH a
-  pending consumer. `UpstreamFetchTask` stays a task of its own: a FETCH
+  SUBSCRIBE is a pending producer counted on the track (its `Creating`
+  state), and a forwarded PUBLISH a pending consumer. `UpstreamFetchTask` stays a task of its own: a FETCH
   fill is no edge of the track.
 - The session entry keeps only session-level state (handle, token, span,
   peer, expiry, mailbox); the worker reads it from there and holds nothing of
-  its own. Which edges a session has is a directory query (`tracks_fed_by`,
-  `consumer_tracks`), not a second index kept in step with the tracks.
+  its own. Which edges a session has is asked of the directory
+  (`tracks_fed_by`, `consumer_tracks`), not kept on the session.
 - `SessionRepository` and the directory are the registry; no object above
   them carries rules. The sequences are thin choreography over them, and the
   per-session worker is the dispatcher that reads in order, runs the

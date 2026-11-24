@@ -14,7 +14,7 @@ Add `reqwest` (with the `rustls` and `json` features, no default features) as a
 direct dependency of the `google-cloud` crate. `src/cloud_storage.rs` uses it to
 download an object with its generation and to upload or delete it with
 `ifGenerationMatch`; `src/metadata_token.rs` uses it to take an access token
-from the metadata server.
+from the metadata server, and `src/jwt.rs` to fetch Google's JWKS.
 
 ## Context
 
@@ -39,6 +39,6 @@ the same ones.
 
 ## Decision
 
-Use `reqwest` over the JSON API. It is already in the workspace lock at 0.13.4
-(`relay`, `observability`, `ingest-gateway pull`), so no new crate enters the
+Use `reqwest` over the JSON API. It is already in the workspace lock
+(`observability`, `ingest-gateway pull`), so no new crate enters the
 dependency tree.

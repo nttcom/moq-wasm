@@ -10,29 +10,23 @@ Accepted
 
 ## What
 
-Add `aws-lc-rs` as a direct dependency of the `console` crate. `iap.rs`
-verifies the ES256 signature of the IAP assertion with
-`aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED`; the tests sign assertions with
-`EcdsaKeyPair`.
+Add `aws-lc-rs` as a direct dependency of the `console` crate. `apps.rs`
+draws each app's secret from `SystemRandom`. The ES256 signature of the IAP
+assertion is verified by `google_cloud::IapVerifier`
+(see [google-cloud/aws-lc-rs.md](../google-cloud/aws-lc-rs.md)).
 
 ## Context
 
-IAP signs the `x-goog-iap-jwt-assertion` header with ES256 and publishes its
-public keys as P-256 JWKs. The console must check that signature before it
-trusts the `sub` inside.
+The console creates the signing secret of every app it registers, which needs
+random bytes from the operating system.
 
 ## Alternatives
 
-- `jsonwebtoken`. Verifies ES256 and checks `exp`, `iss` and `aud`, but is a
-  new crate in the tree whose key and validation types the code would still
-  wrap for the JWK set and the 30-second skew.
-- `p256` (RustCrypto). ECDSA over P-256 without the rest of a JWT library, but
-  a new crate family next to the `aws-lc-rs` already compiled.
+- `rand`. A new crate for what the crypto library already compiled does.
 - `ring`, used here until 2026-11-10. Same API, but a second crypto library
   once the workspace's TLS moved to `aws-lc-rs`.
 
 ## Decision
 
 Use `aws-lc-rs`. It is already compiled in the workspace for QUIC, TLS and the
-HS256 tokens in `auth-token`, and verifying a fixed-length P-256 signature is
-one call.
+HS256 tokens in `auth-token`.

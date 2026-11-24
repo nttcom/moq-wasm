@@ -41,7 +41,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   | `moqt::fetch` | FETCH and FETCH_CANCEL: options, `FetchParams`, handlers, fetch stream sender/receiver |
   | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE (and draft-18 SUBSCRIBE_TRACKS) and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, `NamespaceInterest`, handlers |
   | `moqt::object` | Draft-independent object model (`Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
-  | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
+  | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses`; behind the `self-signed-cert` feature, `CertificateFiles` and `write_self_signed_cert` |
   | `moqt::executor` | `spawn` / `JoinHandle`, `sleep`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
   | `moqt::client` | A client `Session` with `Subscription`, `Group`, `Fetch`, `NamespaceWatch`, `Announcement`, `TrackWriter`, `EventHandler` and `RequestError` (see "`client` — the client session") |
 
@@ -88,7 +88,7 @@ takes no stream ID while pending; WebTransport keeps a pending open for the
 next call, since past the stream ID it still writes the stream header; the
 browser's API cannot tell, so it waits like `open_bi`.
 
-Three zero-sized markers implement it; the first two are native-only:
+Three zero-sized markers implement it:
 
 | Marker | Implementation | Notes |
 | --- | --- | --- |
@@ -102,7 +102,8 @@ Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 (`Connecting`, `Accepting`, `Handshake`, `Session`, the handlers and the data
 stream types) is a plain type over the boxed transport, so one process can hold
 sessions of different transports in one collection and the `NATIVE` creator
-simply boxes a `QUICConnection` or a `WtConnection` per connection.
+boxes a `QUICConnection`, a `WtConnection` or a `QmuxConnection` per
+connection.
 
 Client-side helpers shared by the creators:
 
@@ -261,8 +262,9 @@ call through the adapter; a draft never gets a task of its own (see
   instead of a trait object: the set of drafts is closed, the match is
   checked for exhaustiveness when a draft is added, and async methods need no
   object safety or `Send` bounds that wasm32 cannot meet. It offers
-  `reserve_request_id`, `send_request(RequestIdReservation, OutgoingRequest)
-  -> PendingResponse`, `send_subscribe_update`,
+  `reserve_request_id`, `send_request(&Arc<Connection>, RequestIdReservation,
+  OutgoingRequest) -> Result<PendingResponse, RequestFailure>`,
+  `send_subscribe_update`,
   `respond(OutgoingResponse)` and `notify(Notification)`. The draft-14
   control message structs serve as the shared model; `draft14::ControlChannel`
   encodes them.
@@ -497,8 +499,8 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   `server::write_self_signed_cert` (feature `self-signed-cert`, off by
   default so wasm builds do not pull in `rcgen`) writes the certificate pair
   a local server or a test passes in `ServerConfig`.
-- `connect(url)` returns `Connecting`, whose future performs the transport
-  handshake and runs the SETUP exchange through `version::connect` (draft-14
+- `connect(url)` opens the transport and returns `Connecting`, whose future
+  runs the SETUP exchange through `version::connect` (draft-14
   opens the bidirectional control stream, sends CLIENT_SETUP and awaits
   SERVER_SETUP, version `0xff00000e`). When SERVER_SETUP does not arrive
   within 30 s of the exchange starting (`SERVER_SETUP_TIMEOUT`, as long as
@@ -518,8 +520,9 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   the token. A provider that fails fails that connection. On success a
   `Session` is created.
 - `refuse_new_connections()` makes every later connection attempt fail at
-  the transport level (QUIC CONNECTION_REFUSED, HTTP 503 for WebTransport)
-  while `accept()` keeps being polled; established sessions are unaffected.
+  the transport level (QUIC CONNECTION_REFUSED, HTTP 503 for WebTransport and
+  WebSocket) while `accept()` keeps being polled; established sessions are
+  unaffected.
   A closing server uses it so that clients learn at once instead of waiting
   for their handshake to time out.
 - `accept()` returns `Accepting`, or `AcceptError::EndpointClosing` once the
@@ -620,8 +623,9 @@ code consumes inbound control messages through
 transport close itself (the signal `DisconnectWatchTask` turns into
 `SessionEvent::Disconnected`) and returns the peer's termination code and
 reason as `TransportClose`; it reads no session events, so a task can await it
-beside `receive_event()`. `Session::url_scheme()` is `moqt` for raw QUIC and
-`https` for WebTransport, so a server sending GOAWAY can name the new session
+beside `receive_event()`. `Session::url_scheme()` is `moqt` for raw QUIC,
+`https` for WebTransport and `wss` for WebSocket, so a server sending GOAWAY
+can name the new session
 URI in the scheme the client connected with (§9.4).
 The session's `Connection` knows whether it is the server side and whether a
 GOAWAY was already received: a second GOAWAY, or one carrying a New Session
@@ -648,8 +652,8 @@ use these facades instead of the data-plane factories directly:
   which is how LOC headers are attached. Group ids run from the
   `first_group_id` given at construction unless chosen, object ids run from
   0 within each group;
-  publisher priority is fixed at 128 and the subgroup id is omitted
-  (`SubgroupId::None`).
+  publisher priority is 128 unless `with_priorities` sets it, and the
+  subgroup id is omitted (`SubgroupId::None`).
 - `TrackReader` wraps a `DataReceiver` and yields
   `TrackObject { group_id, forwarding, object_id, extension_headers, payload }`
   in arrival order, from subgroup streams and datagrams alike. Subgroup
@@ -998,7 +1002,7 @@ attempt; it adds no field for the retry.
 | Span | Fields |
 | --- | --- |
 | `moqt.subscriber.subscribe` | `track_namespace`, `track_name`, `subscriber_priority`, `forward`, `request_id`, `outcome` |
-| `moqt.subscriber.subscribe_namespace` | `track_namespace_prefix`, `request_id`, `outcome` |
+| `moqt.subscriber.subscribe_namespace` | `track_namespace_prefix`, `interest`, `request_id`, `outcome` |
 | `moqt.subscriber.fetch` | `track_namespace`, `track_name`, `request_id`, `outcome` |
 | `moqt.publisher.publish` | `track_namespace`, `track_name`, `request_id`, `outcome` |
 | `moqt.publisher.publish_namespace` | `track_namespace`, `request_id`, `outcome` |
@@ -1113,10 +1117,9 @@ it on the spans that answer the peer's requests. On receipt, `trace_context()` o
     received value (request error or PUBLISH_DONE status) reads as
     INTERNAL_ERROR.
   - Integers remain only in the draft-14 message structs. `moqt::wire`
-    exports `RequestKind` and the draft-14 conversions
-    (`request_error_code_to_wire` / `request_error_code_from_wire`,
-    `publish_done_code_from_wire`) for the wasm bindings, whose JavaScript
-    API carries draft-14 numbers.
+    exports `RequestKind` and the conversions to draft-14 numbers
+    (`request_error_code_to_wire`, `publish_done_code_to_wire`) for the wasm
+    bindings, whose JavaScript API carries draft-14 numbers.
   - `ResponseGuard` is the one place that sends a handler's answer: the
     `*_OK` of its `ok()`, and the `*_ERROR` of both its `error()` and the
     drop-time NOT_SUPPORTED reply. It logs each as `*_OK sent` /
@@ -1157,8 +1160,9 @@ returns the TRACK_STATUS_OK it awaits on path 2 (TRACK_STATUS_ERROR becomes a
 is discarded because the request creates no state. The receiving side gets
 `SessionEvent::TrackStatus(TrackStatusHandler)` with the request's
 AUTHORIZATION TOKEN parameters exposed. `TrackStatusHandler::ok(expires,
-content_exists)` fills TRACK_STATUS_OK the way `SubscribeHandler` fills a
-SUBSCRIBE_OK (Group Order resolved by `GroupOrder::delivered`) with Track
+content_exists, track_properties)` fills TRACK_STATUS_OK the way
+`SubscribeHandler` fills a SUBSCRIBE_OK (Group Order resolved by
+`delivered_group_order` from the track properties) with Track
 Alias 0 (§9.21); the caller supplies the track's status, which the relay
 reports as Content Exists false when TRACK_STATUS only carries an
 authorization token refresh. The handler carries a
@@ -1255,8 +1259,8 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     the status, and only a datagram with a payload sends it back. FETCH cannot
     carry it, so a fetched copy of that object has `ends_group` false. A
     datagram larger than the session's maximum datagram size is dropped and
-    the send succeeds (draft-14 §10.3, draft-18 §11.3); the QUIC and
-    WebTransport connections map quinn's `TooLarge` to that drop.
+    the send succeeds (draft-14 §10.3, draft-18 §11.3); every connection
+    reports it as `DatagramDelivery::TooLarge`.
   - `Publisher::mixes_forwarding_preferences()` tells, without naming the
     draft, whether one track sent on the session may use subgroup streams and
     datagrams alike (draft-18 §11) or keeps one preference (draft-14 §10).
@@ -1283,8 +1287,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     `FetchHandler::marks_unknown_ranges()` tells beforehand whether the
     response can do the former, so a relay can choose how long to wait for
     objects without knowing the draft.
-  - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
-    maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
+  - `StreamDataSender::set_priority(StreamPriority)` maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:
     higher first). `stream_priority.rs` packs the four §7.2 rules most
     significant first — subscriber priority, publisher priority, group
@@ -1304,7 +1307,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - `fetch_notifier::notify` routes FETCH streams by request id as a
   `FetchDataReceiver`.
 - `IncomingObject` is the per-track-alias envelope (`Subgroup` holding a
-  `StreamDataReceiver` / `Datagram` holding an `Object`); FETCH streams never
+  `StreamDataReceiver` / `Datagram` holding an `IncomingDatagram`: the
+  `Object`, the draft of its connection and whether it inherits the
+  subscription's priority); FETCH streams never
   enter the per-track channel.
 
 ## Key invariants
@@ -1454,10 +1459,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   Identical copies are returned; moqt does not drop duplicates.
 - **Header-first subgroup streams**: enforced by the sender typestate; on the
   receive side a uni stream whose first frame is not a header is rejected.
-- **Priority before data**: a stream's transport priority is settable only
-  before its header, because the transport applies a changed priority to a
-  stream with queued data only after that stream's next frame.
-- **Session teardown**: dropping `Session` aborts all four background tasks;
+- **Priority before data**: a stream's transport priority is set before its
+  header, because the transport applies a changed priority to a stream with
+  queued data only after that stream's next frame. A relay that
+  reprioritizes an open stream accepts that delay.
+- **Session teardown**: dropping `Session` aborts the five background tasks
+  of each connection;
   the control task's `Weak` reference guarantees it never keeps the context
   alive. The transport closes (code 0) once the last handle to the context
   (`Session`, `Publisher`, `Subscriber`, stream writers) is gone, but the
@@ -1476,8 +1483,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   still open at the close ends with the connection, never with a FIN, since
   only its writer knows whether its subgroup is complete. The
   control stream and draft-18 request streams are not waited for. Guarded
-  by `a_group_written_just_before_the_session_closes_reaches_the_peer`. The application need not keep the
-  `Endpoint`.
+  by `a_group_written_just_before_the_session_closes_reaches_the_peer`.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
   yields, bounds waits and reads the clock only through `modules/executor`
   (`spawn`, `try_spawn`, `yield_now`, `timeout`, `now`, `system_time`); `tokio::sync`
@@ -1502,9 +1508,8 @@ draft:
 - **A stream whose header has not arrived does not hold back later streams**
   (`UniStreamReceiveTask`). Headers are read concurrently; a draft only
   parses them, in `Version::accept_uni_stream`. Guarded by
-  `uni_stream_receive_task::tests::a_stream_without_its_header_does_not_hold_back_later_streams`,
-  which writes draft-14 header bytes through `open_subgroup`, so it covers
-  draft-14 only.
+  `uni_stream_receive_task::tests::a_stream_without_its_header_does_not_hold_back_later_streams`
+  (draft-14) and `a_draft18_stream_without_its_header_does_not_hold_back_later_streams`.
 - **Closing a send stream does not wait for the peer to acknowledge the FIN**
   (`TransportSendStream::close`). quinn and WebTransport call `finish()`; the
   browser transport does not await `writer.close()`. Awaiting the ACK stalls

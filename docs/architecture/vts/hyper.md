@@ -34,5 +34,5 @@ already calls the VTS with `reqwest`, which is built on `hyper`.
 
 Use `hyper` directly. It is already compiled in the workspace (a transitive
 dependency of `reqwest` and `tonic`), so no new crate enters the dependency
-tree, and `service_fn` plus a `match` on method and path is enough for the
-VTS's routing.
+tree, and `http-server`'s accept loop plus a `match` on method and path is
+enough for the VTS's routing.

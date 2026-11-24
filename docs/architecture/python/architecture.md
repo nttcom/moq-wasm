@@ -10,10 +10,10 @@ Accepted
 2026-10-20
 
 ## Scope
-A new crate `sdk/python` that builds the Python module `moqt` with PyO3, a
-helper moved into `moqt` so the module and `broadcast` share one way of serving
-published tracks, and the switch of the Meeting transcriber and the AI demo
-bots under `examples/python/` from moq-rs to the module.
+A new crate `sdk/python` that builds the Python module `moq_wasm._native` with PyO3, a
+helper in `moqt` so the module and `broadcast` share one way of serving
+published tracks, and the use of the module by the Meeting transcriber and the AI demo
+bots under `examples/python/`.
 
 ## Context
 The Python bots reach the relay through moq-rs (`moq-rs` 0.4.7, via pipecat).
@@ -34,9 +34,7 @@ repository's relay and pages:
 
 `moqt` does all of this: `Subscriber::subscribe_current_group`, objects with
 their extension headers, and `publish::Origin`, which caches what it publishes
-and answers SUBSCRIBE and FETCH. An earlier binding (unmerged branch
-`feat/python-bindings`, 2026-09-07) wrapped `Session<DUAL>`, which no longer
-exists, and exposed no FETCH.
+and answers SUBSCRIBE and FETCH.
 
 ## Decision
 
@@ -47,7 +45,7 @@ maturin. Its method names follow the browser SDK's `MoqSession`. Every async met
 awaitable through `pyo3-async-runtimes` on its tokio runtime; the module
 enters that runtime before it creates the quinn endpoint, which binds through
 the ambient runtime. The ABI is `abi3-py311`, the Python version the bots
-require. It covers what the Meeting transcriber needs and nothing more:
+require:
 
 ```python
 import moq_wasm
@@ -81,8 +79,7 @@ await transcript.write(payload)
 await session.close()
 ```
 
-Left out: the server side (`listen`), raw request handlers, datagram tracks,
-extension headers (the transcriber reads no LOC property) and PUBLISH from a
+Left out: the server side (`listen`), raw request handlers and PUBLISH from a
 peer (rejected as `Uninterested`, as the recorder does). The request methods
 are listed in sdk.md "Core: `moq_wasm`".
 
@@ -139,12 +136,13 @@ The browser SDK binds the same `client::Session`, so both answer the relay alike
   need no Python and link the crate as an extension module.
 - pytest runs the module against a relay and a VTS started from this
   workspace on free ports (`tests/conftest.py`), in the `python.yml` workflow
-  when the crate, `moqt`, the relay or the VTS change.
+  when the crate, the crates it builds on, the relay, the VTS or the Python
+  examples its tests cover change.
 
 ### Using it from the bots
 A bot depends on the module by path (`moq-wasm = { path = "../../../sdk/python" }`
 in `[tool.uv.sources]`), and uv builds it with maturin, so building a bot
-needs a Rust toolchain. `examples/python/Dockerfile` gains a builder stage
+needs a Rust toolchain. `examples/python/Dockerfile` has a builder stage
 that compiles the wheel.
 
 The bots use the SDK's media layer ([sdk.md](sdk.md) "Media") rather than

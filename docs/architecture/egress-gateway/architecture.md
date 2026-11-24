@@ -7,7 +7,7 @@ flow, the outputs or the invariants described here change.
 ## Scope
 `services/egress-gateway` is the reverse of `ingest-gateway`: it subscribes to an MSF
 broadcast on a relay and hands its media to a protocol outside MoQT. Plain
-RTP is the one output today. The broadcast is the one `crates/broadcast`
+RTP is the one output. The broadcast is the one `crates/broadcast`
 publishes, so the tracks are the ones its
 [architecture document](../broadcast/architecture.md) describes.
 
@@ -59,5 +59,5 @@ group the publisher opens.
 
 ## End of stream
 The output runs until every track has ended or the relay session closes.
-A publisher that leaves resets the stream of the group in flight, which is
-logged as a warning; the subscriptions stay open.
+A publisher that leaves resets the stream of the group in flight, which the
+reader skips; the subscriptions stay open.

@@ -10,9 +10,10 @@ module boundaries, runtime flow, or invariants described here change.
 that references the broadcast's own video and audio, plus one Opus track per
 target language (`audio_en`, `audio_es`, `audio_de`, `audio_ko`,
 `audio_zh-Hans`), and the transcripts as `text_<lang>` (what Gemini said) and
-`text_ja` (what it heard), one JSON object `{"text", "final"}` per piece,
-stamped like the translated audio so a viewer shows each piece when that
-audio plays; `text_ja` is written by one running language and refused while
+`text_ja` (what it heard), one JSON object `{"text", "final"}` per piece.
+`text_<lang>` is stamped like the translated audio, so a viewer shows each
+piece when that audio plays, and `text_ja` with the time of the newest
+source audio sent; `text_ja` is written by one running language and refused while
 none runs. A language is translated by Gemini Live Translate only while
 someone subscribes to its track. Gemini is called on the Gemini Enterprise
 Agent Platform (`gemini/platform.rs`): the `global` location's Live API over a

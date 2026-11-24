@@ -21,8 +21,8 @@ The `moqt` tests that open real QUIC connections fail intermittently. Without a
 subscriber every `tracing` event from the crate is dropped, so a failed run
 shows only the panic and the cause cannot be read from the output. The capture
 keeps passing tests silent: libtest prints a test's output only when it fails.
-All `moqt` async tests use the current-thread `#[tokio::test]` runtime, so
-spawned tasks log on the test thread and stay inside its capture.
+Almost all `moqt` async tests use the current-thread `#[tokio::test]` runtime,
+so their spawned tasks log on the test thread and stay inside its capture.
 
 ## Alternatives
 
@@ -35,7 +35,7 @@ spawned tasks log on the test thread and stay inside its capture.
 ## Decision
 
 Use `tracing-subscriber`. It is already in the workspace lock (`relay`,
-`ingest-gateway`, `observability` and others depend on it), so no new crate enters
+`telemetry-otlp`, `vts` and others depend on it), so no new crate enters
 the dependency tree, and as a dev-dependency it does not reach crates that
 depend on `moqt`. `RUST_LOG=moqt=debug cargo test -p moqt` raises the level
 for a run.
