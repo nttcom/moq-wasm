@@ -361,7 +361,8 @@ mod tests {
             mock_session::{
                 RecordedControlMessages, mock_session_answering_subscribe,
                 recorded_session_answering_subscribe, recorded_session_answering_subscribe_after,
-                session_repository_with_session, wait_until,
+                recorded_session_refusing_subscribe_after, session_repository_with_session,
+                wait_until,
             },
         },
     };
@@ -544,6 +545,62 @@ mod tests {
             LATE_PUBLISHER_SESSION,
             LATE_UPSTREAM_REQUEST_ID
         ));
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_answered_after_its_track_was_created_again_leaves_the_new_track_alone() {
+        // Arrange: the new entry's own SUBSCRIBE to the same publisher is in flight too
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(_old_creation, old_reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let (session, recorded) = recorded_session_refusing_subscribe_after(
+            gate.clone(),
+            RequestErrorCode::InternalError,
+        );
+        let repository = session_repository_with_session(
+            LATE_PUBLISHER_SESSION,
+            session,
+            VerifiedToken::full_access(),
+        )
+        .await;
+        table.add_pending_producers(old_reservation.entry(), 1);
+        let old = PendingProducerTask::run(
+            deps(table.clone(), repository),
+            old_reservation.entry().clone(),
+            SUBSCRIBER_SESSION,
+            UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
+            None,
+        );
+        wait_until(|| recorded.subscribed_track_names().len() == 1)
+            .await
+            .expect("the old SUBSCRIBE should be sent");
+        table.remove_upstream_track(&track_key());
+        let TrackLookup::Started(new_creation, new_reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("a SUBSCRIBE after the removal starts a new creation");
+        };
+        let new_entry = new_reservation.entry().clone();
+        table.add_pending_producers(&new_entry, 1);
+        assert!(table.begin_upstream_subscribe(&new_entry, LATE_PUBLISHER_SESSION));
+
+        // Act
+        gate.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), old._join_handle)
+            .await
+            .expect("the old SUBSCRIBE should be answered")
+            .unwrap();
+
+        // Assert: the new entry keeps its claim on the publisher
+        assert_eq!(*new_creation.borrow(), CreationState::Creating);
+        assert!(!table.begin_upstream_subscribe(&new_entry, LATE_PUBLISHER_SESSION));
+        // Assert: its own SUBSCRIBE is its only pending producer, so ending it fails the creation
+        table.pending_producer_ended(&new_entry, None);
+        assert!(matches!(*new_creation.borrow(), CreationState::Failed(_)));
     }
 
     #[tokio::test]

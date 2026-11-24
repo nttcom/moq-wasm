@@ -227,6 +227,7 @@ enum SubscribeAnswer {
     /// SUBSCRIBE_OK once the gate is notified.
     SubscribeOkAfter(Arc<tokio::sync::Notify>),
     Refuse(RequestErrorCode),
+    RefuseAfter(Arc<tokio::sync::Notify>, RequestErrorCode),
     Never,
 }
 
@@ -351,6 +352,18 @@ pub(crate) fn recorded_session_answering_subscribe_after(
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
         answer_subscribe: Some(SubscribeAnswer::SubscribeOkAfter(gate)),
+        ..MockUpstreamSession::new(recorded.clone())
+    });
+    (session, recorded)
+}
+
+pub(crate) fn recorded_session_refusing_subscribe_after(
+    gate: Arc<tokio::sync::Notify>,
+    code: RequestErrorCode,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        answer_subscribe: Some(SubscribeAnswer::RefuseAfter(gate, code)),
         ..MockUpstreamSession::new(recorded.clone())
     });
     (session, recorded)
@@ -772,6 +785,14 @@ impl Publisher for MockUpstreamPublisher {
     }
 }
 
+fn refused(code: RequestErrorCode) -> anyhow::Error {
+    anyhow::Error::new(moqt::RequestFailure::Rejected {
+        request_id: 1,
+        code,
+        reason: "refused".to_string(),
+    })
+}
+
 struct MockUpstreamSubscriber {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
@@ -797,12 +818,10 @@ impl Subscriber for MockUpstreamSubscriber {
                 gate.notified().await;
                 ContentExists::False
             }
-            Some(SubscribeAnswer::Refuse(code)) => {
-                return Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
-                    request_id: 1,
-                    code: *code,
-                    reason: "refused".to_string(),
-                }));
+            Some(SubscribeAnswer::Refuse(code)) => return Err(refused(*code)),
+            Some(SubscribeAnswer::RefuseAfter(gate, code)) => {
+                gate.notified().await;
+                return Err(refused(*code));
             }
             Some(SubscribeAnswer::Never) => std::future::pending().await,
             None => unimplemented!("not used by MockUpstreamSession tests"),
