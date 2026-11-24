@@ -556,7 +556,8 @@ relay に残るのは、ブラウザが接続を閉じられないとき（ク�
 ### meeting での使い方
 meeting は `createBroadcast` で配信する（`mediaPublisher.ts`）。受ける側は
 `watchBroadcasts` ではなく、`session.watchNamespaces` と `new RemoteBroadcast` を直接
-使う（`localSession.ts`、`remotePlayers.ts`）。
+使い、transcriber の検知に `botTypeOf`、文字起こしの購読に `subscribeTranscript` を
+使う（`localSession.ts`、`remotePlayers.ts`、`trackNamespace.ts`）。
 
 入り直し（リロードした人の古い session が残る間の振る舞い）は、現象を再現して原因を
 確かめてから決める。relay は、同じ namespace を公開する session が残っている間は
