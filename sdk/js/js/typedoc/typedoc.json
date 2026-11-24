@@ -1,5 +1,10 @@
 {
-  "entryPoints": ["../src/core/index.ts", "../src/media/index.ts", "../src/recording/index.ts"],
+  "entryPoints": [
+    "../src/core/index.ts",
+    "../src/media/index.ts",
+    "../src/recording/index.ts",
+    "../src/element/index.ts"
+  ],
   "tsconfig": "../tsconfig.build.json",
   "readme": "../README.md",
   "skipErrorChecking": true,

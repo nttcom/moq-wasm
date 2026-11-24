@@ -107,6 +107,7 @@ moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, LiveP
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
 moq-wasm/recording  openRecording, Recording, RecorderError
+moq-wasm/element    <moq-player>（import すると登録される）
 ```
 
 1パッケージにする理由: `core` と `media` は1つの wasm インスタンスと1つの `Session`
@@ -833,6 +834,30 @@ publisher の timeline から始め、recorder の replay を VOD にしてか�
 - カメラか画面共有かを catalog で示すこと。source 名（「相手ごとに再生し、source を名前で
   扱う」）と `label` で足りる。画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える
   必要が出たときに決める。
+
+## `<moq-player>`
+
+`LivePlayer` を HTML のタグ1つで置けるようにする Custom Element。`moq-wasm/element` を
+import すると `customElements.define('moq-player', …)` が走る。副作用を持つのはこの entry
+だけで、`moq-wasm/media` は import しても何も登録しない。
+
+```html
+<moq-player src="https://relay.example/moq" namespace="room/alice" token="…" controls></moq-player>
+```
+
+- **属性。** `src`（relay の URL）、`namespace`（`/` 区切りの track namespace）、`token`、
+  `controls`。`src` と `namespace` がそろい、ページに入っている間だけ接続する。`src`、
+  `namespace`、トークンが変わると接続し直し、ページから外れると player を `dispose` して
+  session を閉じる。接続中の変更はまとめ、接続が終わった時点の属性で1回だけ接続し直す。
+- **トークン。** `token` 属性は文字列。`token` プロパティには `MoqConnectOptions.token` と
+  同じく、接続のたびに呼ばれる関数も入れられる。属性に書いたトークンは HTML から読めるので、
+  期限の短いトークンを使うページはプロパティに関数を入れる。
+- **`controls`。** `PlayerControls` を出す。外すと `PlayerControls.dispose` で取り除き、
+  接続はそのまま続く。
+- **見た目。** Shadow DOM は使わず、要素自身を `LivePlayer` の container にする。ページは
+  `LivePlayer` と同じく `player.css`（`controls` なら `controls.css` も）を import する。
+- **それ以上の操作。** `player` プロパティが接続中の `LivePlayer` を返す（`setVolume`、
+  `stats` など）。接続や再生の開始に失敗すると、要素に `error` の `ErrorEvent` を投げる。
 
 ## core API
 

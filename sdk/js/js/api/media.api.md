@@ -564,6 +564,8 @@ export type PlaybackGroupState = {
 export class PlayerControls {
     constructor(container: HTMLElement, player: LivePlayer, onLog: (level: LogLevel, message: string) => void);
     // (undocumented)
+    dispose(): void;
+    // (undocumented)
     render(): void;
     // (undocumented)
     renderBuffer(stats: LivePlayerStats): void;

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embed · MoQT Playground</title>
+    <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
+    <link rel="stylesheet" href="./embed.css" />
+  </head>
+  <body data-title="Embed">
+    <main class="page">
+      <section class="card">
+        <div class="card-head">
+          <h2>接続</h2>
+        </div>
+        <div class="controls stack">
+          <div id="urlPresets"></div>
+          <input type="url" id="url" aria-label="Relay URL" data-testid="embed-url-input" />
+          <label for="namespace">Track Namespace</label>
+          <input type="text" id="namespace" data-testid="embed-namespace-input" />
+          <div class="button-row">
+            <button type="button" id="playBtn" data-testid="embed-play-button">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>再生
+            </button>
+            <button type="button" id="stopBtn" class="danger" data-testid="embed-stop-button">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-square" /></svg>停止
+            </button>
+          </div>
+        </div>
+        <p class="hint" id="status" data-testid="embed-status">未接続</p>
+      </section>
+
+      <section class="card">
+        <moq-player id="player" controls data-testid="embed-player"></moq-player>
+        <pre class="embed-snippet" id="snippet" data-testid="embed-snippet"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+    <script type="module" src="../../utils/shell.ts"></script>
+  </body>
+</html>
