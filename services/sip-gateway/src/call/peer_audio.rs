@@ -1,7 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use broadcast::{BroadcastReader, selection::TrackChoice};
+use broadcast::{
+    BroadcastReader,
+    selection::{TrackChoice, VideoChoice},
+};
 use bytes::Bytes;
 use mediapack::{AudioConfig, MediaEvent};
 use moqt::client;
@@ -123,8 +126,13 @@ async fn forward(
     namespace: &str,
     audio_sender: &mpsc::Sender<PeerAudio>,
 ) -> Result<()> {
-    let mut reader =
-        BroadcastReader::run(session.moqt_session(), namespace, TrackChoice::default()).await?;
+    // A meeting participant encodes a video rendition only while it has a
+    // subscriber, so the phone's call does not subscribe to one.
+    let choice = TrackChoice {
+        video: VideoChoice::Off,
+        ..TrackChoice::default()
+    };
+    let mut reader = BroadcastReader::run(session.moqt_session(), namespace, choice).await?;
     tracing::info!(track_namespace = namespace, "peer audio subscribed");
     while let Some(event) = reader.next_event().await {
         let audio = match event {
