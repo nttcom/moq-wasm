@@ -182,6 +182,9 @@ struct Requests {
     /// Namespaces sent as NAMESPACE, with the SUBSCRIBE_NAMESPACE stream
     /// that carried them.
     advertised: HashMap<Vec<String>, RequestId>,
+    /// Subscriptions this side publishes that the subscriber ended before
+    /// PUBLISH_DONE: the PUBLISH_DONE that later ends one has nothing to end.
+    withdrawn: HashSet<RequestId>,
 }
 
 /// Request IDs this side makes up for events that need no response (a
@@ -600,6 +603,28 @@ impl ControlChannel {
         self.requests().outgoing.remove(&request_id)
     }
 
+    /// Takes the stream of the peer's request `request_id`, which the peer
+    /// ended; a SUBSCRIBE among them is remembered as withdrawn.
+    fn take_ended_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
+        let mut requests = self.requests();
+        let stream = requests.incoming.remove(&request_id)?;
+        if stream.kind == RequestStreamKind::Subscribe {
+            requests.withdrawn.insert(request_id);
+        }
+        Some(stream)
+    }
+
+    /// Takes the stream of this side's request `request_id`, which the peer
+    /// ended; a PUBLISH among them is remembered as withdrawn.
+    fn take_ended_outgoing(&self, request_id: RequestId) -> Option<RequestStream> {
+        let mut requests = self.requests();
+        let stream = requests.outgoing.remove(&request_id)?;
+        if stream.kind == RequestStreamKind::Publish {
+            requests.withdrawn.insert(request_id);
+        }
+        Some(stream)
+    }
+
     fn take_by_kind(
         map: &mut HashMap<RequestId, RequestStream>,
         kind: &RequestStreamKind,
@@ -976,12 +1001,22 @@ impl ControlChannel {
                     .take_incoming(request_id)
                     .or_else(|| self.take_outgoing(request_id));
                 let Some(stream) = stream else {
+                    if self.requests().withdrawn.remove(&request_id) {
+                        return Ok(());
+                    }
                     return Err(TransportSendError::ClosedStream);
                 };
                 let message = messages::encode_publish_done(code, stream_count, &reason)
                     .map_err(encode_error)?;
-                stream.sender.send(&message).await?;
-                stream.sender.close().await
+                let sent = match stream.sender.send(&message).await {
+                    Ok(()) => stream.sender.close().await,
+                    error => error,
+                };
+                match sent {
+                    // §5.1.1: STOP_SENDING ended the subscription already.
+                    Err(TransportSendError::Stopped { .. }) => Ok(()),
+                    sent => sent,
+                }
             }
             Notification::FetchCancel(fetch_cancel) => {
                 cancel(self.take_outgoing(fetch_cancel.request_id)).await
@@ -1482,6 +1517,53 @@ mod tests {
 
         // Assert
         assert_eq!(object, datagram_object());
+    }
+
+    #[tokio::test]
+    async fn publish_done_after_the_subscriber_stopped_the_request_stream_succeeds() {
+        for scheme in SCHEMES {
+            // Arrange: the subscriber's STOP_SENDING has arrived while its half stays open
+            let (client, server) = spawn_connected_draft18_sessions(
+                &format!("draft18-publish-done-stopped-{scheme}"),
+                scheme,
+            )
+            .await;
+            let (request, handler) =
+                subscribe_requested(&client, &server, SubscribeOption::default()).await;
+            let request_id = handler.request_id();
+            let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+            let subscription = request.await.unwrap().unwrap();
+            ControlChannel::of(&client.publisher().session.connection())
+                .requests()
+                .outgoing
+                .get(&subscription.request_id())
+                .unwrap()
+                .reader_stop
+                .notify_one();
+            let request_sender = ControlChannel::of(&server.publisher().session.connection())
+                .requests()
+                .incoming
+                .get(&request_id)
+                .unwrap()
+                .sender
+                .clone();
+            let stopped = tokio::time::timeout(HANDSHAKE_TIMEOUT, request_sender.stopped()).await;
+            assert!(matches!(stopped, Ok(Some(_))), "{scheme}: {stopped:?}");
+
+            // Act
+            let ended = server
+                .publisher()
+                .publish_done(
+                    &handler.into_subscription(track_alias),
+                    PublishDoneCode::TrackEnded,
+                    0,
+                    "done".into(),
+                )
+                .await;
+
+            // Assert
+            assert!(ended.is_ok(), "{scheme}: {ended:?}");
+        }
     }
 
     #[tokio::test]

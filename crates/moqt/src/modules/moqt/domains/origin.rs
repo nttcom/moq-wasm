@@ -1098,18 +1098,28 @@ mod tests {
     }
 
     async fn unsubscribe(peers: &Peers, subscription: &Subscription) -> Option<(String, String)> {
+        let handler = unsubscribe_unreleased(peers, subscription).await;
+        peers.origin.release(&handler).await
+    }
+
+    /// Unsubscribes and returns the UNSUBSCRIBE the origin has not released.
+    async fn unsubscribe_unreleased(
+        peers: &Peers,
+        subscription: &Subscription,
+    ) -> UnsubscribeHandler {
         let subscriber = peers.server.subscriber();
-        let (unsubscribed, released) = within(async {
-            tokio::join!(subscriber.unsubscribe(subscription), async {
-                let SessionEvent::Unsubscribe(handler) = next_event(&peers.client).await else {
-                    panic!("expected UNSUBSCRIBE from the relay");
-                };
-                peers.origin.release(&handler).await
-            })
+        let (unsubscribed, event) = within(async {
+            tokio::join!(
+                subscriber.unsubscribe(subscription),
+                next_event(&peers.client)
+            )
         })
         .await;
         unsubscribed.unwrap();
-        released
+        let SessionEvent::Unsubscribe(handler) = event else {
+            panic!("expected UNSUBSCRIBE from the relay");
+        };
+        handler
     }
 
     fn subscribe_option(filter_type: FilterType) -> SubscribeOption {
@@ -1884,6 +1894,39 @@ mod tests {
 
             // Assert
             assert!(ended.is_ok(), "{ended:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn end_track_after_a_subscribe_is_unsubscribed_but_not_released_succeeds() {
+        for version in DRAFTS {
+            // Arrange: the session took the UNSUBSCRIBE before the origin released it
+            let peers = origin_with_track("origin-end-unsubscribed", RETENTION, version).await;
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let _unsubscribe = unsubscribe_unreleased(&peers, &subscription).await;
+
+            // Act
+            let ended = within(peers.origin.end_track(NAMESPACE, TRACK)).await;
+
+            // Assert
+            assert!(ended.is_ok(), "{version:?}: {ended:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn end_track_after_a_publish_is_unsubscribed_but_not_released_succeeds() {
+        for version in DRAFTS {
+            // Arrange: the session took the UNSUBSCRIBE before the origin released it
+            let peers =
+                origin_with_track("origin-end-unsubscribed-publish", RETENTION, version).await;
+            let accepted = publish(&peers).await;
+            let _unsubscribe = unsubscribe_unreleased(&peers, &accepted).await;
+
+            // Act
+            let ended = within(peers.origin.end_track(NAMESPACE, TRACK)).await;
+
+            // Assert
+            assert!(ended.is_ok(), "{version:?}: {ended:?}");
         }
     }
 
