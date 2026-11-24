@@ -772,7 +772,24 @@ export type StatusState = 'idle' | 'ok' | 'review' | 'error';
 export type StreamKind = 'subscribe' | 'fetch';
 
 // @public (undocumented)
+export function subscribeTranscript(session: MoqSession, room: string[], onRecords: (records: TranscriptRecord[]) => void): Promise<TranscriptSubscription>;
+
+// @public (undocumented)
 export type TrackInput = true | MediaTrackConstraints | MediaStreamTrack;
+
+// @public (undocumented)
+export type TranscriptRecord = {
+    startedAtMs: number;
+    speaker: string;
+    text: string;
+    live: boolean;
+};
+
+// @public (undocumented)
+export type TranscriptSubscription = {
+    readonly done: Promise<PublishDone | undefined>;
+    close(): Promise<void>;
+};
 
 // @public (undocumented)
 export type VideoCodecName = 'h264' | 'h265' | 'vp8' | 'vp9' | 'av1';
