@@ -51,11 +51,11 @@ def launch_token(app_id: str, secret: str, bots: str = "") -> str:
 
 ## API
 
-Pass the launch token as `Authorization: Bearer <token>` on the routes below (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific):
+Pass the launch token as `Authorization: Bearer <token>` on the routes below (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific; `stay_when_empty` is an optional boolean, default `false`):
 
 | Route | Response |
 | --- | --- |
-| `POST /bots/{type}` `{"namespace_prefix", "options"}` | `201` bot record |
+| `POST /bots/{type}` `{"namespace_prefix", "options", "stay_when_empty"}` | `201` bot record |
 | `GET /bots?namespace_prefix=` | `200 {"bots": […]}` latest bot of each configured type that had one in that room (type-name order; `[]` if none) |
 | `GET /bots/{type}?namespace_prefix=` | `200` latest bot for that room/type, or `404` |
 | `GET /bots/{type}/{id}` | `200` bot record |
@@ -83,7 +83,7 @@ While a bot's latest heartbeat reports a type-specific JSON object as `output`, 
 
 | Status | `error` | Meaning |
 | --- | --- | --- |
-| `400` | `invalid_request` | Invalid JSON body or missing `namespace_prefix` |
+| `400` | `invalid_request` | Invalid JSON body (e.g. non-boolean `stay_when_empty`) or missing `namespace_prefix` |
 | `400` | `invalid_room` | `namespace_prefix` has fewer than 2 segments or an empty segment |
 | `400` | `invalid_options` | `options` is not an object, names an unlisted key, or uses a disallowed value for a type with an `options` table (creates no bot) |
 | `401` | `a bearer token is required` | Missing `Authorization: Bearer` header |
@@ -107,7 +107,7 @@ While a bot's latest heartbeat reports a type-specific JSON object as `output`, 
 | `failed` | Launch failed, crashed, or timed out (see `error`) |
 
 - A bot is marked `failed` (`the bot stopped reporting`) if it misses heartbeats for 90 s or fails to report within 5 min of launch, freeing the room to start another.
-- Bots exit automatically after `grace_seconds` with no active publishers (including at startup) or after `max_seconds`.
+- Bots exit automatically after `grace_seconds` with no active publishers (including at startup) or after `max_seconds`. Because a bot only sees publishing members, a room of listeners counts as empty; an app server that manages room lifetime can pass `"stay_when_empty": true` (sets `--grace-seconds` to `max_seconds`, not stored or returned in the bot record) so an empty room does not end the bot: the app server ends it with `DELETE /bots/{type}/{id}`, and `max_seconds` still applies. `services/temporary-apps` rejects `stay_when_empty: true` with `403 forbidden`.
 
 ## Bot types and options
 
@@ -168,7 +168,7 @@ Bots join with a 1-hour token that subscribes to `<room>` and publishes only und
 
 - `launcher`: `{"kind": "cloud-run", "job": ...}` (requires `run.jobs.runWithOverrides`) or `{"kind": "local", "program": <path>}`.
 - `options` (optional): map from option name to a non-empty array of allowed JSON scalars (string, boolean, number). Malformed tables fail startup.
-- `bot-dispatcher` appends `--bot-type`, `--bot-id`, `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds`, and (if present) `--options <JSON>` to `args`. Local bots receive their auth key in `BOT_DISPATCHER_BOT_KEY`.
+- `bot-dispatcher` appends `--bot-type`, `--bot-id`, `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds` (`max_seconds` when `stay_when_empty` is `true`), `--max-seconds`, and (if present) `--options <JSON>` to `args`. Local bots receive their auth key in `BOT_DISPATCHER_BOT_KEY`.
 
 ## Running locally
 

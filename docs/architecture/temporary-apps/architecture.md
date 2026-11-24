@@ -52,6 +52,9 @@ sequenceDiagram
   themselves call (`/token`, `/heartbeat`), are `404` here.
 - `POST` counts against 10 calls per client address per hour, in fixed windows
   of this process like `POST /tokens`.
+- `POST /bots/{type}` with `stay_when_empty: true` is refused with `403 forbidden`
+  without calling `bot-dispatcher` (anyone can create a temporary app); `false`
+  is forwarded.
 - Without `TEMPORARY_APPS_BOT_DISPATCHER_URL` every `/bots` route is `404`.
 
 ## Invariants
