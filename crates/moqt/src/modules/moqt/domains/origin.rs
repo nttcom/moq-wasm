@@ -433,8 +433,10 @@ impl Origin {
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
         let request = (key_of_session, subscription.request_id());
         let track_alias = subscription.track_alias();
-        let forward = match &subscription {
-            Subscription::PublisherInitiated(accepted) => accepted.forward,
+        let (forward, new_group_request) = match &subscription {
+            Subscription::PublisherInitiated(accepted) => {
+                (accepted.forward, accepted.new_group_request)
+            }
             Subscription::SubscriberInitiated(_) => {
                 unreachable!("a PUBLISH_OK gives a publisher-initiated subscription")
             }
@@ -452,6 +454,9 @@ impl Origin {
             subscription,
         });
         track.refresh_demand();
+        if let Some(new_group_request) = new_group_request {
+            track.request_new_group(new_group_request);
+        }
         state.subscriptions.insert(
             request,
             OriginSubscription {
@@ -3228,6 +3233,35 @@ mod tests {
 
         // Assert
         assert!(subscription.unwrap().track_properties().dynamic_groups());
+        assert!(is_notified(&requested));
+    }
+
+    #[tokio::test]
+    async fn a_publish_answered_with_a_new_group_request_is_notified() {
+        // Arrange
+        let (peers, requested) = origin_with_dynamic_groups("origin-new-group-publish-ok").await;
+
+        // Act
+        let (published, ()) = within(async {
+            tokio::join!(
+                peers.origin.publish(&peers.client, NAMESPACE, TRACK),
+                async {
+                    let SessionEvent::Publish(mut handler) = next_event(&peers.server).await else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    handler.new_group_request = Some(0);
+                    handler
+                        .ok(128, FilterType::LargestObject, true)
+                        .await
+                        .unwrap();
+                    handler.accept_data_receiver().await;
+                }
+            )
+        })
+        .await;
+
+        // Assert
+        published.unwrap();
         assert!(is_notified(&requested));
     }
 

@@ -397,6 +397,7 @@ impl Publisher for Arc<PeerState> {
                     forward,
                     filter_type: FilterType::LargestObject,
                     delivery_timeout: None,
+                    new_group_request: None,
                     track_properties: TrackProperties::default(),
                     last_update: moqt::LastSubscribeUpdate::default(),
                 }),
@@ -725,6 +726,7 @@ impl PublishHandler for ScriptedPublish {
             forward: true,
             filter_type,
             delivery_timeout: None,
+            new_group_request: None,
             track_properties: TrackProperties::default(),
             last_update: moqt::LastSubscribeUpdate::default(),
         })

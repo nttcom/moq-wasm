@@ -191,6 +191,8 @@ pub struct PublisherInitiatedSubscription {
     pub forward: bool,
     pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
+    /// Carried by the PUBLISH_OK (draft-18 §10.2.13).
+    pub new_group_request: Option<u64>,
     /// What the PUBLISH said about the track.
     pub track_properties: TrackProperties,
     pub last_update: LastSubscribeUpdate,
@@ -215,6 +217,7 @@ impl PublisherInitiatedSubscription {
             forward: publish_ok.forward,
             filter_type: publish_ok.filter_type,
             delivery_timeout: publish_ok.delivery_timeout,
+            new_group_request: publish_ok.new_group_request,
             track_properties,
             last_update: LastSubscribeUpdate::default(),
         }

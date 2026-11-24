@@ -879,6 +879,7 @@ mod tests {
             group_order: GroupOrder::Ascending,
             filter_type: FilterType::LargestObject,
             delivery_timeout: None,
+            new_group_request: None,
         })
     }
 

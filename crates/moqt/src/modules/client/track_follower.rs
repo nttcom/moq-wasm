@@ -138,7 +138,7 @@ struct Follow {
 
 enum Step {
     Announced(NamespaceEvent),
-    Published(PublishHandler),
+    Published(Box<PublishHandler>),
     Object(ReceivedObject),
     Left,
     Ended,
@@ -153,7 +153,7 @@ impl Follow {
                 announcement = self.announcements.recv() => {
                     announcement.map_or(Step::Ended, Step::Announced)
                 }
-                handler = self.publish_receiver.recv() => handler.map_or(Step::Ended, Step::Published),
+                handler = self.publish_receiver.recv() => handler.map_or(Step::Ended, |handler| Step::Published(Box::new(handler))),
                 object = next_object(&followed) => object.map_or(Step::Left, Step::Object),
                 () = left(&followed) => Step::Left,
             };
@@ -175,7 +175,7 @@ impl Follow {
                             )
                             .await;
                     } else {
-                        followed = self.accept(handler).await;
+                        followed = self.accept(*handler).await;
                     }
                 }
                 Step::Object(object) => {
