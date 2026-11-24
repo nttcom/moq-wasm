@@ -1,32 +1,72 @@
 # Workspace crates
 
-Reusable Rust libraries and plugins under `crates/` (for runnable services see `services/`; for application SDKs see `sdk/`).
+Reusable Rust libraries and plugins under `crates/`.
 
-## Protocol & formats
+- **Building an app, bot, or robot?** Start with an SDK: [JavaScript](../sdk/js/js/README.md) · [Python](../sdk/python/README.md) · [Rust (`moq-wasm`)](../sdk/rust/README.md). `sdk/rust` wraps `moqt`, `broadcast`, and `robotics` with automatic reconnects and JWT refresh.
+- **Self-hosting a relay or gateway?** See [`services/`](../README.md#self-hostable-server--gateway-stack).
+- **Embedding a crate directly or exploring the codebase?** Pick a crate below.
 
-| Crate | Purpose |
-| --- | --- |
-| [`moqt`](moqt/README.md) | Core MoQT transport over QUIC, WebTransport, and browser WebTransport/WebSocket (draft-18 / draft-14) |
-| [`msf`](msf/README.md) | MSF catalog (`draft-ietf-moq-msf-02`) and CMAF profile (`draft-ietf-moq-cmsf-01`) types and validation |
+## Protocol & media dependencies
 
-## Media & plugins
+Arrows point to dependencies (`crates/` protocol and media layers only):
 
-| Crate | Purpose |
-| --- | --- |
-| [`mediapack`](mediapack/README.md) | Pure-Rust demuxers, muxers, and bitstream helpers (MPEG-TS, FLV, fMP4, LOC, RTP) |
-| [`broadcast`](broadcast/README.md) | Publishes and reads MSF broadcasts (`catalog` + LOC/CMAF tracks + timelines) over `moqt` |
-| [`transcode`](transcode/README.md) | In-process GStreamer H.264 ABR ladder transcoder and offline MP4 compositor |
-| [`gst-plugin-moqt`](gst-plugin-moqt/README.md) | GStreamer `moqtsink` plugin for publishing H.264/AAC pipelines to a MoQT relay |
+```mermaid
+flowchart BT
+    moqt["moqt<br/>MoQT transport (draft-14 / draft-18)"]
+    msf["msf<br/>MSF catalog & timelines"]
+    mediapack["mediapack<br/>TS / FLV / fMP4 / LOC / RTP"]
+    broadcast["broadcast<br/>MSF broadcasts over MoQT"]
+    robotics["robotics<br/>Teleoperation & arbiter"]
+    transcode["transcode<br/>GStreamer ABR & compositor"]
+    gst["gst-plugin-moqt<br/>moqtsink plugin"]
 
-## Auth & storage
+    mediapack -. "moqt feature" .-> moqt
+    broadcast --> moqt
+    broadcast --> msf
+    broadcast --> mediapack
+    robotics --> broadcast
+    robotics --> moqt
+    robotics --> msf
+    transcode --> mediapack
+    gst --> broadcast
+    gst --> mediapack
+```
 
-| Crate | Purpose |
-| --- | --- |
-| [`auth-token`](auth-token/README.md) | HS256 JWT signing, verification, claim/namespace authorization, VTS client, and token-minting CLI |
-| [`app-registry`](app-registry/README.md) | JSON app registry store backed by Cloud Storage or a local file with optimistic concurrency |
+## Protocol & media
 
-## Internal service helpers
+| Crate | Audience | Targets | Role |
+| --- | --- | --- | --- |
+| [`moqt`](moqt/README.md) | External / Via SDK | native, `wasm32` | Core MoQT transport over QUIC, WebTransport, and QMux over WebSocket (draft-18 & draft-14) |
+| [`msf`](msf/README.md) | External | native, `wasm32` | Pure-Rust MSF catalog (`draft-ietf-moq-msf-02`) and CMSF (`draft-ietf-moq-cmsf-01`) types and validation |
+| [`mediapack`](mediapack/README.md) | External | native, `wasm32` | Pure-Rust container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC, RTP) and bitstream helpers |
+| [`broadcast`](broadcast/README.md) | Via SDK / External | native, `wasm32` | Publishes and reads MSF broadcasts (`catalog`, LOC/CMAF tracks, timelines) over `moqt` |
+| [`robotics`](robotics/README.md) | Via SDK / External | native | Robot teleoperation records, synchronous `Arbiter` with dead-man hold, `Robot`, and `Driver` |
 
-Shared workspace crates without standalone READMEs: `google-cloud` (metadata tokens and conditional Cloud Storage calls), `http-server` (HTTP/1 accept loop and JSON responses), `job-launcher` (Cloud Run and local job execution), `robotics` (robot-room arbiter and action/state tracks), `telemetry`, `telemetry-otlp`, and `telemetry-report` (tracing/OTLP export and client telemetry records).
+## GStreamer & transcoding
 
-To inspect a crate's direct dependencies, run `cargo tree -p <crate> --depth 1 -e normal`. See the [component list](../AGENTS.md#2-project-scope) for the full workspace layout.
+| Crate | Audience | Targets | Role |
+| --- | --- | --- | --- |
+| [`transcode`](transcode/README.md) | External / Workspace | native (GStreamer) | In-process GStreamer H.264 ABR ladder transcoder and offline multi-participant MP4 compositor |
+| [`gst-plugin-moqt`](gst-plugin-moqt/README.md) | External | native (`cdylib`) | GStreamer `moqtsink` plugin for publishing H.264/AAC pipelines directly to a MoQT relay |
+
+## Auth & service infrastructure
+
+| Crate | Audience | Targets | Role |
+| --- | --- | --- | --- |
+| [`auth-token`](auth-token/README.md) | External (CLI) / Workspace | native | HS256 JWT claims, signing, verification, namespace authorization, VTS client, and token-minting CLI |
+| [`app-registry`](app-registry/README.md) | Workspace-internal | native | JSON app registry backed by Cloud Storage or a local file with optimistic concurrency |
+| [`google-cloud`](google-cloud/README.md) | Workspace-internal | native | Minimal GCP HTTP client: metadata tokens, conditional Cloud Storage, and IAP/ID token JWKS verification |
+| [`http-server`](http-server/README.md) | Workspace-internal | native | Shared HTTP/1 accept loop, JSON body/response helpers, CORS, proxy IP extraction, and shutdown signal |
+| [`job-launcher`](job-launcher/README.md) | Workspace-internal | native | Fire-and-forget job launcher over local child processes or Google Cloud Run Jobs |
+
+## Telemetry
+
+`telemetry` defines the JSON schemas, `telemetry-otlp` bootstraps servers, and `telemetry-report` collects client logs and spans without an OpenTelemetry SDK.
+
+| Crate | Audience | Targets | Role |
+| --- | --- | --- | --- |
+| [`telemetry`](telemetry/README.md) | Workspace-internal | native, `wasm32` | Wire schemas for client telemetry reports (`/api/client-telemetry`) and 1 Hz relay stats snapshots |
+| [`telemetry-otlp`](telemetry-otlp/README.md) | Workspace-internal | native | Tracing/OTLP bootstrap (stdout + OTLP traces, logs, metrics), `EventLogger`, and W3C trace context |
+| [`telemetry-report`](telemetry-report/README.md) | Workspace-internal | native, `wasm32` | Lightweight `tracing` layer turning client logs and closed spans into `telemetry` reports |
+
+Architecture docs: [`docs/architecture/`](../docs/architecture/) · Full component map: [`AGENTS.md`](../AGENTS.md#2-project-scope).
