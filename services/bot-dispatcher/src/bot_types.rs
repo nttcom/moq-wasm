@@ -85,6 +85,11 @@ impl BotTypes {
     pub(crate) fn get(&self, name: &str) -> Option<&BotType> {
         self.0.get(name)
     }
+
+    /// The type names, in order.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
 }
 
 #[cfg(test)]

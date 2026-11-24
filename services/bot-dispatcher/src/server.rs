@@ -63,6 +63,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ServerState>) -> JsonResp
             (&Method::POST, ["bots", bot_type]) => {
                 start(&state, &head.headers, bot_type, body).await
             }
+            (&Method::GET, ["bots"]) => room(&state, &head.headers, head.uri.query()).await,
             (&Method::GET, ["bots", bot_type]) => {
                 latest(&state, &head.headers, bot_type, head.uri.query()).await
             }
@@ -153,16 +154,44 @@ async fn latest(
     bot_type: &str,
     query: Option<&str>,
 ) -> JsonResponse {
-    let Some(prefix) = query_params(query).remove("namespace_prefix") else {
-        return error_response(StatusCode::BAD_REQUEST, "invalid_request");
+    let prefix = match authorized_prefix(state, headers, query).await {
+        Ok(prefix) => prefix,
+        Err((status, error)) => return error_response(status, error),
     };
-    if let Err(rejection) = state.launch_auth.authorize(headers, &prefix).await {
-        return refused(rejection, &prefix);
-    }
     match state.bots.latest(bot_type, &prefix, now_ms()).await {
         Ok(Some(bot)) => json_response(StatusCode::OK, &bot),
         Ok(None) => error_response(StatusCode::NOT_FOUND, "not_found"),
         Err(error) => internal(&error),
+    }
+}
+
+async fn room(state: &ServerState, headers: &HeaderMap, query: Option<&str>) -> JsonResponse {
+    let prefix = match authorized_prefix(state, headers, query).await {
+        Ok(prefix) => prefix,
+        Err((status, error)) => return error_response(status, error),
+    };
+    match state.bots.room(&prefix, now_ms()).await {
+        Ok(bots) => json_response(StatusCode::OK, &json!({ "bots": bots })),
+        Err(error) => internal(&error),
+    }
+}
+
+/// The query's `namespace_prefix`, when the launch token covers it;
+/// otherwise the refusal, already logged.
+async fn authorized_prefix(
+    state: &ServerState,
+    headers: &HeaderMap,
+    query: Option<&str>,
+) -> Result<String, (StatusCode, &'static str)> {
+    let Some(prefix) = query_params(query).remove("namespace_prefix") else {
+        return Err((StatusCode::BAD_REQUEST, "invalid_request"));
+    };
+    match state.launch_auth.authorize(headers, &prefix).await {
+        Ok(_) => Ok(prefix),
+        Err(rejection) => {
+            log_refusal(&rejection, &prefix);
+            Err((rejection.status, rejection.error))
+        }
     }
 }
 
@@ -317,17 +346,24 @@ mod tests {
     use super::*;
     use crate::test_support::{launch_token_answer, test_bots};
 
-    #[tokio::test]
-    async fn an_app_server_starts_finds_and_stops_a_bot_of_a_type() {
-        // Arrange
+    /// A server over `test_bots()` whose VTS accepts every bearer as the app
+    /// `app`'s launch token for its whole root, and its base URL.
+    async fn start_server() -> (String, BotDispatcherServer, StubServer) {
         let vts = StubServer::run(StatusCode::OK, launch_token_answer()).await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let _server = BotDispatcherServer::run(
+        let server = BotDispatcherServer::run(
             listener,
             test_bots().bots,
             LaunchAuth::new(format!("{}/verify", vts.url())),
         );
+        (base, server, vts)
+    }
+
+    #[tokio::test]
+    async fn an_app_server_starts_finds_and_stops_a_bot_of_a_type() {
+        // Arrange
+        let (base, _server, _vts) = start_server().await;
         let client = reqwest::Client::new();
 
         // Act
@@ -398,5 +434,64 @@ mod tests {
         assert_eq!(stopped, StatusCode::ACCEPTED);
         assert_eq!(unauthenticated, StatusCode::UNAUTHORIZED);
         assert_eq!(launch_token_as_bot, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn an_app_server_lists_the_bots_of_a_room_it_covers() {
+        // Arrange
+        let (base, _server, _vts) = start_server().await;
+        let client = reqwest::Client::new();
+        let started: Value = client
+            .post(format!("{base}/bots/recorder"))
+            .bearer_auth("launch-token")
+            .json(&json!({ "namespace_prefix": "app/room" }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let get = |path: &str| {
+            client
+                .get(format!("{base}{path}"))
+                .bearer_auth("launch-token")
+        };
+
+        // Act
+        let listed: Value = get("/bots?namespace_prefix=app%2Froom")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let empty: Value = get("/bots?namespace_prefix=app%2Fquiet")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let without_prefix = get("/bots").send().await.unwrap().status();
+        let other_app = get("/bots?namespace_prefix=other%2Froom")
+            .send()
+            .await
+            .unwrap()
+            .status();
+        let unauthenticated = client
+            .get(format!("{base}/bots?namespace_prefix=app%2Froom"))
+            .send()
+            .await
+            .unwrap()
+            .status();
+
+        // Assert
+        assert_eq!(listed["bots"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["bots"][0]["id"], started["id"]);
+        assert_eq!(listed["bots"][0]["type"], "recorder");
+        assert_eq!(empty, json!({ "bots": [] }));
+        assert_eq!(without_prefix, StatusCode::BAD_REQUEST);
+        assert_eq!(other_app, StatusCode::FORBIDDEN);
+        assert_eq!(unauthenticated, StatusCode::UNAUTHORIZED);
     }
 }

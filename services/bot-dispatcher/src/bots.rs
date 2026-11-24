@@ -225,6 +225,16 @@ impl Bots {
         Ok(Some(self.view(&record, now_ms).await?))
     }
 
+    /// The room's latest bot of every type that ever had one there, in type
+    /// name order.
+    pub(crate) async fn room(&self, namespace_prefix: &str, now_ms: u64) -> Result<Vec<BotView>> {
+        let mut bots = Vec::new();
+        for bot_type in self.types.names() {
+            bots.extend(self.latest(bot_type, namespace_prefix, now_ms).await?);
+        }
+        Ok(bots)
+    }
+
     /// The bot as the app server sees it: a bot asked to stop shows as
     /// stopping before its next heartbeat says so, and one that stopped
     /// reporting as failed.
@@ -715,6 +725,28 @@ mod tests {
         assert_eq!(reported.unwrap().output, output("r1"));
         assert_eq!(dropped.unwrap().output, None);
         assert_eq!(replaced.unwrap().output, output("r2"));
+    }
+
+    #[tokio::test]
+    async fn a_room_lists_its_latest_bot_of_each_type_that_had_one() {
+        // Arrange
+        let test = test_bots();
+        let recorder = started(&test, "app/a").await;
+        let agent = test
+            .bots
+            .start("app", "agent", "app/a", None, NOW)
+            .await
+            .unwrap();
+        started(&test, "app/b").await;
+
+        // Act
+        let both = test.bots.room("app/a", NOW).await.unwrap();
+        let empty = test.bots.room("app/c", NOW).await.unwrap();
+
+        // Assert: in type name order; a room without bots lists none
+        let ids: Vec<_> = both.iter().map(|bot| bot.id.as_str()).collect();
+        assert_eq!(ids, [agent.id.as_str(), recorder.id.as_str()]);
+        assert!(empty.is_empty());
     }
 
     #[test]
