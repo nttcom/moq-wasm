@@ -77,6 +77,8 @@ async fn main() -> Result<()> {
     println!("ok: the phone hangs up");
     the_phone_hears_a_dtmf_digit(&env).await?;
     println!("ok: the phone hears a DTMF digit");
+    calls_outlive_their_session_interval(&env, &webhook).await?;
+    println!("ok: calls outlive their session interval");
     the_page_answers_a_call_to_the_app_s_number(&env, &webhook).await?;
     println!("ok: the page answers a call to the app's number");
     a_call_the_webhook_declines_never_reaches_the_room(&env, &webhook).await?;
@@ -176,6 +178,52 @@ async fn a_call_the_webhook_declines_never_reaches_the_room(
     trunk_calls_the_app(env)?;
     let (_, answer) = webhook.next_call().await?;
     let _ = answer.send(json!({ "reject": "decline" }));
+    until_trunk_idle(env).await
+}
+
+/// The trunk asks for 90 s session timers (`pjsip.conf`): an outbound and an
+/// inbound call stay up past them.
+async fn calls_outlive_their_session_interval(env: &Env, webhook: &Webhook) -> Result<()> {
+    const HELD: Duration = Duration::from_secs(100);
+    let page = connect(env).await?;
+    let peer_session = connect(env).await?;
+    let outbound_peer =
+        ToneBroadcast::run(&peer_session, &format!("{ROOM}/alice/long-out")).await?;
+    let inbound_peer = ToneBroadcast::run(&peer_session, &format!("{ROOM}/alice/long-in")).await?;
+    let outbound = CallObserver::place(env, &page, ECHO, &format!("{ROOM}/alice/long-out")).await?;
+    outbound.until_state("answered").await?;
+    // One SUBSCRIBE_NAMESPACE per prefix and session: the inbound call is watched on another.
+    let inbound_page = connect(env).await?;
+    let phones = inbound_page
+        .watch_namespaces(&["sip-e2e", "room", "phone"])
+        .await?;
+    trunk_calls_the_app(env)?;
+    let (call, answer) = webhook.next_call().await?;
+    let call_id = call["call_id"].as_str().context("no call_id")?.to_string();
+    let _ =
+        answer.send(json!({ "namespace_prefix": ROOM, "peer": format!("{ROOM}/alice/long-in") }));
+    let inbound =
+        CallObserver::watch(&inbound_page, phones, format!("{ROOM}/phone/{call_id}")).await?;
+    inbound.until_state("answered").await?;
+
+    let (outbound_state, inbound_state) = tokio::join!(
+        outbound.next_state_within(HELD),
+        inbound.next_state_within(HELD)
+    );
+    ensure!(
+        outbound_state.is_none(),
+        "the outbound call changed to {outbound_state:?}"
+    );
+    ensure!(
+        inbound_state.is_none(),
+        "the inbound call changed to {inbound_state:?}"
+    );
+    outbound_peer.hang_up().await?;
+    inbound_peer.hang_up().await?;
+    outbound.until_gone().await?;
+    inbound.until_gone().await?;
+    drop((outbound_peer, inbound_peer));
+    peer_session.close().await;
     until_trunk_idle(env).await
 }
 
@@ -352,6 +400,15 @@ impl CallObserver {
         until_namespace(&self.phones, &elements, false)
             .await
             .context("the call's broadcast did not end")
+    }
+
+    /// The next state and its reason, unless none comes within `wait`.
+    async fn next_state_within(&self, wait: Duration) -> Option<String> {
+        let object = timeout(wait, self.states.next()).await.ok()?;
+        Some(match object {
+            Ok(Some(object)) => String::from_utf8_lossy(&object.payload).into_owned(),
+            other => format!("{other:?}"),
+        })
     }
 
     /// The `reason` of the first state `expected` (empty when it has none);

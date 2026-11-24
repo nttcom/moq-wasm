@@ -10,9 +10,11 @@ use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use moqt::{CertificateVerification, ClientConfig, client};
 use rsipstack::{
     dialog::{
-        dialog::DialogStateReceiver, invitation::InviteAsyncResult, invite_dialog::InviteDialog,
+        dialog::{DialogState, DialogStateReceiver, TransactionHandle},
+        invitation::InviteAsyncResult,
+        invite_dialog::InviteDialog,
     },
-    sip::StatusCode,
+    sip::{Header, Request, StatusCode, StatusCodeKind},
 };
 use tokio::{
     sync::{mpsc, watch},
@@ -24,7 +26,9 @@ use tracing::Instrument;
 use crate::{
     calls::CallSlot,
     media::rtp_leg::{Negotiated, RtpLeg},
-    sip_trunk::{InboundInvite, Progress, SipTrunk, progress, sdp_content_type},
+    sip_trunk::{
+        InboundInvite, Progress, Refresher, SessionTimer, SipTrunk, progress, sdp_content_type,
+    },
 };
 use peer_audio::{PeerAudio, PeerWatchTask, PlayoutTask};
 use peer_control::Command;
@@ -41,6 +45,9 @@ const SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 /// `PhoneCall.join` finishes after the call already ended (a busy phone's
 /// immediate 486) still reads why it ended.
 const ENDED_LINGER: Duration = Duration::from_secs(5);
+/// A refresh answered 491 (both sides re-INVITE at once) is sent this many
+/// times at most.
+const REFRESH_ATTEMPTS: usize = 3;
 
 pub(crate) struct CallContext {
     pub(crate) trunk: SipTrunk,
@@ -139,6 +146,11 @@ struct Call {
     dialog: InviteDialog,
     states: DialogStateReceiver,
     setup: Setup,
+    /// The gateway's SDP: its offer, or its answer to the trunk's. A refresh
+    /// sends it again unchanged.
+    local_sdp: String,
+    /// Settled by the trunk's 2xx to the gateway's INVITE, or by the trunk's INVITE.
+    timer: Option<SessionTimer>,
     peer_watch: PeerWatchTask,
     peer_audio: Option<mpsc::Receiver<PeerAudio>>,
     peer_commands: mpsc::Receiver<Command>,
@@ -177,11 +189,11 @@ impl Call {
         let (peer_watch, peer_audio, peer_commands) =
             PeerWatchTask::run(session.clone(), plan.peer.clone());
         let call_id = plan.slot.call_id.clone();
-        let (leg, dialog, states, setup) = match plan.direction {
+        let (leg, dialog, states, setup, local_sdp, timer) = match plan.direction {
             Direction::Outbound { from, to } => {
                 state_track.publish(&CallState::Dialing).await?;
                 let (leg, offer) = RtpLeg::offer(context.media_address).await?;
-                let invite = context.trunk.invite(&call_id, &from, &to, offer)?;
+                let invite = context.trunk.invite(&call_id, &from, &to, offer.clone())?;
                 tracing::info!(
                     call_id,
                     sip_call_id = invite.dialog.id().call_id,
@@ -190,16 +202,21 @@ impl Call {
                 let setup = Setup::Outbound {
                     result: invite.result,
                 };
-                (leg, invite.dialog, invite.states, setup)
+                (leg, invite.dialog, invite.states, setup, offer, None)
             }
             Direction::Inbound(answering) => {
                 state_track.publish(&CallState::Ringing).await?;
                 let dialog = answering.invite.dialog;
+                let timer = answering.invite.timer;
+                let mut headers = sdp_content_type();
+                if let Some(timer) = timer {
+                    headers.extend([
+                        timer.session_expires(false),
+                        Header::Require("timer".into()),
+                    ]);
+                }
                 dialog
-                    .accept(
-                        Some(sdp_content_type()),
-                        Some(answering.answer.into_bytes()),
-                    )
+                    .accept(Some(headers), Some(answering.answer.clone().into_bytes()))
                     .context("answer the INVITE")?;
                 tracing::info!(
                     call_id,
@@ -210,7 +227,14 @@ impl Call {
                 let setup = Setup::Inbound {
                     negotiated: answering.negotiated,
                 };
-                (answering.leg, dialog, answering.invite.states, setup)
+                (
+                    answering.leg,
+                    dialog,
+                    answering.invite.states,
+                    setup,
+                    answering.answer,
+                    timer,
+                )
             }
         };
         Ok(Self {
@@ -223,6 +247,8 @@ impl Call {
             dialog,
             states,
             setup,
+            local_sdp,
+            timer,
             peer_watch,
             peer_audio: Some(peer_audio),
             peer_commands,
@@ -256,7 +282,7 @@ impl Call {
                             tracing::info!(call_id = %self.call_id, sip_status, "INVITE provisional response received");
                             self.publish(&CallState::Ringing).await;
                         }
-                        Progress::Answered(answer) => return self.answered(&answer).await,
+                        Progress::Answered { answer, timer } => return self.answered(&answer, timer).await,
                         Progress::Ended => return Err(self.ended_unanswered().await),
                         Progress::Ringing(_) | Progress::Other => {}
                     }
@@ -278,9 +304,14 @@ impl Call {
         }
     }
 
-    /// Applies the trunk's SDP answer to an outbound call; an inbound call's
-    /// media was settled by the gateway's own answer.
-    async fn answered(&mut self, answer: &str) -> Result<Negotiated, EndReason> {
+    /// Applies the trunk's SDP answer and the session timer of its 2xx to an
+    /// outbound call; an inbound call's media was settled by the gateway's
+    /// own answer.
+    async fn answered(
+        &mut self,
+        answer: &str,
+        timer: Option<SessionTimer>,
+    ) -> Result<Negotiated, EndReason> {
         match &self.setup {
             Setup::Inbound { negotiated } => {
                 tracing::info!(call_id = %self.call_id, "ACK received");
@@ -288,6 +319,7 @@ impl Call {
             }
             Setup::Outbound { .. } => {
                 tracing::info!(call_id = %self.call_id, sip_status = 200, "INVITE final response received");
+                self.timer = timer;
                 match self.leg.answer(answer).await {
                     Ok(negotiated) => Ok(negotiated),
                     Err(error) => {
@@ -331,16 +363,29 @@ impl Call {
             digits,
         );
         let limit = Instant::now() + context.max_duration;
+        let next_refresh =
+            |timer: Option<SessionTimer>| timer.map(|timer| Instant::now() + timer.wait());
+        let mut refresh_at = next_refresh(self.timer);
         loop {
             let silent_until = *last_audio.borrow() + SILENCE_TIMEOUT;
             tokio::select! {
-                state = self.states.recv() => match state.as_ref().map(progress) {
-                    Some(Progress::Ended) | None => {
+                state = self.states.recv() => match state {
+                    Some(DialogState::Updated(_, request, handle)) => {
+                        self.answer_refresh(&request, handle).await;
+                        refresh_at = next_refresh(self.timer);
+                    }
+                    state => if matches!(state.as_ref().map(progress), Some(Progress::Ended) | None) {
                         tracing::info!(call_id = %self.call_id, "BYE received");
                         return EndReason::Hangup;
-                    }
-                    _ => {}
+                    },
                 },
+                () = sleep_until(refresh_at.unwrap_or(limit)), if refresh_at.is_some() => {
+                    if !self.refresh().await {
+                        hang_up_dialog(&self.dialog).await;
+                        return EndReason::Timeout;
+                    }
+                    refresh_at = next_refresh(self.timer);
+                }
                 () = sleep_until(silent_until) => {
                     if *last_audio.borrow() + SILENCE_TIMEOUT <= Instant::now() {
                         hang_up_dialog(&self.dialog).await;
@@ -366,6 +411,65 @@ impl Call {
                     }
                     Command::Other => {}
                 },
+            }
+        }
+    }
+
+    /// Answers the trunk's re-INVITE or UPDATE, which refreshes the session
+    /// (RFC 4028): with the gateway's SDP again when it carries an offer.
+    async fn answer_refresh(&self, request: &Request, handle: TransactionHandle) {
+        tracing::info!(call_id = %self.call_id, "session refresh received");
+        let mut headers = Vec::new();
+        let mut body = None;
+        if !request.body.is_empty() {
+            headers.extend(sdp_content_type());
+            body = Some(self.local_sdp.clone().into_bytes());
+        }
+        if let Some(timer) = self.timer {
+            headers.extend([
+                timer.session_expires(false),
+                Header::Require("timer".into()),
+            ]);
+        }
+        if let Err(error) = handle.respond(StatusCode::OK, Some(headers), body).await {
+            tracing::warn!(%error, call_id = %self.call_id, "session refresh not answered");
+        }
+    }
+
+    /// Acts when the session timer fires: as the refresher, re-INVITEs with
+    /// the same SDP (again after a 491, RFC 3261 §14.1); otherwise the trunk
+    /// let the session expire. `false` when the call must end.
+    async fn refresh(&self) -> bool {
+        let Some(timer) = self
+            .timer
+            .filter(|timer| timer.refresher == Refresher::Gateway)
+        else {
+            tracing::warn!(call_id = %self.call_id, "session expired without a refresh");
+            return false;
+        };
+        let mut headers = sdp_content_type();
+        headers.push(timer.session_expires(true));
+        let refreshed = self
+            .dialog
+            .reinvite_with_glare_retry(
+                Some(headers),
+                Some(self.local_sdp.clone().into_bytes()),
+                REFRESH_ATTEMPTS,
+            )
+            .await;
+        match refreshed {
+            Ok(Some(response)) if response.status_code.kind() == StatusCodeKind::Successful => {
+                tracing::info!(call_id = %self.call_id, "session refreshed");
+                true
+            }
+            Ok(response) => {
+                let sip_status = response.map(|response| response.status_code.code());
+                tracing::warn!(call_id = %self.call_id, ?sip_status, "session refresh refused");
+                false
+            }
+            Err(error) => {
+                tracing::warn!(%error, call_id = %self.call_id, "session refresh failed");
+                false
             }
         }
     }
