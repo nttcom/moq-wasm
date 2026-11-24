@@ -1,0 +1,36 @@
+[package]
+name = "ingest-gateway"
+version = "0.1.0"
+edition = "2024"
+description = "Bridges RTMP/SRT/RTP pushes and ONVIF cameras into MSF broadcasts over MoQT"
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+broadcast = { path = "../../crates/broadcast" }
+bytes = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+futures = { workspace = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+mediapack = { path = "../../crates/mediapack" }
+moqt = { path = "../../crates/moqt" }
+rand = "0.10.1"
+reqwest = { workspace = true, features = ["rustls"] }
+rml_rtmp = "0.8.0"
+roxmltree = "0.21.1"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = "0.11.0"
+socket2 = "0.6"
+srt-tokio = "0.4.4"
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }
+time = { version = "0.3.47", features = ["formatting", "macros"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+transcode = { path = "../../crates/transcode" }
+
+[dev-dependencies]
+moqt = { path = "../../crates/moqt", features = ["self-signed-cert"] }
+proptest = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["test-util", "time"] }

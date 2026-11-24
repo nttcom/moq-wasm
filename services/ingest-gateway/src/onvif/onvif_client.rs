@@ -1,0 +1,128 @@
+use crate::onvif::{
+    app_config::Target,
+    onvif_profile_list,
+    onvif_requests::{self, OnvifRequest},
+    onvif_services, ptz_config, soap_client,
+};
+use anyhow::{Result, anyhow};
+use reqwest::Client;
+
+pub(crate) struct OnvifClient {
+    client: Client,
+    target: Target,
+    device_endpoint: String,
+    media_endpoint: String,
+    ptz_endpoint: String,
+    profile_token: String,
+    ptz_range: ptz_config::PtzRange,
+}
+
+impl OnvifClient {
+    fn new(client: Client, target: Target) -> Self {
+        let device_endpoint = target.onvif_endpoint();
+        Self {
+            client,
+            target,
+            media_endpoint: device_endpoint.clone(),
+            ptz_endpoint: device_endpoint.clone(),
+            device_endpoint,
+            profile_token: String::new(),
+            ptz_range: ptz_config::PtzRange::default(),
+        }
+    }
+
+    pub(crate) async fn initialize(client: Client, target: Target) -> Result<Self> {
+        let mut onvif = Self::new(client, target);
+
+        onvif.init_endpoints().await;
+        let config_token = onvif.init_profiles().await?;
+        onvif.init_ptz(config_token.as_deref()).await;
+        Ok(onvif)
+    }
+
+    pub(crate) async fn initialize_media(client: Client, target: Target) -> Result<Self> {
+        let mut onvif = Self::new(client, target);
+        onvif.init_endpoints().await;
+        Ok(onvif)
+    }
+
+    pub(crate) fn device_endpoint(&self) -> &str {
+        &self.device_endpoint
+    }
+
+    pub(crate) fn profile_token(&self) -> &str {
+        &self.profile_token
+    }
+
+    pub(crate) fn ptz_range(&self) -> ptz_config::PtzRange {
+        self.ptz_range.clone()
+    }
+
+    async fn init_endpoints(&mut self) {
+        let endpoints = onvif_services::discover_endpoints(self).await;
+        self.media_endpoint = endpoints.media_endpoint;
+        self.ptz_endpoint = endpoints.ptz_endpoint;
+    }
+
+    async fn init_profiles(&mut self) -> Result<Option<String>> {
+        // Never empty: onvif_profile_list::fetch returns Err instead of an empty list.
+        let profile = onvif_profile_list::fetch(self).await?.swap_remove(0);
+        self.profile_token = profile.token;
+        Ok(profile.ptz_config)
+    }
+
+    async fn init_ptz(&mut self, token_hint: Option<&str>) {
+        match self.fetch_ptz_range(token_hint).await {
+            Ok(range) => self.ptz_range = range,
+            Err(err) => tracing::warn!("PTZ error: ptz init error: {err}"),
+        }
+    }
+
+    async fn fetch_ptz_range(&self, token_hint: Option<&str>) -> Result<ptz_config::PtzRange> {
+        let (token, body) = self.fetch_ptz_config_token(token_hint).await?;
+        let range = ptz_config::extract_range_from_config(&body, &token);
+        let options_body = self.fetch_ptz_config_options(&token).await?;
+        Ok(ptz_config::update_range_from_options(range, &options_body))
+    }
+
+    async fn fetch_ptz_config_token(&self, token_hint: Option<&str>) -> Result<(String, String)> {
+        tracing::info!("[GetToken]");
+        tracing::info!("  [GetConfigurations]");
+        let cmd = onvif_requests::get_configurations();
+        let body = self.send_ptz(&cmd).await?;
+        let tokens = ptz_config::extract_tokens(&body);
+        let token = select_ptz_config_token(&tokens, token_hint)
+            .ok_or_else(|| anyhow!("PTZ configuration token not found in response"))?;
+        Ok((token, body))
+    }
+
+    async fn fetch_ptz_config_options(&self, token: &str) -> Result<String> {
+        tracing::info!("[GetConfigurationOptions]");
+        let cmd = onvif_requests::get_configuration_options(token);
+        self.send_ptz(&cmd).await
+    }
+
+    pub(crate) async fn send_device(&self, command: &OnvifRequest) -> Result<String> {
+        self.send_to(&self.device_endpoint, command).await
+    }
+
+    pub(crate) async fn send_media(&self, command: &OnvifRequest) -> Result<String> {
+        self.send_to(&self.media_endpoint, command).await
+    }
+
+    pub(crate) async fn send_ptz(&self, command: &OnvifRequest) -> Result<String> {
+        self.send_to(&self.ptz_endpoint, command).await
+    }
+
+    async fn send_to(&self, endpoint: &str, command: &OnvifRequest) -> Result<String> {
+        soap_client::send(&self.client, &self.target, endpoint, command).await
+    }
+}
+
+fn select_ptz_config_token(tokens: &[String], hint: Option<&str>) -> Option<String> {
+    if tokens.is_empty() {
+        return hint.map(str::to_string);
+    }
+    hint.and_then(|hint| tokens.iter().find(|token| token.as_str() == hint).cloned())
+        .or_else(|| tokens.first().cloned())
+}

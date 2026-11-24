@@ -32,5 +32,5 @@ GStreamer.
 
 ## Decision
 
-Depend on `base64`. `broadcast`, `auth-token`, `onvif-ingest` and `vts`
+Depend on `base64`. `broadcast`, `auth-token`, `ingest-gateway onvif` and `vts`
 already use the same version, so no new crate enters the workspace lock.

@@ -37,7 +37,7 @@ same room from another tab of that Chrome to meet yourself.
 
 ```mermaid
 flowchart LR
-    ffmpeg["ffmpeg (test pattern)"] -->|SRT| ingest[live-ingest] --> relay[Relay] --> viewer[Live Viewer]
+    ffmpeg["ffmpeg (test pattern)"] -->|SRT| ingest[ingest-gateway] --> relay[Relay] --> viewer[Live Viewer]
 ```
 
 ```shell
@@ -90,7 +90,7 @@ To change the code, run the services from source instead
 
 ```shell
 make relay          # relay on https://127.0.0.1:4433 and a local VTS
-make live-ingest    # RTMP/SRT ingest publishing to the relay
+make ingest-gateway    # RTMP/SRT ingest publishing to the relay
 make ffmpeg-srt     # test pattern over SRT into the ingest
 make browser        # wasm build and the example hub on http://localhost:5173
 make chrome         # Chrome trusting the relay's certificate (make chrome:linux on Linux)

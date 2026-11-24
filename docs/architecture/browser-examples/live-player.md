@@ -259,10 +259,10 @@ Each player creates its own decoder workers, two per instance.
 The player relies on how the publishers shape their tracks. They are written
 where they are used, not as options, until a publisher differs:
 
-| Convention | live-ingest / MP4 publisher | ONVIF bridge |
+| Convention | ingest-gateway / MP4 publisher | ONVIF bridge |
 | --- | --- | --- |
 | LOC capture timestamps on one wall clock for all tracks | yes | yes |
-| CMAF sibling named `<track>_cmaf` | live-ingest only | none |
+| CMAF sibling named `<track>_cmaf` | ingest-gateway only | none |
 | MSF media timeline track, one per source | yes | yes, one per camera profile |
 | Audio groups start at the video keyframes with the same ids | yes | **no**: audio rotates every 2 s with its own ids |
 | Codec in the catalog from the first catalog | yes | only once the track's stream has started; a catalog update fills it in |
@@ -444,7 +444,7 @@ together.
 The MP4 Publish panel demuxes the chosen file in the browser and publishes it
 through `crates/broadcast`, built into `sdk/js` as `Mp4Broadcast`: the
 catalog, LOC and CMAF tracks, media timeline and FETCH cache are the ones
-`live-ingest` produces, so the viewer, the CMAF packaging and the rewind work
+`ingest-gateway` produces, so the viewer, the CMAF packaging and the rewind work
 unchanged. The page reads and paces the samples; everything sent to the relay
 is decided in Rust, as described in the `broadcast` architecture document.
 It publishes on a session of its own, opened with the page's token, so
@@ -455,7 +455,7 @@ stopping it leaves the viewer's session open.
   samples are read with `File.slice`, so the file never sits in memory whole.
 - Video must be H.264. `mediapack` converts AVCC samples to Annex-B and puts
   the SPS / PPS from `avcC` before every keyframe, so the video track has no
-  `initRef`, as with `live-ingest`.
+  `initRef`, as with `ingest-gateway`.
 - Audio may be AAC or MP3, both sent as the MP4 frames they are (a LOC payload
   is the raw bitstream of a codec in the WebCodecs registry). AAC gets a CMAF
   sibling; MP3 travels as LOC alone with `codec: "mp3"`. A file with other

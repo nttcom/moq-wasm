@@ -130,7 +130,7 @@ impl Args {
     }
 }
 
-/// Drops empty elements the way `live-ingest` does, so `anon/live/test/`
+/// Drops empty elements the way `ingest-gateway` does, so `anon/live/test/`
 /// names the namespace it published rather than one with a trailing empty
 /// element.
 fn normalize_namespace(text: &str) -> Result<String> {

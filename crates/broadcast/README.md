@@ -1,8 +1,8 @@
 # broadcast
 
 Publishes an MSF broadcast, a catalog and its media tracks, into a MoQT
-relay. It is the publishing side shared by `live-ingest`, `moqtsink`,
-`onvif-ingest`, `moq-cli` and the Live Viewer's in-browser MP4 publisher, so
+relay. It is the publishing side shared by `ingest-gateway`, `moqtsink`,
+`ingest-gateway onvif`, `moq-cli` and the Live Viewer's in-browser MP4 publisher, so
 one player plays and rewinds all of them.
 
 ## Tracks
@@ -18,7 +18,7 @@ one player plays and rewinds all of them.
 
 `video_720p` / `video_480p` / `video_360p` appear when the publisher
 transcodes (`crates/transcode`). A publisher can name its tracks otherwise
-(`SourceTracks`), as `onvif-ingest` does per camera profile.
+(`SourceTracks`), as `ingest-gateway onvif` does per camera profile.
 
 ## Behaviour
 

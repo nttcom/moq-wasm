@@ -1997,6 +1997,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "ingest-gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "broadcast",
+ "bytes",
+ "clap",
+ "futures",
+ "gstreamer",
+ "gstreamer-app",
+ "mediapack",
+ "moqt",
+ "proptest",
+ "rand 0.10.3",
+ "reqwest",
+ "rml_rtmp",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha1",
+ "socket2 0.6.5",
+ "srt-tokio",
+ "telemetry-otlp",
+ "time",
+ "tokio",
+ "tracing",
+ "transcode",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2202,26 +2233,6 @@ dependencies = [
  "telemetry-otlp",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "live-ingest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "broadcast",
- "bytes",
- "clap",
- "futures",
- "mediapack",
- "moqt",
- "rml_rtmp",
- "socket2 0.6.5",
- "srt-tokio",
- "telemetry-otlp",
- "tokio",
- "tracing",
- "transcode",
 ]
 
 [[package]]
@@ -2717,32 +2728,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "onvif-ingest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "broadcast",
- "bytes",
- "clap",
- "gstreamer",
- "gstreamer-app",
- "mediapack",
- "moqt",
- "proptest",
- "rand 0.10.3",
- "reqwest",
- "roxmltree",
- "serde",
- "serde_json",
- "sha1",
- "telemetry-otlp",
- "time",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "opaque-debug"

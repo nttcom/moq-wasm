@@ -1,6 +1,6 @@
 # live-viewer
 
-Plays a stream that `services/live-ingest`, the GStreamer `moqtsink` or this
+Plays a stream that `services/ingest-gateway`, the GStreamer `moqtsink` or this
 page's MP4 publisher sends to a relay, switches between the renditions the
 catalog lists, and rewinds through what the relay still caches.
 Design: [Live Player architecture](../../../../docs/architecture/browser-examples/live-player.md).
@@ -10,12 +10,12 @@ Design: [Live Player architecture](../../../../docs/architecture/browser-example
 Every route publishes `anon/live/test`; enter that namespace in the viewer
 and press Watch. OBS and ffmpeg sources need H.264 video and AAC audio.
 
-| Route                                         | Commands, each in its own terminal                                                                               | Relay URL in the viewer                       |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| MP4 file from this page                       | Choose a file in MP4 Publish and press Publish                                                                   | The one already set                           |
-| ffmpeg → cloud ingest → cloud relay           | `make ffmpeg-srt-bbb-remote`                                                                                     | `https://relay-1.moqt.research.skyway.io:443` |
-| ffmpeg → local GStreamer ingest → cloud relay | `make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443`, `make ffmpeg-srt-bbb-local`     | `https://relay-1.moqt.research.skyway.io:443` |
-| ffmpeg → local ingest → local relay           | `make relay`, `make gst-srt-publish` (or `make live-ingest`), `make ffmpeg-srt-bbb-local` (or `make ffmpeg-srt`) | `https://127.0.0.1:4433`                      |
+| Route                                         | Commands, each in its own terminal                                                                                  | Relay URL in the viewer                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| MP4 file from this page                       | Choose a file in MP4 Publish and press Publish                                                                      | The one already set                           |
+| ffmpeg → cloud ingest → cloud relay           | `make ffmpeg-srt-bbb-remote`                                                                                        | `https://relay-1.moqt.research.skyway.io:443` |
+| ffmpeg → local GStreamer ingest → cloud relay | `make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443`, `make ffmpeg-srt-bbb-local`        | `https://relay-1.moqt.research.skyway.io:443` |
+| ffmpeg → local ingest → local relay           | `make relay`, `make gst-srt-publish` (or `make ingest-gateway`), `make ffmpeg-srt-bbb-local` (or `make ffmpeg-srt`) | `https://127.0.0.1:4433`                      |
 
 Instead of ffmpeg, point OBS at
 `srt://<ingest host>:9000?mode=caller&streamid=anon/live/test`, with
@@ -45,7 +45,7 @@ than the relay keeps (`RELAY_CACHE_TTL_SECS`, 60 s).
 ## MP4 Publish
 
 Publishes an MP4 from the browser as the same catalog and LOC tracks
-`live-ingest` produces, on its own MoQT session.
+`ingest-gateway` produces, on its own MoQT session.
 
 - Video must be H.264; audio may be AAC or MP3, and other audio is skipped.
 - Loop restarts the file at its end.
@@ -69,8 +69,8 @@ The delivery check compares what the viewer received over `DELIVERY_SECONDS`
 is missing:
 
 ```shell
-RUST_LOG=info,broadcast::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
-DELIVERY_BRIDGE_LOG=/tmp/live-ingest.log \
+RUST_LOG=info,broadcast::delivery=debug make ingest-gateway 2>&1 | tee /tmp/ingest-gateway.log
+DELIVERY_BRIDGE_LOG=/tmp/ingest-gateway.log \
 MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \
 MEDIA_E2E_MOQT_URL=https://127.0.0.1:4433 \
 LIVE_VIEWER_E2E_NAMESPACE=anon/live/test \

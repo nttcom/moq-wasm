@@ -24,7 +24,7 @@ on:
       - "sdk/python/**"
       - "examples/rust/moq-cli/**"
       - "sdk/js/**"
-      - "services/live-ingest/**"
+      - "services/ingest-gateway/**"
       - "services/recorder/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
@@ -83,7 +83,7 @@ on:
       - "sdk/python/**"
       - "examples/rust/moq-cli/**"
       - "sdk/js/**"
-      - "services/live-ingest/**"
+      - "services/ingest-gateway/**"
       - "services/recorder/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
@@ -248,13 +248,13 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/system-one-bot-e2e.mjs|tests/browser-e2e/bot-dispatcher-dev.mjs|examples/browser/utils/systemOneBot.ts|examples/browser/utils/roomBots.ts|services/bot-dispatcher/*|services/temporary-apps/*|crates/job-launcher/*|crates/app-registry/*|crates/google-cloud/*|tests/browser-e2e/fake-onvif-ingest.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-job/*|examples/python/moq-system-one-bot/*|examples/rust/moq-cli/*|sdk/python/*|sdk/js/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/system-one-bot-e2e.mjs|tests/browser-e2e/bot-dispatcher-dev.mjs|examples/browser/utils/systemOneBot.ts|examples/browser/utils/roomBots.ts|services/bot-dispatcher/*|services/temporary-apps/*|crates/job-launcher/*|crates/app-registry/*|crates/google-cloud/*|tests/browser-e2e/fake-ingest-gateway-onvif.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-job/*|examples/python/moq-system-one-bot/*|examples/rust/moq-cli/*|sdk/python/*|sdk/js/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   ptz_tracking=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/run-goaway-e2e.mjs|docker-compose.yml|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-viewer/*|examples/browser/examples/media/*|examples/browser/examples/message/*|examples/browser/examples/meeting/*|examples/browser/tests/live-viewer-*|examples/browser/tests/recorder-*|examples/browser/tests/goaway-e2e*|examples/browser/tests/message-e2e-arrange.ts|examples/browser/tests/meeting-e2e-arrange.ts|sdk/js/*|services/live-ingest/*|services/recorder/*|services/bot-dispatcher/*|crates/job-launcher/*|crates/google-cloud/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/run-goaway-e2e.mjs|docker-compose.yml|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-viewer/*|examples/browser/examples/media/*|examples/browser/examples/message/*|examples/browser/examples/meeting/*|examples/browser/tests/live-viewer-*|examples/browser/tests/recorder-*|examples/browser/tests/goaway-e2e*|examples/browser/tests/message-e2e-arrange.ts|examples/browser/tests/meeting-e2e-arrange.ts|sdk/js/*|services/ingest-gateway/*|services/recorder/*|services/bot-dispatcher/*|crates/job-launcher/*|crates/google-cloud/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
                   ;;
               esac
@@ -534,7 +534,7 @@ jobs:
         if: ${{ matrix.ingest == 'srt' }}
         run: |
           ffmpeg -hide_banner -protocols | grep -qw srt || {
-            echo "::error::ffmpeg lacks the srt protocol, so this row cannot push to live-ingest over SRT"
+            echo "::error::ffmpeg lacks the srt protocol, so this row cannot push to ingest-gateway over SRT"
             exit 1
           }
 

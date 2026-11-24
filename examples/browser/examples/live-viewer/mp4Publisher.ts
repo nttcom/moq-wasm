@@ -59,7 +59,7 @@ type Mp4Media = {
 }
 
 /// Reads the samples of an MP4 file and paces them like a live encoder into
-/// `Mp4Broadcast`, which publishes them as live-ingest does. It publishes on a
+/// `Mp4Broadcast`, which publishes them as ingest-gateway does. It publishes on a
 /// session of its own, so stopping it leaves the viewer's session open.
 export class Mp4Publisher {
   readonly sentStreams = new StreamMonitor()

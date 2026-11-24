@@ -125,7 +125,7 @@ again in every catalog (`track_selection::SourceChoice`):
   tracks of the source the browser SDK names `camera`. While none is listed, as for a participant
   with the camera and the microphone off, there is no main source; a catalog
   without an event timeline, a broadcast outside a meeting such as
-  `onvif-ingest`'s, takes its first source.
+  `ingest-gateway onvif`'s, takes its first source.
 - Another source (`Content::ScreenShare`) is the first one listed besides
   the main one: a meeting participant's screen share.
 - A recorded track stays while the catalog lists it in a source of its

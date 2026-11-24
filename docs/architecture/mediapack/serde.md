@@ -37,6 +37,6 @@ the draft-ietf-moq-loc-04 §2.3 representation and is mirrored by
 
 ## Decision
 
-Derive `serde` behind an opt-in feature so native consumers (`live-ingest`,
+Derive `serde` behind an opt-in feature so native consumers (`ingest-gateway`,
 `transcode`, `crates/gst-plugin-moqt`) do not pull it in. `serde` and `serde_json`
 are already in the workspace lock, so no new crate enters the dependency tree.

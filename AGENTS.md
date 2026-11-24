@@ -7,13 +7,13 @@
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
 - Every Rust crate lives under `services/`, `crates/` or `sdk/`. Architecture documents live under `docs/architecture/<package name>/`, where `<package name>` is the `name` in the crate's `Cargo.toml`.
-  - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `live-ingest`).
+  - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `ingest-gateway`).
   - `crates/` holds the code other crates, the SDKs or GStreamer link against: libraries and plugins (`moqt`, `broadcast`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
   - `sdk/` holds the SDKs applications install, one directory per language: `sdk/js` (the crate `wasm` and the npm package under `js/`), `sdk/python` (the crate `python` and the Python package) and `sdk/rust` (the crate `moq-wasm`, named as the other two SDKs are installed, since a git dependency is named by its package).
 - Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
   1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
   2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
-  3. Otherwise → name the role in one or two kebab-case words (`relay`, `broadcast`, `live-ingest`, `onvif-ingest`).
+  3. Otherwise → name the role in one or two kebab-case words (`relay`, `broadcast`, `ingest-gateway`, `live-egress`).
   Use an abbreviation only when it is already the identifier in code, flags or environment variables (`msf`, `vts`); otherwise spell it out (`auth-token`). Binaries take the package name.
 
 Library components (draft-governed):
@@ -24,7 +24,7 @@ Library components (draft-governed):
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
 | `crates/msf` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-02.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
 | `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC properties to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-04.txt` (`loc` module only) |
-| `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`, and the reader that turns a broadcast back into media events for `live-egress`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
+| `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `ingest-gateway` and `gst-plugin-moqt`, and the reader that turns a broadcast back into media events for `live-egress`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
 
 All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are application and integration components (see each crate's `Cargo.toml` `description` and `docs/architecture/<package name>/`); draft lookup is normally not required for them.
 
@@ -125,7 +125,7 @@ A span that lives longer than the request that starts it (a track, a session) ro
 - A squash-merged commit on `master` takes the Japanese PR title as its subject; the English rule applies to the commits you write on a branch.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
-  - Scope: use the component or crate name (e.g. `moqt`, `relay`, `wasm`, `python`, `moq-wasm`, `broadcast`, `live-ingest`, `live-egress`, `onvif-ingest`, `msf`, `mediapack`)
+  - Scope: use the component or crate name (e.g. `moqt`, `relay`, `wasm`, `python`, `moq-wasm`, `broadcast`, `ingest-gateway`, `live-egress`, `msf`, `mediapack`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.

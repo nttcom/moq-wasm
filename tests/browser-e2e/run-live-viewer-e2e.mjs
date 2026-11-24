@@ -14,7 +14,7 @@ import {
 import {
   assertE2EPrerequisites,
   buildBinaries,
-  buildLiveIngestFfmpegArgs,
+  buildIngestGatewayFfmpegArgs,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   jsDir,
@@ -48,8 +48,8 @@ async function main() {
   const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? "anon/live/e2e";
 
   // The recorder specs run target/debug/recorder and target/debug/bot-dispatcher.
-  const [liveIngestBinary] = buildBinaries([
-    "live-ingest",
+  const [ingestGatewayBinary] = buildBinaries([
+    "ingest-gateway",
     "recorder",
     "bot-dispatcher",
     "relay",
@@ -63,12 +63,13 @@ async function main() {
     // against the samples this log says the bridge published.
     const bridgeLog = join(
       mkdtempSync(join(tmpdir(), "live-viewer-e2e-")),
-      "live-ingest.log",
+      "ingest-gateway.log",
     );
     const bridge = spawnProcess(
-      "live-ingest",
-      liveIngestBinary,
+      "ingest-gateway",
+      ingestGatewayBinary,
       [
+        "listen",
         "--rtmp-addr",
         rtmpAddress,
         "--srt-addr",
@@ -92,20 +93,20 @@ async function main() {
     await waitForOutput(
       bridge,
       ingest === "srt" ? /SRT listener started/ : /RTMP listener started/,
-      "live-ingest",
+      "ingest-gateway",
       180_000,
     );
 
     const broadcastReady = waitForOutput(
       bridge,
       transcode ? /transcoding renditions started/ : /detected video codec/,
-      "live-ingest broadcast",
+      "ingest-gateway broadcast",
       120_000,
     );
     const ffmpeg = spawnProcess(
       "ffmpeg",
       "ffmpeg",
-      buildLiveIngestFfmpegArgs(ingest, ingestAddress, namespace),
+      buildIngestGatewayFfmpegArgs(ingest, ingestAddress, namespace),
       {
         cwd: repoRoot,
       },

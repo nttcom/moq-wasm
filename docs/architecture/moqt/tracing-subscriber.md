@@ -35,7 +35,7 @@ spawned tasks log on the test thread and stay inside its capture.
 ## Decision
 
 Use `tracing-subscriber`. It is already in the workspace lock (`relay`,
-`live-ingest`, `observability` and others depend on it), so no new crate enters
+`ingest-gateway`, `observability` and others depend on it), so no new crate enters
 the dependency tree, and as a dev-dependency it does not reach crates that
 depend on `moqt`. `RUST_LOG=moqt=debug cargo test -p moqt` raises the level
 for a run.

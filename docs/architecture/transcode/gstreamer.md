@@ -16,7 +16,7 @@ resolutions and bitrates in-process.
 
 ## Context
 
-The live-ingest bridge publishes the source rendition as received. Viewers on
+The ingest-gateway bridge publishes the source rendition as received. Viewers on
 constrained links need lower renditions, which requires decoding and
 re-encoding video. `mediapack` deliberately stays codec-free (containers and
 bitstream syntax only, pure Rust), so the encoder dependency needs its own

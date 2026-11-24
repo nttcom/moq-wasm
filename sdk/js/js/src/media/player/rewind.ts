@@ -11,7 +11,7 @@ export type GroupMark = {
 
 type ObservedMark = GroupMark & { observedAtMicros: number }
 
-/// Group ids are seeded from a wall clock by the live-ingest bridge and groups
+/// Group ids are seeded from a wall clock by the ingest-gateway bridge and groups
 /// last as long as the encoder's GOP, so seconds are resolved from capture
 /// timestamps instead of from group arithmetic. The capture timestamps come
 /// from the groups observed while playing live and from the groups a followed

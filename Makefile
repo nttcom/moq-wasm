@@ -3,7 +3,7 @@
 MOQT_URL ?= https://127.0.0.1:4433
 RESOLVED_MOQT_URL = $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
 LOCAL_MOQT_URL ?= $(RESOLVED_MOQT_URL)
-LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
+INGEST_GATEWAY_MOQT_URL ?= $(LOCAL_MOQT_URL)
 LIVE_EGRESS_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # For the PTZ tracking page, set ONVIF_PUBLISH_NAMESPACE to `<appId>/moq-ptz-tracking/onvif/client`,
@@ -20,24 +20,24 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # A loopback MOQT_URL may resolve to the Docker bridge host, which is local as well.
 LOOPBACK_RELAY_URLS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
 LOCAL_RELAY_URLS = $(LOOPBACK_RELAY_URLS) $(if $(filter $(LOOPBACK_RELAY_URLS),$(MOQT_URL)),$(RESOLVED_MOQT_URL))
-LIVE_INGEST_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_INGEST_MOQT_URL)),--insecure-skip-tls-verify)
+INGEST_GATEWAY_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(INGEST_GATEWAY_MOQT_URL)),--insecure-skip-tls-verify)
 LIVE_EGRESS_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_EGRESS_MOQT_URL)),--insecure-skip-tls-verify)
 ONVIF_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
 RECORDER_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(RECORDER_MOQT_URL)),--insecure-skip-tls-verify)
 GST_TLS_PROPERTIES = $(if $(filter $(LOCAL_RELAY_URLS),$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
-LIVE_INGEST_RTP_SDP ?= assets/rtp.sdp
-LIVE_INGEST_RTP_NAMESPACE ?= anon/live/test
+INGEST_GATEWAY_RTP_SDP ?= assets/rtp.sdp
+INGEST_GATEWAY_RTP_NAMESPACE ?= anon/live/test
 LIVE_EGRESS_NAMESPACE ?= anon/live/test
 LIVE_EGRESS_DESTINATION ?= 127.0.0.1
-# Not 5004/5006: live-ingest-rtp listens there, and sending to it would loop the output back in.
+# Not 5004/5006: ingest-gateway-rtp listens there, and sending to it would loop the output back in.
 LIVE_EGRESS_VIDEO_PORT ?= 5014
 LIVE_EGRESS_AUDIO_PORT ?= 5016
 LIVE_EGRESS_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
+.PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -66,22 +66,22 @@ chrome\:linux:
 	./scripts/chrome_linux.sh
 
 # RTMP/SRT/RTP Bridges
-live-ingest:
-	@echo "Using MoQT relay URL: $(LIVE_INGEST_MOQT_URL)"
-	cargo run -p live-ingest -- \
+ingest-gateway:
+	@echo "Using MoQT relay URL: $(INGEST_GATEWAY_MOQT_URL)"
+	cargo run -p ingest-gateway -- listen \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
-		--moqt-url $(LIVE_INGEST_MOQT_URL) $(LIVE_INGEST_TLS_FLAGS) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,) $(LIVE_INGEST_RTP_FLAGS)
+		--moqt-url $(INGEST_GATEWAY_MOQT_URL) $(INGEST_GATEWAY_TLS_FLAGS) $(if $(INGEST_GATEWAY_TRANSCODE),--transcode,) $(if $(INGEST_GATEWAY_STATS),--stats,) $(INGEST_GATEWAY_RTP_FLAGS)
 
-live-ingest-transcode: LIVE_INGEST_TRANSCODE := 1
-live-ingest-transcode: live-ingest
+ingest-gateway-transcode: INGEST_GATEWAY_TRANSCODE := 1
+ingest-gateway-transcode: ingest-gateway
 
-live-ingest-stats: LIVE_INGEST_STATS := 1
-live-ingest-stats: live-ingest
+ingest-gateway-stats: INGEST_GATEWAY_STATS := 1
+ingest-gateway-stats: ingest-gateway
 
 # Reads the SDP that `make ffmpeg-rtp` writes, so start the sender first.
-live-ingest-rtp: LIVE_INGEST_RTP_FLAGS := --rtp-sdp $(LIVE_INGEST_RTP_SDP) --rtp-namespace $(LIVE_INGEST_RTP_NAMESPACE)
-live-ingest-rtp: live-ingest
+ingest-gateway-rtp: INGEST_GATEWAY_RTP_FLAGS := --rtp-sdp $(INGEST_GATEWAY_RTP_SDP) --rtp-namespace $(INGEST_GATEWAY_RTP_NAMESPACE)
+ingest-gateway-rtp: ingest-gateway
 
 # MoQT to RTP: play the result with `ffplay -protocol_whitelist file,udp,rtp $(LIVE_EGRESS_SDP)`.
 live-egress:
@@ -136,11 +136,11 @@ ffmpeg-srt:
 
 # One RTP stream per output. The SDP FFmpeg writes names the ports, payload types and the AAC config, so the receiver needs it.
 ffmpeg-rtp:
-	mkdir -p $(dir $(LIVE_INGEST_RTP_SDP))
+	mkdir -p $(dir $(INGEST_GATEWAY_RTP_SDP))
 	ffmpeg $(FFMPEG_REALTIME) \
 		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
 		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
-		-sdp_file $(LIVE_INGEST_RTP_SDP) \
+		-sdp_file $(INGEST_GATEWAY_RTP_SDP) \
 		-map 0:v -c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-f rtp rtp://127.0.0.1:5004 \
@@ -180,7 +180,7 @@ onvif:
 		exit 1; \
 	fi
 	@echo "Using MoQT relay URL: $(ONVIF_MOQT_URL)"
-	cargo run -p onvif-ingest -- \
+	cargo run -p ingest-gateway -- onvif \
 		--ip $(ONVIF_IP) \
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \

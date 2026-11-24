@@ -39,7 +39,7 @@ The Playwright specs live in `examples/browser/tests`, and the runners in
 | --- | --- | --- |
 | `run-console-e2e.mjs` | The VTS and the console on a temporary registry file | Tokens the console issues pass the VTS until the secret is rotated or the app deleted, without affecting other apps |
 | `run-live-translate-e2e.mjs` | live-translate in `--echo` mode | A viewer switches to a translation in sync with the picture and back to the original |
-| `run-ptz-tracking-e2e.mjs` | A fake ONVIF camera (`fake-onvif-ingest.py`) and a fake System One server | The PTZ tracking bot sends ContinuousMove then Stop for the boxes it receives |
+| `run-ptz-tracking-e2e.mjs` | A fake ONVIF camera (`fake-ingest-gateway-onvif.py`) and a fake System One server | The PTZ tracking bot sends ContinuousMove then Stop for the boxes it receives |
 
 Set `RELAY_PORT`, `VTS_PORT` or `MEDIA_E2E_WEB_PORT` when a default port is
 taken.

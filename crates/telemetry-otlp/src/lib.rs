@@ -344,8 +344,8 @@ mod tests {
     fn the_filter_variable_is_named_after_the_service() {
         // Act / Assert
         assert_eq!(
-            filter_env_name("live-ingest", "STDOUT"),
-            "LIVE_INGEST_STDOUT_FILTER"
+            filter_env_name("ingest-gateway", "STDOUT"),
+            "INGEST_GATEWAY_STDOUT_FILTER"
         );
     }
 }

@@ -26,7 +26,7 @@ from moq_ptz_tracking.ptz import CENTER_SECONDS, Heading, PtzCalibration, PtzCom
 from moq_ptz_tracking.target import Target, parse_prompt
 from moq_ptz_tracking.vision import Answer, Box, Sighting, SystemOneVisionClient
 
-# The participant ids of onvif-ingest's camera and the PTZ tracking page, the last elements of their
+# The participant ids of ingest-gateway onvif's camera and the PTZ tracking page, the last elements of their
 # namespaces.
 CAMERA = "client"
 VIEWER = "viewer"
@@ -52,7 +52,7 @@ class PtzTracker(FrameProcessor):
     position; while sweeping it locates every picture it gets and stops on sight.
 
     `release_video` stops receiving a profile of the camera, as when the target changes, because
-    onvif-ingest streams the profile its first subscriber picks and rejects the others. The camera's
+    ingest-gateway onvif streams the profile its first subscriber picks and rejects the others. The camera's
     commands go out through `command_writer()`, so the Stop of a turn reaches the camera even as the
     pipeline ends."""
 
@@ -77,7 +77,7 @@ class PtzTracker(FrameProcessor):
         self._sweep: Sweep | None = None
 
     def command_writer(self) -> "_CommandWriter":
-        """Writes onvif-ingest's command track through this tracker, for `PtzCommands.publish_on`."""
+        """Writes ingest-gateway onvif's command track through this tracker, for `PtzCommands.publish_on`."""
         return _CommandWriter(self)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
