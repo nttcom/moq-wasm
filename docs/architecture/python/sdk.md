@@ -739,7 +739,8 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   namespace element the participant id, followed with `watch_broadcasts`.
   `MOQTransport` follows one peer; a room is what the transcriber, chat
   moderation, camera detection and PTZ tracking serve. `on_client_connected`
-  and `on_client_disconnected` take the participant id. The transport's own
+  and `on_client_disconnected` take the participant id, which
+  `get_client_id` returns as it is. The transport's own
   broadcast, `[*room, participant_id]` or the namespace `broadcast` names, is
   not a participant. A `broadcast` such as `[*room, "bots", "chat-moderation"]`
   puts it where the bot service lets its bots publish
