@@ -470,8 +470,9 @@ impl ConnectedRelay {
             .await
     }
 
-    /// Returns `handler` for a namespace no broadcast here publishes and for a
-    /// track no broadcast here has published.
+    /// Returns `handler` for a namespace no broadcast here publishes, for a
+    /// track no broadcast here has published and for one that ends before
+    /// `accept_subscribe` serves it.
     async fn serve_subscribe(
         origin: &Origin,
         state: &Mutex<RelayState>,
@@ -503,9 +504,13 @@ impl ConnectedRelay {
             return None;
         }
         ensure_origin_track(origin, &(namespace.clone(), track_name.clone())).await;
-        if let Err(err) = origin.accept_subscribe(handler).await {
-            tracing::warn!(track_namespace = %namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
-            return None;
+        match origin.accept_subscribe(handler).await {
+            Ok(None) => {}
+            Ok(Some(handler)) => return Some(handler),
+            Err(err) => {
+                tracing::warn!(track_namespace = %namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
+                return None;
+            }
         }
         state
             .lock()

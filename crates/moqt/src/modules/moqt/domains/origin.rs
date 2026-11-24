@@ -574,11 +574,12 @@ impl Origin {
         match event {
             SessionEvent::Subscribe(handler) => {
                 let key = (handler.track_namespace.clone(), handler.track_name.clone());
-                if self.state.lock().await.live_track_mut(&key).is_none() {
-                    return Some(SessionEvent::Subscribe(handler));
-                }
-                if let Err(err) = self.accept_subscribe(handler).await {
-                    tracing::warn!(track_namespace = %key.0, track_name = %key.1, error = ?err, "failed to accept SUBSCRIBE");
+                match self.accept_subscribe(handler).await {
+                    Ok(None) => {}
+                    Ok(Some(handler)) => return Some(SessionEvent::Subscribe(handler)),
+                    Err(err) => {
+                        tracing::warn!(track_namespace = %key.0, track_name = %key.1, error = ?err, "failed to accept SUBSCRIBE");
+                    }
                 }
             }
             SessionEvent::Unsubscribe(handler) => {
@@ -633,17 +634,21 @@ impl Origin {
         }
     }
 
-    /// Serves the SUBSCRIBE on the session it arrived on. Fails without
-    /// answering when the track is unregistered or ended.
-    pub async fn accept_subscribe(&self, mut handler: SubscribeHandler) -> Result<()> {
+    /// Serves the SUBSCRIBE on the session it arrived on. Returns the handler
+    /// unanswered when the track is unregistered or ended, for the caller to
+    /// answer.
+    pub async fn accept_subscribe(
+        &self,
+        mut handler: SubscribeHandler,
+    ) -> Result<Option<SubscribeHandler>> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
-        // Hold the lock until the outlet is registered: the peer can act on
-        // SUBSCRIBE_OK before then, and an `end_track` or `write` in that gap
-        // would miss this subscription.
+        // Hold the lock from the check until the outlet is registered: the
+        // peer can act on SUBSCRIBE_OK before then, and an `end_track` or
+        // `write` anywhere in that span would miss this subscription.
         let mut state = self.state.lock().await;
-        let track = state
-            .live_track_mut(&key)
-            .with_context(|| format!("track {}/{} is not published by the origin", key.0, key.1))?;
+        let Some(track) = state.live_track_mut(&key) else {
+            return Ok(Some(handler));
+        };
         let largest = track.numbering.largest();
         handler
             .track_properties
@@ -688,7 +693,7 @@ impl Origin {
             track_alias,
             "SUBSCRIBE accepted"
         );
-        Ok(())
+        Ok(None)
     }
 
     /// Whether the peer of `session` still takes objects of any track: a
@@ -1178,7 +1183,14 @@ mod tests {
                     let SessionEvent::Subscribe(handler) = next_event(&peers.client).await else {
                         panic!("expected SUBSCRIBE from the relay");
                     };
-                    peers.origin.accept_subscribe(handler).await.unwrap();
+                    assert!(
+                        peers
+                            .origin
+                            .accept_subscribe(handler)
+                            .await
+                            .unwrap()
+                            .is_none()
+                    );
                 }
             )
         })
@@ -3205,6 +3217,48 @@ mod tests {
             assert_eq!(
                 rejection(subscription).code,
                 RequestErrorCode::TrackDoesNotExist
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_handled_while_its_track_ends_is_answered() {
+        for version in DRAFTS {
+            // Arrange
+            let peers =
+                origin_with_track("origin-subscribe-while-ending", RETENTION, version).await;
+            let mut subscriber = peers.server.subscriber();
+
+            // Act: `handle` and `end_track` queue on `state` in this order
+            let (subscription, ()) = within(async {
+                tokio::join!(
+                    subscriber.subscribe(
+                        NAMESPACE.to_string(),
+                        TRACK.to_string(),
+                        subscribe_option(FilterType::NextGroupStart)
+                    ),
+                    async {
+                        let event = next_event(&peers.client).await;
+                        let state = peers.origin.state.lock().await;
+                        let (_, ended, ()) = tokio::join!(
+                            peers.origin.handle(event),
+                            peers.origin.end_track(NAMESPACE, TRACK),
+                            async {
+                                tokio::task::yield_now().await;
+                                drop(state);
+                            }
+                        );
+                        ended.unwrap();
+                    }
+                )
+            })
+            .await;
+
+            // Assert: the SUBSCRIBE is accepted before the track ends
+            assert!(
+                subscription.is_ok(),
+                "{version:?}: {:?}",
+                subscription.err()
             );
         }
     }
