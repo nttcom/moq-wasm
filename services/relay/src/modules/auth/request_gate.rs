@@ -164,6 +164,7 @@ mod tests {
         MoqtSessionEvent::PublishNamespaceDone(PublishNamespaceDoneHandler {
             track_namespace: track_namespace.to_string(),
             track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
+            request_id: None,
         })
     }
 

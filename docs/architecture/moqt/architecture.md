@@ -342,7 +342,10 @@ call through the adapter; a draft never gets a task of its own (see
     draft-14 event once its Request ID passes the parity and reuse checks
     (§10.1). The peer ending an open request raises the event its draft-14
     cancellation would (`Unsubscribe`, `FetchCancel`, `PublishNamespaceDone`,
-    `UnsubscribeNamespace`, `PublishDone`). PUBLISH_DONE is the publisher's
+    `UnsubscribeNamespace`, `PublishDone`); `PublishNamespaceDone` names the
+    request it ends in `request_id()`, which draft-14's message cannot, so
+    a namespace published again on a new stream is not withdrawn by the old
+    stream's end read after it. PUBLISH_DONE is the publisher's
     final message on a subscription's stream (§10.11), so this side stops
     reading the stream there and ends its half with FIN.
   - `messages` / `parameters` encode the draft-14 structs: Message Parameters
@@ -377,8 +380,8 @@ call through the adapter; a draft never gets a task of its own (see
       response; a REQUEST_ERROR or a `publish_namespace_done` drops it.
     - NAMESPACE / NAMESPACE_DONE on our SUBSCRIBE_NAMESPACE raise
       `PublishNamespace` / `PublishNamespaceDone`. `PublishNamespace` gets a
-      synthetic Request ID counting down from `u64::MAX`; responses to it
-      send nothing.
+      synthetic Request ID counting down from `u64::MAX`, which its
+      `PublishNamespaceDone` carries; responses to it send nothing.
     - SUBSCRIBE_TRACKS raises `SubscribeNameSpace` with
       `NamespaceInterest::Tracks` and its FORWARD as `forward`;
       SUBSCRIBE_NAMESPACE raises it with `Namespaces`. A SUBSCRIBE_TRACKS

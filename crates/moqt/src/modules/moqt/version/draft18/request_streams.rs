@@ -5,7 +5,7 @@
 //! becomes the cancellation message draft-14 would have sent.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, hash_map::Entry},
     sync::{Arc, Weak},
 };
 
@@ -700,9 +700,12 @@ impl IncomingRequestTask {
                 Unsubscribe { request_id },
             )),
             RequestStreamKind::Fetch => unreachable!("a FETCH returned above"),
-            RequestStreamKind::PublishNamespace(namespace) => SessionEvent::PublishNamespaceDone(
-                PublishNamespaceDoneHandler::new(PublishNamespaceDone::new(namespace)),
-            ),
+            RequestStreamKind::PublishNamespace(namespace) => {
+                SessionEvent::PublishNamespaceDone(PublishNamespaceDoneHandler::new(
+                    PublishNamespaceDone::new(namespace),
+                    Some(request_id),
+                ))
+            }
             RequestStreamKind::SubscribeNamespace(prefix) => {
                 scope.channel().forget_advertised(request_id);
                 SessionEvent::UnsubscribeNamespace(UnsubscribeNamespaceHandler::new(
@@ -1057,8 +1060,9 @@ impl OutgoingRequestTask {
             return;
         }
         drop(context);
-        // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn.
-        let mut namespaces: HashSet<Vec<String>> = HashSet::new();
+        // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn,
+        // with the Request ID each was announced under.
+        let mut namespaces: HashMap<Vec<String>, RequestId> = HashMap::new();
         let mut update_answers = UpdateAnswers::default();
         loop {
             let received = tokio::select! {
@@ -1139,8 +1143,8 @@ impl OutgoingRequestTask {
                         return;
                     };
                     let namespace = [prefix.as_slice(), suffix.as_slice()].concat();
-                    if namespaces.insert(namespace.clone()) {
-                        Self::namespace_announced(&context, namespace);
+                    if let Entry::Vacant(entry) = namespaces.entry(namespace.clone()) {
+                        entry.insert(Self::namespace_announced(&context, namespace));
                     }
                 }
                 Ok(Some(Message::NamespaceDone(suffix))) => {
@@ -1150,11 +1154,11 @@ impl OutgoingRequestTask {
                     };
                     let namespace = [prefix.as_slice(), suffix.as_slice()].concat();
                     // §10.18: NAMESPACE_DONE must follow its NAMESPACE.
-                    if !namespaces.remove(&namespace) {
+                    let Some(announced_request_id) = namespaces.remove(&namespace) else {
                         close_on_violation(&context, "NAMESPACE_DONE before its NAMESPACE");
                         return;
-                    }
-                    Self::namespace_withdrawn(&context, namespace);
+                    };
+                    Self::namespace_withdrawn(&context, namespace, announced_request_id);
                 }
                 // The request ends at its first GOAWAY; a second is never read.
                 Ok(Some(Message::GoAway(go_away))) => {
@@ -1197,7 +1201,7 @@ impl OutgoingRequestTask {
     /// A NAMESPACE reaches the application as draft-14's PUBLISH_NAMESPACE,
     /// under a Request ID made up for it: NAMESPACE takes no response, so
     /// the handler's answer goes nowhere.
-    fn namespace_announced(scope: &Scope, namespace: Vec<String>) {
+    fn namespace_announced(scope: &Scope, namespace: Vec<String>) -> RequestId {
         let request_id = scope.channel().synthetic_request_id();
         emit(
             scope,
@@ -1211,21 +1215,23 @@ impl OutgoingRequestTask {
                 },
             )),
         );
+        request_id
     }
 
     /// §10.18: the end of a SUBSCRIBE_NAMESPACE request withdraws every
     /// namespace it announced.
-    fn withdraw_namespaces(scope: &Scope, namespaces: HashSet<Vec<String>>) {
-        for namespace in namespaces {
-            Self::namespace_withdrawn(scope, namespace);
+    fn withdraw_namespaces(scope: &Scope, namespaces: HashMap<Vec<String>, RequestId>) {
+        for (namespace, request_id) in namespaces {
+            Self::namespace_withdrawn(scope, namespace, request_id);
         }
     }
 
-    fn namespace_withdrawn(scope: &Scope, namespace: Vec<String>) {
+    fn namespace_withdrawn(scope: &Scope, namespace: Vec<String>, request_id: RequestId) {
         emit(
             scope,
             SessionEvent::PublishNamespaceDone(PublishNamespaceDoneHandler::new(
                 PublishNamespaceDone::new(namespace),
+                Some(request_id),
             )),
         );
     }

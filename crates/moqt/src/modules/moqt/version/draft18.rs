@@ -2592,6 +2592,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_namespace_done_names_the_request_id_its_namespace_was_announced_under() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-done-request-id", "moqt").await;
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("live".into(), NamespaceInterest::Namespaces)
+                .await
+        });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+        let mut announced = Vec::new();
+        for namespace in ["live/room", "live/hall"] {
+            server
+                .publisher()
+                .publish_namespace(namespace.into())
+                .await
+                .unwrap();
+            let SessionEvent::PublishNamespace(handler) = next_event(&client).await else {
+                panic!("expected PUBLISH_NAMESPACE");
+            };
+            announced.push(handler.request_id());
+        }
+
+        // Act
+        server
+            .publisher()
+            .publish_namespace_done("live/room".into())
+            .await
+            .unwrap();
+        let withdrawn = next_event(&client).await;
+
+        // Assert
+        let SessionEvent::PublishNamespaceDone(withdrawn) = withdrawn else {
+            panic!("expected PUBLISH_NAMESPACE_DONE, got {withdrawn:?}");
+        };
+        assert_eq!(withdrawn.request_id(), Some(announced[0]));
+    }
+
+    #[tokio::test]
     async fn a_held_namespace_with_an_empty_field_is_refused_and_the_others_still_arrive() {
         // Arrange: the SUBSCRIBE_NAMESPACE is unanswered, so namespaces are held
         let (client, server) =

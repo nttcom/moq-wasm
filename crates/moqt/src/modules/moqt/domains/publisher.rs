@@ -413,7 +413,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use crate::{
-        RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription,
+        RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription, Version,
         modules::{
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
@@ -664,6 +664,44 @@ mod tests {
                 panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
             };
             assert_eq!(done.track_namespace(), "live/room");
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_done_names_its_request_on_draft18_only() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("publisher-publish-namespace-done-request-id", version).await;
+            let publisher = client.publisher();
+            let (announced, handler) = within(async {
+                tokio::join!(publisher.publish_namespace("live/room".into()), async {
+                    let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+                        panic!("expected PUBLISH_NAMESPACE");
+                    };
+                    handler.ok().await.unwrap();
+                    handler
+                })
+            })
+            .await;
+            announced.unwrap();
+
+            // Act
+            publisher
+                .publish_namespace_done("live/room".into())
+                .await
+                .unwrap();
+            let event = next_event(&server).await;
+
+            // Assert: draft-14's PUBLISH_NAMESPACE_DONE carries only the namespace
+            let SessionEvent::PublishNamespaceDone(done) = event else {
+                panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
+            };
+            let expected = match version {
+                Version::Draft14 => None,
+                Version::Draft18 => Some(handler.request_id()),
+            };
+            assert_eq!(done.request_id(), expected);
         }
     }
 
