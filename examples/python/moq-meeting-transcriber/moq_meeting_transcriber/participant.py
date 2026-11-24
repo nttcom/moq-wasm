@@ -5,7 +5,7 @@ from moq_wasm.media import EventTimeline, RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParticipantInput, MoqWasmTrack
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineWorker
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.workers.runner import WorkerRunner
 
@@ -28,9 +28,7 @@ class Participant:
         self._timeline = timeline
 
     async def run(self) -> None:
-        audio = MoqWasmParticipantInput(
-            self._broadcast, MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE)
-        )
+        audio = MoqWasmParticipantInput(self._broadcast, MoqWasmInputParams(audio_in_enabled=True))
 
         @audio.event_handler("on_track_subscribed")
         async def on_track_subscribed(_, track: MoqWasmTrack):
@@ -45,6 +43,8 @@ class Participant:
                     TranscriptWriter(self._timeline),
                 ]
             ),
+            # The input decodes at the pipeline's rate, which Silero starts at too.
+            params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE),
             enable_rtvi=False,
             idle_timeout_secs=None,
         )
