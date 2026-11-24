@@ -69,7 +69,6 @@ pub(crate) struct BotView {
     pub(crate) output: Option<Map<String, Value>>,
 }
 
-/// The body of an app server's launch.
 #[derive(Debug, Deserialize)]
 pub(crate) struct StartRequest {
     pub(crate) namespace_prefix: String,
