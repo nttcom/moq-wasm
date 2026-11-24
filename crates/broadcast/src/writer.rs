@@ -49,7 +49,7 @@ impl BroadcastWriter {
         if let MediaEvent::Video(VideoSample { pts, .. })
         | MediaEvent::Audio(AudioSample { pts, .. }) = &event
         {
-            self.timing.loc_muxer(*pts);
+            self.timing.capture_origin(*pts);
         }
         // Number a keyframe's group here: the publish task reaches the sample
         // only after the relay takes those queued before, and a `FollowSource`
@@ -168,13 +168,10 @@ mod tests {
         let before = wall_clock_micros();
         writer.push(keyframe_at(pts)).unwrap();
         let after = wall_clock_micros();
-        let captured = writer.shared_timing().loc.get().map(|muxer| {
-            muxer
-                .push(&keyframe_at(pts))
-                .unwrap()
-                .capture_timestamp()
-                .unwrap()
-        });
+        let captured = writer
+            .shared_timing()
+            .seeded_capture_origin()
+            .map(|origin| origin.saturating_add(pts));
 
         // Assert
         let captured = captured

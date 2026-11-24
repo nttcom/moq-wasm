@@ -36,16 +36,29 @@ const AUDIO_ONLY_GROUP_DURATION_US: u64 = 1_000_000;
 /// presentation time (draft-ietf-moq-cmsf-01 §3.2).
 #[derive(Clone)]
 pub(crate) struct SharedTiming {
-    pub(crate) loc: Arc<OnceLock<LocMuxer>>,
+    /// The wall-clock time of presentation time zero.
+    capture_origin: Arc<OnceLock<Timestamp>>,
     pub(crate) alignment: Arc<GroupAlignment>,
 }
 
 impl SharedTiming {
+    fn new() -> Self {
+        Self {
+            capture_origin: Arc::new(OnceLock::new()),
+            alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
+        }
+    }
+
     /// The first call takes the wall clock as the capture time of
     /// `presentation_time`; later calls ignore it.
-    pub(crate) fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {
-        self.loc
-            .get_or_init(|| LocMuxer::new(wall_clock().saturating_sub(presentation_time)))
+    pub(crate) fn capture_origin(&self, presentation_time: Timestamp) -> Timestamp {
+        *self
+            .capture_origin
+            .get_or_init(|| wall_clock().saturating_sub(presentation_time))
+    }
+
+    pub(crate) fn seeded_capture_origin(&self) -> Option<Timestamp> {
+        self.capture_origin.get().copied()
     }
 }
 
@@ -80,10 +93,7 @@ impl TrackPublisher {
             video_published: false,
             audio_config: None,
             timeline: MediaTimeline::default(),
-            timing: SharedTiming {
-                loc: Arc::new(OnceLock::new()),
-                alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
-            },
+            timing: SharedTiming::new(),
             video_codec: VideoCodec::H264,
             video_groups: StartedGroups::default(),
             video_cmaf: None,
@@ -183,9 +193,7 @@ impl TrackPublisher {
             bytes = sample.data.len(),
             keyframe = sample.is_keyframe
         );
-        let Some(object) = self
-            .timing
-            .loc_muxer(sample.pts)
+        let Some(object) = LocMuxer::new(self.timing.capture_origin(sample.pts))
             .with_video_codec(self.video_codec)
             .push(&MediaEvent::Video(sample.clone()))
         else {
@@ -289,9 +297,7 @@ impl TrackPublisher {
         let Some(group) = self.audio_group(sample.pts.micros()) else {
             return Ok(());
         };
-        let Some(object) = self
-            .timing
-            .loc_muxer(sample.pts)
+        let Some(object) = LocMuxer::new(self.timing.capture_origin(sample.pts))
             .push(&MediaEvent::Audio(sample.clone()))
         else {
             return Ok(());
