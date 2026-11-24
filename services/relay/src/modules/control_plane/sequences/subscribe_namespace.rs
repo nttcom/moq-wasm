@@ -523,11 +523,11 @@ mod tests {
                 active_upstream, client_subscription, downstream_publish_context,
                 downstream_publish_context_for, downstream_publish_context_with_session,
                 inter_relay_connection_manager, local_publisher_resolver, namespaces_and_tracks,
-                producer_with, table_with_upstream, track_key,
+                producer, producer_with, table_with_upstream, track_key,
             },
             in_memory_route_registry::InMemoryRouteRegistry,
             mock_session::{
-                MockPublishHandler, MockPublishNamespaceHandler, MockSubscribeNamespaceHandler,
+                MockPublishNamespaceHandler, MockSubscribeNamespaceHandler,
                 MockSubscribeNamespaceUpdateHandler, PUBLISH_REQUEST_ID, RecordedControlMessages,
                 SentMessages, add_recorded_relay_session, detached_session_repository,
                 recorded_session_holding_publish_namespace, wait_until,
@@ -596,11 +596,6 @@ mod tests {
 
     async fn context_with_published_track(sent: SentMessages) -> DownstreamPublishContext {
         let table = Arc::new(table_with_upstream(ProducerOrigin::Publish).0);
-        table.register_publish(
-            PUBLISHER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("ns", "track", 0)),
-        );
         downstream_publish_context(table, move || {
             sent.lock().unwrap().push("PUBLISH");
             Ok(true)
@@ -965,10 +960,10 @@ mod tests {
     async fn a_tracks_subscription_is_not_sent_a_track_its_session_publishes() {
         // Arrange
         let ctx = context_with_published_track(SentMessages::default()).await;
-        ctx.table.register_publish(
+        ctx.table.register_upstream_subscription(
+            track_key(),
             NAMESPACE_SUBSCRIBER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("ns", "track", 1)),
+            producer(ProducerOrigin::Publish),
         );
         let handler = MockSubscribeNamespaceHandler {
             interest: NamespaceInterest::Tracks,
@@ -987,10 +982,10 @@ mod tests {
     async fn a_draft14_namespace_subscription_is_echoed_a_track_its_session_publishes() {
         // Arrange
         let ctx = context_with_published_track(SentMessages::default()).await;
-        ctx.table.register_publish(
+        ctx.table.register_upstream_subscription(
+            track_key(),
             NAMESPACE_SUBSCRIBER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("ns", "track", 1)),
+            producer(ProducerOrigin::Publish),
         );
         let handler = MockSubscribeNamespaceHandler::new("ns");
 
@@ -1267,11 +1262,6 @@ mod tests {
             track_key,
             PUBLISHER_SESSION,
             producer_with(active_upstream(ProducerOrigin::Publish)),
-        );
-        table.register_publish(
-            PUBLISHER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("room/alice", "video", 0)),
         );
         table.register_publish_namespace(
             PUBLISHER_SESSION,

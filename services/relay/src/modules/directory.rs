@@ -3,7 +3,7 @@ pub(crate) mod track;
 use std::{
     collections::{BTreeSet, HashMap, HashSet, btree_map},
     sync::{
-        Arc, Mutex, OnceLock, PoisonError, RwLock,
+        Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -30,7 +30,7 @@ use crate::modules::{
             namespace_prefixes_overlap,
         },
     },
-    session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
+    session::subscription::UpstreamSubscription,
 };
 use tokio::sync::watch;
 
@@ -104,12 +104,6 @@ pub(crate) struct DownstreamSubscriptionState {
     pub(crate) request_id: u64,
     pub(crate) track_key: TrackKey,
     pub(crate) delivery: DeliveryCounters,
-}
-
-pub(crate) struct RegisteredPublish {
-    publisher_session_id: SessionId,
-    publisher_peer: SessionPeer,
-    handler: Arc<dyn PublishHandler>,
 }
 
 /// One PUBLISH_NAMESPACE: the session that sent it and its Request ID.
@@ -223,7 +217,6 @@ fn unregister_peer(
 pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, NamespacePublishers>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, NamespaceSubscriptions>,
-    pub(crate) published_handlers: RwLock<Vec<RegisteredPublish>>,
     pub(crate) upstream_tracks: DashMap<TrackKey, Track>,
     next_track_generation: AtomicU64,
     /// The track of each consumer, keyed like `Track::consumers`. A track
@@ -243,7 +236,6 @@ impl InMemoryLocalPubSubDirectory {
         Self {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
-            published_handlers: RwLock::new(Vec::new()),
             upstream_tracks: DashMap::new(),
             next_track_generation: AtomicU64::new(0),
             consumer_tracks: DashMap::new(),
@@ -308,10 +300,7 @@ impl InMemoryLocalPubSubDirectory {
             let producer = producer.remove();
             if track.producers.is_empty() {
                 entry.remove();
-            } else {
-                drop(entry);
             }
-            self.forget_published_handler(publisher_session_id, &track_key);
             released.push((
                 track_key,
                 ReleasedUpstreamSubscription {
@@ -322,17 +311,6 @@ impl InMemoryLocalPubSubDirectory {
             ));
         }
         released
-    }
-
-    fn forget_published_handler(&self, publisher_session_id: SessionId, track_key: &TrackKey) {
-        self.published_handlers
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .retain(|published| {
-                published.publisher_session_id != publisher_session_id
-                    || published.handler.track_namespace() != track_key.track_namespace
-                    || published.handler.track_name() != track_key.track_name
-            });
     }
 
     #[tracing::instrument(
@@ -351,11 +329,6 @@ impl InMemoryLocalPubSubDirectory {
             ..Default::default()
         };
 
-        self.published_handlers
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .retain(|published| published.publisher_session_id != session_id);
-
         let downstream_keys: Vec<_> = self
             .consumer_tracks
             .iter()
@@ -368,7 +341,7 @@ impl InMemoryLocalPubSubDirectory {
         }
 
         for TrackEntry { track_key, .. } in self.tracks_fed_by(session_id) {
-            let Some((_, downstream_subscriptions)) = self.end_publisher_subscription(
+            let Some(downstream_subscriptions) = self.end_publisher_subscription(
                 &track_key,
                 session_id,
                 PublishDoneReason::publisher_session_closed(),
@@ -652,28 +625,6 @@ impl InMemoryLocalPubSubDirectory {
         last_client_left
     }
 
-    #[tracing::instrument(
-        level = "debug",
-        name = "relay.local_pub_sub_directory.register_publish",
-        skip_all,
-        fields(session_id = %session_id)
-    )]
-    pub(crate) fn register_publish(
-        &self,
-        session_id: SessionId,
-        peer: SessionPeer,
-        handler: Arc<dyn PublishHandler>,
-    ) {
-        self.published_handlers
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(RegisteredPublish {
-                publisher_session_id: session_id,
-                publisher_peer: peer,
-                handler,
-            });
-    }
-
     /// The sessions with a subscription to a prefix of `track_namespace` that
     /// asks for what `wanted` does, each with that subscription. A session has
     /// at most one of them, since overlapping ones are refused.
@@ -720,17 +671,11 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
 
-        for RegisteredPublish { handler, .. } in self
-            .published_handlers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-        {
-            if namespace_has_prefix(handler.track_namespace(), track_namespace_prefix) {
-                matching.insert(MatchingPublication::Track(TrackKey::new(
-                    handler.track_namespace(),
-                    handler.track_name(),
-                )));
+        for entry in self.upstream_tracks.iter() {
+            if namespace_has_prefix(&entry.key().track_namespace, track_namespace_prefix)
+                && entry.value().publishers().next().is_some()
+            {
+                matching.insert(MatchingPublication::Track(entry.key().clone()));
             }
         }
         matching
@@ -774,15 +719,11 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     fn publishes_track(&self, session_id: SessionId, track_key: &TrackKey) -> bool {
-        self.published_handlers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .any(|published| {
-                published.publisher_session_id == session_id
-                    && published.handler.track_namespace() == track_key.track_namespace
-                    && published.handler.track_name() == track_key.track_name
-            })
+        self.upstream_tracks.get(track_key).is_some_and(|track| {
+            track
+                .publishers()
+                .any(|(publisher, _)| publisher == session_id)
+        })
     }
 
     #[tracing::instrument(
@@ -807,18 +748,17 @@ impl InMemoryLocalPubSubDirectory {
                     .map(|publication| publication.key().0),
             );
         }
-        publishers.extend(
-            self.published_handlers
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .iter()
-                .filter(|published| {
-                    published.publisher_peer == SessionPeer::Client
-                        && published.handler.track_namespace() == track_namespace
-                        && published.handler.track_name() == track_name
-                })
-                .map(|published| published.publisher_session_id),
-        );
+        if let Some(track) = self
+            .upstream_tracks
+            .get(&TrackKey::new(track_namespace, track_name))
+        {
+            publishers.extend(
+                track
+                    .publishers()
+                    .filter(|(_, peer)| *peer == SessionPeer::Client)
+                    .map(|(session_id, _)| session_id),
+            );
+        }
         publishers.into_iter().collect()
     }
 
@@ -898,24 +838,18 @@ impl InMemoryLocalPubSubDirectory {
 
     /// While true, this relay owns the track's route.
     pub(crate) fn has_client_published_track(&self, track_key: &TrackKey) -> bool {
-        self.published_handlers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .any(|published| {
-                published.publisher_peer == SessionPeer::Client
-                    && published.handler.track_namespace() == track_key.track_namespace
-                    && published.handler.track_name() == track_key.track_name
-            })
+        self.upstream_tracks.get(track_key).is_some_and(|track| {
+            track
+                .publishers()
+                .any(|(_, peer)| peer == SessionPeer::Client)
+        })
     }
 
-    /// Some publisher still serves the track: an upstream subscription, a
-    /// client publishing its namespace, or a pending PUBLISH of it.
+    /// Some publisher still serves the track: an upstream subscription or a
+    /// client publishing its namespace.
     pub(crate) fn has_track_publisher(&self, track_key: &TrackKey) -> bool {
         self.upstream_tracks.contains_key(track_key)
-            || !self
-                .find_upstream_publishers(&track_key.track_namespace, &track_key.track_name)
-                .is_empty()
+            || self.has_client_namespace_publisher(&track_key.track_namespace)
     }
 
     /// `None` for a track no producer feeds yet (see `TrackLookup`).
@@ -1132,8 +1066,7 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
-    /// A later release of the producer also forgets this handler. The
-    /// producer starts in the Forward State `Track::upstream_forward`
+    /// The producer starts in the Forward State `Track::upstream_forward`
     /// gives, which is returned for the PUBLISH_OK. Also returns the producer
     /// from the same publisher that this one replaces; its ingest stops when
     /// the caller drops it.
@@ -1141,14 +1074,20 @@ impl InMemoryLocalPubSubDirectory {
         &self,
         track_key: TrackKey,
         publisher_session_id: SessionId,
-        producer: Producer,
-        handler: Arc<dyn PublishHandler>,
+        mut producer: Producer,
     ) -> (bool, Option<Producer>) {
-        self.insert_producer(track_key, publisher_session_id, producer, Some(handler))
+        let mut track = self
+            .upstream_tracks
+            .entry(track_key)
+            .or_insert_with(|| self.new_track(CreationState::Created));
+        let forward = track.upstream_forward(&producer.state);
+        producer.state.forward = forward;
+        let replaced = track.producers.insert(publisher_session_id, producer);
+        track.mark_created();
+        (forward, replaced)
     }
 
-    /// Registers a producer like `register_published_subscription`, without
-    /// a handler.
+    /// Inserts a producer of either origin.
     #[cfg(test)]
     pub(crate) fn register_upstream_subscription(
         &self,
@@ -1156,39 +1095,7 @@ impl InMemoryLocalPubSubDirectory {
         publisher_session_id: SessionId,
         producer: Producer,
     ) -> (bool, Option<Producer>) {
-        self.insert_producer(track_key, publisher_session_id, producer, None)
-    }
-
-    fn insert_producer(
-        &self,
-        track_key: TrackKey,
-        publisher_session_id: SessionId,
-        mut producer: Producer,
-        handler: Option<Arc<dyn PublishHandler>>,
-    ) -> (bool, Option<Producer>) {
-        let publisher_peer = producer.state.peer;
-        let mut track = self
-            .upstream_tracks
-            .entry(track_key.clone())
-            .or_insert_with(|| self.new_track(CreationState::Created));
-        let forward = track.upstream_forward(&producer.state);
-        producer.state.forward = forward;
-        let replaced = track.producers.insert(publisher_session_id, producer);
-        track.mark_created();
-        // Change the handler before dropping the track entry: a release
-        // forgets the handler only after it drops the entry, so it cannot run
-        // between the producer insert and the handler change.
-        if replaced
-            .as_ref()
-            .is_some_and(|replaced| replaced.state.origin == ProducerOrigin::Publish)
-        {
-            self.forget_published_handler(publisher_session_id, &track_key);
-        }
-        if let Some(handler) = handler {
-            self.register_publish(publisher_session_id, publisher_peer, handler);
-        }
-        drop(track);
-        (forward, replaced)
+        self.register_published_subscription(track_key, publisher_session_id, producer)
     }
 
     pub(crate) fn take_upstream_forward_update(
@@ -1264,19 +1171,12 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Leaves the track's downstream registrations to their subscribers: a
-    /// malformed track ends their runners on its own. Forgets the PUBLISH
-    /// handler of each published subscription it removes.
+    /// malformed track ends their runners on its own.
     pub(crate) fn remove_upstream_track(&self, track_key: &TrackKey) -> Vec<(SessionId, Producer)> {
-        let Some((_, track)) = self.upstream_tracks.remove(track_key) else {
-            return Vec::new();
-        };
-        let removed: Vec<_> = track.producers.into_iter().collect();
-        for (publisher_session_id, producer) in &removed {
-            if producer.state.origin == ProducerOrigin::Publish {
-                self.forget_published_handler(*publisher_session_id, track_key);
-            }
-        }
-        removed
+        self.upstream_tracks
+            .remove(track_key)
+            .map(|(_, track)| track.producers.into_iter().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn end_upstream_subscription(
@@ -1298,10 +1198,7 @@ impl InMemoryLocalPubSubDirectory {
                     })
             })
             .map(|entry| entry.key().clone())?;
-        let (ended, _) = self.end_publisher_subscription(&track_key, publisher_session_id, end)?;
-        if ended.state.origin == ProducerOrigin::Publish {
-            self.forget_published_handler(publisher_session_id, &track_key);
-        }
+        self.end_publisher_subscription(&track_key, publisher_session_id, end)?;
         Some(track_key)
     }
 
@@ -1312,17 +1209,17 @@ impl InMemoryLocalPubSubDirectory {
         track_key: &TrackKey,
         publisher_session_id: SessionId,
         end: PublishDoneReason,
-    ) -> Option<(Producer, Vec<RemovedDownstreamSubscription>)> {
+    ) -> Option<Vec<RemovedDownstreamSubscription>> {
         let Entry::Occupied(mut track) = self.upstream_tracks.entry(track_key.clone()) else {
             return None;
         };
-        let ended = track.get_mut().producers.remove(&publisher_session_id)?;
+        track.get_mut().producers.remove(&publisher_session_id)?;
         if !track.get().producers.is_empty() || track.get_mut().outlive_last_producer(end.clone()) {
-            return Some((ended, Vec::new()));
+            return Some(Vec::new());
         }
         let removed = self.end_downstream_subscriptions(track.get_mut(), track_key, end);
         track.remove();
-        Some((ended, removed))
+        Some(removed)
     }
 
     /// `entry` is the track entry the subscriber found; returns `None` when
@@ -1424,7 +1321,6 @@ impl InMemoryLocalPubSubDirectory {
         let client_remains = track.client_remains();
         let draining = self.draining_since_ms.get().is_some();
         let mut released_upstream_subscriptions = Vec::new();
-        let mut released_published = Vec::new();
         if !client_remains {
             track.producers.retain(|publisher_session_id, producer| {
                 let state = &producer.state;
@@ -1434,9 +1330,6 @@ impl InMemoryLocalPubSubDirectory {
                     }
                     ProducerOrigin::Publish => draining && !downstream_remains,
                 };
-                if released && state.origin == ProducerOrigin::Publish {
-                    released_published.push(*publisher_session_id);
-                }
                 if released {
                     released_upstream_subscriptions.push(ReleasedUpstreamSubscription {
                         publisher_session_id: *publisher_session_id,
@@ -1456,10 +1349,6 @@ impl InMemoryLocalPubSubDirectory {
             entry.remove();
         } else {
             track.report_upstream_forward(&track_key);
-            drop(entry);
-        }
-        for publisher_session_id in released_published {
-            self.forget_published_handler(publisher_session_id, &track_key);
         }
         Some(RemovedDownstreamSubscription {
             track_key,
@@ -1504,7 +1393,7 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::{
         client_subscription, delivery_control, downstream_subscription, namespaces_and_tracks,
     };
-    use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
+    use crate::modules::test_support::mock_session::runner_stopped;
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
     use tokio::sync::{mpsc, oneshot::error::TryRecvError};
 
@@ -1629,8 +1518,8 @@ mod tests {
         assert!(!table.has_track_publisher(&track_key));
     }
 
-    #[test]
-    fn remove_session_cleans_up_all_session_scoped_entries() {
+    #[tokio::test]
+    async fn remove_session_cleans_up_all_session_scoped_entries() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
 
@@ -1651,11 +1540,7 @@ mod tests {
             "solo".to_string(),
             namespaces_and_tracks(SessionPeer::Client),
         );
-        table.register_publish(
-            1,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("room/member", "video", 10)),
-        );
+        register_client_publish(&table, 1, &TrackKey::new("room/member", "video"));
 
         // Act: Remove all state associated with session 1.
         let removed = table.remove_session(1);
@@ -1943,8 +1828,8 @@ mod tests {
         assert!(under_longer_field.is_empty());
     }
 
-    #[test]
-    fn matching_publications_match_the_prefix_field_by_field() {
+    #[tokio::test]
+    async fn matching_publications_match_the_prefix_field_by_field() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         for track_namespace in ["APP/site1/cam1", "APP/site10", "APP/site10/cam1"] {
@@ -1954,11 +1839,7 @@ mod tests {
                 track_namespace.to_string(),
                 SessionPeer::Client,
             );
-            table.register_publish(
-                1,
-                SessionPeer::Client,
-                Arc::new(MockPublishHandler::new(track_namespace, "video", 10)),
-            );
+            register_client_publish(&table, 1, &TrackKey::new(track_namespace, "video"));
         }
 
         // Act
@@ -2191,23 +2072,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn allows_multiple_publishers_for_the_same_namespace_and_track() {
+    #[tokio::test]
+    async fn allows_multiple_publishers_for_the_same_namespace_and_track() {
         // Arrange: Register multiple publishers for the same namespace and track.
         let table = InMemoryLocalPubSubDirectory::new();
+        let track_key = TrackKey::new("room/member", "video");
 
         table.register_publish_namespace(1, 0, "room/member".to_string(), SessionPeer::Client);
         table.register_publish_namespace(2, 0, "room/member".to_string(), SessionPeer::Client);
-        table.register_publish(
-            1,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("room/member", "video", 10)),
-        );
-        table.register_publish(
-            2,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new("room/member", "video", 20)),
-        );
+        register_client_publish(&table, 1, &track_key);
+        register_client_publish(&table, 2, &track_key);
 
         // Act: Find upstream publishers available for subscribe.
         let upstream_publishers = table.find_upstream_publishers("room/member", "video");
@@ -2216,22 +2090,14 @@ mod tests {
         assert_eq!(upstream_publishers, vec![1, 2]);
     }
 
-    #[test]
-    fn a_track_stays_client_published_while_another_client_publishes_it() {
+    #[tokio::test]
+    async fn a_track_stays_client_published_while_another_client_publishes_it() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let track_key = TrackKey::new("room/member", "video");
-        for (session_id, peer) in [
-            (1, SessionPeer::Client),
-            (2, SessionPeer::Client),
-            (3, SessionPeer::Relay),
-        ] {
-            table.register_publish(
-                session_id,
-                peer,
-                Arc::new(MockPublishHandler::new("room/member", "video", 10)),
-            );
-        }
+        register_client_publish(&table, 1, &track_key);
+        register_client_publish(&table, 2, &track_key);
+        register_relay_publish(&table, 3, &track_key);
 
         // Act
         table.remove_session(1);
@@ -3220,27 +3086,34 @@ mod tests {
         session_id: SessionId,
         track_key: &TrackKey,
     ) {
-        table.register_publish(
+        table.register_published_subscription(
+            track_key.clone(),
             session_id,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new(
-                &track_key.track_namespace,
-                &track_key.track_name,
-                10,
-            )),
+            producer(ProducerOrigin::Publish),
         );
     }
 
-    #[test]
-    fn upstream_publishers_are_the_clients_publishing_exactly_the_track() {
+    fn register_relay_publish(
+        table: &InMemoryLocalPubSubDirectory,
+        session_id: SessionId,
+        track_key: &TrackKey,
+    ) {
+        table.register_published_subscription(
+            track_key.clone(),
+            session_id,
+            producer_with(ProducerState {
+                peer: SessionPeer::Relay,
+                ..active_upstream(ProducerOrigin::Publish)
+            }),
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_publishers_are_the_clients_publishing_exactly_the_track() {
         // Arrange: no session publishes the namespace, so only PUBLISHes count
         let table = InMemoryLocalPubSubDirectory::new();
         register_client_publish(&table, 1, &TrackKey::new("room/member", "video"));
-        table.register_publish(
-            2,
-            SessionPeer::Relay,
-            Arc::new(MockPublishHandler::new("room/member", "video", 10)),
-        );
+        register_relay_publish(&table, 2, &TrackKey::new("room/member", "video"));
         register_client_publish(&table, 3, &TrackKey::new("room/other", "video"));
         register_client_publish(&table, 4, &TrackKey::new("room/member", "audio"));
 
@@ -3249,36 +3122,6 @@ mod tests {
 
         // Assert: a relay's PUBLISH is found through the route registry instead
         assert_eq!(upstream_publishers, vec![1]);
-    }
-
-    #[tokio::test]
-    async fn publish_done_unregisters_only_the_publish_handler_of_its_session_and_track() {
-        // Arrange
-        let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
-        let other_track_key = TrackKey::new(&track_key.track_namespace, "other");
-        register_client_publish(&table, PUBLISHER_SESSION, &track_key);
-        register_client_publish(&table, PUBLISHER_SESSION, &other_track_key);
-        register_client_publish(&table, SECOND_PUBLISHER_SESSION, &track_key);
-
-        // Act
-        table.end_upstream_subscription(
-            PUBLISHER_SESSION,
-            UPSTREAM_REQUEST_ID,
-            PublishDoneReason::publisher_session_closed(),
-        );
-
-        // Assert
-        assert_eq!(
-            table.find_upstream_publishers(&track_key.track_namespace, &track_key.track_name),
-            vec![SECOND_PUBLISHER_SESSION]
-        );
-        assert_eq!(
-            table.find_upstream_publishers(
-                &other_track_key.track_namespace,
-                &other_track_key.track_name
-            ),
-            vec![PUBLISHER_SESSION]
-        );
     }
 
     #[test]
@@ -3357,24 +3200,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_publish_replacing_the_sessions_earlier_publish_of_the_track_drops_its_handler() {
-        // Arrange
-        let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
-        register_client_publish(&table, PUBLISHER_SESSION, &track_key);
-
-        // Act
-        let (_, replaced) = table.register_upstream_subscription(
-            track_key.clone(),
-            PUBLISHER_SESSION,
-            producer(ProducerOrigin::Publish),
-        );
-
-        // Assert: the new PUBLISH registers its own handler afterwards
-        assert!(replaced.is_some());
-        assert!(!table.has_client_published_track(&track_key));
-    }
-
-    #[tokio::test]
     async fn published_upstream_subscription_ignores_a_subscribe_initiated_producer() {
         // Arrange
         let (table, published_track_key) = table_with_upstream(ProducerOrigin::Publish);
@@ -3397,7 +3222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_last_subscriber_leaving_keeps_a_published_track_and_its_handler() {
+    async fn the_last_subscriber_leaving_keeps_a_published_track() {
         // Arrange
         let (table, track_key) = published_track_with_one_subscriber(false);
 
@@ -3410,7 +3235,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_last_subscriber_leaving_a_draining_relay_drops_the_handler_of_the_publish() {
+    async fn the_last_subscriber_leaving_a_draining_relay_releases_the_publish() {
         // Arrange
         let (table, track_key) = published_track_with_one_subscriber(true);
 
@@ -3425,13 +3250,12 @@ mod tests {
         assert!(!table.has_client_published_track(&track_key));
     }
 
-    /// A track a client PUBLISHed, with its handler, and the one downstream
-    /// subscription 100 of session 2.
+    /// A track a client PUBLISHed and the one downstream subscription 100 of
+    /// session 2.
     fn published_track_with_one_subscriber(
         draining: bool,
     ) -> (InMemoryLocalPubSubDirectory, TrackKey) {
         let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
-        register_client_publish(&table, PUBLISHER_SESSION, &track_key);
         if draining {
             table.begin_draining(0);
         }

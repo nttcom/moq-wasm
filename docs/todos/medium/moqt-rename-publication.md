@@ -4,7 +4,7 @@ Next: rename `Publication` and `PublicationTarget` in `crates/moqt/src/modules/m
 
 ## Goal
 
-No MoQT state is called a publication, as the Naming rule in `.agents/rules/coding-style.md` requires: `moqt` `Publication` (`crates/moqt/src/modules/moqt/domains/origin.rs:137`, the state of a served track), `relay` `MatchingPublication` (`services/relay/src/modules/directory/track.rs:472`), `live-translate` `CatalogPublication`, the meeting example's `TrackPublication` and `cross-version-e2e`'s `Publication` (`tests/cross-version-e2e/src/main.rs:99`) name a track or a subscription instead.
+No MoQT state is called a publication, as the Naming rule in `.agents/rules/coding-style.md` requires: `moqt` `Publication` (`crates/moqt/src/modules/moqt/domains/origin.rs:137`, the state of a served track), `relay` `MatchingPublication` (`services/relay/src/modules/directory/track.rs:481`), `live-translate` `CatalogPublication`, the meeting example's `TrackPublication` and `cross-version-e2e`'s `Publication` (`tests/cross-version-e2e/src/main.rs:99`) name a track or a subscription instead.
 `recorder` `Publication` (`services/recorder/src/recordings.rs:50`) is a replay of a recording, not MoQT state; name it after the replay.
 
 ## Plan

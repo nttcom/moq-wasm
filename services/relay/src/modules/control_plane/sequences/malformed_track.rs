@@ -49,18 +49,14 @@ impl MalformedTrackCleanup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::ProducerOrigin,
-        domain::{session_id::SessionId, session_peer::SessionPeer},
+        domain::session_id::SessionId,
         test_support::{
             directory_fixtures::{
-                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
-                upstream_release_context,
+                UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key, upstream_release_context,
             },
-            mock_session::MockPublishHandler,
             stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
     };
@@ -141,18 +137,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn detection_of_a_published_track_unregisters_its_publish_handler_and_route() {
+    async fn detection_of_a_published_track_withdraws_its_route() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Publish).await;
-        ctx.table.register_publish(
-            PUBLISHER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new(
-                &track_key().track_namespace,
-                &track_key().track_name,
-                10,
-            )),
-        );
         let route_registry = StubRouteRegistry::new(PublisherLookup::MustNotBeCalled);
 
         // Act

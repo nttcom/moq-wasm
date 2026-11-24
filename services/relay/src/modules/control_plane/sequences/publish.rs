@@ -1,5 +1,4 @@
 use moqt::{RequestErrorCode, namespace::NamespaceInterest};
-use std::sync::Arc;
 
 use crate::modules::{
     cascading::{
@@ -40,7 +39,6 @@ impl Publish {
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: Box<dyn PublishHandler>,
     ) {
-        let handler: Arc<dyn PublishHandler> = Arc::from(handler);
         let upstream_subscription = handler.subscription(0, FilterType::LargestObject);
         tracing::debug!(
             session_id = %session_id,
@@ -75,7 +73,7 @@ impl Publish {
                 table,
                 forwarder,
                 cache_store,
-                handler.clone(),
+                handler.as_ref(),
                 &upstream_subscription,
             )
             .await
@@ -263,7 +261,7 @@ impl Publish {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cache_store: &TrackCacheStore,
-        handler: Arc<dyn PublishHandler>,
+        handler: &dyn PublishHandler,
         subscription: &UpstreamSubscription,
     ) -> anyhow::Result<bool> {
         let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
@@ -300,7 +298,6 @@ impl Publish {
             track_key,
             session_id,
             Producer::new(state, ingest),
-            handler,
         )
         .await)
     }

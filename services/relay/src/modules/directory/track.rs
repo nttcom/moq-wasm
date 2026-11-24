@@ -316,6 +316,15 @@ impl Track {
         }
     }
 
+    /// The sessions that PUBLISHed the track, each with its peer: a producer
+    /// of origin `Publish` is the relay's whole record of a PUBLISH.
+    pub(crate) fn publishers(&self) -> impl Iterator<Item = (SessionId, SessionPeer)> {
+        self.producers
+            .iter()
+            .filter(|(_, producer)| producer.state.origin == ProducerOrigin::Publish)
+            .map(|(session_id, producer)| (*session_id, producer.state.peer))
+    }
+
     pub(crate) fn has_client_consumer(&self) -> bool {
         self.consumers
             .values()

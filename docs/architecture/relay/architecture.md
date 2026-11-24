@@ -307,10 +307,9 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
     `Producer` of the track, since the cache latch makes the whole track
     malformed whichever publisher's object conflicted, and send each
     publisher UNSUBSCRIBE (§2.5 MUST); dropping the producers stops their
-    ingests. As on PUBLISH_DONE, a removed PUBLISH's handler is forgotten
-    and the track's route withdrawn once no client PUBLISH of it remains
-    (`Publish::withdraw_track_route`). Duplicate reports are idempotent (the track entry is only found
-    once).
+    ingests. As on PUBLISH_DONE, the track's route is withdrawn once no
+    client PUBLISH of it remains (`Publish::withdraw_track_route`).
+    Duplicate reports are idempotent (the track entry is only found once).
   - `ProtocolViolationDetected { reason }`, raised when a subgroup object
     carries an Object Status draft-14 §10.2.1.1 does not define. The worker
     closes the session with PROTOCOL_VIOLATION (`Session::close_with_error`);
@@ -499,8 +498,8 @@ to the track the same way.
    answers PUBLISH_ERROR INTERNAL_ERROR, like PUBLISH_NAMESPACE.
 2. Start the ingest and add the publisher to the `Track` as a `Producer` of
    origin `Publish` (it survives without consumers), which replaces and
-   unsubscribes a SUBSCRIBE-initiated producer of the same publisher, and
-   register the PUBLISH for namespace lookups.
+   unsubscribes a SUBSCRIBE-initiated producer of the same publisher. That
+   producer is the relay's whole record of the PUBLISH.
 3. Forward PUBLISH to every local session whose namespace subscription for a
    matching prefix asks for tracks (draft-14 §8.4, draft-18 §9.5: a
    SUBSCRIBE_TRACKS, not a SUBSCRIBE_NAMESPACE), with that subscription's
@@ -1626,15 +1625,13 @@ no list of relays and no session to each.
   exists.
 - **An ended upstream is announced downstream**: every downstream subscription
   removed because its track's last upstream subscription ended receives PUBLISH_DONE, always
-  after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
-  also unregisters that PUBLISH, so the ended track is no longer resolved.
-- **A PUBLISH handler lives exactly as long as its producer**:
-  `register_published_subscription` inserts the producer and registers its
-  handler while it holds the track entry, and every release of a
-  PUBLISH-initiated producer forgets the handler after it lets go of the
-  entry. A release racing the PUBLISH, such as the last subscriber leaving a
-  draining relay, therefore never leaves a handler, nor the client route it
-  keeps (`has_client_published_track`), for a track that has no entry.
+  after its SUBSCRIBE_OK.
+- **A PUBLISH is its producer**: the tracks a session PUBLISHed are the ones
+  it holds a producer of origin `Publish` of (`Track::publishers`).
+  Publisher resolution, the publications a namespace subscription is offered
+  and the ownership of a track's route (`has_client_published_track`) read
+  the producers, so a PUBLISH that ended or was released is found by none of
+  them.
 - **A forwarded PUBLISH is a downstream subscription**: every PUBLISH the
   relay sends and the receiver accepts is registered and served by an egress
   runner like a SUBSCRIBE, so it carries objects and ends with PUBLISH_DONE.
