@@ -17,6 +17,8 @@ export class PlayerControls {
   readonly seekbar: HTMLInputElement
   private seeking = false
   private pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
+  private readonly markup: ChildNode[]
+  private readonly listeners = new AbortController()
 
   private readonly onLog: (level: LogLevel, message: string) => void
 
@@ -32,10 +34,22 @@ export class PlayerControls {
     container.classList.add('viewer-stage')
     const template = document.createElement('template')
     template.innerHTML = CONTROLS_MARKUP
+    this.markup = Array.from(template.content.childNodes)
     container.append(template.content)
     this.seekbar = this.part<HTMLInputElement>('seekbar')
     this.part<HTMLButtonElement>('quality-button').popoverTargetElement = this.part('quality-menu')
     this.bind()
+  }
+
+  /// Takes the controls out of the container and stops listening to it and to
+  /// the page's keys.
+  dispose(): void {
+    this.listeners.abort()
+    clearTimeout(this.pointerIdleTimer)
+    for (const node of this.markup) {
+      node.remove()
+    }
+    this.container.classList.remove('viewer-stage', 'pointer-idle')
   }
 
   render(): void {
@@ -87,21 +101,26 @@ export class PlayerControls {
     for (const part of ['min-buffer', 'max-buffer']) {
       this.part(part).addEventListener('change', () => this.applyBufferPolicy())
     }
-    this.container.addEventListener('fullscreenchange', () => this.renderFullscreen())
+    const { signal } = this.listeners
+    this.container.addEventListener('fullscreenchange', () => this.renderFullscreen(), { signal })
     for (const type of ['pointermove', 'pointerdown', 'keydown']) {
-      this.container.addEventListener(type, () => this.markPointerActive())
+      this.container.addEventListener(type, () => this.markPointerActive(), { signal })
     }
     for (const button of Array.from(this.container.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
       button.addEventListener('click', () => player.skip(Number(button.dataset.skipSeconds)))
     }
-    document.addEventListener('keydown', (event) => {
-      const seconds = SKIP_SECONDS_BY_KEY[event.key]
-      if (seconds === undefined || this.usesArrowKeys(event.target)) {
-        return
-      }
-      event.preventDefault()
-      player.skip(seconds)
-    })
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        const seconds = SKIP_SECONDS_BY_KEY[event.key]
+        if (seconds === undefined || this.usesArrowKeys(event.target)) {
+          return
+        }
+        event.preventDefault()
+        player.skip(seconds)
+      },
+      { signal }
+    )
     seekbar.addEventListener('input', () => {
       this.seeking = true
       this.renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max), player.state.isLive)
