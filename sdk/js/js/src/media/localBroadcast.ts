@@ -18,6 +18,12 @@ import type { SourcePublicationStats } from './internal/encoders/publishStats'
 
 const TARGET = 'moq-wasm::media::local_broadcast'
 
+const AUDIO_TRACK_EVENT_MESSAGES = {
+  mute: 'audio track muted',
+  unmute: 'audio track unmuted',
+  ended: 'audio track ended'
+} as const
+
 /// A JSON event timeline (draft-ietf-moq-msf-02 §8) the catalog lists.
 export type EventTimelineOffer = {
   name: string
@@ -338,13 +344,14 @@ async function captureInputs(inputs: Partial<Record<MediaKind, TrackInput>>): Pr
   return [...given, ...owned(await navigator.mediaDevices.getUserMedia(constraints))]
 }
 
-/// Where a source publishes, which its stats are about.
+/// Where a source publishes, which its logs and stats are about.
 type SourceIdentity = { session: MoqSession; namespace: string[]; name: string }
 
 class Source implements LocalSource {
   readonly stream = new MediaStream()
   readonly name: string
   private readonly tracks = new Map<MediaKind, CapturedTrack>()
+  private stopAudioTrackLog: (() => void) | undefined
   private readonly listeners = new Set<LocalSourceListener>()
   private readonly unregisterStats: () => void
   private closed = false
@@ -437,6 +444,30 @@ class Source implements LocalSource {
     if (captured.owned) {
       captured.track.addEventListener('ended', () => void this.trackEnded(captured), { once: true })
     }
+    if (captured.kind === 'audio') {
+      this.stopAudioTrackLog = this.logTrackEvents(captured.track)
+    }
+  }
+
+  /// Logs when the browser mutes, unmutes or ends `track`, such as when another
+  /// app takes the microphone or a Bluetooth headset disconnects. The returned
+  /// function stops the logging.
+  private logTrackEvents(track: MediaStreamTrack): () => void {
+    const { session, namespace, name } = this.identity
+    const controller = new AbortController()
+    for (const type of ['mute', 'unmute', 'ended'] as const) {
+      track.addEventListener(
+        type,
+        () =>
+          sdkLog(session, 'info', TARGET, AUDIO_TRACK_EVENT_MESSAGES[type], {
+            track_namespace: namespace.join('/'),
+            track_name: audioTrackName(name),
+            ready_state: track.readyState
+          }),
+        { signal: controller.signal }
+      )
+    }
+    return () => controller.abort()
   }
 
   private detach(kind: MediaKind): void {
@@ -445,6 +476,10 @@ class Source implements LocalSource {
       return
     }
     this.tracks.delete(kind)
+    if (kind === 'audio') {
+      this.stopAudioTrackLog?.()
+      this.stopAudioTrackLog = undefined
+    }
     this.stream.removeTrack(captured.track)
     release([captured])
   }

@@ -505,6 +505,7 @@ renderGroup（§5.2.12）を使わない理由は「足す機能」の節と同�
 | `source.setMuted(kind, muted)` / `source.isMuted(kind)` | デバイスを掴んだまま、送るのを止める |
 | `source.stream` | 送っている track の `MediaStream`。自分のプレビューに使う。track を替えても同じ stream の中で差し替える |
 | `source.stats()` | `publish()` の `SourcePublication.stats()` と同じ（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数）。音声は encoder に入った `AudioData` の直近1秒の数、最新のサンプルレートと ch 数、RFC 6464 の音量（dBov）の最小とパワー平均も持つ。encoder worker が `AudioData` ごとに `{ type: 'input' }` を postMessage して数える |
+| （ログ） | source の音声 track（`setAudio` で替えたものを含む）の `mute` / `unmute` / `ended` を、その時の `readyState` とともに INFO で書く（`audio track muted` など）。track を外すと書かなくなる |
 | `source.listen({ onTrackEnded, onEnded })` | `onTrackEnded(kind)` は SDK が取ったその kind の track が終わった（デバイスが抜かれた）とき、`onEnded` は source の track がすべて終わった（ブラウザの「共有を停止」）とき。SDK は track や source を外してから呼ぶ。ページが渡した track の終了はページが扱う（取り直して `setAudio` で差し替えるなど） |
 
 `input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` である。
