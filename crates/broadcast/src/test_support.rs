@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, vp8::Vp8Config};
+use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, mp4::Demuxer, vp8::Vp8Config};
 
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, SessionEvent,
@@ -30,6 +30,29 @@ pub(crate) fn keyframe_at(pts_us: u64) -> MediaEvent {
         pts: Timestamp::from_micros(pts_us),
         dts: Timestamp::from_micros(pts_us),
     })
+}
+
+/// The largest gap between a time and the one its CMAF fragment decodes at:
+/// a tick of the 90 kHz video timescale, rounded up to whole microseconds.
+pub(crate) const VIDEO_TICK_US: u64 = 12;
+
+/// The decode time of each sample `fragments` hold, read back through
+/// `init_segment`.
+pub(crate) fn decode_times(init_segment: &[u8], fragments: &[Bytes]) -> Vec<Timestamp> {
+    let mut demuxer = Demuxer::new();
+    let mut events = demuxer.push(init_segment).unwrap();
+    for fragment in fragments {
+        events.extend(demuxer.push(fragment).unwrap());
+    }
+    events.extend(demuxer.finish().unwrap());
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            MediaEvent::Video(sample) => Some(sample.dts),
+            MediaEvent::Audio(sample) => Some(sample.pts),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A server config with a self-signed certificate written under a temporary
