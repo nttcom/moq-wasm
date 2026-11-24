@@ -5,6 +5,7 @@ use object_store::{
     ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, UpdateVersion, path::Path,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use url::Url;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +38,9 @@ pub(crate) struct BotRecord {
     /// SHA-256 of the key a locally launched bot authenticates with, in hex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) key_sha256: Option<String>,
+    /// What the bot's latest heartbeat reported it produces, specific to its type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) output: Option<Map<String, Value>>,
 }
 
 /// The room's current holder for one bot type.
@@ -205,7 +209,22 @@ impl BotStore {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::test_support::temporary_store;
+
+    #[test]
+    fn a_record_stored_without_an_output_still_reads() {
+        // Arrange
+        let stored = r#"{"id": "b1", "bot_type": "recorder", "app_id": "app",
+                         "namespace_prefix": "app/a", "state": "running",
+                         "created_at_ms": 1, "updated_at_ms": 2}"#;
+
+        // Act
+        let record: BotRecord = serde_json::from_str(stored).unwrap();
+
+        // Assert
+        assert_eq!(record.output, None);
+    }
 
     #[tokio::test]
     async fn a_room_is_taken_once_until_its_holder_is_replaced() {

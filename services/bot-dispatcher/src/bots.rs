@@ -6,7 +6,7 @@ use aws_lc_rs::{
 };
 use google_cloud::IdTokenVerifier;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::{
     bot_types::BotTypes,
@@ -63,6 +63,8 @@ pub(crate) struct BotView {
     pub(crate) error: Option<String>,
     pub(crate) created_at_ms: u64,
     pub(crate) updated_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) output: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +72,10 @@ pub(crate) struct Heartbeat {
     pub(crate) state: BotState,
     #[serde(default)]
     pub(crate) error: Option<String>,
+    /// What the bot produces, specific to its type. It replaces what the
+    /// last heartbeat reported, so `None` leaves the bot with none.
+    #[serde(default)]
+    pub(crate) output: Option<Map<String, Value>>,
 }
 
 pub(crate) struct Bots {
@@ -159,6 +165,7 @@ impl Bots {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
             key_sha256: key.as_deref().map(sha256_hex),
+            output: None,
         };
         self.store
             .write(&record)
@@ -242,6 +249,7 @@ impl Bots {
             error,
             created_at_ms: record.created_at_ms,
             updated_at_ms: record.updated_at_ms,
+            output: record.output.clone(),
         })
     }
 
@@ -312,6 +320,7 @@ impl Bots {
             state: heartbeat.state,
             error: heartbeat.error,
             updated_at_ms: now_ms,
+            output: heartbeat.output,
             ..record
         };
         self.store.write(&updated).await?;
@@ -392,6 +401,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use auth_token::{decode_unverified_payload, verify_signature};
+    use serde_json::json;
 
     use super::*;
     use crate::test_support::{TestBots, test_bots};
@@ -413,7 +423,11 @@ mod tests {
     }
 
     fn heartbeat(state: BotState) -> Heartbeat {
-        Heartbeat { state, error: None }
+        Heartbeat {
+            state,
+            error: None,
+            output: None,
+        }
     }
 
     #[tokio::test]
@@ -666,5 +680,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(latest.unwrap().state, BotState::Running);
+    }
+
+    #[tokio::test]
+    async fn the_output_is_what_the_latest_heartbeat_reported() {
+        // Arrange
+        let test = test_bots();
+        let bot = started(&test, "app/a").await;
+        let output = |id: &str| json!({ "recording_id": id }).as_object().cloned();
+        let beat = |output| Heartbeat {
+            output,
+            ..heartbeat(BotState::Running)
+        };
+
+        // Act
+        test.bots
+            .heartbeat("recorder", &bot.id, Some(KEY), beat(output("r1")), NOW)
+            .await
+            .unwrap();
+        let reported = test.bots.latest("recorder", "app/a", NOW).await.unwrap();
+        test.bots
+            .heartbeat("recorder", &bot.id, Some(KEY), beat(None), NOW)
+            .await
+            .unwrap();
+        let dropped = test.bots.latest("recorder", "app/a", NOW).await.unwrap();
+        test.bots
+            .heartbeat("recorder", &bot.id, Some(KEY), beat(output("r2")), NOW)
+            .await
+            .unwrap();
+        let replaced = test.bots.latest("recorder", "app/a", NOW).await.unwrap();
+
+        // Assert
+        assert_eq!(bot.output, None);
+        assert_eq!(reported.unwrap().output, output("r1"));
+        assert_eq!(dropped.unwrap().output, None);
+        assert_eq!(replaced.unwrap().output, output("r2"));
+    }
+
+    #[test]
+    fn a_heartbeat_whose_output_is_not_an_object_is_malformed() {
+        // Act
+        let parsed = serde_json::from_value::<Heartbeat>(json!({
+            "state": "running",
+            "output": "r1",
+        }));
+
+        // Assert
+        assert!(parsed.is_err());
     }
 }
