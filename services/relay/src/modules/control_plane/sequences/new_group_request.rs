@@ -83,15 +83,16 @@ mod tests {
 
     use moqt::{
         Session, SessionEvent,
+        namespace::NamespaceInterest,
         publish::{GroupBoundary, MIN_GROUP_OBJECTS, Origin, OutgoingObject, Retention},
-        subscribe::SubscribeOption,
+        subscribe::{FilterType, SubscribeOption},
     };
     use tokio::{sync::Notify, task::JoinHandle};
 
     use crate::modules::{
         auth::test_support::{app_token, connect_draft18_client, spawn_draft18_relay},
         test_support::{
-            relay_clients::{NAMESPACE, TRACK, publish_namespace, subscribe_track},
+            relay_clients::{NAMESPACE, TRACK, next_event, publish_namespace, subscribe_track},
             within,
         },
     };
@@ -203,6 +204,35 @@ mod tests {
 
         // Assert
         assert!(sent, "the relay did not pass DYNAMIC_GROUPS downstream");
+        assert!(asked);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_new_group_request_in_a_publish_ok_reaches_the_publisher() {
+        // Arrange: the subscriber asks for the PUBLISH of each track in the namespace
+        let relay = spawn_draft18_relay(app_token(Some(""), Some("")));
+        let publisher = DynamicGroupPublisher::run(connect_draft18_client(&relay).await).await;
+        publisher.publish().await;
+        let subscriber = connect_draft18_client(&relay).await;
+        within(
+            subscriber
+                .subscriber()
+                .subscribe_namespace(NAMESPACE.to_string(), NamespaceInterest::Tracks),
+        )
+        .await
+        .unwrap();
+        let SessionEvent::Publish(mut handler) = next_event(&subscriber).await else {
+            panic!("expected PUBLISH from the relay");
+        };
+        handler.new_group_request = Some(0);
+
+        // Act
+        let _subscription = within(handler.ok(128, FilterType::LargestObject, true))
+            .await
+            .unwrap();
+        let asked = publisher.is_asked_for_a_new_group().await;
+
+        // Assert
         assert!(asked);
     }
 

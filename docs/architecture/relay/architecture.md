@@ -683,14 +683,16 @@ unneeded. The relay itself never branches on the draft.
 
 ### NEW_GROUP_REQUEST sequence
 A subscriber asks the Original Publisher for a new group with
-NEW_GROUP_REQUEST (draft-18 §10.2.13), in a SUBSCRIBE or a REQUEST_UPDATE.
+NEW_GROUP_REQUEST (draft-18 §10.2.13), in a SUBSCRIBE, a REQUEST_UPDATE or
+the PUBLISH_OK that answers the relay's PUBLISH.
 `sequences/new_group_request.rs` passes it upstream:
 
 - The SUBSCRIBE that creates the track: every upstream SUBSCRIBE carries the
   parameter (`PendingProducerTask`), and the track's `NewGroupRequestGate`
   records it as sent.
-- A SUBSCRIBE to an established track, after its SUBSCRIBE_OK, and a
-  REQUEST_UPDATE, after the SUBSCRIBE_UPDATE sequence applied it: the relay
+- A SUBSCRIBE to an established track, after its SUBSCRIBE_OK, a
+  REQUEST_UPDATE, after the SUBSCRIBE_UPDATE sequence applied it, and a
+  PUBLISH_OK, after `sequences/downstream_publish.rs` started its egress: the relay
   sends a REQUEST_UPDATE with the same value on the upstream subscription of
   every publisher whose track properties carry DYNAMIC_GROUPS (§12.6), both
   those it subscribed to and those that sent PUBLISH.

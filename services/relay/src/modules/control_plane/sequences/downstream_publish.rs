@@ -11,7 +11,10 @@ use crate::modules::{
     cascading::route_registry::RelayRouteRegistry,
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::{EgressRequest, start_egress, subscribe::existing_track_largest},
+        sequences::{
+            EgressRequest, new_group_request::NewGroupRequest, start_egress,
+            subscribe::existing_track_largest,
+        },
     },
     data_plane::cache::store::TrackCacheStore,
     directory::InMemoryLocalPubSubDirectory,
@@ -101,6 +104,7 @@ impl DownstreamPublish {
         };
         let subscriber_peer = super::session_peer(subscriber_session_id, &self.forwarder).await;
 
+        let new_group_request = downstream_subscription.publish_ok_new_group_request();
         let filter_type = downstream_subscription.filter_type();
         let Some(runner_signals) = self.table.register_downstream_subscription(
             forwarding.entry(),
@@ -152,6 +156,18 @@ impl DownstreamPublish {
         .await
         {
             bail!("subscriber session left before its egress started");
+        }
+        if let Some(new_group_request) = new_group_request {
+            NewGroupRequest
+                .handle(
+                    subscriber_session_id,
+                    track_key,
+                    new_group_request,
+                    &self.table,
+                    &self.cache_store,
+                    &self.forwarder,
+                )
+                .await;
         }
         Ok(())
     }
