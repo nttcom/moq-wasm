@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use mediapack::{
     MediaEvent,
-    loc::{VideoCodec, to_extension_headers},
+    loc::{Muxer as LocMuxer, VideoCodec, to_extension_headers},
 };
 use moqt::publish::{GroupBoundary, OutgoingObject, TrackDemand};
 use tokio::sync::{Notify, mpsc};
@@ -126,13 +126,15 @@ impl RenditionTrack {
                     Some(cmaf) => cmaf.push(&sample, group)?,
                     None => None,
                 };
-                let muxer = match self.config.keyframes {
-                    RenditionKeyframes::FollowSource => *self.timing.loc.get().context(
-                        "rendition sample before the source seeded the LOC capture origin",
-                    )?,
-                    RenditionKeyframes::SameFrames => *self.timing.loc_muxer(sample.pts),
-                }
-                .with_video_codec(self.video_codec);
+                let capture_origin = match self.config.keyframes {
+                    RenditionKeyframes::FollowSource => {
+                        self.timing.seeded_capture_origin().context(
+                            "rendition sample before the source seeded the LOC capture origin",
+                        )?
+                    }
+                    RenditionKeyframes::SameFrames => self.timing.capture_origin(sample.pts),
+                };
+                let muxer = LocMuxer::new(capture_origin).with_video_codec(self.video_codec);
                 if let Some(object) = muxer.push(&MediaEvent::Video(sample)) {
                     self.broadcast
                         .send_object(
