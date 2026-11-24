@@ -56,7 +56,8 @@ test('live viewer plays a recorder replay as VOD, through FETCH alone, to its en
       .filter((track) => track !== undefined)
     expect(subscribed.sort()).toEqual([`${namespace}/catalog`, `${namespace}/video_timeline`])
 
-    // Act
+    // Act: the buttons over the picture take a click only while the pointer is on the stage
+    await viewer.seekbar.hover()
     await viewer.playPauseButton.click()
 
     // Assert: playing again starts over
