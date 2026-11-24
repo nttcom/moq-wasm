@@ -50,7 +50,7 @@ sequenceDiagram
     participant S as Transcriber bot
     participant R as Relay
     participant B as Page (bob)
-    A->>S: POST /bots/transcriber (through temporary-apps and bots)
+    A->>S: POST /bots/transcriber (through temporary-apps and bot-dispatcher)
     S->>R: connect, SUBSCRIBE_NAMESPACE {root}/{room}/
     R->>S: PUBLISH_NAMESPACE {root}/{room}/alice, .../bob
     S->>R: PUBLISH_NAMESPACE {root}/{room}/bots/transcriber
@@ -71,8 +71,8 @@ in a temporary app's room. A registered app's server can start it in its own
 rooms through `bot-dispatcher`.
 
 ### Starting and stopping
-The Meeting page gains a captions button in the bottom bar. Choosing a model
-from it sends `POST /bots/transcriber` with the room as `namespace_prefix` and
+The Meeting page has an STT section in the Activities menu of the bottom bar.
+Choosing a model from it sends `POST /bots/transcriber` with the room as `namespace_prefix` and
 the model as the option `asr`; `bot-dispatcher` launches one bot per room, and answers
 `409` while the room runs one. The bot joins the room with the token `bot-dispatcher`
 signs for it and sends a heartbeat every 5 s. Until the bot's namespace
@@ -83,8 +83,8 @@ The bot ends by itself once the room has had no participant, nor the words of
 one who left still to transcribe, for 30 s, counted from its start too, and at
 the hour `bot-dispatcher` allows it. It follows the room's namespace until
 then, so a participant who joins while the words of one who left are
-transcribed is heard and starts the 30 s over. Stop transcription in the
-button's menu asks for confirmation, then sends
+transcribed is heard and starts the 30 s over. Stop transcription in that
+menu asks for confirmation, then sends
 `DELETE /bots/transcriber/{id}`, which the bot learns at its next heartbeat;
 it then leaves the room for every page.
 
@@ -97,10 +97,8 @@ it then leaves the room for every page.
   group the relay holds (`subscribe_current_group`): the relay already serves the
   catalog to the other participants, and a SUBSCRIBE alone would deliver
   nothing until the catalog changes. The subscription follows catalog updates.
-- From the catalog it picks the audio track the Meeting's viewers pick, the
-  one with the highest bitrate (`pickHighestBitrateTrack`). The publisher
-  encodes a profile only while someone subscribes to it, so another choice
-  would start an extra encoder in the participant's browser.
+- From the catalog it picks the Opus LOC audio track with the lowest bitrate
+  (`MoqWasmParticipantInput`).
 - When the audio track ends (mute), the bot subscribes again a second later.
   When the catalog switches to another track, the bot unsubscribes from the
   old one, so the participant's browser stops encoding it if no one else
@@ -115,9 +113,9 @@ it then leaves the room for every page.
 Each participant gets a pipeline of `VADProcessor(SileroVADAnalyzer())` and an
 STT service. The language is fixed to Japanese, since language detection on a
 short utterance guesses wrong more often than a demo of a Japanese meeting
-gains from it. The Opus packets of the participant's audio objects are
-decoded with PyAV and pushed as `UserAudioRawFrame`s whose `user_id` is the
-participant's user name. The STT service is a `SegmentedSTTService` subclass
+gains from it. `MoqWasmParticipantInput` (the Python SDK) decodes the Opus
+packets of the participant's audio objects with PyAV and pushes them as
+`UserAudioRawFrame`s whose `user_id` is the participant's user name. The STT service is a `SegmentedSTTService` subclass
 that dates each utterance (below) and hands the segment to one of five speech
 recognizers:
 
@@ -138,10 +136,9 @@ recognizers:
   Whisper's encoder always reads a 30 s window: on Cloud Run's 4 vCPU,
   `medium` took about 6 s per segment, and a speaker who paused more often
   than that fell further behind with every segment. A participant's segments
-  that close while the recognizer is busy are therefore transcribed together
-  in the next call, as one record dated from the first. The default is
-  `small`, about 2.7 times faster than `medium`, so the delay after the last
-  segment stays within about two calls.
+  that close while the recognizer is busy wait in a queue and are transcribed
+  in order, one record each. The default is `small`, about 2.7 times faster
+  than `medium`.
 - `granite-speech-5-470m`: a CTC model, so one pass of its encoder writes
   the whole segment, with no window to fill as Whisper's. It takes no
   language and writes what it hears. All pipelines share one model, as with
@@ -231,7 +228,7 @@ collide with it. The track is `transcript`, an MSF event timeline
 - A speaker's live records from the last 5 s appear at the bottom of their
   tile, joined and cut to the last 60 characters, since a fast recognizer
   publishes fragments under a second apart. Records from the joining FETCH are history
-  and are not shown there, however late a live record arrives. The sidebar gains a Transcript tab next
+  and are not shown there, however late a live record arrives. The sidebar has a Transcript tab next
   to the chat that lists every record with speaker and time. The tab and the
   tile captions show on every page while the transcriber is in the room; the
   captions button hides or shows the tile captions on its own page only.
@@ -245,8 +242,7 @@ collide with it. The track is `transcript`, an MSF event timeline
 
 ### Negative
 - Captions arrive after the speaker stops: about 0.7–1.4 s with
-  `qwen3-asr`, and a few seconds with `whisper` on Cloud Run's CPUs. Every
-  model transcribes whole utterances, so there are no partial results.
+  `qwen3-asr`, and a few seconds with `whisper` on Cloud Run's CPUs.
 - CPU cost grows with the speech in the room.
 - Each room starts its own bot, a Cloud Run Job execution, and a `whisper`
   room loads its own model, so captions start later than with a service whose

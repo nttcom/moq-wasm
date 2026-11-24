@@ -7,7 +7,7 @@ intent, module boundaries, runtime flow, or invariants described here change.
 ## Scope
 The records the observability server reads, as types its producers write
 and it decodes, so both sides share one definition. The crate depends only on
-Serde and JSON, so it builds on wasm32: how a record is sent
+Serde, JSON and `anyhow`, so it builds on wasm32: how a record is sent
 (`telemetry-otlp` for the workspace binaries, `telemetry-report` for the
 clients) stays with the producer.
 
@@ -15,7 +15,7 @@ clients) stays with the producer.
 
 `telemetry::client_report` defines the body a client posts to the
 observability server's `/api/client-telemetry`: `ClientReport` with its
-`ClientLog`s, `ClientSpan`s and `PlayerStats`, and `MAX_RECORDS`, the most of
+`ClientLog`s, `ClientSpan`s, `PlayerStats` and `PublisherStats`, and `MAX_RECORDS`, the most of
 each one report carries.
 
 - `telemetry-report` builds `ClientLog` and `ClientSpan` from `tracing`; the

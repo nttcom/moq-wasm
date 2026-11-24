@@ -1,20 +1,16 @@
 # Live Player Architecture
 
 ## Status
-Target design, adopted step by step (see "Migration"). Update this file in the
-same change whenever the layering, module boundaries, public API or invariants
+Implemented. Update this file in the same change whenever the layering, module boundaries, public API or invariants
 described here change.
 
 ## Scope
 The Live Player is the MoQT viewer of `examples/browser`: it follows an MSF
 catalog, subscribes to a video and an audio track, plays them live and replays
 what the relay still caches through FETCH; a broadcast whose tracks are not
-live, such as a recorder replay, it plays as VOD through FETCH alone. It is
-extracted from the Live Viewer example (`examples/live-viewer`), which keeps
-every feature it has today, and is adopted by the ONVIF example
-(`examples/onvif`) as its second consumer.
+live, such as a recorder replay, it plays as VOD through FETCH alone.
 
-Features carried over unchanged:
+Features:
 
 - MSF catalog following: SUBSCRIBE plus a FETCH of the group SUBSCRIBE_OK names
   as the largest, the catalog of the newest group wins, and a track redefined
@@ -84,8 +80,8 @@ Rules:
   pictures and the page's own overlays. The arrow keys skip wherever the focus
   is, so a page holds one `PlayerControls`.
 - L1 reads the MSF catalog through `sdk/js/js/src/media/catalog.ts` and uses
-  `getErrorMessage` from `utils/page.ts`; neither `lib/` nor `utils/` imports
-  from `examples/`.
+  `getErrorMessage` from `sdk/js/js/src/media/internal/status.ts`; the SDK
+  imports nothing from `examples/`.
 - Diagnostics stay in L3. L1 reports deliveries to an optional observer
   (`DeliveryObserver`), which the Live Viewer's `StreamMonitor` implements.
 
@@ -98,12 +94,18 @@ type LivePlayerOptions = {
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
   keepLiveWhileReviewing?: boolean
+  deliveryTimeoutMs?: number | null   // 2000 by default; null turns it off
+  groupOrder?: 'ascending' | 'descending'
+  source?: LiveSource
+  audioContext?: AudioContext
+  latencyTolerance?: LatencyTolerance
 }
 
 type LivePlayerCallbacks = {
   onStateChange(): void
   onLiveFrame(): void
-  onLog(level: 'info' | 'warn' | 'error', message: string): void
+  onLog(level: LogLevel, message: string): void
+  onAudioLevel?(level: AudioLevel): void
 }
 
 class LivePlayer {
@@ -112,6 +114,7 @@ class LivePlayer {
   dispose(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
+  setLatencyTolerance(tolerance: LatencyTolerance): void
   selectAudioTrack(name: string): Promise<void>
   addAudioTrack(name: string, listener?: AddedAudioTrackListener): Promise<AddedAudioTrack>
   addTextTrack(name: string, listener: AddedTextTrackListener): Promise<AddedTextTrack>
@@ -141,11 +144,12 @@ subgroup objects the page receives.
 
 ```ts
 class LocLive {
-  constructor(video: HTMLVideoElement, canvas: HTMLCanvasElement, livePicture: LivePictureKind | undefined, callbacks: LocLiveCallbacks)
+  constructor(video: HTMLVideoElement, canvas: HTMLCanvasElement, livePicture: LivePictureKind | undefined, callbacks: LocLiveCallbacks, logSession: () => LogSession, audioContext?: AudioContext)
   readonly playout: LivePlayout
   readonly picture: LivePictureSink
   configureTrack(kind: MediaKind, track: MediaCatalogTrack): void
-  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectWithLoc): void
+  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectWithLoc, codec: string | undefined, cached?: boolean): void
+  joinAudio(): void
   setBufferPolicy(policy: BufferPolicy): void
   reset(): void
   dispose(): void
@@ -160,8 +164,8 @@ decoder workers and closes the `AudioContext`, so a page that creates one
 buffer and target, output latency, arrival spread, video and audio bitrate,
 A/V offset, audio breaks, video drops, shed.
 
-`LiveTracks` (`{ video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }`)
-stands in for the catalog of a publisher that announces none: `start`
+`LiveTracks` (`{ video?: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }`, at
+least one track) stands in for the catalog of a publisher that announces none: `start`
 subscribes to the tracks given and nothing else, the catalog status reads
 `Tracks given`, and a track redefinition can only come from another `start`.
 
@@ -213,8 +217,7 @@ the catalog / playback / rewind status, the seek range (broadcast start,
 replayable start, live edge, review anchor and playhead, and elapsed times from
 the media timeline), and the aliases of the live subscriptions and review
 FETCHes the delivery grid follows. `LivePlayerStats` carries the numbers of the
-stats line and the Buffer chart: viewer delay, buffer and target, output
-latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
+stats line and the Buffer chart (`LiveStats` plus the object count).
 
 ## Modules (L1)
 
@@ -246,11 +249,11 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `reviewClock` | The clock `ReviewPlayout` presents a review on: capture time onto local time from where it is anchored, the pause, the AudioContext of the review's sound, and which review's drift moves it |
 | `playbackGroup` / `groupMember` | One position for several players: where the group puts each of them (live, aligned or held) as the position moves, and the commands a player in the group hands to it |
 | `stallWatch` | Whether the wanted picture has stood still |
+| `arrivalLag` | How far live objects arrive behind their capture, to place a group known only by its id on the capture time axis |
+| `playableVideoTracks` | The video tracks the browser decodes; of an `altGroup`'s renditions of one size, the lowest bitrate |
+| `rewind` | `GroupTimeline`: the groups live delivery observed, with their capture times |
+| `trackPriority` | The Subscriber Priority of each kind of track: catalog 0, text 16, audio 32, video 128 |
 | `streamConventions` | The relay cache TTL the seek axis keeps groups for |
-
-The existing classes (`LivePlayout`, `PlayoutClock`, `JitterBuffer`,
-`AudioPlayout`, `AudioSplice`, `VideoPlayout`, `LivePictureSink`,
-`ReviewPlayout`, `GroupTimeline`, `MediaTimeline`) move as they are.
 
 Each player creates its own decoder workers, two per instance.
 
@@ -308,9 +311,6 @@ group can span two windows.
   main thread (see `LivePlayout`); the worker's superseded-group drop stays.
 
 ## Playback behaviour
-
-What the Live Viewer page documents to its users as controls; this section
-records how they work.
 
 ### Review (rewind)
 
@@ -479,8 +479,7 @@ stopping it leaves the viewer's session open.
   the same bars as Subscribe Streams under the Playback picture, sharing its
   Window and GOPs settings, with the counts of streams in flight and finished
   and the send bitrate of the streams open in the window.
-- Publishing runs on its own MoQT session, so Watch and Stop on the same page
-  do not interrupt it. FETCHes the relay forwards are answered from the
+- FETCHes the relay forwards are answered from the
   broadcast's 60 s cache, so a viewer rewinds into groups that predate the
   relay's first subscriber within that window.
 
@@ -634,7 +633,7 @@ below) plus the audio
 device's output latency (the time from handing a chunk to the device to
 hearing it, some 25 ms on built-in speakers and far more over Bluetooth) and the
 20 ms within which the sound is continued by repetition (below). That
-sum is clamped to `Min buffer (ms)` (200 ms by default) and `Max buffer (ms)`
+sum is clamped to `Min buffer (ms)` (0 by default) and `Max buffer (ms)`
 (unlimited when empty), so the bounds are the buffer as displayed; equal
 bounds fix it, and a maximum below the output latency makes every chunk late.
 `Current` next to the bounds shows the buffer and its target, and the Buffer
@@ -739,9 +738,7 @@ live subscriptions keep forwarding during the review and the live pipeline
 keeps decoding and presenting behind the review picture, muted, so `goLive`
 only brings that picture to the front. The seek axis follows the live objects
 instead of TRACK_STATUS. The cost is the live bandwidth and the decoding spent
-while reviewing, which is why it is not the default; parking the newest group
-undecoded in the worker would save the decoding and is left for when a page
-needs it.
+while reviewing, which is why it is not the default.
 
 ### Playback speed
 
@@ -757,8 +754,7 @@ is on by default).
 
 ### Player controls
 
-The seek bar, the skip buttons and the quality menu sit on the video itself
-rather than in their own cards. They appear while the pointer is over the
+The seek bar, the skip buttons and the quality menu sit on the video itself. They appear while the pointer is over the
 picture, while a control has focus or while the quality menu is open, and fade
 out otherwise. The gear opens the video and audio track selection and the
 packaging choice, and closes on a second click, on Escape, or on a click
@@ -810,10 +806,7 @@ and a fill from it carries the movement, because the decoder emits frames in
 bursts and a thumb that followed each one read as jitter. The fill and the
 readouts step a second at a time for the same reason.
 
-The position label shows seconds behind live and follows review playback. A seek
-decodes from the preceding closed keyframe group, shows frames from the chosen
-position on, and continues with the same bounded FETCH replay as the skip
-buttons.
+The position label shows seconds behind live and follows review playback.
 
 Review playback does not stop at the end of the fetched window: the next
 bounded FETCH is issued while the current window plays, so playback keeps
@@ -852,52 +845,30 @@ newest record at or before it. The renditions share the source's keyframe times
 and group ids, so the reading survives a video quality change. The label shows
 `--:-- / --:--` until the first timeline object arrives.
 
-## Migration
+## Test ids
 
-Each step is its own PR, stacked on the previous one; the Live Viewer E2E
-suites (`e2e:live-viewer`, `e2e:live-viewer-mp4`, `e2e:live-viewer-delivery`)
-must pass through steps 1 to 3. The test ids of the page keep their
-`live-viewer-*` names; the elements the player and its controls create are
-named `live-player-*`.
-
-1. Split `live-viewer/main.ts` into the L1 modules inside the example, with
-   `main.ts` reduced to page wiring. No behavior change.
-2. Move L1 to `lib/player`; the player creates its picture elements in the
-   container; split `viewer.css` into player and page styles.
-3. Extract the controls into `lib/player/ui`.
-4. Resolve review audio by capture time (the ONVIF convention above).
-5. Adopt the player in `examples/onvif`, keeping the PTZ commands in the page.
-6. `start` with tracks given by the page (`LiveTracks`), for publishers
-   without a catalog.
-7. Seeking while paused: `seek` / `skip` keep the pause and show the frame
-   at the position.
-8. Adopt the player in `examples/remote-monitoring`: one player per camera on
-   a canvas picture, the page's seek bar and transport buttons on the
-   player's seek axis and stepping, the camera publisher unchanged.
-9. Instant live return (`keepLiveWhileReviewing`) for the monitoring page.
+The test ids of the Live Viewer page are `live-viewer-*`; the
+elements the player and its controls create are named `live-player-*`.
 
 ## Consumers
 
 - `examples/live-viewer`: the player, its controls, and the page's diagnostics
   (StreamMonitor, delivery grid, PlaybackCharts), the MP4 publisher and the
   connection form.
-- `examples/onvif`: the player and its controls on the session that also
+- `examples/onvif`: a `<moq-player controls>` element (`moq-wasm/element`,
+  which wraps the player and its controls) on the session that also
   announces the viewer namespace and answers the bridge's SUBSCRIBE for the
-  PTZ command track. Latency follows the player's jitter buffer; the worker
-  pacing presets, the jitter-buffer visualizer and the worker-telemetry stats
-  the page used to show are gone with it, and the catalog, video and audio are
-  subscribed by the player instead of by request ids typed into the page.
+  PTZ command track. Latency follows the player's jitter buffer.
 - `examples/meeting`: one player per member and source (`LivePlayerOptions.source`:
   the camera with the microphone, and the screen share), both listening to the
   member's `BroadcastCatalog`. A player draws into an element the member's tile
   places; its video is enabled (`setVideoEnabled`) only while the tile is on the
-  stage, so the camera player's audio plays for every member. The player's
-  rendition choice, ABR under the tile's height and joining FETCH for a still
-  screen share serve the meeting as they serve the viewer. A member who leaves
+  stage, so the camera player's audio plays for every member. A member who leaves
   or rejoins has its players disposed. The buffer policy and catch-up are set
   per member, and the per-member stats line and charts show `LiveStats`.
-- `examples/media/subscriber`: one `LivePlayer` started with the MSF catalog
-  tracks the page selects (`LiveTracks`), so it subscribes exactly those; the
+- `examples/media/subscriber`: one `<moq-player>` element given the MSF catalog
+  tracks the page selects (its `tracks` property, `LiveTracks`), so it
+  subscribes exactly those; the
   receive line counts the player's objects and the playout stats line shows
   its `LiveStats`.
 - `examples/remote-monitoring`: `watchBroadcasts` over the location's

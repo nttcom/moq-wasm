@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-`telemetry` depends on `http` 1.x so `inject_trace_context` and
+`telemetry-otlp` depends on `http` 1.x so `inject_trace_context` and
 `continue_trace_from` read and write W3C `traceparent` headers in an
 `http::HeaderMap`.
 
@@ -31,5 +31,5 @@ type covers the client and the server.
 ## Decision
 
 Depend on `http` directly and implement the two small `Injector` /
-`Extractor` adapters in `telemetry`. `http` is already compiled in the
+`Extractor` adapters in `telemetry-otlp`. `http` is already compiled in the
 workspace through `reqwest` and `hyper`, so no new crate enters `Cargo.lock`.

@@ -8,12 +8,11 @@ layout, the publishing flow or the invariants described here change.
 `crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
 unit draft-ietf-moq-msf-02 initiates and ends (§11.3, §11.4): a catalog, LOC and
 CMAF media tracks, a media timeline and a publisher-side FETCH cache. It also
-reads such a broadcast back into media events for `services/egress-gateway` (see
-"Reading a broadcast").
-`services/ingest-gateway`, `crates/gst-plugin-moqt`, `services/ingest-gateway`, `moq-cli` and the
+reads such a broadcast back into media events for `services/egress-gateway` and
+`services/sip-gateway` (see "Reading a broadcast").
+`services/ingest-gateway`, `crates/gst-plugin-moqt`, `moq-cli` and the
 Live Viewer's MP4 publisher, through `sdk/js`, build on it. The track
-layout is summarised in [its README](../../../crates/broadcast/README.md); this
-document records why the tracks are shaped that way.
+layout is summarised in [its README](../../../crates/broadcast/README.md).
 
 Three types carry the three multiplicities. `RelayConnection` is one session
 to the relay, opened on first use and shared by every broadcast on it: RTMP
@@ -39,8 +38,7 @@ describes it, and has its subgroups carry a Publisher Priority of their own;
 the publisher writes its objects with `Broadcast::send_object`. An offered
 chat is one of these event timelines, under the Publisher Priority of the
 catalog and the media. `CatalogMetadata` keeps them by name, so offering a
-name again replaces its entry. Every
-writer publishes a media timeline of its own (see "Media timeline").
+name again replaces its entry.
 
 Tasks are spawned, timers run and clocks read only through `moqt::executor`, so the crate
 also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
@@ -233,8 +231,6 @@ configuration that finds even the free slots taken is held, the latest replacing
 an earlier one, and queued just before that keyframe. The bindings keep only
 their callbacks and their error types: `MediaSourceError` tells media the caller
 got wrong (`InvalidMedia`) from a source that stopped publishing.
-`MediaSource::end` ends the source's tracks after its queued media (see
-"Publishing without subscribers").
 
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or

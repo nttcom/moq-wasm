@@ -12,7 +12,8 @@ Accepted
 
 Add `hyper` 1.x (features `http1`, `server`) as a direct dependency of the
 `temporary-apps` crate. `server.rs` serves `POST /tokens`,
-`POST /tokens/refresh` and `GET /healthz` over HTTP/1 with it.
+`POST /tokens/refresh`, the `/bots` routes and `GET /healthz` over HTTP/1
+with it, on `http-server`'s accept loop.
 
 ## Context
 
@@ -30,5 +31,5 @@ The temporary-apps service needs an HTTP/1 server for three routes, a CORS prefl
 ## Decision
 
 Use `hyper` directly, as the VTS and the console do. It is already compiled in
-the workspace, so no new crate enters the dependency tree, and `service_fn`
-plus a `match` on method and path is enough routing.
+the workspace, so no new crate enters the dependency tree, and a `match` on
+method and path is enough routing.

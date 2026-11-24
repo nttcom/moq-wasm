@@ -28,8 +28,7 @@ runs where publishers can reach its ports.
 `listen` accepts RTMP (FLV), SRT (MPEG-TS) and plain RTP (H.264,
 AAC, Opus and G.711 A-law described by an SDP file), demuxes the input with `mediapack`,
 optionally re-encodes it with `crates/transcode`, and hands the resulting
-media events to `crates/broadcast`, which owns the track layout (see
-[its architecture document](../broadcast/architecture.md)).
+media events to `crates/broadcast`.
 
 Each input is one module (`rtmp`, `srt`, `rtp`) that owns its transport and
 ends in the same `IngestPublisher`; the formats meet only at
@@ -81,7 +80,8 @@ MPEG-TS, and each loss is logged as a warning.
 The SRT stream id is the MoQT namespace: either the `r=` resource of an
 access-control stream id (`#!::r=anon/live/test,m=publish`) or a plain path.
 Connections without a stream id publish under `anon/srt/live`. RTMP uses the
-application name of the URL. RTP carries no name, so its namespace is the
+application name of the URL, followed by every element of the stream key
+but its last when the key holds a `/`. RTP carries no name, so its namespace is the
 `--rtp-namespace` argument, `anon/rtp/live` by default. Relays only admit
 tokenless publishers into `anon/**`, so every default stays inside it.
 

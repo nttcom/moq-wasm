@@ -1,10 +1,8 @@
 # ブラウザ SDK 設計
 
 ## ステータス
-承認済み。「移行計画」の step 1〜12 を実装した。
-1.0 の範囲は「決定事項」にまとめた。この計画のゴールは、npm パッケージとして使える形に
-整えるところまでで、配布は GitHub Release に添付する tarball から始め、npm への公開は
-含まない（「配布」を参照）。採用後は、パッケージ構成、公開 API、ここに書いた
+実装済み。1.0 の範囲は「決定事項」にまとめた。配布は GitHub Release に添付する tarball で
+行い、npm への公開は含まない（「配布」を参照）。パッケージ構成、公開 API、ここに書いた
 不変条件を変える変更で、このファイルも同時に更新する。
 
 ## 目標
@@ -13,52 +11,46 @@ Web 開発者が npm パッケージを1つ入れるだけで、MoQ のメディ
 を再生する。同じパッケージで、独自データ（チャット、テレメトリ、制御）を運ぶアプリ
 向けに、型付きの track 単位 API も提供する。
 
-SDK は `examples/browser` から切り出す。`examples/browser` は切り出し後も SDK の上で
-動き続ける。現状、視聴側はこの目標に近い（`LivePlayer`）が、配信側は遠い。
+`examples/browser` は SDK の上で動く。
 
-| 項目 | 現状 | SDK |
-| --- | --- | --- |
-| 接続 | `MoqSession.connect(url, { token, versions })`。`versions` は提示する draft（`draft-14` / `draft-18`）を優先順に並べ、省略すると draft-18、draft-14 の順 | `connect(url, options)` が `Session` を返す |
-| namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })`、`start(session, namespace)` | 同じ形で、`Session` の上で動く |
-| メディアの配信 | `moq-wasm/media` の `createBroadcast(session, namespace)` と `addSource(name, input)`（「相手ごとに再生し、source を名前で扱う」）。meeting の `mediaPublisher.ts` もこれで配信する | 同じ |
-| track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `MoqFetch` / `TrackWriter` の handle と async iteration | `Subscription` / `TrackWriter` の handle と async iteration |
-| パッケージ | `sdk/js/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
+| 項目 | API |
+| --- | --- |
+| 接続 | `MoqSession.connect(url, { token, versions })`。`versions` は提示する draft（`draft-14` / `draft-18`）を優先順に並べ、省略すると draft-18、draft-14 の順 |
+| namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })`、`start(session, namespace)` |
+| メディアの配信 | `moq-wasm/media` の `createBroadcast(session, namespace)` と `addSource(name, input)`（「相手ごとに再生し、source を名前で扱う」） |
+| track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `MoqFetch` / `TrackWriter` の handle と async iteration |
+| パッケージ | `sdk/js/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる |
 
-## 目標の利用コード
+## 利用コード
 
 接続:
 
 ```ts
-import { connect } from 'moq-wasm'
+import { MoqSession } from 'moq-wasm'
 
-const session = await connect('https://relay.example.com:4433', {
+const session = await MoqSession.connect('https://relay.example.com:4433', {
   // 関数なら、接続、GOAWAY による移動、再接続のたびに呼ばれる
   token: () => fetchTokenFromMyBackend(),
 })
-session.addEventListener('statechange', () => console.log(session.state))
 session.closed.then((info) => console.log('session closed', info))
 ```
 
 カメラとマイクの配信:
 
 ```ts
-import { publish } from 'moq-wasm/media'
+import { createBroadcast } from 'moq-wasm/media'
 
-const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-const broadcast = await publish(session, ['room-1', 'alice'], stream, {
-  video: {
-    codec: 'av01.0.08M.08', // 省略時は avc1.640028
-    label: 'Camera',
-    renditions: [
-      { label: '720p', width: 1280, height: 720, bitrate: 2_500_000 },
-      { label: '360p', width: 640, height: 360, bitrate: 600_000 },
-    ],
-  },
-  audio: { codec: 'opus', label: 'Mic' },
+const broadcast = await createBroadcast(session, ['room-1', 'alice'])
+const camera = await broadcast.addSource('camera', {
+  label: 'Camera',
+  video: true, // SDK が getUserMedia する
+  audio: true,
+  main: { height: 720, bitrate: 2_500_000 },
+  renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 }],
 })
 
-broadcast.replaceTrack('video', screenStream.getVideoTracks()[0])
-broadcast.setMuted('audio', true)
+await camera.setVideo(screenStream.getVideoTracks()[0])
+await camera.setMuted('audio', true)
 await broadcast.close()
 ```
 
@@ -70,40 +62,41 @@ import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
 
 const container = document.querySelector<HTMLElement>('#view')!
-const player = new LivePlayer({ session, container })
-new PlayerControls({ player, container }) // シークバー、再生/一時停止、LIVE、音量、画質メニュー
-await player.start(['room-1', 'alice'])
+const player = new LivePlayer({
+  container,
+  callbacks: { onStateChange: () => {}, onLiveFrame: () => {}, onLog: () => {} },
+})
+// シークバー、再生/一時停止、LIVE、音量、画質メニュー
+new PlayerControls(container, player, () => {})
+await player.start(session, ['room-1', 'alice'])
 ```
 
 コントロールをページで作る場合は、`PlayerControls` を使わずに
-`player.addEventListener('statechange', ...)` で `player.state` を描く。
+`callbacks.onStateChange` で `player.state` を描く。
 
 メディアを使わない track 単位の PubSub:
 
 ```ts
 const chat = await session.publishTrack(['room-1', 'alice'], 'chat')
-await chat.writeGroup([new TextEncoder().encode('hello')])
+await chat.writeGroup(new TextEncoder().encode('hello'))
 
 const subscription = await session.subscribe(['room-1', 'alice'], 'chat')
 for await (const object of subscription) {
-  console.log(object.groupId, new TextDecoder().decode(object.payload))
+  console.log(object.groupId, new TextDecoder().decode(object.objectPayload))
 }
 
 for await (const event of await session.watchNamespaces(['room-1'])) {
-  if (event.kind === 'announced') player.start(event.namespace)
+  if (event.kind === 'announced') void player.start(session, event.namespace)
 }
 ```
-
-オプションを省いた最小の形（`publish(session, namespace, stream)`）なら、自分を配信し、
-相手を再生するページが合計30行未満で書ける。
 
 ## パッケージ構成
 
 レイヤーごとにパッケージを分けず、subpath exports を持つ npm パッケージを1つにする。
 
 ```
-moq-wasm            core: init, connect, Session, Subscription, TrackWriter, 型
-moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, PhoneCall, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
+moq-wasm            core: init, MoqSession, MoqSubscription, MoqGroup, MoqFetch, MoqNamespaceWatch, TrackWriter, RequestError, 型
+moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, BroadcastCatalog, PhoneCall, LivePlayer, PlaybackGroup, PlayerControls, parseCatalog, Mp4Broadcast
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
 moq-wasm/recording  openRecording, Recording, RecorderError
@@ -118,25 +111,8 @@ moq-wasm/element    <moq-player>（import すると登録される）
 encoder の worker、CSS を引き込むが、`core` はどれも引き込まない。`recording` は
 recorder の HTTP API だけを持ち、wasm も `media` も引き込まない。
 
-ソースの置き場所: Rust 側は `sdk/js` のまま。TypeScript 側は
-`examples/browser/lib` から、その隣のパッケージディレクトリ（`sdk/js/js/`）へ
-移す。ビルドは `wasm-pack build --target web`、`tsc`、worker のバンドルで行う。
-`examples/browser` は、`@moqt` と `@player` の alias ではなく、workspace のパスで
-このパッケージに依存する。
-
-何をどこへ移すか:
-
-| 移動元 | 移動先 | 備考 |
-| --- | --- | --- |
-| `examples/browser/lib/moqt/loadMoqt.ts` | `core/init.ts` | single-flight な `init()`。wasm の URL を上書きできる |
-| `examples/browser/lib/moqt/moqtClient.ts` | `core/session.ts`（書き直し） | 「core API」を参照 |
-| `examples/browser/lib/msf/catalog.ts` | `media/catalog.ts` | パースだけ。組み立ては wasm へ移る |
-| `examples/browser/lib/player/*` | `media/player/*` | `LivePlayer`、playout、review。テストも一緒に移す |
-| `examples/browser/lib/player/ui` | `media/controls/*` | `PlayerControls`。React に依存しない DOM 部品なので、そのまま移せる |
-| `examples/browser/utils/media/decoders/*`、`loc.ts`、`mseSink.ts`、jitter buffer | `media/internal/*` | export しない |
-| `examples/browser/utils/media/encoders/*` | `media/internal/encoders/*` | `createBroadcast()` が使う |
-| `examples/browser/lib/ui/*`（React） | `examples/browser` に残す | ページの UI |
-| `utils/media/fetchReplay.ts`、`lib/moqt/subgroupWriter.ts`、`examples/media/serveSubscribes.ts` | 削除 | wasm の `broadcast` に置き換わる（下記） |
+ソースの置き場所: Rust 側は `sdk/js`、TypeScript 側は `sdk/js/js/`。ビルドは `wasm-pack build --target web`、`tsc`、
+worker のバンドルで行う。`examples/browser` は workspace のパスでこのパッケージに依存する。
 
 ## 配信を `crates/broadcast` に寄せる
 
@@ -144,12 +120,8 @@ recorder の HTTP API だけを持ち、wasm も `media` も引き込まない�
 の MP4 publisher（`sdk/js/src/mp4_broadcast.rs`）向けに MSF broadcast を組み
 立てている。担っているのは、catalog、LOC（と CMAF）の track、media timeline、
 catalog より先の PUBLISH、壁時計から始める group id、`moqt::Origin` による60秒の
-FETCH キャッシュ、GOAWAY による切り替え、catalog の再送である。入力は、映像は今のところ H.264（Annex-B）だけ、音声は AAC、
-Opus、A-law、MP3 を受け付ける。`mediapack` はすでに VP8/VP9/AV1 の `VideoConfig`、
-LOC の demux、fMP4 の mux を持っているので、映像の codec を増やす変更は `broadcast` の
-track 組み立てと catalog に閉じる（下記の変更6）。
-
-そのため、SDK の配信側は次のように分ける。
+FETCH キャッシュ、GOAWAY による切り替え、catalog の再送である。入力は、映像が
+H.264（Annex-B）、H.265、VP8、VP9、AV1、音声が AAC、Opus、A-law、MP3 である。
 
 ```
 JS（メインスレッド / worker）              wasm（sdk/js -> crates/broadcast）
@@ -157,30 +129,19 @@ JS（メインスレッド / worker）              wasm（sdk/js -> crates/broa
 MediaStreamTrack
   -> MediaStreamTrackProcessor
   -> VideoEncoder / AudioEncoder
-  -> EncodedVideoChunk / EncodedAudioChunk --> MediaBroadcast.pushVideo / pushAudio
+  -> EncodedVideoChunk / EncodedAudioChunk --> MediaSource.pushVideo / pushAudio
      （Uint8Array に copyTo、timestamp µs）       -> BroadcastWriter::push(MediaEvent)
                                                   -> catalog、LOC、timeline、Origin、
                                                      PUBLISH、FETCH、SUBSCRIBE への応答
 ```
 
 JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate の制御で、どれも
-ブラウザが必要なものである。プロトコルと MSF に関わる処理は、すべて wasm へ移す。
-これにより、配信側で次のものが不要になる。
+ブラウザが必要なものである。プロトコルと MSF に関わる処理は、すべて wasm が行う。採番、キャッシュ、FETCH・
+FETCH_CANCEL・TRACK_STATUS への応答は `Origin` が、SUBSCRIBE への応答と catalog の
+組み立て（`broadcast::build_catalog`）は `broadcast` が担う。
 
-- `sdk/js` の `ClientState` が持つ publisher 側の管理情報（announce した
-  namespace、受けた SUBSCRIBE とその join point、配信した最大の location、subgroup
-  の状態）。callback API と一緒に消した。採番、キャッシュ、FETCH・
-  FETCH_CANCEL・TRACK_STATUS への応答は `Origin` が、SUBSCRIBE への応答は
-  `broadcast` が担う。`ClientState` の subscriber 側も callback API と一緒に消した
-  （「core API」を参照）。
-- JS の `SubgroupWriter`、`fetchReplay`、`serveSubscribes.ts`。group と object の
-  採番、リプレイ用キャッシュ、SUBSCRIBE/FETCH への応答を、2か所ではなく Rust の
-  1か所で行う。
-- `meetingCatalog.ts` の catalog 組み立て。catalog は `broadcast::build_catalog`
-  が作る。meeting が載せている役割と bitrate は MSF の `role` と `bitrate` で、
-  独自フィールドは要らない（下記の変更7）。
 
-このために、下の層で次の変更が要る。それぞれ別の PR にする。
+下の層の変更は次のとおり。
 
 1. **session の共有。** `RelayConnection` は `MoqtTarget` から自分で
    `moqt::Session` を開く。ページは配信と再生を1つの session で行うので、
@@ -203,14 +164,13 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    ブラウザの rendition は `RenditionKeyframes::SameFrames` で、source より先に
    来た keyframe でもその時刻の group id を割り当てる。
 4. **track のライフサイクル。** ミュート、ソースの差し替え、画面共有では、track が
-   catalog から抜けて戻る必要がある。今の `Broadcast` は track を足すことしかできない。
-   追加するのは `Broadcast::remove_track`（catalog の更新と PUBLISH_DONE）だけ。
+   catalog から抜けて戻る必要がある。そのため `Broadcast::remove_track`（catalog の更新と PUBLISH_DONE）がある。
 5. **Audio Level。** meeting の話者検出は、LOC の Audio Level property
    （draft-ietf-moq-loc-04）を読む。JS が、今の `media/internal/audioLevel.ts` と同じく
    capture したサンプルからレベルを計算し、
    `pushAudio` に渡す。`broadcast` はそれをその object の property として書く。
-6. **映像 codec の追加（VP8、VP9、AV1）。** `TrackPublisher` は今
-   `VideoConfig::avc()` を要求する。これを `VideoConfig` の全 variant に広げ、
+6. **映像 codec の追加（H.265、VP8、VP9、AV1）。** `TrackPublisher` は
+   `VideoConfig` の全 variant を受け取り、
    catalog の `codec` はビットストリームから読んだ config で作る。VP9 の level は
    ビットストリームに無いので、CMAF の vpcC box と同じく画面サイズに収まる最小の
    level にし、catalog と init segment の codec を揃える。CMAF の兄弟 track は既存の
@@ -225,9 +185,8 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    情報（参加者の表示名など）を載せる用途が出るまで足さない。足すときは、MSF の
    フィールド名と衝突するキーをエラーにする（MUST NOT）。label と role は独自
    フィールドではなく、MSF の `label`、`role` に入れる。
-8. **CMAF の opt-in。** 今の `broadcast` は、すべての media track に `_cmaf` の兄弟
-   track を作る。`SourceTracks` に CMAF を作るかどうかのフラグを足す。既定は今のまま
-   にして ingest-gateway などは変えず、ブラウザの配信だけ既定で切る。`addSource` の
+8. **CMAF の opt-in。** `broadcast` は既定ですべての media track に `_cmaf` の兄弟
+   track を作る。`SourceTracks` に CMAF を作るかどうかのフラグがあり、ブラウザの配信だけ既定で切る。`addSource` の
    `cmaf: true` は、映像と rendition にだけ兄弟 track を作る（Opus の音声には作れない）。
    兄弟 track は LOC の track と encoder を共有し、encoder はどちらかに購読者がいる間
    動く。
@@ -281,23 +240,17 @@ namespace から作り、`addSource` でソースごとに `MediaSource` を作�
 `MediaSource` を1つ作る。
 
 メディアを使わない配信（チャット、データ）には `broadcast` は要らない。
-`moqt::Origin` を直接使う `Session.publishTrack` で行う。catalog がすでに載せて
-いる broadcast の `chat` track には、同じ `TrackWriter` 型の
-`broadcast.track('chat')` で書く。
+`moqt::Origin` を直接使う `session.publishTrack` で行う。broadcast の catalog に
+`chat` を載せるには `createBroadcast(session, namespace, { offerChat: true })` を使い、
+書き込みは同じく `session.publishTrack(namespace, 'chat')` で行う。
 
 ## 会議の再生を `LivePlayer` に載せる
 
-### 現状
-meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、`RenditionSplice`、
-`pictureElements`、`readLocHeader` を内部パスから組み合わせて、メンバーとソース（カメラ、
-画面共有）ごとに再生している。catalog の追従、rendition の切り替え、ABR は `LivePlayer`
-にもあり、同じ仕組みが2つある。
-
 ### 方針
 メンバーのソースごとに `LivePlayer` を1つ作り、会議が要る機能を `LivePlayer` に足す。
-`LocLive` などの部品は公開しない。公開すると仕組みが2つ残り、内部の API が公開範囲に入る。
+`LocLive` などの部品は公開しない。公開すると内部の API が公開範囲に入る。
 
-1つの session に `LivePlayer` を複数載せる形は、remote-monitoring がすでに使っている。
+1つの session に `LivePlayer` を複数載せる形は、remote-monitoring も使っている。
 タイルは player に container の要素を渡し、React はその要素を置く場所を変えるだけにする。
 
 1人のメンバーのカメラと画面共有は1つの broadcast に載るので、ソースごとの player が
@@ -309,7 +262,7 @@ protocol violation として扱う SHOULD）。meeting もタイルの配置と�
 listener になり、自分では catalog を購読しない。ページも同じ `BroadcastCatalog` の
 listener になる。publisher がいないときの再購読と、catalog の PUBLISH_DONE の扱いも
 `BroadcastCatalog` が持つ。`start` に catalog を渡さない player は自分用の
-`BroadcastCatalog` を作り、`stop` で閉じるので、今までと同じに動く。
+`BroadcastCatalog` を作り、`stop` で閉じる。
 
 ### 足す機能
 
@@ -321,7 +274,7 @@ listener になる。publisher がいないときの再購読と、catalog の P
 | 最初の映像を group の先頭から取る | 映像の最初の購読は `subscribeGroupStart` にする（下の「keyframe の間隔と NEW_GROUP_REQUEST」）。rendition の切り替えは新しい group を要求し、その先頭で切り替える | 静止した画面共有も、参加した直後に映る |
 | 小さい track を映像より優先する | player が SUBSCRIBE する track の subscriber priority を、catalog 0、テキスト（media timeline、字幕）16、音声 32、映像 128 にする（`player/trackPriority.ts`、小さいほど先）。オプションにはしない。media timeline には、映像・音声と同じ `deliveryTimeoutMs` と `groupOrder` も付ける（毎回それまでの表を丸ごと送るので、遅れた object は届かなくてよい）。catalog には付けない | DELIVERY TIMEOUT のない track を映像と同じか下の優先度に置くと、下りが詰まったとき、映像の後ろで送られないままの stream が残る。relay が同時に開ける stream 数（subscriber が決める上限）をそれが埋め、優先度の高い映像の stream も開けなくなる |
 | 映像どうしの優先度を変える | `LivePlayer.setVideoPriority(priority)`。映像の subscriber priority（0〜255、既定は128、小さいほど先）を変える。購読中の映像には SUBSCRIBE_UPDATE で送り、その後に購読する映像（rendition の切り替え、`setVideoEnabled(true)`）にも使う。音声は 32 のまま。view からは `view.player` で呼ぶ | 下りが詰まったとき、ピン留めした映像や画面共有をほかの映像より先に受ける |
-| 古い映像と音声を送らせない | `LivePlayerOptions.deliveryTimeoutMs`（`RemoteBroadcastOptions` にも同名）。選択中の映像と音声の SUBSCRIBE に DELIVERY TIMEOUT（draft-14 §9.2.1.2）を付ける。`addAudioTrack` で足した音声には付けない。1〜4294967295 の整数以外は `RangeError`。relay は object を受け取ってからその時間を過ぎた Group の stream を reset する。指定しなければ全 object が届く | 下りが詰まったとき、遅れた映像を捨てて新しい映像を受ける。優先度だけでは、後回しの映像が送信バッファを埋めて優先した映像まで遅れる |
+| 古い映像と音声を送らせない | `LivePlayerOptions.deliveryTimeoutMs`（`RemoteBroadcastOptions` にも同名、既定は 2000、`null` で無効）。選択中の映像と音声、media timeline、`addAudioTrack` で足した音声の SUBSCRIBE に DELIVERY TIMEOUT（draft-14 §9.2.1.2）を付ける。catalog、字幕、`addTextTrack` には付けない。`null` と 1〜4294967295 の整数以外は `RangeError`。relay は object を受け取ってからその時間を過ぎた Group の stream を reset する | 下りが詰まったとき、遅れた映像を捨てて新しい映像を受ける。優先度だけでは、後回しの映像が送信バッファを埋めて優先した映像まで遅れる |
 | 詰まったとき新しい Group を先に受ける | `LivePlayerOptions.groupOrder`（`RemoteBroadcastOptions` にも同名）。選択中の映像と音声の SUBSCRIBE の Group Order（draft-14 §7）。既定の `'ascending'` は古い Group から送るので、遅れが伸びる。`'descending'` は新しい Group を先に送るので、遅れずに先へ飛ぶ。SUBSCRIBE のあとでは変えられない | ライブ視聴で、遅れるより飛ぶほうがよい場合。`deliveryTimeoutMs` と併用すると、送れなかった古い Group は捨てられる |
 
 #### keyframe の間隔と NEW_GROUP_REQUEST
@@ -379,45 +332,16 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
 付ける altGroup から見つかる。映像だけがミュートされて catalog から外れても、音声は名前で
 見つかるので再生を続けられる。catalog の render group（§5.2.12）で映像と音声を結び付ける
 方法は採らない。番号に意味が無いので、映像 track が catalog に無いときに、どの音声が
-そのソースのものかを決められない。track 名は `publish()` の命名（`video` と `audio`、
-`addSource` の `<name>` と `<name>_audio`）をアプリが渡し、player は命名の規則を持たない。
+そのソースのものかを決められない。track 名（`addSource` の `<name>` と
+`<name>_audio`）はアプリが渡し、player は命名の規則を持たない。
 命名の規則は、player の上に置く `RemoteBroadcast` が持つ（「相手ごとに再生し、source を
 名前で扱う」）。
 `source` を `start` の引数でなく player のオプションにするのは、`start` の3つ目の引数が
 すでに `LiveTracks` で、meeting はソースごとに player を作るため。
 
-### 移行の手順
-1手順を1 PR にする。
-
-手順 1 から 8 は実装した。
-
-1. **feat(wasm): `LivePlayerOptions.source`。**
-2. **feat(wasm): 表示の高さによる ABR の上限。**
-3. **feat(wasm): `onAudioLevel`。**
-4. **feat(wasm): 映像の最初の購読を joining FETCH にする。**
-5. **feat(wasm): 音声の subscriber priority を映像より高くする。**
-6. **feat(wasm): `BroadcastCatalog`。** catalog の購読を player から切り出し、
-   `start` の3つ目の引数で受け取る。あわせて、隠れたタイルの映像だけを止める
-   `setVideoEnabled` と、退室したメンバーの player を手放す `dispose` を足す。
-7. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
-   `localSession.ts` の映像・音声の購読と切り替え、`meetingCatalog.ts` の解析を消す。
-   ブラウザ E2E（`run-meeting-e2e.mjs`）で守る。
-8. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
-   なってから行う。
-
 ## 相手ごとに再生し、source を名前で扱う
 
-### 現状
-会議の画面を書くには、ページが次のものを組み合わせる（meeting の `remotePlayers.ts`）。
-
-- 受ける側は、相手1人に `BroadcastCatalog` を1つと、source ごとの `LivePlayer` を作る。
-  `source` には track 名を組み立てて渡し、画面共有の有無は catalog を `parseCatalog` と
-  `extractCatalogTracks` で読んで判定する。退室では `unlisten`、`dispose`、`close` を全部呼ぶ。
-- 送る側は、`publish()` の最初の source だけ名前が無く、track は `video`/`audio` になる。
-  `addSource(name)` は `<name>`/`<name>_audio`。`MediaStream` はページが自分で取る。
-- 送る側は source 名で書き、受ける側は track 名で書く。
-
-### 目標の利用コード
+### 利用コード
 
 ```ts
 import { MoqSession } from 'moq-wasm'
@@ -460,26 +384,25 @@ function addTile(remote: RemoteBroadcast) {
 ```
 
 ### source の名前
-source 名は、その source の映像 track の名前である。`createBroadcast` の `addSource(name)` は
-今の `addSource` の命名をすべての source に当てはめ、名前の無い source を作らない。
+source 名は、その source の映像 track の名前である。名前の無い source は作らない。
 
 | track | 名前 |
 | --- | --- |
 | 映像 | `<name>` |
 | 音声 | `<name>_audio` |
 | rendition | `<name>_<rendition>`（映像と同じ altGroup） |
-| CMAF の兄弟、media timeline | `broadcast` の今の命名（`_cmaf`、`_timeline`） |
+| CMAF の兄弟、media timeline | `broadcast` の命名（`_cmaf`、`_timeline`） |
 
 - source 名は識別子で、表示名は MSF の `label`（draft-ietf-moq-msf-02 §5.2.11）に入れる。
   独自フィールドは足さない（変更7の見送りのまま）。
-- `addSource` は、空の名前、`catalog`、`_audio`・`_cmaf`・`_timeline` で終わる名前、ほかの
-  source の track と重なる名前を reject する。
+- `addSource` は、空の名前、`catalog`、`chat`、`_audio`・`_cmaf`・`_timeline` で終わる
+  名前、ほかの source の track と重なる名前を reject する。
 - `crates/broadcast` を使う配信元（ingest-gateway、gst-plugin-moqt）は
   `video`/`audio` のままにする。受ける側には source `video` として見える。
 
 `RemoteBroadcast` は catalog から次の規則で source を読む。
 
-1. CMAF の兄弟と timeline は source を決めるのに使わない。player が今と同じく、source の
+1. CMAF の兄弟と timeline は source を決めるのに使わない。player が source の
    track から見つける。
 2. altGroup（§5.2.13）を共有する LOC track は1つの source にまとめる。その名前は、group の
    中で一番短い名前の映像 track（映像が無ければ音声 track）に 3 を当てはめて決める。
@@ -487,30 +410,27 @@ source 名は、その source の映像 track の名前である。`createBroadc
 3. 残りの映像 track は、その名前の source になる。ただし `<name>_<rendition>` の rendition が
    映像本体より先に載った（ミュートを解除したカメラ）ときは、音声が名付ける source `<name>`
    に入る。音声 track は、`<name>_audio` なら
-   source `<name>`、`audio` なら source `video`（`publish()` と `broadcast` の既定の命名）、
+   source `<name>`、`audio` なら source `video`（`broadcast` の既定の命名）、
    それ以外は自分の名前の、音声だけの source になる。
 4. source は、その track が catalog に1本でもある間は存在する。カメラを止めても音声が
    残る間は `onSourceRemove` を呼ばず、view の `state.video` が `off` になるだけである。
-
-renderGroup（§5.2.12）を使わない理由は「足す機能」の節と同じ。映像が catalog から
-抜けると、番号から source の名前を決められない。
 
 ### 送る側: `createBroadcast` と `LocalSource`
 
 | API | 振る舞い |
 | --- | --- |
-| `createBroadcast(session, namespace, { offerChat?, onError? })` | 呼んだ時点で namespace を公開する。`onError` は encoder のエラーを受ける |
+| `createBroadcast(session, namespace, { offerChat?, eventTimelines?, onError? })` | 呼んだ時点で namespace を公開する。`offerChat` と `eventTimelines` は、`session.publishTrack` で書く track を catalog に載せる。`onError` は encoder のエラーを受ける |
 | `local.addSource(name, input)` | source を足し、その track を catalog に載せる。デバイスの権限を拒否されたら `getUserMedia` のエラー（`NotAllowedError`）で reject する |
 | `local.source(name)` / `local.removeSource(name)` / `local.close()` | `close` は全 source の PUBLISH_DONE を送り、session は閉じない |
 | `source.setVideo(input \| false)` / `source.setAudio(input \| false)` | デバイスの切り替え。`false` はデバイスを離す |
 | `source.setMuted(kind, muted)` / `source.isMuted(kind)` | デバイスを掴んだまま、送るのを止める |
 | `source.stream` | 送っている track の `MediaStream`。自分のプレビューに使う。track を替えても同じ stream の中で差し替える |
-| `source.stats()` | `publish()` の `SourcePublication.stats()` と同じ（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数）。音声は encoder に入った `AudioData` の直近1秒の数、最新のサンプルレートと ch 数、RFC 6464 の音量（dBov）の最小とパワー平均も持つ。encoder worker が `AudioData` ごとに `{ type: 'input' }` を postMessage して数える |
+| `source.stats()` | `SourcePublicationStats`（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数）。音声は encoder に入った `AudioData` の直近1秒の数、最新のサンプルレートと ch 数、RFC 6464 の音量（dBov）の最小とパワー平均も持つ。encoder worker が `AudioData` ごとに `{ type: 'input' }` を postMessage して数える |
 | （ログ） | source の音声 track（`setAudio` で替えたものを含む）の `mute` / `unmute` / `ended` を、その時の `readyState` とともに INFO で書く（`audio track muted` など）。track を外すと書かなくなる |
 | `source.listen({ onTrackEnded, onEnded })` | `onTrackEnded(kind)` は SDK が取ったその kind の track が終わった（デバイスが抜かれた）とき、`onEnded` は source の track がすべて終わった（ブラウザの「共有を停止」）とき。SDK は track や source を外してから呼ぶ。ページが渡した track の終了はページが扱う（取り直して `setAudio` で差し替えるなど） |
 
-`input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` である。
-`SourceOptions` は映像の encode を、どの track に効くかで3つに分ける。
+`input` は `{ label?, video?, audio?, stream?, display?, encoding?, main?, renditions?, cmaf? }`
+である。映像の encode は、どの track に効くかで3つに分ける。
 
 | フィールド | 効く track | 中身 |
 | --- | --- | --- |
@@ -524,7 +444,7 @@ renderGroup（§5.2.12）を使わない理由は「足す機能」の節と同�
 rendition の大きさは、`width`/`height`（上限）か `scaleResolutionDownBy`（取り込んだフレームの
 縦横を割る。WebRTC と同じ名前と意味）のどちらかで指定する。倍率で指定すると、配信者は
 カメラや画面の元の大きさを知らなくてよい。フレームの大きさが変わると encoder を設定し直す
-仕組み（`configureForFrame`）は今もあるので、画面共有のウィンドウの大きさが変わっても
+仕組み（`configureForFrame`）があるので、画面共有のウィンドウの大きさが変わっても
 倍率から計算し直すだけで済む。bitrate は大きさに比例しないので、倍率で指定しても必須にする。
 
 WebCodecs の `framerate` は rate control の目安で、encoder はフレームを間引かない。
@@ -573,11 +493,11 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 | API | 振る舞い |
 | --- | --- |
 | `remote.listen({ onSourceAdd?, onSourceRemove?, onAudioLevel? })` | 登録した時点の source を `onSourceAdd` で流し直す（`BroadcastCatalog.listen` と同じ）。解除する関数を返す |
-| `remote.sources` | source 名から view への `ReadonlyMap` |
+| `remote.sources` / `remote.catalog` | source 名から view への `ReadonlyMap` と、broadcast の `BroadcastCatalog` |
 | `remote.dispose()` | view と catalog を片付ける |
 | `view.name` / `view.label` | source 名と catalog の `label` |
 | `view.element` | SDK が作る描画要素。source が消えたら SDK が取り除く |
-| `view.state` / `view.listen({ onChange })` | `{ video: 'waiting' \| 'playing' \| 'off', audio: 'playing' \| 'off', videoSize? }` |
+| `view.state` / `view.listen({ onChange?, onPlayerChange? })` | `{ video: 'waiting' \| 'playing' \| 'off', audio: 'playing' \| 'off', videoSize? }` |
 | `view.setVolume(volume)` / `view.stats()` | `LivePlayer` の `setVolume`、`stats` |
 | `view.setVideoEnabled(enabled)` | 映像の購読を止めて音声を残す |
 | `view.player` | seek や track の選択など、ほかの `LivePlayer` の操作 |
@@ -615,24 +535,10 @@ SDK は context を1つも持たずに済む。
 relay に残るのは、ブラウザが接続を閉じられないとき（クラッシュ、通信断）で、そのときは
 `pagehide` で閉じることもできない。
 
-### 移行の手順
-1手順を1 PR にする。手順 1 から 7 は実装した。
-
-1. **feat(recorder): source 名で録画する source を選ぶ。** 今の `SourceChoice::Main` は
-   名前が `video`・`audio`・`video_<rendition>` の track を持つ source を選ぶ。これに
-   `camera` の命名（`camera`、`camera_audio`、`camera_<rendition>`）を足す。ブラウザが
-   `camera` で配信する前に入れる。
-2. **feat(wasm): `createBroadcast` と `LocalSource`。** `publish()` は手順7で消すまで残す。
-3. **feat(wasm): `RemoteBroadcast`。** catalog から source を読む規則、`listen`、
-   `view.element` と CSS、`state`、`setVolume`、`stats`。
-4. **feat(wasm): 画面外の view の映像を自動で止める。** 要素を移しても止まらないことの
-   テストも足す。
-5. **feat(wasm): `watchBroadcasts`。** `filter` と、自分の配信を除くこと。
-6. **feat(wasm): `RemoteBroadcast` の `audioContext`。**
-7. **refactor(browser): meeting を `createBroadcast` と `watchBroadcasts` に移す。**
-   `remotePlayers.ts` と、`publish()` の呼び出しを消す。ブラウザ E2E
-   （`run-meeting-e2e.mjs`）で守る。そのあと残りの example を移し、`publish()` を消して
-   README を書き直す。
+### meeting での使い方
+meeting は `createBroadcast` で配信する（`mediaPublisher.ts`）。受ける側は
+`watchBroadcasts` ではなく、`session.watchNamespaces` と `new RemoteBroadcast` を直接
+使う（`localSession.ts`、`remotePlayers.ts`）。
 
 入り直し（リロードした人の古い session が残る間の振る舞い）は、現象を再現して原因を
 確かめてから決める。relay は、同じ namespace を公開する session が残っている間は
@@ -673,24 +579,6 @@ await call.hangUp()
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 9 をすべて実装した。
-
-### 現状
-`examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
-FETCH の範囲、時刻から位置への対応、track の一覧を、recorder の `POST /recordings/{id}/publish`
-の応答（JSON の `tracks[].chunks[]`）から得る。この JSON は recorder の保存単位（約 4 MiB の
-チャンク）に結び付いた独自の形式で、ライブの `LivePlayer` にはこの入口がない。
-
-`LivePlayer` に replay の namespace を渡しても再生できない。
-
-- catalog を joining FETCH 付きで購読するが、replay は joining FETCH を断り、SUBSCRIBE では
-  Object を送らないので、catalog が届かない。
-- 巻き戻しの時間軸は、ライブで観測した group から作る（`GroupTimeline`、60 秒で失効）。
-  見たことのない group へはシークできない。`MediaTimeline` は観測した group に時刻を
-  付けるのにしか使っていない。
-- 終わりの状態が無い。publisher の終了は「publisher が去った、戻るのを待つ」と扱う。
-- 時計と AudioContext は player ごとにあり、複数の player を1つの再生位置に揃えられない。
-
 ### 方針
 MoQ では、過去の Object も FETCH で取れるので、録画とライブの違いは「publisher がまだ
 配信しているか」だけになる。録画を見るときは、元の publisher の代わりに recorder が
@@ -711,33 +599,33 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
   timeline で振る舞いを決める。
 - recorder と player は、ソースを `renderGroup`（§5.2.12）で、rendition を `altGroup`（§5.2.13）で
   見分ける。カメラか画面共有かを示す独自のフィールドは足さず、recorder は既定のソースの track 名
-  （`video`、`audio`、`video_<rendition>`）でカメラを見分ける。表示には `label` を使う。
+  （`video`、`audio`、`camera`）でカメラを見分ける。表示には `label` を使う。
 - recorder の HTTP API（再 publish の依頼と lease）は `LivePlayer` に入れない。SDK の
   別の subpath（`moq-wasm/recording`）に置き、`LivePlayer` とライブだけ使うアプリの
   バンドルには入れない。
 
-### publisher（`crates/broadcast`）に要る変更
+### publisher（`crates/broadcast`）
 
-| 項目 | 今 | 変更後 |
-| --- | --- | --- |
-| timeline を出すソース | 名前が `video` の track（カメラ）だけ | すべてのソース。ソースごとに timeline track を1本出し、そのソースの映像、rendition、音声を対象にする。`depends` は、それらがソースの renderGroup のすべてならその番号（§7.2）、そうでなければ track 名を並べる。track 名は `<ソースの映像の track 名>_timeline`（既定のソースは `video_timeline`） |
-| entry を書く時 | `video` のキーフレームごと | ソースの group が始まるごと。映像があるときはキーフレームで、無いとき（ミュート中、音声だけのソース）は音声が始める group で書く。1つのソースの映像と音声は同じ Group ID の列を使うので、1本で両方の位置を表せる |
-| group ID が飛んだとき | 一覧を空にする（映像をミュートすると起きる） | 音声の group でも entry を書くので、ID は飛ばない。一覧を空にするのは publisher が配信をやり直したときだけにする |
+| 項目 | 振る舞い |
+| --- | --- |
+| timeline を出すソース | すべてのソース。ソースごとに timeline track を1本出し、そのソースの映像、rendition、音声を対象にする。`depends` は、それらがソースの renderGroup のすべてならその番号（§7.2）、そうでなければ track 名を並べる。track 名は `<ソースの映像の track 名>_timeline`（既定のソースは `video_timeline`） |
+| entry を書く時 | ソースの group が始まるごと。映像があるときはキーフレームで、無いとき（ミュート中、音声だけのソース）は音声が始める group で書く。1つのソースの映像と音声は同じ Group ID の列を使うので、1本で両方の位置を表せる |
+| group ID が飛んだとき | 音声の group でも entry を書くので、ID は飛ばない。一覧を空にするのは publisher が配信をやり直したときだけにする |
 
-保持する範囲は今と同じく relay のキャッシュの保持時間（60 秒）とする。
+保持する範囲は relay のキャッシュの保持時間（60 秒）とする。
 
-### recorder（replay）に要る変更
+### recorder（replay）
 
-| 項目 | 今 | 変更後 |
-| --- | --- | --- |
-| track の選び方 | 画面共有を名前（`screenshare` で始まる）で見分け、画面共有だけ高さの上限を 720p（`SCREEN_SHARE_MAX_HEIGHT`）、カメラを `--max-video-height`（既定 480）にする。チャットは `chat` と決め打ち | catalog の `renderGroup` ごとに1ソースとして録画し、`altGroup` の中から `--max-video-height` 以下で一番高い1本を選ぶ。上限はすべてのソースで同じで、既定を 720 にする。チャットは `eventtimeline` の track を catalog から選ぶ |
-| catalog | 元の catalog の Object をそのまま流す。track の `namespace` 欄は元の publisher のもの | replay の namespace ごとに、保存した track を並べた catalog を1つ作って流す。各 track は元の catalog から codec、幅、高さなどを引き継ぎ、`isLive: false` と `trackDuration` を付ける。catalog 全体は `isComplete: true` にし、`generatedAt` は付けない（§5.1.2） |
-| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline は録画しない。replay は、保存した group ごとの最初の Object の Timestamp（録画の開始からの media time、下の段落）から、ソースごとに全期間の media timeline を1つ出す。presentation time はその Timestamp、wallclock は 0（draft-ietf-moq-msf-02 §7.1.1） |
-| joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
-| 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
-| 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の、room より後の要素（会議では参加者名）を `<member-index>` の代わりに入れる。最後の要素だけにしないのは、room より深い namespace どうしで名前が重ならないようにするため |
-| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。replay の記録は media time なので、§8.3 は `depends` にその media timeline を並べることを求め（MUST）、§5.2.15 はその名前を同じ namespace で引く。参加者の media timeline はその参加者の namespace にあるので、そこに置く |
-| HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）、`renew_after_seconds`、録画の開始時刻（`started_at_ms`）だけにする |
+| 項目 | 振る舞い |
+| --- | --- |
+| track の選び方 | catalog の `renderGroup` ごとに1ソースとして録画し、`altGroup` の中から `--max-video-height` 以下で一番高い1本を選ぶ。上限はすべてのソースで同じで、既定を 720 にする。チャットは `eventtimeline` の track を catalog から選ぶ |
+| catalog | replay の namespace ごとに、保存した track を並べた catalog を1つ作って流す。各 track は元の catalog から codec、幅、高さなどを引き継ぎ、`isLive: false` と `trackDuration` を付ける。catalog 全体は `isComplete: true` にし、`generatedAt` は付けない（§5.1.2） |
+| 時刻から位置 | 元の publisher の timeline は録画しない。replay は、保存した group ごとの最初の Object の Timestamp（録画の開始からの media time、下の段落）から、ソースごとに全期間の media timeline を1つ出す。presentation time はその Timestamp、wallclock は 0（draft-ietf-moq-msf-02 §7.1.1） |
+| joining FETCH | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
+| 終わり | catalog の `isLive: false` で示す。SUBSCRIBE は Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
+| 参加者の名前 | 元の namespace の、room より後の要素（会議では参加者名）を `<member-index>` の代わりに入れる。最後の要素だけにしないのは、room より深い namespace どうしで名前が重ならないようにするため |
+| transcript | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。replay の記録は media time なので、§8.3 は `depends` にその media timeline を並べることを求め（MUST）、§5.2.15 はその名前を同じ namespace で引く。参加者の media timeline はその参加者の namespace にあるので、そこに置く |
+| HTTP の応答 | replay の prefix（`namespace_prefix`）、`renew_after_seconds`、録画の開始時刻（`started_at_ms`）だけにする |
 
 transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
 メディアの範囲が記録の `M` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
@@ -767,7 +655,7 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 しても、デプロイでリビジョンが切り替わる間は新旧が並ぶので、どのみち重複に耐える必要が
 ある。上の決まりを守れば、重複は relay がまとめる。
 
-### SDK に要る変更
+### SDK
 
 `LivePlayer`:
 
@@ -781,10 +669,10 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
   - timeline が届いたら最初の group から再生する。ライブの視聴と同じく、先に一時停止して
     いなければそのまま再生する。終わりでは一時停止し、そこから再開すると最初から再生する
     （メディア要素と同じ）。
-- 見たことのない group へも、timeline の entry を使ってシークする。FETCH の窓は今の巻き戻しと
+- 見たことのない group へも、timeline の entry を使ってシークする。FETCH の窓は巻き戻しと
   同じ（group の先頭から、4 group ずつ）。ライブでも、timeline があればこれを使い、relay の
-  キャッシュに無い範囲は今どおり `FetchFailure` で扱う。
-- 複数の player を1つの再生位置に揃える `PlaybackGroup` を足す。会議で全員を 10 秒前に
+  キャッシュに無い範囲は `FetchFailure` で扱う。
+- 複数の player を1つの再生位置に揃える `PlaybackGroup` がある。会議で全員を 10 秒前に
   戻してまとめて見る、録画の会議を全員そろえて再生する、といった使い方のため。映像と音声が
   1つずつの配信は、1つの player の中で揃うので使わない。
   - group は1つの AudioContext と、LOC の Timestamp（ライブでは capture 時刻、録画では録画の
@@ -829,38 +717,11 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 SUBSCRIBE_OK の Largest Location で知り、そこまでを1つの FETCH で読む。relay は購読して
 いない track の TRACK_STATUS に答えないので、TRACK_STATUS は使えない。player が catalog を
 購読し続けるので、ページは player を始める前に catalog を読む。
-ライブの会議で `PlaybackGroup` を使えるのは、meeting の再生を `LivePlayer` に移した後
-（「会議の再生を `LivePlayer` に載せる」の手順 6）になる。
-
-### 移行の手順
-publisher の timeline から始め、recorder の replay を VOD にしてから、録画の再生を
-`LivePlayer` に移す。手順 2 はライブの巻き戻しだけに効き、手順 1 の後ならいつでもよい。
-1手順を1 PR にする。後方互換は持たない。手順 4 で replay の HTTP 応答と catalog が変わり、
-今の recording-player は再生できなくなる。手順 4 で recorder の再生 E2E
-（`recorder-archive-e2e` の再生部分、`recorder-mp4-replay-e2e`）を外し、手順 9 で
-`LivePlayer` 版として戻す。
-
-1. **feat(broadcast): すべてのソースに media timeline を出す。** entry をソースの group の
-   始まりごとに書く。
-2. **feat(wasm): ライブの巻き戻しで、見たことのない group へも timeline でシークする。**
-3. **feat(recorder): track を `renderGroup` と `altGroup` で選ぶ。** 名前の規則と、画面共有
-   だけの高さの上限を消し、`--max-video-height` の既定を 720 にする。カメラも 720p で録画
-   するので、保存量が増え、参加者は録画の間 720p の rendition をエンコードする（rendition は
-   購読者がいる間だけエンコードされる）。
-4. **feat(recorder): replay を MSF の VOD broadcast にする。** timeline を録画し、VOD の
-   catalog と全期間の timeline を出し、joining FETCH を受け、HTTP の応答を prefix と
-   `renew_after_seconds` だけにする。MP4 で保存した録画の replay（`mp4_replay`）は消す。
-5. **feat(recorder): replay の namespace に参加者名を入れ、transcriber の catalog を作る。**
-6. **feat(wasm): `isLive: false` の catalog を、timeline を使って最後まで再生する。**
-7. **feat(wasm): `PlaybackGroup`。**
-8. **feat(wasm): `moq-wasm/recording` の `openRecording`。**
-9. **refactor(browser): recording-player を `LivePlayer` に移す。** 独自の再生エンジンを消し、
-   手順 4 で外した E2E を戻す。
 
 ### 範囲外
 - MP4 で保存した録画の replay。MP4 には元の catalog も timeline も残らないので、VOD の
   broadcast にするには、サンプルの時刻から catalog と timeline を作る経路を MoQ 形式とは別に
-  持つことになる。手順 4 で replay ごと消す。MP4 の録画ファイルと合成はそのまま残る。
+  持つことになる。MP4 の録画ファイルと合成は残る。
 - 録画の時刻を開始からの media time にする前の録画（room manifest の `version` が 1 のもの）。
   後方互換は持たず、replay しない。
 - カメラか画面共有かを catalog で示すこと。source 名（「相手ごとに再生し、source を名前で
@@ -908,29 +769,28 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
 - 公開 API に request id、track alias、subgroup id を出さない。request id は moqt
   が振り、Maximum Request ID も moqt が守る。handle は、自分がどのリクエストから
   生まれたかを知っている。
-- 1リクエストに1 handle。`subscribe` は SUBSCRIBE_OK で `Subscription` に解決し、
+- 1リクエストに1 handle。`subscribe` は SUBSCRIBE_OK で `MoqSubscription` に解決し、
   失敗すると draft のエラーコードを持つ `RequestError` で reject する。handle の
-  メソッドは SUBSCRIBE_UPDATE と UNSUBSCRIBE で、handle を捨てる（`close()`、または
-  `using` / `Symbol.asyncDispose`）と UNSUBSCRIBE する。
+  メソッドは SUBSCRIBE_UPDATE と UNSUBSCRIBE（`close()`）である。
 - データは session 全体の callback ではなく、async iteration で届く。
-  `Subscription` は、subgroup stream ごとに group 順・object 順で並ぶ
-  `AsyncIterable<MoqObject>` である。stream を分けて扱いたい利用者（プレイヤーは
-  映像を group ごとに decode する）のために、`groups(): AsyncIterable<Group>` も
-  用意し、各 `Group` は `AsyncIterable<MoqObject>` とする。背圧は iterator が担う。
+  `MoqSubscription` は、subgroup stream ごとに group 順・object 順で並ぶ
+  `AsyncIterable<ReceivedObject>` である。stream を分けて扱いたい利用者（プレイヤーは
+  映像を group ごとに decode する）のために、`groups(): AsyncIterable<MoqGroup>` も
+  用意し、各 `MoqGroup` は `AsyncIterable<ReceivedObject>` とする。背圧は iterator が担う。
   JS が次を求めたときに、wasm が次の object を読む。
 - session 単位のイベントは、promise（`session.closed`）と async iterable
   （`session.watchNamespaces(prefix)`）で出す。ページ全体で1つしかない callback の
   枠は作らない。
-- session の状態は `session.state`（`'connected'`、`'reconnecting'`、`'closed'`）と
-  `statechange` イベントで出す。再接続中も handle は生きたままである（「再接続」を参照）。
-- 境界をまたぐ値は `Uint8Array` と `bigint`。`MoqObject` は
-  `{ groupId, subgroupId, objectId, payload, extensions, status }`。
+- session の状態は `session.isOpen` と `session.closed` で出す。再接続中も handle は
+  生きたままで、その間の状態は出さない（「再接続」を参照）。
+- 境界をまたぐ値は `Uint8Array` と `bigint`。`ReceivedObject` は
+  `{ groupId, subgroupId, objectId, objectStatus, objectPayload, objectPayloadLength, locHeader }`。
 - wasm 内の `tracing` のログは `init({ onLog, logLevel })` で受け取る。`onLog` は
   `logLevel`（既定は `'warn'`）以上の event ごとに `LogRecord`
   （`{ timeMs, level, target, message, fields, traceId?, spanId? }`）で呼ばれる。`onLog` を渡さなければ
   ログは捨てる。`onSpan` も渡していれば、span の中で書かれたログには
   その span の `traceId` と `spanId` が付く。wasm の subscriber はページ全体で1つなので、session の option では
-  なく `init` の option にし、`onLog` を付けた `init` を2回呼ぶと reject する。
+  なく `init` の option にし、最初の `init` の option だけが効く（後の呼び出しは最初の Promise を返す）。
   subscriber は `tracing-subscriber` の registry に自前の `Layer` を載せたもので、
   `sdk/js/src/log_sink.rs` にある（`tracing-subscriber.md` を参照）。
 - `init({ onSpan })` を渡すと、閉じた INFO 以上の span（request span
@@ -1008,7 +868,6 @@ export function init(options?: {
   onSpan?: (record: SpanRecord, token: string | undefined) => void
   telemetry?: TelemetryOptions                                 // observability サーバへ送る
 }): Promise<void>
-export function connect(url: string, options?: ConnectOptions): Promise<Session>
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace'
 export interface LogRecord {
@@ -1034,49 +893,53 @@ export interface TelemetryStatsSample {
 }
 export function reportLog(level: LogLevel, target: string, message: string, fields?: Record<string, unknown>): void
 
-export interface ConnectOptions {
+export type MoqConnectOptions = {
   token?: string | (() => Promise<string>)       // CLIENT_SETUP の AUTHORIZATION TOKEN
-  reconnect?: false | { maxDurationMs?: number } // 既定は有効。60秒で諦める
-  fallback?: false | { webTransportHeadStartMs?: number } // 既定は有効。WebTransport に 500 ms 先行させて wss:// と並走
+  versions?: ('draft-14' | 'draft-18')[]         // 提示する draft。既定は draft-18、draft-14 の順
 }
 
-export interface Session extends EventTarget {
-  readonly state: 'connected' | 'reconnecting' | 'closed'
-  readonly transport: 'webtransport' | 'websocket'
+export class MoqSession {
+  static connect(url: string, options?: MoqConnectOptions): Promise<MoqSession>
   readonly closed: Promise<CloseInfo>
-  subscribe(namespace: string[], track: string, options?: SubscribeOptions): Promise<Subscription>
-  subscribeCurrentGroup(namespace: string[], track: string, options?: SubscribeGroupStartOptions): Promise<Subscription>  // SUBSCRIBE + joining FETCH
-  subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, options?: SubscribeGroupStartOptions): Promise<Subscription>  // joining FETCH または NEW_GROUP_REQUEST
-  fetch(namespace: string[], track: string, range: FetchRange): Promise<AsyncIterable<MoqObject>>
-  trackStatus(namespace: string[], track: string): Promise<TrackStatus>
+  get isOpen(): boolean
+  transportStats(): TransportStats
+  subscribe(namespace: string[], track: string, options?: MoqSubscribeOptions): Promise<MoqSubscription>
+  subscribeCurrentGroup(namespace: string[], track: string, options?: MoqSubscribeGroupStartOptions): Promise<MoqSubscription>  // SUBSCRIBE + joining FETCH
+  subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, options?: MoqSubscribeGroupStartOptions): Promise<MoqSubscription>  // joining FETCH または NEW_GROUP_REQUEST
+  fetch(namespace: string[], track: string, start: MoqLocation, end: MoqLocation): Promise<MoqFetch>
+  trackStatus(namespace: string[], track: string): Promise<MoqLocation | undefined>
   announce(namespace: string[]): Promise<Announcement>          // PUBLISH_NAMESPACE
-  publishTrack(namespace: string[], track: string, options?: PublishOptions): Promise<TrackWriter>
-  watchNamespaces(prefix: string[]): Promise<NamespaceWatch>      // SUBSCRIBE_NAMESPACE; AsyncIterable<NamespaceEvent>
-  close(code?: number, reason?: string): Promise<void>
+  publishTrack(namespace: string[], track: string, options?: PublishTrackOptions): Promise<TrackWriter>
+  watchNamespaces(prefix: string[]): Promise<MoqNamespaceWatch>   // SUBSCRIBE_NAMESPACE; AsyncIterable<NamespaceEvent>
+  close(): void
 }
 
-export interface Subscription extends AsyncIterable<MoqObject>, AsyncDisposable {
-  readonly largest?: Location
-  groups(): AsyncIterable<Group>
-  update(update: { forward?: boolean; endGroup?: bigint }): Promise<void>
-  close(): Promise<void>
+export class MoqSubscription implements AsyncIterable<ReceivedObject> {
+  readonly largest: MoqLocation | undefined
+  readonly done: Promise<PublishDone | undefined>              // PUBLISH_DONE
+  groups(): AsyncIterable<MoqGroup>
+  setForward(forward: boolean): Promise<void>
+  setPriority(priority: number): Promise<void>
+  requestNewGroup(largestGroup?: bigint): Promise<boolean>
+  endBeforeGroup(groupId: bigint): Promise<void>
+  close(): Promise<void>                                       // UNSUBSCRIBE
 }
 
-export interface TrackWriter extends AsyncDisposable {
-  writeGroup(objects: Uint8Array[], options?: { extensions?: Extensions }): Promise<void>
-  close(): Promise<void>                                      // PUBLISH_DONE
+export class TrackWriter {                                     // wasm の型
+  write(payload: Uint8Array, newGroup: boolean, locHeader: any): Promise<bigint | undefined>
+  writeGroup(payload: Uint8Array): Promise<bigint | undefined>
+  nextSubscriber(): Promise<boolean>
 }
 ```
 
 `subscribeCurrentGroup` と配信側の `TrackWriter` は、moqt にすでにある
 `Subscriber::subscribe_current_group` と joining FETCH の範囲解決の上に作る。
-`LivePlayer` の catalog 追従は `subscribeCurrentGroup(namespace, 'catalog')` に
-なる。
+`LivePlayer` の catalog 追従は `subscribeCurrentGroup(namespace, 'catalog')` を使う。
 
 wasm 側の実装は `sdk/js/src/session.rs` の `Session`、`Subscription`、
 `FetchStream`、`NamespaceWatch` で、iterator は `next()` の Promise として出す。
-JS の `AsyncIterable` への包み直しと `groups()` は、最初の利用者である `LivePlayer` を
-載せる手順で足す。これらは `moqt::client` の同名の型（`FetchStream` は
+JS の `AsyncIterable` への包み直しと `groups()` は `core/session.ts` が持つ。
+これらは `moqt::client` の同名の型（`FetchStream` は
 `client::Fetch`）の wasm_bindgen の包みで、JsValue との変換、`SessionScope` による
 telemetry の帰属、`RequestError` から draft-14 のコードを持つ `Error` への変換だけを
 持つ。session のイベントの振り分けと、どこも引き受けないリクエストへの答え方は
@@ -1097,9 +960,9 @@ telemetry の帰属、`RequestError` から draft-14 のコードを持つ `Erro
 短い JWT を使うページは、ここで backend から新しいトークンを取る。呼ぶのは transport を
 開いた後で、relay は開いてから 10 秒以内に CLIENT_SETUP が届かない接続を閉じる。関数は
 その間に答える。これは wasm ではなく
-moqt の役目にする。`ClientConfig::authorization_token` を、固定値と、接続ごとに呼ばれる
-provider の両方を表せる型に変え、`Session` が新しい `Connection` を開くたびに provider
-を呼ぶ。Rust の publisher（ingest-gateway など）も同じ口を使える。
+moqt の役目である。`ClientConfig::authorization_token` は、固定値と、接続ごとに呼ばれる
+provider の両方を表す型で、`Session` が新しい `Connection` を開くたびに provider
+を呼ぶ。Rust の publisher（ingest-gateway など）も同じ口を使う。
 
 ### 再接続
 
@@ -1118,36 +981,24 @@ session は、GOAWAY が無いままの切断（ネットワークの変化、re
   新しい接続で PUBLISH_NAMESPACE と PUBLISH を送り直し、各 track は次の group から
   新しい接続に流れる（移行時と同じ）。catalog は、送った接続の世代が変わったので次の
   送信で送り直される。
-- **再試行。** 0.5秒から始めて最大10秒まで間隔を倍にしながら、`maxDurationMs`
-  （既定60秒、relay のキャッシュ保持時間に合わせる）まで試す。その間 `state` は
-  `'reconnecting'` で、配信側の object は `Origin` に溜まる。諦めたら
+- **再試行。** 0.5秒から始めて最大10秒まで間隔を倍にしながら、60秒（relay の
+  キャッシュ保持時間に合わせた固定値）まで試す。その間、配信側の object は
+  `Origin` に溜まる。諦めたら
   `session.closed` が解決し、すべての handle が終わる（iterator は終わり、書き込みは
   reject する）。
 - **認証エラー。** 再接続先が SETUP で認証エラーを返したら、トークンを取り直して1回
-  だけ再試行し、それでも失敗したら諦める。`reconnect: false` なら、切断で
-  `session.closed` が解決する。
-
-callback スタイルからの移行: `examples/browser` が使っている間は、wasm の
-`MOQTClient` の callback export を残し、新しい `Session` は別の wasm クラスにした。
-example を1つずつ別の PR で移し、最後の1つのあとで callback のクラス、`ClientState`、
-`MoqtClientWrapper` を消した。最初に移したのは、core API の一番の利用者である
-`LivePlayer` で、「L1 は alias ごとの handler だけを登録する」というルールもこれで
-不要になった。
+  だけ再試行し、それでも失敗したら諦める。
 
 ## bundler 互換
 
-パッケージは TypeScript ではなくビルド済みの JavaScript を配る。2種類の付随
-ファイルは、主要な bundler が設定なしで扱える方法で読み込む。
-
+パッケージは TypeScript ではなくビルド済みの JavaScript を配る。
 - **wasm**: `wasm-pack --target web` の glue は、`moqt_bg.wasm` を
   `new URL('moqt_bg.wasm', import.meta.url)` で解決する。Vite、webpack 5、Rollup
   （URL plugin 付き）、Parcel はこれを書き換える。CDN や、書き換えない bundler には
   `init({ wasmUrl })` で対応する。
-- **worker**: decoder と encoder の worker は、パッケージのビルド時に単体で動く
-  ファイルにバンドルし、
-  `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })` で起動
-  する。これを書き換えない bundler のために、オプションで `workerUrl` を上書き
-  できる。パッケージは Vite の app build（library mode は wasm と worker を data URL に
+- **worker**: decoder と encoder の worker は、ファイルごとに
+  `new Worker(new URL('<相対パス>', import.meta.url), { type: 'module' })` で起動
+  する。URL を上書きする option は無い。パッケージは Vite の app build（library mode は wasm と worker を data URL に
   埋め込む）で作り、出力の URL を `new URL('<相対パス>', import.meta.url)` の形に
   そろえる。
 - **AudioWorklet**: Safari の音声 capture の module は、ソースを文字列として取り込み、
@@ -1156,65 +1007,25 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 - **CSS**: JS は CSS を読み込まない。`LivePlayer` を出すページは
   `moq-wasm/media/player.css`、`PlayerControls` も出すページは
   `moq-wasm/media/controls.css` を読み込む。
-- `init()` は single-flight で、何度呼んでも同じ結果になる。`connect()` が内部で
-  呼ぶ。
+- `init()` は single-flight で、何度呼んでも同じ結果になる。`MoqSession.connect` は
+  内部で `loadMoqt()` を呼んで wasm を読み込む。
 - パッケージに実行時の依存は無い。React は examples に残す。
 
 ## バージョニング
 
 - パッケージのバージョンは、crate のバージョンとは独立にリポジトリのリリースに合わせ、
   semver に従う。1.0 までは minor でも API を壊してよく、壊したものはすべて
-  changelog に書く。公開するまでは `package.json` の version を 0.x に保つだけで、
-  changelog は公開するときに始める。
-- 公開範囲は `moq-wasm`、`moq-wasm/media`、`moq-wasm/recording` が export するもので、
+  changelog に書く。
+- 公開範囲は `moq-wasm`、`moq-wasm/media`、`moq-wasm/element`、`moq-wasm/recording` が
+  export するものと CSS の subpath で、
   `internal/` 以下は含まない。session がネゴシエートする draft のバージョンも API の
   約束の一部とし、changelog に書く。
 - wasm、glue、TypeScript は1つの成果物なので、ページがそれらのバージョンを混ぜる
   ことはない。
 
-## 移行計画
-1手順を1 PR にする。リファクタの PR は、それに依存する機能の PR より先に出し、依存
-するものは stacked PR にする。
-
-1. **feat(moqt): 接続ごとに呼ばれる認証トークンの provider。** `ClientConfig` の
-   `authorization_token` を、固定値と provider の両方を表す型にする。
-2. **feat(moqt): GOAWAY 無しの切断からの自動再接続。** 移行の仕組みを使い、購読の
-   FETCH による埋め合わせ、再試行の間隔と上限、認証エラー時のトークン取り直しを
-   入れる。relay を止めて戻す Rust のテストで確かめる。
-3. **refactor(broadcast): 既存の `moqt::Session` から `RelayConnection` を作る。**
-   `Mp4Broadcast` はページの session を受け取る。ingest-gateway/onvif のコンストラクタは
-   `MoqtTarget` のまま。
-4. **feat(wasm): handle スタイルの subscribe、fetch、track status、namespace 監視を
-   持つ `Session` wasm クラス。** `moqt::Subscriber` の上に、`MOQTClient` と並べて
-   作る。Rust でユニットテストする。JS の利用者はまだ無い。
-5. **feat(wasm): `moqt::Origin` の上の `TrackWriter` / `publishTrack` と
-   `announce`。**
-6. **refactor(browser): `LivePlayer` を新しい `Session` に載せる。** Live Viewer と
-   ONVIF の example もあとに続く。ブラウザ E2E（`run-media-e2e.mjs`）で守る。
-7. **feat(broadcast): Annex-B の parameter set、`remove_track`、Audio Level、
-   VP8/VP9/AV1 の映像、CMAF の opt-in**（PR 5本）。
-8. **feat(wasm): `MediaBroadcast`**（`Mp4Broadcast` の一般化）と、
-   **feat(browser): 既存の encoder を使う `publish(session, namespace, MediaStream)`。**
-   media example の publisher をこれに移し、その経路から `serveSubscribes.ts`、
-   `SubgroupWriter`、`fetchReplay` を消す。
-9. **feat(browser): `publish()` に rendition、画面共有、codec の選択を足す。**
-   そのあと meeting
-   example を移し、`mediaPublisher.ts` のプロトコル部分と `meetingCatalog.ts` の
-   catalog 組み立てを消す。
-10. **feat(browser): Safari 対応。** 映像と音声の capture の代替経路。実機の Safari で
-    配信と再生を確かめる。
-11. **refactor: TS をパッケージディレクトリへ移す。** subpath exports、worker の
-    バンドル、`examples/browser` を workspace 依存にする。CI に、新しい Vite
-    プロジェクトが `npm pack` した tarball でビルドできるかの確認を足す。
-12. **refactor(wasm): `MOQTClient`、`ClientState`、`MoqtClientWrapper` を消す。**
-    使う example が無くなってから行う。
-
-12 が入った時点で、パッケージは完成とする。配布は「配布」の手順で行う。
-
 ## 決定事項
-1.0 の範囲として決めたもの。
 
-1. **codec: 映像は H.264、H.265、VP8、VP9、AV1、音声は Opus と AAC。** 既定は
+1. **codec: 映像は H.264、H.265、VP8、VP9、AV1。音声は配信が Opus、再生が Opus と AAC。** 既定は
    `avc1.640028` と `opus`。`addSource` の `encoding.codec` で選び、ブラウザが encode できない
    codec を指定したら reject する（「配信を `crates/broadcast` に寄せる」の変更6）。
    `encoding.codec` は名前（`'h264'`、`'h265'`、`'vp8'`、`'vp9'`、`'av1'`）か WebCodecs の codec
@@ -1237,26 +1048,15 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 6. **CMAF の兄弟 track: 作らない。** ブラウザの配信は CMAF を作らない。他の publisher（ingest-gateway など）の既定は変えない
    （変更8）。
 7. **パッケージ名: `moq-wasm`。** `package.json` の `name` と import パスに使う。
-   `docs/architecture/moqt/sdk.md` は3言語の SDK の名前を `moqt` に揃えると決めたので、
-   その移行計画の改名の手順で `moqt` に変える。それまでは `moq-wasm` のままである。
+   3言語の SDK の名前をリポジトリ名にそろえる（`docs/architecture/moqt/sdk.md`）。
 8. **対応ブラウザ: Chrome、Edge、Safari。** Safari の違いは「Safari 対応」に書いた
    代替経路で吸収する。
-9. **プレイヤー UI: `PlayerControls` も含める。** 今の `PlayerControls` は、
-   コンストラクタで container、player、ログ用の callback を受け取り、ページが
-   `onStateChange` から `render()` を呼ぶ形である。SDK では次のように変える。
-   - 引数を `{ player, container, onLog? }` のオプションオブジェクトにする。
-     `onLog` は省略できる。
-   - `LivePlayer` を `EventTarget` にして `statechange` イベントを出し、
-     `PlayerControls` はそれを自分で購読して描き直す。ページが `render()` を呼ぶ必要は
-     無くなり、ページ自身も同じイベントを購読できる（`onStateChange` の枠を
-     取り合わない）。
-   - 見た目は `controls.css` に閉じ、class 名と CSS 変数（色、サイズ）を公開範囲に
-     含める。markup の構造は含めない。
-   - `dispose()` で、追加した DOM とイベントの購読を外す。
-   移す PR は移行計画の手順6（`LivePlayer` を新しい `Session` に載せる）のあとに
-   出す。
-10. **安定性: semver。1.0 までは minor で壊してよい。** core API（`Session`、
-    `Subscription`、`TrackWriter`）を先に 1.0 にする。`moq-wasm/media` は、examples
+9. **プレイヤー UI: `PlayerControls` も含める。** コンストラクタで container、player、
+   ログ用の callback を受け取り、ページが `onStateChange` から `render()` を呼ぶ。
+   見た目は `controls.css` に閉じ、class 名と CSS 変数（色、サイズ）を公開範囲に含める。
+   markup の構造は含めない。`dispose()` で、追加した DOM とイベントの購読を外す。
+10. **安定性: semver。1.0 までは minor で壊してよい。** core API（`MoqSession`、
+    `MoqSubscription`、`TrackWriter`）を先に 1.0 にする。`moq-wasm/media` は、examples
     以外のアプリが1つ、それで配信と再生をするまで 1.0 未満のままにする。両方を
     1パッケージで出すので、media API が 1.0 未満であることは、バージョンを分けず、
     doc comment と README に書く。
@@ -1305,7 +1105,7 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
    GitHub Release に添付する。changelog の該当部分を Release の本文にする。
 
 3 は `.github/workflows/sdk-release.yml` が行う。tag がパッケージの version を指して
-いなければ止まり、`CHANGELOG.md` にその version の節が無くても止まる。添付する前に、手順11の CI と同じ
+いなければ止まり、`CHANGELOG.md` にその version の節が無くても止まる。添付する前に、CI と同じ
 `check:pack` を通す。
 
 tarball 配布の制約: `^0.1.0` のような範囲指定、`npm update`、Dependabot や Renovate に

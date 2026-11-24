@@ -13,7 +13,7 @@ reviewer cannot tell from a pull request whether the public API changed.
 
 ## Decision
 Add **`@microsoft/api-extractor`** as a devDependency of `moq-wasm`. For each entry point in `exports` that has
-types (`.`, `./media`, `./recording`), it reads the built `types/<entry>/index.d.ts` and writes
+types (`.`, `./media`, `./recording`, `./element`), it reads the built `types/<entry>/index.d.ts` and writes
 `sdk/js/js/api/<entry>.api.md`, the exported declarations with their signatures. The reports are committed.
 The `sdk-package` CI job builds the package and runs `npm run api:check`, which fails when a report differs from
 the declarations; `npm run api:update` rewrites them.
@@ -28,7 +28,7 @@ only list declarations and the types they reference but do not export (`ae-forgo
 - Internal modules can change freely: only declarations reachable from an entry point are reported.
 
 ### Negative
-- API Extractor reports one entry point per run, so there are three configs and three reports.
+- API Extractor reports one entry point per run, so there are four configs and four reports.
 - It analyzes with its own TypeScript (6.x) and cannot report `typeof import('...')`, so the SDK writes the wasm
   module type as `typeof` a namespace import.
 - A type that an export references but the entry point does not export is reported by name only, so a change

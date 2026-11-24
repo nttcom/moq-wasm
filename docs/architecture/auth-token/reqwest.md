@@ -10,17 +10,18 @@ Accepted
 
 ## What
 
-Add `reqwest` (with the `json` and `rustls` features, no default features) as
-a direct dependency of the `relay` crate. It is used by
-`modules/auth/vts_token_verifier.rs` to `POST` the client's authorization token
-to the Verify Token Service (VTS) and read back the verified claims.
+`reqwest` (with the `json` and `rustls` features, no default features) is an
+optional dependency of `auth-token`, enabled by its `vts-client` feature.
+`VtsClient` (`vts_client.rs`) uses it to `POST` a client's authorization token
+to the Verify Token Service (VTS) and read back the verified claims. The
+relay, `bot-dispatcher`, `observability` and `recorder` call the VTS through
+it.
 
 ## Context
 
 Clients present a JWT in the CLIENT_SETUP AUTHORIZATION TOKEN parameter. The
 relay does not hold signing secrets; it forwards the token to VTS over HTTP
-once per session and trusts the returned claims. This is the relay's first
-outbound HTTP call.
+once per session and trusts the returned claims.
 
 ## Alternatives
 
@@ -33,7 +34,6 @@ outbound HTTP call.
 
 ## Decision
 
-Use `reqwest`. It is already in the workspace lock at 0.13.4 (a direct
-dependency of `services/ingest-gateway` and a transitive one of `opentelemetry-otlp`
-inside `relay`), so no new crate enters the dependency tree. The `rustls`
-feature matches the TLS stack the relay already links for QUIC.
+Use `reqwest`. The `rustls` feature matches the TLS stack the relay already
+links for QUIC. The dependency is optional so that a crate that only signs or
+checks tokens does not link an HTTP client.

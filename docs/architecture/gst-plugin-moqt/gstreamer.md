@@ -41,6 +41,6 @@ Subclass `gst::Element` directly with two request sink pads (`video`, `audio`)
 so one element owns one MoQT session and the pipeline can link demuxer pads to
 it by caps. The plugin descriptor is declared with `gst::plugin_define!` using
 Cargo package metadata, so no build script or `gst-plugin-version-helper`
-dependency is needed. The `gstreamer` crate is confined to this crate and
-`crates/transcode`; `moqt`, `mediapack` and `broadcast` compile without
-it.
+dependency is needed. The `gstreamer` crate is used by this crate, `crates/transcode`,
+`ingest-gateway`, `live-translate` and `sip-gateway`; `moqt`, `mediapack` and
+`broadcast` compile without it.

@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-Add `reqwest` (with the `rustls` feature, no default features) as a direct
+Add `reqwest` (with the `json` and `rustls` features, no default features) as a direct
 dependency of `moq-cli`. `telemetry.rs` uses it to `POST` the
 CLI's logs to the observability server's `/api/client-telemetry` every 10 s
 and once more on exit.
@@ -34,6 +34,6 @@ the observability server's public endpoint, as the browser pages do.
 
 ## Decision
 
-Use `reqwest`. It is already in the workspace lock at 0.13 (a direct
-dependency of `relay`, `observability` and others), so no new crate enters
+Use `reqwest`. It is already in the workspace lock (a direct
+dependency of `observability`, `recorder` and others), so no new crate enters
 the dependency tree.

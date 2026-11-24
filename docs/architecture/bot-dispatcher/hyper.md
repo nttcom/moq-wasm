@@ -1,4 +1,4 @@
-# hyper and http-body-util for the bot-dispatcher HTTP server
+# hyper for the bot-dispatcher HTTP server
 
 ## Status
 
@@ -10,9 +10,9 @@ Accepted
 
 ## What
 
-Add `hyper` 1.x (`http1`, `server`) and `http-body-util` as direct
-dependencies of `bot-dispatcher`. `server.rs` takes `hyper::Request<Incoming>` from
-`http_server::HttpServer` and answers `Response<Full<Bytes>>`.
+Add `hyper` 1.x (`http1`, `server`) as a direct dependency of
+`bot-dispatcher`. `server.rs` takes `hyper::Request<Incoming>` from
+`http_server::HttpServer` and answers `http_server::JsonResponse`.
 
 ## Context
 
@@ -25,5 +25,5 @@ dependencies of `bot-dispatcher`. `server.rs` takes `hyper::Request<Incoming>` f
 
 ## Decision
 
-Use `hyper` through `http-server`, as the other services do. Both crates are
-already compiled in the workspace.
+Use `hyper` through `http-server`, as the other services do. It is already
+compiled in the workspace.

@@ -27,7 +27,7 @@ crate with a `MediaEvent`-in / `MediaEvent`-out boundary.
 - Pure Rust codecs. `openh264` offers decoding and baseline-only encoding
   through bindings, `rav1e` is far from real time; neither gives a hardware
   path.
-- `ffmpeg-next` (already used by the ONVIF bridge). Decoding, scaling and
+- `ffmpeg-next`. Decoding, scaling and
   encoding N outputs must be driven by hand or through a libavfilter graph;
   hardware encoders need per-platform code.
 - An external ffmpeg/gst-launch process feeding the bridge with several SRT

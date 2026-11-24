@@ -11,13 +11,14 @@ Accepted
 ## What
 
 Add `reqwest` (`json`, `rustls`) as a direct dependency of `bot-dispatcher`.
-`launch_auth.rs` posts launch tokens to the VTS and `id_token.rs` fetches
-Google's JWKS; `job-launcher` and `google-cloud` take a client too.
+It builds the `reqwest::Client` that `google_cloud::MetadataToken` and
+`job-launcher` take.
 
 ## Context
 
-`bot-dispatcher` calls two HTTP services and the crates it builds on take a
-`reqwest::Client`.
+The crates `bot-dispatcher` builds on take a `reqwest::Client`. Launch tokens
+go to the VTS through `auth_token::VtsClient`, and Google's JWKS is fetched by
+`google_cloud::IdTokenVerifier`.
 
 ## Alternatives
 

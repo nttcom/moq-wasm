@@ -14,30 +14,23 @@ A client `Session` follows the server's GOAWAY by itself (draft-14 §3.5:
 "Ideally this is transparent to the application using MOQT"). The application
 keeps its `Session`, `Subscription`s, data receivers, stream senders and
 handlers; request ids and track aliases it has seen keep their values.
-`MigratingSession` and the browser's `moqtClient.ts` switchover are removed.
+It replaced `moqt::MigratingSession` and the browser's TypeScript switchover,
+which are deleted.
 
 ## Context
 
-Migration lives in three places today:
-
-| Where | Subscribing side | Publishing side |
-| --- | --- | --- |
-| `moqt::MigratingSession` (#799, #804) | `MigratingTrack`, object level | `Origin` with one outlet per session (#803) |
-| `broadcast::RelayConnection` | — | through `MigratingSession` (#805) |
-| `examples/browser/lib/moqt/moqtClient.ts` | id/alias maps, group cutover, joining FETCH fill, FETCH carry-over, Forward | dual send for PUBLISH and for SUBSCRIBE-served tracks |
-
-The wasm `MOQTClient` exposes a message-level API: JavaScript chooses request
-ids, reads subgroup headers, objects and ends per track alias, and writes
-subgroups by track alias. `MigratingSession` hides ids behind handles and
-delivers objects only, so the browser cannot use it without an id map of its
-own. Putting the id map into `Session` serves Rust and the browser alike.
+`MigratingSession` hid request ids behind handles and delivered objects only.
+The browser's API is message-level (JavaScript sees request ids and track
+aliases), so it could not use `MigratingSession` without an id map of its
+own and migrated in TypeScript instead. Putting the id map into `Session`
+serves Rust and the browser alike.
 
 ## Design
 
 ### Layering
 
-`Session` becomes the logical session. The per-connection state of
-`SessionContext` moves to a `Connection` (transport, `ControlChannel` with
+`Session` is the logical session. The per-connection state lives in a
+`Connection` (transport, `ControlChannel` with
 its request id allocator, the track aliases this side assigns, GOAWAY state,
 the object sinks keyed by wire alias and the FETCH stream notifications keyed
 by wire request id), and the tasks that read a connection are bound to it
@@ -48,7 +41,8 @@ by wire request id), and the tasks that read a connection are bound to it
 - one event channel fed by the connections;
 - a handle to the `Endpoint`'s connection creator, so the session can open
   the new connection on the same socket and transport (`BROWSER` included);
-- the `MigrationTask`, which reacts to GOAWAY.
+- the `MigrationTask`, which reacts to GOAWAY and tries the new connection
+  every 500 ms for 10 s.
 
 Requests sent while a migration re-sends the others wait for it, so none is
 missed.
@@ -60,16 +54,14 @@ so its answer goes there.
 
 ### Turning it off
 
-`ClientConfig::follow_go_away: bool`. With `false` the session behaves as
-today: GOAWAY is a `SessionEvent` and nothing migrates. A server-side session
-never migrates.
+`ClientConfig::follow_go_away: bool`, `true` by default. With `false`, GOAWAY
+is a `SessionEvent` and nothing migrates. A server-side session never
+migrates.
 
 | Client | Setting | Why |
 | --- | --- | --- |
 | relay → relay (`inter_relay_connection_manager`) | `false` | a relay-peer GOAWAY is answered by subscribing other publishers ("GOAWAY sequence") |
 | broadcast, recorder, egress-gateway, ingest-gateway pull command subscriber, moq-cli, wasm | `true` | |
-
-The default is `true`; the relay call site sets `false` in the same change.
 
 ### Request ids and track aliases
 
@@ -85,14 +77,11 @@ application sees logical ids:
   the first connection uses the wire id as the logical id. A later connection
   maps each wire id to a fresh logical id from a session-wide counter, so ids
   from the two relays never collide in a map the application keys by request
-  id (the wasm `IncomingRequests`).
+  id.
 - **Track aliases**: the logical alias is the alias of the first connection
   (assigned by the peer for SUBSCRIBE, by this side for PUBLISH). A later
   connection translates its wire alias to the logical one where objects enter
   (`subscription_notifier::notify`) and where streams and datagrams are opened.
-
-The JavaScript API keeps its shape: the ids it passes and receives are logical
-ids.
 
 ### Subscribing side
 
@@ -117,9 +106,7 @@ cutover from the previous connection and the rest from the new one, and drops
 the others before the application sees them. Datagrams take the same
 decision per object. Each stream and datagram is checked by the draft of
 the connection it arrived on, so a track moved from a draft-14 server to a
-draft-18 one may mix subgroup streams and datagrams there. `TrackReader`,
-`MigratingTrack`'s users and the wasm `track_io` all read the receiver, so
-they need no change. The track's
+draft-18 one may mix subgroup streams and datagrams there. The track's
 `ObjectLedger` belongs to the session, so an object received before the move
 is still compared with its copies after it, a FETCH on the new connection
 included.
@@ -144,9 +131,8 @@ PUBLISH_NAMESPACE and PUBLISH are sent again on the new connection. A
 opens its streams on every connection whose peer still takes the track: the
 new one from the next group, the previous one until the peer UNSUBSCRIBEs
 there (draft-22 §7.6.1). This covers both PUBLISH-initiated tracks and tracks
-served for a SUBSCRIBE the previous relay sent. With fan-out below `Origin`,
-the per-session outlets of #803 are no longer needed and `Origin` goes back
-to one logical session.
+served for a SUBSCRIBE the previous relay sent. The fan-out is below
+`Origin`, which sees one logical session.
 
 ### Events
 
@@ -156,7 +142,7 @@ the current connection closed and no migration replaced it. The previous
 connection's Disconnected and ProtocolViolation are dropped. A
 PUBLISH_NAMESPACE the new relay sends for a namespace already announced on the
 previous one is delivered as is (the application acknowledges it again, as
-the recorder does now).
+the recorder does).
 
 ### Reconnecting after a lost connection
 
@@ -167,8 +153,7 @@ when the server closed it with EXPIRED_AUTH_TOKEN while
 `ClientConfig::authorization_token` is a provider that hands out a token other
 than the one just refused: a provider repeating it, as a token file nobody
 refreshed does, would only be refused again, and the session ends instead. A
-close this side made, and any other termination code, ends the session as
-before.
+close this side made, and any other termination code, ends the session.
 
 Attempts start 0.5 s after the loss and double their delay up to 10 s, for at
 most 60 s, about as long as a relay keeps a track in its cache. A server that
@@ -194,7 +179,8 @@ in.
 ### Closing the previous connection
 
 With NO_ERROR once the peer takes no track this side sends there and no
-carried subscription has a subgroup stream open there, or when the server
+carried subscription has a subgroup stream open there (each sink counts the
+streams it handed out until they end, `OpenSubgroups`), or when the server
 closes it. A subscription with none open when it moves needs nothing more
 from the previous connection, since the publisher sends every later group to
 the new one too; its cutover is fixed at the group after the newest the
@@ -202,58 +188,11 @@ previous connection handed out. A group that never ends is bounded by the
 5 s grace after every subscription cut over (10 s limit for a track that
 delivers nothing on the new connection). A SUBSCRIBE the
 previous server sent and never unsubscribed ends then with an `Unsubscribe`
-event, as `moqtClient.ts` reports it today, and so does a PUBLISH the new
+event, and so does a PUBLISH the new
 server rejected, which no connection takes any more.
-
-## What `moqtClient.ts` does that this design covers
-
-| `moqtClient.ts` | Here |
-| --- | --- |
-| app alias ↔ wire alias, request ids kept | logical ids and aliases in `Session` |
-| group cutover, `previousNewestGroup` | `GroupCutover` per stream in the receiver factory |
-| joining FETCH to fill the new relay's current group | not needed: the previous connection supplies every group before the cutover; a previous connection lost before the cutover leaves the gap of today |
-| FETCH remainder carried over | FETCH carry-over, ascending only: a descending FETCH cut off is not sent again |
-| Forward=0 carried | Forward state re-sent with the SUBSCRIBE |
-| dual send for PUBLISH and SUBSCRIBE-served tracks | fan-out in the sender factory |
-| retry every 500 ms for 10 s | same |
-| leave the old relay at once when no subgroup is arriving there (`onSubgroupEnd`) | each sink counts the subgroup streams it handed out until they end (`OpenSubgroups`); the previous connection closes once none of a carried subscription is open there |
 
 ## Alternatives
 
 - **Keep `MigratingSession` and add an id map in wasm.** The map then exists
   in wasm and, once Rust applications want stable ids, again in `moqt`.
 - **Keep the TypeScript switchover.** Migration stays in two languages.
-
-## Steps
-
-Each step is one PR, stacked:
-
-1. **Connections under `Session`, no migration.** `SessionContext` splits into
-   the logical session and `Connection`, the tasks and object sinks of a
-   connection are bound to it, and each handler answers on the connection
-   its request arrived on; logical ids equal wire ids. No behaviour change;
-   the existing tests are the check.
-2. **`follow_go_away` and subscribing-side migration in `Session`.** Logical id
-   maps, per-stream cutover, events. The relay, `broadcast` and wasm set
-   `false` until their steps. The recorder moves from `MigratingSession` to
-   `Session`.
-3. **Publishing-side migration in `Session`.** Logical ids for the requests
-   the peer sends; PUBLISH_NAMESPACE and PUBLISH carried and fan-out in the
-   sender factory; `broadcast` moves to `Session`; `Origin` keeps an outlet
-   per subscription instead of per session; `MigratingSession` is removed.
-4. **FETCH carry-over and Forward state.**
-5. **wasm and `moqtClient.ts`.** The wasm client turns `follow_go_away` on and
-   the TypeScript switchover is deleted; `run-goaway-e2e.mjs` and the browser
-   unit tests are the check.
-
-## Open questions
-
-- #803–#805 add the `Origin` outlets and `MigratingSession`'s publishing side,
-  which step 3 removes again. They work today; merging them gives the Rust
-  publishers drain support now, at the cost of code that is replaced later.
-- The default of `follow_go_away`. `true` makes every client migrate unless it
-  opts out, which is what draft-14 §3.5 recommends, but a client this
-  repository does not know about changes behaviour.
-- A client that refreshes its token in-session (the recorder's
-  `--auth-token-file`) hands `ClientConfig` an `AuthorizationTokenSource`
-  provider, which each connection calls for its CLIENT_SETUP.

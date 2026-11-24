@@ -1,21 +1,21 @@
 # Design: a SIP gateway that bridges phone calls into MoQT rooms
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-11-20
 
 ## Scope
-A new service `services/sip-gateway` that places and answers telephone calls
-through a SIP trunk and bridges each call's audio to a MoQT broadcast, and the
-changes it brings to:
+The service `services/sip-gateway`, which places and answers telephone calls
+through a SIP trunk and bridges each call's audio to a MoQT broadcast, and
+what it uses of:
 
-- `crates/broadcast`, which gains the reading side that `services/egress-gateway`
-  keeps privately today (`BroadcastReader`).
-- `crates/auth-token`, which gains the claim a call request carries.
-- `crates/app-registry`, which gains the phone numbers of an app.
-- The browser SDK (`sdk/js/js`), which gains a call API.
+- `crates/broadcast`: the reading side (`BroadcastReader`), shared with
+  `services/egress-gateway`.
+- `crates/auth-token`: the claim a call request carries.
+- `crates/app-registry`: the phone numbers of an app.
+- The browser SDK (`sdk/js/js`): its call API.
 
 A call connects one phone to one MoQT peer. Out of scope: video, more than one
 peer per call (mixing a room's members into one phone leg), call transfer,
@@ -79,9 +79,10 @@ started, and refuses with:
 | Status | `error` | When |
 | --- | --- | --- |
 | 400 | `invalid_request`, `invalid_destination`, `invalid_peer` | malformed body, `to` not E.164, `peer` outside the room |
-| 401 | `invalid_token`, `invalid_token_lifetime` | the VTS refuses the token, or it lives longer than 5 minutes |
+| 401 | `a bearer token is required`, `invalid_token`, `invalid_token_lifetime` | no bearer token, the VTS refuses the token, or it lives longer than 5 minutes |
 | 403 | `forbidden`, `destination_not_allowed` | no `calls` claim for the room or a relay's token; the app's phone settings do not allow `to` |
 | 429 | `too_many_calls` | the app has its maximum of calls in progress |
+| 500 | `internal_error` | the call could not be started |
 | 503 | `vts_unavailable`, `registry_unavailable` | |
 
 ### Outbound call
@@ -225,7 +226,7 @@ closes (the tab closed, or lost) ends its broadcast, and the gateway hangs up
 on the PUBLISH_NAMESPACE_DONE.
 
 ### Browser SDK
-`moq-wasm/media` gains `PhoneCall`, which publishes the peer broadcast, plays
+`moq-wasm/media` provides `PhoneCall`, which publishes the peer broadcast, plays
 the phone's audio and reads the `call` track. A page never dials: it joins a
 call its app server placed or accepted.
 
@@ -249,10 +250,10 @@ await call.hangUp() // writes hangup on the control track
 - **Phone to MoQT.** Each RTP packet (20 ms) is decoded from G.711, resampled
   to 48 kHz and encoded to one Opus frame, published as one LOC object.
   `broadcast` builds the catalog and the track, as for `ingest-gateway`. The
-  capture timestamp is the RTP time mapped to wall clock through RTCP sender
-  reports when the trunk sends them, else arrival time.
-- **MoQT to phone.** The peer's audio is read through the `BroadcastReader`
-  moved into `broadcast`, with `VideoChoice::Off`: a meeting participant
+  capture timestamp counts 20 ms per Opus frame from the time the first
+  frame is published; RTCP sender reports are not used.
+- **MoQT to phone.** The peer's audio is read through `broadcast`'s
+  `BroadcastReader`, with `VideoChoice::Off`: a meeting participant
   encodes a video rendition only while it has a subscriber. The audio is
   decoded, resampled to 8 kHz, encoded to the codec
   the SDP answer chose, and sent every 20 ms from a playout buffer. While the
@@ -262,8 +263,8 @@ await call.hangUp() // writes hangup on the control track
   `mulawenc`/`alawenc`), already in the workspace through `transcode` and
   `live-translate`.
 - **Latency.** The audio is subscribed from the largest object with a short
-  DELIVERY TIMEOUT, as `egress-gateway` does, and the playout buffer targets
-  40-60 ms.
+  DELIVERY TIMEOUT, as `egress-gateway` does. The playout buffer starts
+  playing at 40 ms and, above 120 ms, drops the oldest audio down to 40 ms.
 
 ### Session timers and teardown
 A call ends on BYE from either side, on the peer's `hangup` or
@@ -347,7 +348,7 @@ a UDP port range for SRTP. Cloud Run cannot receive them. The gateway should run
 the region of the relay it joins.
 
 ### Telemetry
-New log fields, added to the vocabulary in `AGENTS.md`: `call_id` (the
+Log fields from the vocabulary in `AGENTS.md`: `call_id` (the
 gateway's id, also the namespace element and, for an outbound call, the SIP
 Call-ID), `sip_call_id` (the SIP Call-ID, to join with the trunk's logs),
 `sip_status`, `direction` (`inbound` / `outbound`), `call_end_reason` (the
@@ -370,23 +371,6 @@ WARN, since at INFO they carry every message whole, SRTP keys included.
   for inbound calls, but leaves who may answer to whoever holds a room token.
 - **pipecat's `SIPTransport` (baresip)**: unreleased, Python, and one call per
   transport; it suits a bot, not a gateway.
-
-## Plan
-Each step is its own pull request, stacked:
-
-1. `broadcast`: move `BroadcastReader` from `egress-gateway` into the crate (lower
-   layer, refactor only).
-2. `auth-token` / `app-registry`: the `calls` claim, the app's numbers, number
-   patterns and webhook URL.
-3. `sip-gateway`: outbound calls against the local Asterisk over TLS and
-   SDES-SRTP, with the ADRs for `rsipstack`, `rustrtc` and GStreamer.
-4. `sip-gateway`: inbound calls and the webhook.
-5. Browser SDK: `PhoneCall`, on the core API's track writer and joining
-   SUBSCRIBE (no new track type).
-6. `sip-gateway`: the page's `control` track and its `hangup`; then an example
-   page and an E2E test against a local PBX.
-7. `sip-gateway`: `dtmf` on the `control` track as RFC 4733 events, and
-   session timers.
 
 ## Open questions
 - Against Twilio once there is an account: the SRTP crypto suites it accepts,

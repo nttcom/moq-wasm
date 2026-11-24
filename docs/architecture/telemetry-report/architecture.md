@@ -46,4 +46,4 @@ the records go stays with each client.
 
 ## Dependencies
 `telemetry`, `serde_json`, `tracing` and `tracing-subscriber` (registry
-only), which the wasm module already used; see `docs/architecture/wasm/tracing-subscriber.md`.
+only); see `docs/architecture/wasm/tracing-subscriber.md`.

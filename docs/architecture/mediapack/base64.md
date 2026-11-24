@@ -26,11 +26,11 @@ GStreamer.
 ## Alternatives
 
 - Decode Base64 by hand. Some 40 lines, but a second implementation of a
-  routine four other crates in the workspace already take from `base64`.
+  routine other crates in the workspace already take from `base64`.
 - Pass the attribute through as text and let the caller decode it. Moves the
   one place that needs the bytes out of the crate that defines the format.
 
 ## Decision
 
-Depend on `base64`. `broadcast`, `auth-token`, `ingest-gateway pull` and `vts`
-already use the same version, so no new crate enters the workspace lock.
+Depend on `base64`. `broadcast`, `auth-token`, `ingest-gateway pull` and
+`google-cloud` already use the same version, so no new crate enters the workspace lock.

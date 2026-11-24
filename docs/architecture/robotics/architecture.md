@@ -1,22 +1,21 @@
 # Design: robot teleoperation, cloud policies and data collection over MoQT
 
 ## Status
-Proposed
+Accepted. "Not implemented yet" lists what is left.
 
 ## Date
 2026-11-20
 
 ## Scope
-A new library crate `crates/robotics` that defines how a robot, its
-operators and a policy exchange observations and actions over MoQT, and the
-changes it brings to:
+The library crate `crates/robotics` defines how a robot, its
+operators and a policy exchange observations and actions over MoQT. It also touches:
 
-- `crates/moqt`, whose `TrackWriter` gains a Publisher Priority per track.
+- `crates/moqt`, where `TrackWriter` takes a Publisher Priority per track.
 - The SDKs, which wrap `robotics`: the Rust SDK (`moq_wasm::robotics`, see
   docs/architecture/moq-wasm/sdk.md) and the Python SDK for the robot and the
   policy, the browser SDK for the operator.
 - `services/recorder`, which archives the robot room's event timeline tracks.
-- `services/bot-dispatcher`, which gains the bot type `policy`.
+- `services/bot-dispatcher`, which is to gain the bot type `policy`.
 - Two new tools: an exporter writing LeRobot datasets, and later MCAP.
 
 Teleoperation, cloud inference and data collection are one design: an
@@ -27,7 +26,7 @@ intervention. All three are the same tracks with a different driver.
 Out of scope: the policy model itself, the robot's motion control, physical
 safety beyond holding still when actions stop, more than one robot per room,
 point clouds and other observations that are neither video nor small
-records, and a ROS 2 bridge (a later design, see Plan).
+records, and a ROS 2 bridge (its own design).
 
 ## Context
 LiveKit Portal (a robotics layer over LiveKit rooms) moves camera streams,
@@ -101,7 +100,8 @@ drops a group older than one it has read. `episode` is a sequence: each
 episode is one group whose first object opens it and whose later objects
 append to it (§8.4 incremental updates).
 
-The cameras use the existing media source (`add_source` in the SDKs), so
+The cameras use the existing media source (`add_media_source` in the Rust and
+Python SDKs, `addSource` in the browser's), so
 the operator page plays them with `LivePlayer` and the recorder stores them
 as it stores any camera.
 
@@ -245,10 +245,9 @@ needs: an operator and the policy drop a record that arrives too late to
 act on, while the recorder receives every record. The `robotics` helpers
 set these values; the application may override them.
 
-`moqt::TrackWriter` fixes the Publisher Priority at 128 today
-(`crates/moqt/src/modules/moqt/domains/track_writer.rs`), so it gains a
-priority per track, exposed by `publish_track` in each SDK. The relay must
-then let a higher-priority stream open before lower-priority streams that
+The Publisher Priority is set per track through `publish_track` in each SDK
+(`PublishTrackOptions.priority`, 128 by default). The relay must
+let a higher-priority stream open before lower-priority streams that
 wait for credit, which it does not do yet
 (docs/todos/high/relay-lower-priority-streams-block-higher-priority.md); that
 fix is a prerequisite and is handled separately.
@@ -305,20 +304,18 @@ helpers. Each SDK wraps it without reimplementing it:
 | operator | browser | `createBroadcast` with `eventTimelines`, records written as JSON |
 | policy bot | Rust (`moq_wasm::robotics::offer_actions`) | `Driver`, `State` |
 
-A Python robot or policy gets the module once one needs it
-(docs/architecture/moq-wasm/sdk.md).
-
-The records are read through `RemoteBroadcast.event_timeline(name)` of each
-SDK's media layer, which starts from the record the relay holds (a joining
-FETCH) and subscribes again when the track ends, with the `priority` and
-`delivery_timeout` of a SUBSCRIBE, which the table in Priority and delivery
-sets per track.
+The records are read through `RemoteBroadcast.event_timeline(name)` of the
+Rust and Python SDKs' media layer, which starts from the record the relay
+holds (a joining FETCH) and subscribes again when the track ends, with the
+`priority` and `delivery_timeout` of a SUBSCRIBE, which the table in Priority
+and delivery sets per track. The browser's operator page reads them with
+`subscribeCurrentGroup`.
 
 ### Telemetry
 `Robot` logs each driver change (with `control_reason`), each hold, and each
 episode's start and end at INFO, and the loop latency of each applied action
-at DEBUG; a metric of it follows with the SDKs. New log fields, added to the
-vocabulary in `AGENTS.md` before use: `driver` (the namespace driving,
+at DEBUG. Log fields from the
+vocabulary in `AGENTS.md`: `driver` (the namespace driving,
 relative to the room), `hold_reason` (`stale`, `session`), `control_reason`,
 `episode_id`, and `loop_latency_ms` (`now − basis` of an applied action).
 
@@ -342,32 +339,12 @@ relative to the room), `hold_reason` (`stale`, `session`), `control_reason`,
 - **A Rust archive reader for the exporter**: faster than replaying, but a
   second reader of the archive format beside the recorder's replay.
 
-## Plan
-Each step is its own pull request, stacked:
-
-0. `relay`: let higher-priority streams open first (separate work,
-   prerequisite).
-1. `moqt`: Publisher Priority per track in `TrackWriter`, and `priority` in
-   `publish_track` of the Python and browser SDKs.
-2. `robotics`: record types and track setup helpers, with proptest
-   properties for the records.
-3. `robotics`: `Robot` (arbitration, dead man, `state` / `control` /
-   `episode` publishing).
-4. The Rust SDK's `moq_wasm::robotics`; the Python SDK's module follows
-   when a Python robot needs it.
-5. Example: a simulated robot on the Rust SDK (`examples/rust/moq-robot-sim`,
-   a point driven by velocity) and an operator page
-   (`examples/browser/examples/robot-teleop`, keyboard actions), with an E2E
-   test through the relay. Cameras come with a robot that has one.
-6. `recorder`: archive every broadcast's event timelines in a room, the
-   policy bot's included; the operator page lists its `action` in its
-   catalog. The E2E records a room the policy drives and an operator
-   intervenes in, and reads each member's tracks back from the archive.
-7. `robotics::Driver` and an example policy bot, with the E2E driving the
-   robot by the policy and an operator's intervention. The `bot-dispatcher`
-   type `policy` follows with a Rust client of the bot protocol.
-8. Later: the LeRobot exporter, MCAP export, and a ROS 2 bridge (its own
-   design).
+## Not implemented yet
+- `relay`: let higher-priority streams open first
+  (docs/todos/high/relay-lower-priority-streams-block-higher-priority.md).
+- The `bot-dispatcher` type `policy`, with a Rust client of the bot protocol.
+- The Python SDK's robotics module, when a Python robot needs it.
+- The LeRobot exporter, MCAP export, and a ROS 2 bridge (its own design).
 
 ## Open questions
 - How fast the replay serves FETCH for a long recording, which sets how long

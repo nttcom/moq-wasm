@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-`telemetry` depends on `opentelemetry`, `opentelemetry_sdk`,
+`telemetry-otlp` depends on `opentelemetry`, `opentelemetry_sdk`,
 `opentelemetry-otlp`, `opentelemetry-appender-tracing` and
 `tracing-opentelemetry` to export `tracing` spans and events as OTLP traces
 and logs.
@@ -36,6 +36,6 @@ binary would leave N copies to change together.
 
 ## Decision
 
-Move the relay's setup unchanged into `telemetry` and keep the same crates.
+Move the relay's setup unchanged into `telemetry-otlp` and keep the same crates.
 They were already compiled in the workspace for the relay, so no new crate
 enters `Cargo.lock`.

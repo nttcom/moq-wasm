@@ -66,10 +66,10 @@ sequenceDiagram
   adds, removes or interprets claims; `auth_token::SignedToken` reads them.
 - Rejections are reported in the order they are detected: `malformed_token`
   (not three segments, payload not a JSON object, or no non-empty string
-  `appId`), then `unknown_app`, then `invalid_signature`. A header whose
-  `alg` is anything other than `HS256` is `invalid_signature`, matching the
-  previous Node.js implementation built on `jose`, so the relay's
-  `AuthenticationError` mapping is unchanged.
+  `appId`), then `unknown_app`, then the signature check: `malformed_token`
+  for a header that is not a JSON object or has no string `alg` and for a
+  signature that is not base64url, else `invalid_signature`. A header whose
+  `alg` is anything other than `HS256` is `invalid_signature`.
 - Signing secrets exist only in the registry and, for temporary apps, in
   `VTS_TEMPORARY_APP_SECRET`. The relay never receives them.
 - A temporary app is never a relay. While the temporary secret is configured,

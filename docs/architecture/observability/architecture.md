@@ -65,8 +65,8 @@ derived from consecutive snapshots, so a lost snapshot loses no traffic.
 `…_since_last_snapshot_…` and `lag_…` fields are gauges.
 
 All transport statistics are measured on the relay. A browser client could
-not report them: the wasm transport's `stats()` returns
-`TransportStats::default()`. What a browser does report is its player's
+not report them: the wasm transport's `stats()` counts only the bytes sent
+and received. What a browser does report is its player's
 view, through `POST /api/client-telemetry` (see Client telemetry). A QUIC endpoint only knows the loss and
 congestion window of what it sends, so the relay sees the two directions of a
 client session differently:
@@ -77,7 +77,7 @@ client session differently:
 | Uplink (client → relay) | bitrate, client blocked by the relay's flow-control window, streams the client reset, aborted subgroups, maximum object arrival gap per track | packet loss, cwnd |
 | Both | RTT, path MTU, remote address | — |
 
-quinn 0.11.16 has no minimum RTT, and object id gaps prove nothing about
+quinn 0.11 has no minimum RTT, and object id gaps prove nothing about
 loss (draft-14 §11.3 Prior Object ID Gap lets a publisher skip ids), so
 neither is reported.
 
@@ -119,7 +119,7 @@ neither is reported.
   Snapshots stored while relays published stats over MoQT (see Relay side)
   also carry `stats_publisher` and `stats_subscriber` sessions; until they
   expire, the page hides them and the relay totals in `/api/series` count
-  only `client` and `relay` sessions, and `/api/namespaces` leaves out
+  only `client` sessions, and `/api/namespaces` leaves out
   `observability/…`.
 - `dialed_relay_id` is set on an inter-relay session this relay dialed. The
   accepting relay only sees a relay token, so consumers identify the far end
@@ -216,9 +216,9 @@ starts.
     counters turned into per-second rates between the last samples of
     consecutive buckets (so a partly filled newest bucket is not
     underestimated) and a
-    counter that went backwards (a restart) giving no value. `relay` sums
-    every session of the relay; ratios such as loss are weighted by their
-    denominators. `relay` sums only the app's client sessions on the relay, a
+    counter that went backwards (a restart) giving no value. Ratios such as
+    loss are weighted by their denominators. `relay` sums only the app's
+    client sessions on the relay, a
     `session` must be one of them and a `track` or `subscription` must lie
     under the app's namespace root, else the series is empty. Query values
     reach ClickHouse as typed query parameters.
@@ -363,7 +363,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`). The body is
 `telemetry::client_report::ClientReport`.
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
-  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields, traceId?, spanId? }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.
+  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields, traceId?, spanId? }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], publisherStats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.
   `service` is `browser` (the default), `moq-cli` or `python`; any other value
   answers 400, so a client cannot log as a relay. `page` names the page, the
   CLI subcommand or the bot. `clientId` is generated once per page load or
@@ -371,7 +371,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`). The body is
   `text/plain`, a CORS simple request that `navigator.sendBeacon` can send
   and that needs no preflight.
 - **Limits.** The body is at most 64 KiB (413), a report carries at most 100
-  logs, 100 stats and 100 spans, the ids of spans and logs must be 32 (trace) or 16 (span)
+  logs, 100 stats, 100 publisher stats and 100 spans, the ids of spans and logs must be 32 (trace) or 16 (span)
   hex digits, `clientId`, `page`, `trackNamespace` and `mediaSource`
   at most 128 characters (400).
   Each client address has a token bucket of 10 reports refilled at 1 per
@@ -390,22 +390,23 @@ report to OTLP/JSON and forwards it (`client_telemetry`). The body is
   of a session without a token go in a report without one. A client whose
   token was answered 401 sends that token's later records without it, so they
   arrive as `anon` instead of being rejected again (`sdk/js/js/src/core/telemetry.ts`,
-  `moq-cli`).
+  `sdk/python/python/moq_wasm/_telemetry.py`, `moq-cli`).
 - **Logs** become OTLP log records of resource `service.name` (the report's
   `service`) and `page`, with `app_id`, `client_id`, `target` and the
   client's fields as attributes, and are posted to
   `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`. A log's `traceId` and `spanId` go on
   its OTLP record.
 - **Spans** are the closed INFO spans of `moqt` in the browser's wasm module
-  (`init({ onSpan })`) and in `moq-cli`, chiefly the request spans
+  (`init({ onSpan })`), in the Python SDK (`moq_wasm.init(telemetry=...)`) and
+  in `moq-cli`, chiefly the request spans
   (`moqt.subscriber.subscribe`, …) and `moqt.session.connect` (see "Request spans" in
   `docs/architecture/moqt/architecture.md`). Each becomes an OTLP span of the
   same resource as the logs, kind INTERNAL, with `app_id`, `client_id` and
   the span's fields as attributes. `outcome` sets the status: `ok` is OK,
   `rejected` and `failed` are ERROR with the outcome as message. They are
   posted to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, so they land in
-  `otel_traces` with `ServiceName` `browser` or `moq-cli`. The Python bots
-  send none yet. A request span's `traceparent` travels with the request
+  `otel_traces` with `ServiceName` `browser`, `python` or `moq-cli`. A request
+  span's `traceparent` travels with the request
   (`TRACE_CONTEXT`), so the relay's span for it is its child in the same
   trace; `moqt.session.connect`'s travels in CLIENT_SETUP, so the relay's
   `relay.session.setup` is its child.
@@ -448,7 +449,8 @@ input's:
 | `client.publisher.audio_input_level_mean` | dBov | gauge, the level of the mean power of the `AudioData` | `input.meanLevelDbov` |
 | `client.publisher.audio_encoded` | kbit/s | gauge | `encodedKbps` |
 
-A collector that does not accept the export answers 502.
+A collector that does not accept the export answers 502, and so does a VTS
+that cannot be reached for a report with a token.
 
 ## Browser page (`examples/browser/examples/observability`)
 
@@ -470,8 +472,8 @@ app.
   the filter, links carrying only them and clients left with none of them
   are hidden; relays stay. The page filters the snapshot it already holds;
   the API takes no filter parameter.
-- Time controls: a range selector (15 min / 1 h / 6 h / 1 d / 7 d, 1 h by
-  default) shared with the chart drawer, and a slider spanning that range
+- Time controls: a range selector (1 min / 5 min / 15 min / 1 h / 6 h / 1 d / 7 d,
+  1 h by default) shared with the chart drawer, and a slider spanning that range
   up to now in 1 s steps — a 7-day slider would move about an hour per
   pixel. −10 s / +10 s buttons and ← / → (1 s, Shift for 10 s) step from
   the current position; stepping past now returns to live. The whole page
@@ -540,7 +542,7 @@ the viewport by default, resizable by dragging its top edge) and holds:
 - one chart per metric in the style of the GCP monitoring charts, with
   axes, gridlines and one line per series (uplink and downlink bitrate in
   one card, delivery lag per subscription in another), fed by
-  `GET /series`. Every metric of the direction table above appears in one of
+  `GET /api/series`. Every metric of the direction table above appears in one of
   the tabs; a relay's charts are the ingress / egress totals of the app's
   client sessions on it (bitrate-weighted egress loss, summed counts). The charts cover the header's
   range up to now and mark the selected past time with a vertical line;
@@ -570,4 +572,4 @@ target scale) rather than with publisher × subscriber pairs.
 ## Dependencies
 
 The crate's dependencies have ADRs in this directory (`reqwest.md`,
-`hyper.md`). The browser page needs no new package.
+`hyper.md`).
