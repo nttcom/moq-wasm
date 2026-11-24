@@ -96,7 +96,7 @@ for await (const event of await session.watchNamespaces(['room-1'])) {
 
 ```
 moq-wasm            core: init, MoqSession, MoqSubscription, MoqGroup, MoqFetch, MoqNamespaceWatch, TrackWriter, RequestError, 型
-moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, BroadcastCatalog, PhoneCall, LivePlayer, PlaybackGroup, PlayerControls, parseCatalog, Mp4Broadcast
+moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, BroadcastCatalog, botNamespace(), botTypeOf(), subscribeTranscript(), PhoneCall, LivePlayer, PlaybackGroup, PlayerControls, parseCatalog, Mp4Broadcast
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
 moq-wasm/recording  openRecording, Recording, RecorderError
@@ -345,7 +345,7 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
 
 ```ts
 import { MoqSession } from 'moq-wasm'
-import { createBroadcast, watchBroadcasts, type RemoteBroadcast } from 'moq-wasm/media'
+import { botTypeOf, createBroadcast, watchBroadcasts, type RemoteBroadcast } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 
 const session = await MoqSession.connect(url, { token: () => fetchToken() })
@@ -358,7 +358,7 @@ joinButton.onclick = async () => {
   preview.srcObject = camera.stream
 
   const remotes = await watchBroadcasts(session, ['room'], {
-    filter: (namespace) => namespace.at(-1) !== 'transcriber',
+    filter: (namespace) => botTypeOf(['room'], namespace) === undefined,
     onAdd: (remote) => addTile(remote),
     onRemove: (remote) => removeTile(remote)
   })
@@ -472,7 +472,7 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 
 ### 受ける側: `watchBroadcasts` と `RemoteBroadcast`
 
-`watchBroadcasts(session, prefix, { filter?, onAdd, onRemove })` は `session.watchNamespaces`
+`watchBroadcasts(session, prefix, { filter?, onBotChange?, onAdd, onRemove })` は `session.watchNamespaces`
 の上で、公開された namespace ごとに `RemoteBroadcast` を作る。
 
 - ハンドラは呼び出しの引数で受ける。監視の開始と処理の開始を一致させ、作ってから代入する
@@ -484,6 +484,13 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 - `filter` で、文字起こしボットのような参加者以外の配信を除く。深さではなく関数にするのは、
   参加者と同じ深さにいる配信も除けるようにするため。`filter` は公開のときだけ聞き、withdraw
   では聞かない（再生中のものは `filter` の答えによらず片付ける）。
+- `onBotChange(botType, present)` は、`prefix` の下で bot の namespace（`botTypeOf(prefix, namespace)`
+  が返すもの）が公開されたら `true`（呼び出し前から公開中のものも含む）、withdraw されたら `false`
+  で呼ぶ。`close()` では呼ばない。`filter` や再生とは独立で、ほかの session が公開した bot の
+  namespace も `filter` に渡り、除かなければ他の配信と同じく再生する（bot を再生しないページは
+  `filter` で除く）。この session 自身が公開した bot は `onBotChange` で知らせるだけで再生しない。
+  bot の検知をこの watch から出すのは、relay が既存の SUBSCRIBE_NAMESPACE と prefix が重なる2本目の
+  SUBSCRIBE_NAMESPACE を拒否するため（`NAMESPACE_PREFIX_OVERLAP`）。
 - namespace が withdraw されたら、SDK が view と catalog を片付けてから（片付けに失敗しても）
   `onRemove` を呼ぶ。公開中の namespace がもう一度公開されたら（入り直し）、再生していたものを
   片付けて `onRemove` で知らせ、新しい公開を `filter` が受け入れたときだけ再生して `onAdd` で知らせる。
@@ -520,6 +527,14 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 - ページは要素を別の場所に移してよい。同じタスクの中で移せば映像は止まらない。HTML の
   media 要素が document から外れたときの一時停止は、安定状態になってもまだ外れている
   ときにだけ起きる。canvas はもともと影響を受けない。テストで守る。
+
+### room の bot と文字起こし
+
+| API | 振る舞い |
+| --- | --- |
+| `botNamespace(room, botType)` | `bot-dispatcher` が起動した bot が公開する namespace `[...room, 'bots', botType]` を返す |
+| `botTypeOf(room, namespace)` | `namespace` がちょうど `[...room, 'bots', <type>]` なら `<type>`、それ以外は `undefined`。`session.watchNamespaces(room)` を直接読むページや `watchBroadcasts` の `filter` で使う |
+| `subscribeTranscript(session, room, onRecords)` | `botNamespace(room, 'transcriber')` の `transcript` track（MSF event timeline）を `session.subscribeCurrentGroup`（joining FETCH + ライブ購読）で読み、変化するたびに全記録の配列（`TranscriptRecord[]`、transcriber が公開した順）を `onRecords` に渡す。`TranscriptRecord` は `{ startedAtMs, speaker, text, live }` で、joining FETCH で届いた履歴は `live: false`。壊れた object や record は読み飛ばす。transcriber がいない間など relay が SUBSCRIBE を拒否したら `RequestError` で reject するので、`onBotChange('transcriber', true)` や `botTypeOf` で参加を知ってから呼ぶ。返り値の `TranscriptSubscription` は `{ done, close() }` で、`MoqSubscription` と同じく `done` は PUBLISH_DONE（あるいはそれ無しに session が終わったとき `undefined`）で解決し、`close()` は UNSUBSCRIBE して以後の `onRecords` を止める |
 
 ### 音声の出力
 ページが1つの `AudioContext` を持ち、`RemoteBroadcast`（`watchBroadcasts` の option も

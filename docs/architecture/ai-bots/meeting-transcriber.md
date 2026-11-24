@@ -58,7 +58,7 @@ sequenceDiagram
     B->>R: audio objects
     R->>S: audio objects
     Note over S: VAD + Whisper per participant
-    S->>R: transcript record {t, speaker: bob, text}
+    S->>R: transcript record {T, data: {speaker: bob, text}}
     R->>A: transcript record
     R->>B: transcript record
 ```
@@ -193,7 +193,8 @@ recognizer has not answered within 2 s, the transcript gets a record from the
 speaker `transcriber` saying it is starting and may take a while.
 
 ### The transcript track
-The bot publishes under `{root}/{room}/bots/transcriber`. The namespace has
+The bot publishes under `{root}/{room}/bots/transcriber` (`botNamespace(room, 'transcriber')`
+in `moq-wasm/media`). The namespace has
 four elements, so the Meeting's member logic, which takes three-element
 namespaces, does not show the bot as a participant, and no user name can
 collide with it. The track is `transcript`, an MSF event timeline

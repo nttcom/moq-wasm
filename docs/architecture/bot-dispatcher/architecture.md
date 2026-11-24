@@ -142,7 +142,10 @@ Meeting transcriber already uses. Under a two-element room prefix
 reads as a member and no user name collides with. A page learns that a bot
 joined from its PUBLISH_NAMESPACE and that it left from its
 PUBLISH_NAMESPACE_DONE, so the Meeting shows REC from the room itself rather
-than from polling `recorder serve`.
+than from polling `recorder serve`. In the browser SDK (`moq-wasm/media`),
+`botNamespace` and `botTypeOf` build and recognise this namespace, and
+`watchBroadcasts`'s `onBotChange` reports bots joining and leaving the watched
+room.
 
 A **human member** is a namespace under the room that is not under one of the
 reserved elements `bots` and `recordings` (the recorder's replays).
