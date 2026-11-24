@@ -69,6 +69,8 @@ services:
       - live
     command:
       - listen
+      - --rtmp-addr=0.0.0.0:1935
+      - --srt-addr=0.0.0.0:9000
       - --moqt-url=https://relay:4433
       - --insecure-skip-tls-verify
     depends_on:

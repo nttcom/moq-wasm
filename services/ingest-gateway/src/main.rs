@@ -90,9 +90,27 @@ mod tests {
     }
 
     #[test]
+    fn listen_requires_an_input() {
+        // Act
+        let result = Cli::try_parse_from(["ingest-gateway", "listen", "--moqt-url", RELAY_URL]);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn listen_accepts_a_single_input() {
+        // Act
+        let relay = listen_relay_args(&["--srt-addr", "0.0.0.0:9000"]);
+
+        // Assert
+        assert!(relay.moqt_target().is_none());
+    }
+
+    #[test]
     fn moqt_target_verifies_the_relay_certificate_by_default() {
         // Arrange
-        let relay = listen_relay_args(&["--moqt-url", RELAY_URL]);
+        let relay = listen_relay_args(&["--srt-addr", "0.0.0.0:9000", "--moqt-url", RELAY_URL]);
 
         // Act
         let target = relay.moqt_target().unwrap();
@@ -104,7 +122,13 @@ mod tests {
     #[test]
     fn moqt_target_skips_certificate_verification_when_requested() {
         // Arrange
-        let relay = listen_relay_args(&["--moqt-url", RELAY_URL, "--insecure-skip-tls-verify"]);
+        let relay = listen_relay_args(&[
+            "--srt-addr",
+            "0.0.0.0:9000",
+            "--moqt-url",
+            RELAY_URL,
+            "--insecure-skip-tls-verify",
+        ]);
 
         // Act
         let target = relay.moqt_target().unwrap();
