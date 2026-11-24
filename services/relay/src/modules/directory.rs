@@ -185,6 +185,13 @@ fn remove_session_publications(
     removed
 }
 
+/// Checks and removes under one lock of the entry's shard, so a
+/// registration made after the caller dropped its guard on the entry keeps
+/// the entry.
+fn remove_if_empty<K: Eq + std::hash::Hash, V>(map: &DashMap<String, DashMap<K, V>>, key: &str) {
+    map.remove_if(key, |_, entries| entries.is_empty());
+}
+
 fn unregister_peer(
     namespaces: &PeersByNamespace,
     session_id: SessionId,
@@ -200,12 +207,8 @@ fn unregister_peer(
         None => remove_session_publications(&peers, session_id).is_some(),
     };
     let clients_remain = has_client(&peers);
-    let is_empty = peers.is_empty();
     drop(peers);
-
-    if is_empty {
-        namespaces.remove(namespace);
-    }
+    remove_if_empty(namespaces, namespace);
 
     match (removed, clients_remain) {
         (false, _) => PeerRemoval::NotRegistered,
@@ -492,7 +495,7 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
         for track_namespace in empty_namespaces {
-            self.publisher_namespaces.remove(&track_namespace);
+            remove_if_empty(&self.publisher_namespaces, &track_namespace);
         }
     }
 
@@ -580,11 +583,8 @@ impl InMemoryLocalPubSubDirectory {
         };
         subscriptions.remove(&(session_id, interest));
         let no_clients_remain = !has_client_subscription(&subscriptions);
-        let is_empty = subscriptions.is_empty();
         drop(subscriptions);
-        if is_empty {
-            self.subscriber_namespaces.remove(track_namespace_prefix);
-        }
+        remove_if_empty(&self.subscriber_namespaces, track_namespace_prefix);
         no_clients_remain
     }
 
@@ -606,7 +606,7 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
         for prefix in empty_prefixes {
-            self.subscriber_namespaces.remove(&prefix);
+            remove_if_empty(&self.subscriber_namespaces, &prefix);
         }
         last_client_left
     }
@@ -1965,6 +1965,39 @@ mod tests {
         assert_eq!(first, PeerRemoval::ClientsRemain);
         assert_eq!(last, PeerRemoval::NoClientsRemain);
         assert!(table.publisher_namespaces.get("room/member").is_none());
+    }
+
+    #[test]
+    fn a_publication_registered_after_the_last_one_was_withdrawn_keeps_its_namespace() {
+        // Arrange: session 1 emptied the entry and dropped its guard; session 2 publishes into it before the removal
+        let table = InMemoryLocalPubSubDirectory::new();
+        table
+            .publisher_namespaces
+            .insert("room".to_string(), DashMap::new());
+        table.register_publish_namespace(2, 0, "room".to_string(), SessionPeer::Client);
+
+        // Act
+        remove_if_empty(&table.publisher_namespaces, "room");
+
+        // Assert
+        assert!(table.session_publishes_namespace("room", 2));
+    }
+
+    #[test]
+    fn a_namespace_subscription_registered_after_the_last_one_ended_keeps_its_prefix() {
+        // Arrange: session 1 emptied the entry and dropped its guard; session 2 subscribes to it before the removal
+        let table = InMemoryLocalPubSubDirectory::new();
+        table
+            .subscriber_namespaces
+            .insert("room".to_string(), DashMap::new());
+        let subscription = client_subscription(NamespaceInterest::Namespaces);
+        table.register_subscribe_namespace(2, "room".to_string(), subscription);
+
+        // Act
+        remove_if_empty(&table.subscriber_namespaces, "room");
+
+        // Assert
+        assert!(table.is_watched_by_client("room/member"));
     }
 
     #[test]
