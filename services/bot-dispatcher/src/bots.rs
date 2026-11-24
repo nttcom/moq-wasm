@@ -742,11 +742,28 @@ mod tests {
         // Act
         let both = test.bots.room("app/a", NOW).await.unwrap();
         let empty = test.bots.room("app/c", NOW).await.unwrap();
+        test.bots
+            .heartbeat(
+                "recorder",
+                &recorder.id,
+                Some(KEY),
+                heartbeat(BotState::Finished),
+                NOW,
+            )
+            .await
+            .unwrap();
+        let ended = test.bots.room("app/a", NOW).await.unwrap();
+        let replacement = started(&test, "app/a").await;
+        let replaced = test.bots.room("app/a", NOW).await.unwrap();
 
-        // Assert: in type name order; a room without bots lists none
-        let ids: Vec<_> = both.iter().map(|bot| bot.id.as_str()).collect();
-        assert_eq!(ids, [agent.id.as_str(), recorder.id.as_str()]);
+        // Assert: in type name order; a room without bots lists none; a bot
+        // that ended stays listed until the room's next one of its type
+        let ids = |bots: &[BotView]| bots.iter().map(|bot| bot.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&both), [agent.id.clone(), recorder.id.clone()]);
         assert!(empty.is_empty());
+        assert_eq!(ids(&ended), ids(&both));
+        assert_eq!(ended[1].state, BotState::Finished);
+        assert_eq!(ids(&replaced), [agent.id, replacement.id]);
     }
 
     #[test]
