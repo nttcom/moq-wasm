@@ -56,9 +56,9 @@ class CommandWriter(Protocol):
 
 
 class PtzCommands:
-    """Writes ingest-gateway onvif's command track: one group per move, holding a ContinuousMove and a Stop
+    """Writes ingest-gateway pull's command track: one group per move, holding a ContinuousMove and a Stop
     JSON object for each axis it turns, or one sweep. Groups travel on separate streams, so only objects in one
-    group reach ingest-gateway onvif in order and a Stop never overtakes the next ContinuousMove."""
+    group reach ingest-gateway pull in order and a Stop never overtakes the next ContinuousMove."""
 
     def __init__(self):
         self._publication: CommandWriter | None = None

@@ -848,7 +848,7 @@ pipeline = Pipeline(
   UNSUBSCRIBE is done, also when called again after a release that was
   cancelled, and a participant who
   leaves meanwhile ends only once its UNSUBSCRIBE is done: PTZ tracking releases its
-  profile when the viewer clears the target, because ingest-gateway onvif serves only
+  profile when the viewer clears the target, because ingest-gateway pull serves only
   the profile its first subscriber picks.
 - **Image requests.** A `UserImageRequestFrame` pushed upstream is answered
   by the next picture of its `user_id` and `video_source` (`"camera"` when
@@ -1349,7 +1349,7 @@ pipeline = Pipeline(
   speaker, and publishes under `{root}/{room}/bots/transcriber`, two levels
   down, so the Meeting lists no participant for it.
 - PTZ tracking runs a transport for the page's room and one for
-  ingest-gateway onvif's in one pipeline. It reads the viewer's prompt from the
+  ingest-gateway pull's in one pipeline. It reads the viewer's prompt from the
   first, asks the second for pictures of the profile the prompt names, and
   releases the profile with `release_participant_video` when the target
   leaves it; it writes its event timeline and status on the first and the

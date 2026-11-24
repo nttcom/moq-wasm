@@ -1,7 +1,7 @@
 # moq-ptz-tracking
 
-`ingest-gateway onvif` が配信する ONVIF カメラの映像を pipecat の bot が受け取り、ブラウザの MoQ PTZ Tracking ページ（`examples/browser/examples/moq-ptz-tracking`）で指定した対象（最大 16）の位置を、決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) に枠で尋ねます。
-ページは枠を映像に重ねて描きます。枠が画面の端からはみ出しそうになると、bot は `ingest-gateway onvif` に ContinuousMove と Stop を送り、すべての枠が画面に収まるようにカメラを向けます。
+`ingest-gateway pull` が配信する ONVIF カメラの映像を pipecat の bot が受け取り、ブラウザの MoQ PTZ Tracking ページ（`examples/browser/examples/moq-ptz-tracking`）で指定した対象（最大 16）の位置を、決定モデル [d1-2B](https://huggingface.co/LiquidAI/d1-2B) に枠で尋ねます。
+ページは枠を映像に重ねて描きます。枠が画面の端からはみ出しそうになると、bot は `ingest-gateway pull` に ContinuousMove と Stop を送り、すべての枠が画面に収まるようにカメラを向けます。
 
 ```mermaid
 sequenceDiagram
@@ -9,7 +9,7 @@ sequenceDiagram
     participant R as Relay
     participant P as pipecat bot
     participant D as d1-2B (Cloud Run)
-    participant O as ingest-gateway onvif
+    participant O as ingest-gateway pull
     B->>R: prompt {"targets": ["人", "椅子"], "video": "video/profile_1"}
     O->>R: video/profile_1
     R->>P: 全オブジェクト
@@ -37,7 +37,7 @@ bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-di
 一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/ptz-tracking` を呼び、bot はページが 30 秒いないか 1 時間たつと抜けます。
 ルームはアプリに 1 つ（`{app}/moq-ptz-tracking`）で、カメラもそのルームに配信します。Public モードのページでは bot は動きません。
 
-ONVIF カメラは手元のネットワークにあるため、`ingest-gateway onvif` は常に手元で起動します。リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定し、
+ONVIF カメラは手元のネットワークにあるため、`ingest-gateway pull` は常に手元で起動します。リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定し、
 PTZ Tracking ページの共有リンクの `#jwt=` のトークンと、その appId（`temp-…`）でルームに配信します。
 
 ```shell
@@ -70,8 +70,8 @@ make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `{room}/page/viewer` | `prompt` | ブラウザ | `{"targets": ["...", ...], "video": "<映像トラック名>"}` で追従を始め、`{"targets": []}` で止める。対象は 1〜16 個 |
-| `{room}/onvif/client` | `video/profile_N` | `ingest-gateway onvif` | H.264 の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
-| `{room}/bots/ptz-tracking/command` | `command` | bot | `ingest-gateway onvif` の PTZ コマンド。1 回の動きを 1 group にし、`continuous` と `stop` を順に送る |
+| `{room}/onvif/client` | `video/profile_N` | `ingest-gateway pull` | H.264 の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
+| `{room}/bots/ptz-tracking/command` | `command` | bot | `ingest-gateway pull` の PTZ コマンド。1 回の動きを 1 group にし、`continuous` と `stop` を順に送る |
 | `{room}/bots/ptz-tracking` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`data.boxes` は `[[対象の番号, [left, top, right, bottom]], ...]`、どの対象も映っていなければ `"not visible"` |
 | `{room}/bots/ptz-tracking` | `status` | bot | d1-2B の起動状態 |
 

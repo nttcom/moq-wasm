@@ -27,7 +27,7 @@ queue that never blocks the media source; `BroadcastWriter::push` returns
 keep up (see "Group alignment"). A `RenditionTrack` writes one
 rendition of a writer's source video into a track of its own; `ingest-gateway`
 adds its transcoded renditions this way. A writer writes into `video` and
-`audio` by default; `ingest-gateway onvif` runs one writer per camera profile in one
+`audio` by default; `ingest-gateway pull` runs one writer per camera profile in one
 broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
 The chat describes the default `video` and `audio`, so the catalog lists it,
 and the `audio` placeholder sent before the AAC config arrives, only while a

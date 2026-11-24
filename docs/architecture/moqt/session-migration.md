@@ -67,7 +67,7 @@ never migrates.
 | Client | Setting | Why |
 | --- | --- | --- |
 | relay → relay (`inter_relay_connection_manager`) | `false` | a relay-peer GOAWAY is answered by subscribing other publishers ("GOAWAY sequence") |
-| broadcast, recorder, egress-gateway, ingest-gateway onvif command subscriber, moq-cli, wasm | `true` | |
+| broadcast, recorder, egress-gateway, ingest-gateway pull command subscriber, moq-cli, wasm | `true` | |
 
 The default is `true`; the relay call site sets `false` in the same change.
 

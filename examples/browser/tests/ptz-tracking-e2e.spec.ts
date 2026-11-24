@@ -30,7 +30,7 @@ test.describe('MoQ PTZ Tracking', () => {
     // Act
     await trackTargets(page, ['人'])
 
-    // Assert: ingest-gateway onvif receives ContinuousMove then Stop
+    // Assert: ingest-gateway pull receives ContinuousMove then Stop
     await expect(position).toHaveText('人 1', { timeout: 30_000 })
     await expect(page.getByTestId('ptz-tracking-move')).toHaveText(PAN_RIGHT_TEXT)
     await expect

@@ -1,4 +1,4 @@
-"""Stands in for ingest-gateway onvif in the PTZ tracking E2E: streams a synthetic H.264 picture through
+"""Stands in for ingest-gateway pull in the PTZ tracking E2E: streams a synthetic H.264 picture through
 `moq-cli publish` as the camera's broadcast, and records the PTZ commands the bot publishes, served
 as JSON at `GET /commands`. Runs in the moq-ptz-tracking environment (`uv run --project`)."""
 
@@ -19,7 +19,7 @@ GRAY = b"\x80"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fake ingest-gateway onvif for the PTZ tracking E2E")
+    parser = argparse.ArgumentParser(description="Fake ingest-gateway pull for the PTZ tracking E2E")
     parser.add_argument("--relay-url", required=True)
     parser.add_argument("--moq-cli", required=True, help="path of the moq-cli binary that publishes the camera")
     parser.add_argument("--port", type=int, required=True, help="HTTP port serving GET /commands")
@@ -85,7 +85,7 @@ async def main() -> None:
     session = await moq_wasm.connect(args.relay_url, verify_certificate=False, token=args.token)
     print(f"serving commands on http://127.0.0.1:{args.port}", flush=True)
     try:
-        # Where ingest-gateway onvif publishes and reads in the room (examples/browser/examples/moq-ptz-tracking).
+        # Where ingest-gateway pull publishes and reads in the room (examples/browser/examples/moq-ptz-tracking).
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(stream_camera(args.moq_cli, args.relay_url, [*room, "onvif", "client"], args.token))
             tasks.create_task(record_commands(session, [*room, "bots", "ptz-tracking", "command"], commands))

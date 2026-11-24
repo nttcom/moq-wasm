@@ -1,5 +1,5 @@
 mod listen;
-mod onvif;
+mod pull;
 
 use anyhow::Result;
 use broadcast::MoqtTarget;
@@ -9,7 +9,7 @@ use clap::{Args, Parser, Subcommand};
 #[command(
     author,
     version,
-    about = "Bridge RTMP/SRT/RTP pushes and ONVIF cameras over MoQ"
+    about = "Bridge RTMP/SRT/RTP pushes and RTSP/ONVIF cameras over MoQ"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -20,8 +20,8 @@ struct Cli {
 enum Command {
     /// Listen for RTMP/SRT/RTP and publish every stream it receives
     Listen(listen::Args),
-    /// Publish an ONVIF camera's RTSP profiles and apply the PTZ commands it subscribes to
-    Onvif(onvif::Args),
+    /// Pull an RTSP stream or an ONVIF camera's profiles and publish them; with --onvif-ip, apply PTZ commands to the camera
+    Pull(pull::Args),
 }
 
 #[derive(Args, Debug)]
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     })?;
     match cli.command {
         Command::Listen(args) => listen::run(args).await,
-        Command::Onvif(args) => onvif::run(args).await,
+        Command::Pull(args) => pull::run(args).await,
     }
 }
 
@@ -85,7 +85,7 @@ mod tests {
         let cli = Cli::parse_from(["ingest-gateway", "listen"].iter().chain(flags));
         match cli.command {
             Command::Listen(args) => args.relay,
-            Command::Onvif(_) => unreachable!("parsed the listen subcommand"),
+            Command::Pull(_) => unreachable!("parsed the listen subcommand"),
         }
     }
 
@@ -105,6 +105,45 @@ mod tests {
 
         // Assert
         assert!(relay.moqt_target().is_none());
+    }
+
+    #[test]
+    fn pull_requires_a_source() {
+        // Act
+        let result = Cli::try_parse_from(["ingest-gateway", "pull", "--moqt-url", RELAY_URL]);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pull_accepts_an_rtsp_url_without_a_camera() {
+        // Act
+        let result = Cli::try_parse_from([
+            "ingest-gateway",
+            "pull",
+            "--rtsp-url",
+            "rtsp://127.0.0.1:8554/test",
+        ]);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn pull_requires_the_credentials_of_an_onvif_camera() {
+        // Act
+        let result = Cli::try_parse_from([
+            "ingest-gateway",
+            "pull",
+            "--onvif-ip",
+            "192.0.2.1",
+            "--onvif-username",
+            "admin",
+        ]);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]

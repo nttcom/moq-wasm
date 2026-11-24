@@ -1,4 +1,4 @@
-use crate::onvif::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text};
+use crate::pull::onvif::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text};
 use roxmltree::Document;
 pub(crate) struct ServiceEndpoints {
     pub(crate) media_endpoint: String,

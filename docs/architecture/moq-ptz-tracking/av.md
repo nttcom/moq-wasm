@@ -7,7 +7,7 @@ Accepted
 2026-10-09
 
 ## Context
-The PTZ tracking bot (`examples/python/moq-ptz-tracking`) receives an ONVIF camera's video from `ingest-gateway onvif`
+The PTZ tracking bot (`examples/python/moq-ptz-tracking`) receives an ONVIF camera's video from `ingest-gateway pull`
 as H.264 Annex B LOC objects, one group per keyframe. d1-2B locates the targets in images, not video, so the
 bot has to decode the frames of each group and send a picture as a JPEG. The situation is the one the camera
 detection bot was in, except that an ONVIF profile is often 1080p or larger.
@@ -25,9 +25,9 @@ does not inflate the System One request.
 ### Negative
 - The wheel is large (tens of MB) for an example
 - Every frame of the profile is decoded, also while the bot waits for d1-2B
-- The `moq` library hands over payloads without LOC extension headers, so the avcC in `ingest-gateway onvif`'s
+- The `moq` library hands over payloads without LOC extension headers, so the avcC in `ingest-gateway pull`'s
   video config extension is out of reach; a decoder per group relies on SPS/PPS inside the keyframe, which
-  `ingest-gateway onvif` adds when it converts AVCC and which cameras sending Annex B usually repeat before each IDR
+  `ingest-gateway pull` adds when it converts AVCC and which cameras sending Annex B usually repeat before each IDR
 
 ## Alternatives Considered
 

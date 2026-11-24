@@ -20,7 +20,7 @@ async function startCamera({ botDir, moqtUrl, app, childProcesses }) {
       "--project",
       botDir,
       "python",
-      resolve(repoRoot, "tests/browser-e2e/fake-ingest-gateway-onvif.py"),
+      resolve(repoRoot, "tests/browser-e2e/fake-ingest-gateway-pull.py"),
       "--relay-url",
       // The camera and moq-cli connect over raw QUIC on the relay's port.
       moqtUrl.replace(/^https:/, "moqt:"),

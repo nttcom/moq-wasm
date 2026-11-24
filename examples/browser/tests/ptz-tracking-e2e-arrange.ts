@@ -10,7 +10,7 @@ export const placeBoxes = roomBot.placeBoxes
 
 export type PtzCommand = { type: string }
 
-/// Every PTZ command the fake ingest-gateway onvif has received since it started.
+/// Every PTZ command the fake ingest-gateway pull has received since it started.
 export async function receivedCommands(): Promise<PtzCommand[]> {
   const response = await fetch(`${cameraOrigin}/commands`)
   expect(response.ok).toBe(true)

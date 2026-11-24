@@ -1,4 +1,4 @@
-use crate::onvif::Args;
+use crate::pull::onvif::OnvifArgs;
 use anyhow::{Result, bail};
 use std::time::Duration;
 
@@ -14,24 +14,39 @@ pub(crate) struct Target {
 }
 
 impl Target {
-    pub(crate) fn from_args(args: &Args) -> Result<Self> {
-        let host = args.ip.trim().to_string();
+    pub(crate) fn from_args(args: &OnvifArgs) -> Result<Self> {
+        let host = args
+            .onvif_ip
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if host.is_empty() {
-            bail!("ip is required");
+            bail!("--onvif-ip is required");
         }
-        let username = args.username.trim().to_string();
+        let username = args
+            .onvif_username
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if username.is_empty() {
-            bail!("username is required");
+            bail!("--onvif-username is required");
         }
-        let password = args.password.trim().to_string();
+        let password = args
+            .onvif_password
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if password.is_empty() {
-            bail!("password is required");
+            bail!("--onvif-password is required");
         }
         Ok(Self {
             host,
             username,
             password,
-            timeout: Duration::from_millis(args.timeout_ms),
+            timeout: Duration::from_millis(args.onvif_timeout_ms),
         })
     }
 

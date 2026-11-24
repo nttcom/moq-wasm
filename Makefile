@@ -180,13 +180,13 @@ onvif:
 		exit 1; \
 	fi
 	@echo "Using MoQT relay URL: $(ONVIF_MOQT_URL)"
-	cargo run -p ingest-gateway -- onvif \
-		--ip $(ONVIF_IP) \
-		--username $(ONVIF_USERNAME) \
-		--password $(ONVIF_PASSWORD) \
+	cargo run -p ingest-gateway -- pull \
+		--onvif-ip $(ONVIF_IP) \
+		--onvif-username $(ONVIF_USERNAME) \
+		--onvif-password $(ONVIF_PASSWORD) \
 		--moqt-url $(ONVIF_MOQT_URL) \
 		--publish-namespace $(ONVIF_PUBLISH_NAMESPACE) \
-		--subscribe-namespace $(ONVIF_SUBSCRIBE_NAMESPACE) \
+		--command-namespace $(ONVIF_SUBSCRIBE_NAMESPACE) \
 		$(if $(ONVIF_AUTH_TOKEN),--auth-token $(ONVIF_AUTH_TOKEN)) \
 		--video-track video \
 		--audio-track audio \

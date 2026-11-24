@@ -40,5 +40,5 @@ the same ones.
 ## Decision
 
 Use `reqwest` over the JSON API. It is already in the workspace lock at 0.13.4
-(`relay`, `observability`, `ingest-gateway onvif`), so no new crate enters the
+(`relay`, `observability`, `ingest-gateway pull`), so no new crate enters the
 dependency tree.

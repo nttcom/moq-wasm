@@ -34,7 +34,7 @@ A Rust application today therefore writes what the Python SDK gives a bot:
 | --- | --- | --- |
 | Refresh the token before it expires | `connect(refresh_token=)` | each service, or nothing |
 | Tell a lost connection from an expired token or `close` | `ConnectionLost`, `TokenExpired`, `SessionClosed` | `TransportClose` only |
-| Run a task per broadcast under a prefix, cancelled when it is withdrawn | `watch_broadcasts` | `services/ingest-gateway/src/onvif/command_subscriber.rs` and `services/live-translate`, each its own loop |
+| Run a task per broadcast under a prefix, cancelled when it is withdrawn | `watch_broadcasts` | `services/ingest-gateway/src/pull/onvif/command_subscriber.rs` and `services/live-translate`, each its own loop |
 | Read the catalog with a joining FETCH and pick a track | `RemoteBroadcast.catalogs`, `Catalog.select` | `services/recorder/src/catalog_reader.rs`, `services/live-translate/src/source_catalog.rs` |
 | Subscribe again after a track ends | `RemoteBroadcast.follow` | `CommandSubscriber`, per service |
 | Publish encoded H.264/Opus as an MSF broadcast | `LocalBroadcast.add_media_source` over `_native.MediaBroadcast` | `broadcast::Broadcast` and `BroadcastWriter` with `mediapack` events built by hand |

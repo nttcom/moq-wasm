@@ -140,7 +140,7 @@ recorder の HTTP API だけを持ち、wasm も `media` も引き込まない�
 
 ## 配信を `crates/broadcast` に寄せる
 
-`crates/broadcast` は、すでに ingest-gateway（listen と onvif）、gst-plugin-moqt、Live Viewer
+`crates/broadcast` は、すでに ingest-gateway（listen と pull）、gst-plugin-moqt、Live Viewer
 の MP4 publisher（`sdk/js/src/mp4_broadcast.rs`）向けに MSF broadcast を組み
 立てている。担っているのは、catalog、LOC（と CMAF）の track、media timeline、
 catalog より先の PUBLISH、壁時計から始める group id、`moqt::Origin` による60秒の
@@ -272,7 +272,7 @@ Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がい�
 
 `MediaBroadcast`（wasm）は `Mp4Broadcast` を一般化したものである。`Session` と
 namespace から作り、`addSource` でソースごとに `MediaSource` を作る。
-`MediaSource` は `broadcast::MediaSource`（Python SDK と共有。`BroadcastWriter` を1つ持つ）を包み、ingest-gateway onvif がカメラの profile
+`MediaSource` は `broadcast::MediaSource`（Python SDK と共有。`BroadcastWriter` を1つ持つ）を包み、ingest-gateway pull がカメラの profile
 ごとにそうしているのと同じく、`SourceTracks` で、source `<name>` の映像と音声を
 `<name>`/`<name>_audio` と名付ける。どのソースの track も、broadcast の
 1つの catalog に載る。`MediaSource` が公開するのは `configureVideo`・`pushVideo`、

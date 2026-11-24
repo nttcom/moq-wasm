@@ -8,7 +8,7 @@ import { element, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
 
-// One room per app: ingest-gateway onvif publishes the camera at `<room>/onvif/client` and follows the
+// One room per app: ingest-gateway pull publishes the camera at `<room>/onvif/client` and follows the
 // tracker's commands at `<room>/bots/ptz-tracking/command` (examples/python/moq-ptz-tracking).
 const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking'])
 const CAMERA_NAMESPACE = [...ROOM_NAMESPACE, 'onvif', 'client']
