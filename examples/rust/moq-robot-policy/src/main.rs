@@ -16,6 +16,9 @@ const MAX_SPEED: f64 = 0.5;
 const STATE_PRIORITY: u8 = 32;
 const MAX_ACTION_AGE: Duration = Duration::from_millis(300);
 const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
+/// The robot drops an entry whose time has passed when the action arrives,
+/// so each chunk lasts as long as the robot accepts the action.
+const CHUNK_ENTRIES: usize = (MAX_ACTION_AGE.as_millis() as u64).div_ceil(DT_MS) as usize;
 
 #[derive(Parser)]
 struct Cli {
@@ -119,7 +122,9 @@ async fn drive(
                     continue;
                 };
                 let velocity = velocity_toward(target, x, y);
-                driver.send(state.t, DT_MS, vec![velocity.to_vec()]).await?;
+                driver
+                    .send(state.t, DT_MS, vec![velocity.to_vec(); CHUNK_ENTRIES])
+                    .await?;
             }
         }
         tokio::time::sleep(RESUBSCRIBE_DELAY).await;
