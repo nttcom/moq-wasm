@@ -1,8 +1,9 @@
-import { MoqSession, reportLog } from 'moq-wasm'
+import { MoqSession } from 'moq-wasm'
 import { connectOptions } from '../../utils/access'
 import type { TrackWriter } from 'moq-wasm'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
-import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
+import 'moq-wasm/element'
+import { formatLiveStats } from 'moq-wasm/media'
 import { LOAD_BALANCED_RELAY_PRESET, relayUrlFromQuery } from '../../utils/relayPresets'
 import { createRelayPicker } from '../../utils/relayPicker'
 import { icon } from '../../utils/icon'
@@ -52,34 +53,30 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
 
 let session: MoqSession | undefined
 let relayUrl = relayUrlFromQuery() ?? LOAD_BALANCED_RELAY_PRESET.value
-const stage = element<HTMLDivElement>('stage')
+const stage = element<HTMLElementTagNameMap['moq-player']>('stage')
+stage.addEventListener('statechange', renderPlayer)
+stage.addEventListener('liveframe', renderVideoStats)
+stage.addEventListener('error', () => updateStatus('status', 'playback failed', false))
 startPageTelemetry('onvif', () => relayUrl)
-const player = new LivePlayer({
-  container: stage,
-  callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: log }
-})
-const controls = new PlayerControls(stage, player, log)
 let commandWriter: TrackWriter | undefined
 // Commands go out one at a time so a Stop never overtakes the move it ends.
 let commandQueue: Promise<void> = Promise.resolve()
 let activeMove: string | null = null
 
 function renderPlayer(): void {
-  const { catalogStatus, playbackStatus, rewindStatus } = player.state
-  element('playback-status').textContent = `${playbackStatus.text} · ${rewindStatus.text} · ${catalogStatus.text}`
-  stage.toggleAttribute('data-started', player.state.started)
-  controls.render()
+  const state = stage.player?.state
+  stage.toggleAttribute('data-started', state?.started ?? false)
+  if (state) {
+    const { catalogStatus, playbackStatus, rewindStatus } = state
+    element('playback-status').textContent = `${playbackStatus.text} · ${rewindStatus.text} · ${catalogStatus.text}`
+  }
 }
 
 function renderVideoStats(): void {
-  const stats = player.stats()
-  element('video-stats').textContent = formatLiveStats(stats)
-  controls.renderBuffer(stats)
-}
-
-function log(level: 'info' | 'warn' | 'error', message: string): void {
-  reportLog(level, 'onvif', message)
-  console[level](`[onvif] ${message}`)
+  const stats = stage.player?.stats()
+  if (stats) {
+    element('video-stats').textContent = formatLiveStats(stats)
+  }
 }
 
 function updateStatus(id: 'status' | 'command-state', label: string, ok: boolean): void {
@@ -281,7 +278,8 @@ async function connect(): Promise<void> {
   element('live-relay').textContent = url
   showLiveView(true)
   updateStatus('status', 'connected', true)
-  await player.start(connected, subscribeNamespace)
+  stage.setAttribute('namespace', subscribeNamespace.join('/'))
+  stage.session = connected
 }
 
 async function followCameraSubscriptions(writer: TrackWriter): Promise<void> {
@@ -293,7 +291,9 @@ async function followCameraSubscriptions(writer: TrackWriter): Promise<void> {
 async function disconnect(): Promise<void> {
   releaseMove()
   await commandQueue
-  await player.stop()
+  // Unsubscribes before the session closes; the element then disposes the stopped player.
+  await stage.player?.stop()
+  stage.session = undefined
   const closing = session
   session = undefined
   commandWriter = undefined
