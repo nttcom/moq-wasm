@@ -5539,6 +5539,28 @@ async def test_audio_at_no_sample_rate_is_reported_and_the_speech_after_it_is_wr
     await session.close()
 
 
+async def test_an_empty_audio_frame_at_another_rate_is_written_as_nothing_between_the_speech():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(
+        room=ROOM, audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE, audio_out_end_silence_secs=0
+    )
+    transport = MoqWasmTransport(session, params)
+    speech = OutputAudioRawFrame(audio=tone(0.05), sample_rate=SAMPLE_RATE, num_channels=1)
+    empty = OutputAudioRawFrame(audio=b"", sample_rate=24_000, num_channels=1)
+    more_speech = OutputAudioRawFrame(audio=tone(0.05), sample_rate=SAMPLE_RATE, num_channels=1)
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[speech, empty, more_speech]))
+
+    # Assert
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    assert [frame for frame in up if isinstance(frame, ErrorFrame)] == []
+    assert len(source.audio_timestamps) * OPUS_FRAME_MICROS >= 100_000
+    await session.close()
+
+
 async def test_an_output_whose_resampler_fails_at_the_end_of_the_speech_reports_it_and_still_ends(monkeypatch):
     # Arrange: flushing a resampler fails, as the output's EndFrame flushes what it holds of 100 ms
     # of speech
