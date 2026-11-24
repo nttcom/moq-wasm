@@ -64,6 +64,9 @@ jobs:
       matrix:
         dependencies: [latest, lowest]
     runs-on: ubuntu-latest
+    env:
+      # The dev profile reuses the dependencies the relay and VTS build compiled; release wheels pass --release.
+      MATURIN_PEP517_ARGS: --profile dev
     steps:
       - name: Checkout repository
         # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
