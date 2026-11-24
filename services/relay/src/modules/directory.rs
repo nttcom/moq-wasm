@@ -442,6 +442,39 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
+    /// `Client` when a session other than `session_id` publishes the
+    /// namespace as a client, else `Relay` when one does as a relay.
+    pub(crate) fn other_namespace_publisher(
+        &self,
+        track_namespace: &str,
+        session_id: SessionId,
+    ) -> Option<SessionPeer> {
+        let publishers = self.publisher_namespaces.get(track_namespace)?;
+        let mut others = publishers
+            .iter()
+            .filter(|publication| publication.key().0 != session_id)
+            .map(|publication| *publication.value());
+        let first = others.next()?;
+        if first == SessionPeer::Client || others.any(|peer| peer == SessionPeer::Client) {
+            return Some(SessionPeer::Client);
+        }
+        Some(SessionPeer::Relay)
+    }
+
+    pub(crate) fn session_publishes_namespace(
+        &self,
+        track_namespace: &str,
+        session_id: SessionId,
+    ) -> bool {
+        self.publisher_namespaces
+            .get(track_namespace)
+            .is_some_and(|publishers| {
+                publishers
+                    .iter()
+                    .any(|publication| publication.key().0 == session_id)
+            })
+    }
+
     /// Whether a client's namespace subscription covers the namespace.
     pub(crate) fn is_watched_by_client(&self, track_namespace: &str) -> bool {
         self.subscriber_namespaces.iter().any(|prefix_entry| {

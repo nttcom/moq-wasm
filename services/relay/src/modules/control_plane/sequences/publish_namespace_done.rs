@@ -26,26 +26,29 @@ impl PublishNamespaceDone {
         handler: &moqt::namespace::PublishNamespaceDoneHandler,
     ) {
         let track_namespace = handler.track_namespace();
+        let request_id = handler.request_id();
         tracing::info!(
             session_id = %session_id,
+            request_id,
             track_namespace = %track_namespace,
             "PUBLISH_NAMESPACE_DONE received"
         );
 
-        let removal = table.unregister_publish_namespace(session_id, None, track_namespace);
+        let removal = table.unregister_publish_namespace(session_id, request_id, track_namespace);
         let is_origin_client = super::is_origin_client(session_id, forwarder).await;
         // A relay session may withdraw a namespace this relay never registered
         // for it, so only a client's DONE requires its own registration.
         if is_origin_client && removal == PeerRemoval::NotRegistered {
             tracing::warn!(
                 session_id = %session_id,
+                request_id,
                 track_namespace = %track_namespace,
                 "PUBLISH_NAMESPACE_DONE for a namespace the session does not publish; ignored"
             );
             return;
         }
 
-        Self::notify_local_subscribers(
+        let withdrawn_from = Self::notify_local_subscribers(
             session_id,
             is_origin_client,
             track_namespace,
@@ -53,6 +56,16 @@ impl PublishNamespaceDone {
             forwarder,
         )
         .await;
+        // The end of an earlier request read after the session's later
+        // PUBLISH_NAMESPACE of the namespace: the subscribers see the
+        // withdrawal and the publication in the order the session sent them.
+        if table.session_publishes_namespace(track_namespace, session_id) {
+            for subscriber_session_id in withdrawn_from {
+                forwarder
+                    .publish_namespace(subscriber_session_id, track_namespace.to_string())
+                    .await;
+            }
+        }
 
         if !is_origin_client {
             Self::end_relay_namespace_subscription(
@@ -81,24 +94,30 @@ impl PublishNamespaceDone {
         skip_all,
         fields(track_namespace = %track_namespace)
     )]
+    /// Tells the namespace subscribers the publisher session withdrew it, as
+    /// if none of the session's publications of it remained; returns the
+    /// subscribers told.
     pub(crate) async fn notify_local_subscribers(
         publisher_session_id: SessionId,
         publisher_is_client: bool,
         track_namespace: &str,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-    ) {
-        if table.has_client_namespace_publisher(track_namespace) {
+    ) -> Vec<SessionId> {
+        let other_publisher =
+            table.other_namespace_publisher(track_namespace, publisher_session_id);
+        if other_publisher == Some(SessionPeer::Client) {
             tracing::debug!(
                 track_namespace = %track_namespace,
                 "namespace still published by a client; PUBLISH_NAMESPACE_DONE not forwarded"
             );
-            return;
+            return Vec::new();
         }
         // A remaining relay publisher keeps the namespace for client
         // subscribers (draft-14 §9.28); a relay subscriber was told of client
         // publishers only (split horizon).
-        let published_by_relay = table.has_namespace_publishers(track_namespace);
+        let published_by_relay = other_publisher.is_some();
+        let mut withdrawn_from = Vec::new();
         for (subscriber_session_id, subscription) in
             table.get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces)
         {
@@ -110,8 +129,10 @@ impl PublishNamespaceDone {
                 forwarder
                     .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
                     .await;
+                withdrawn_from.push(subscriber_session_id);
             }
         }
+        withdrawn_from
     }
 
     async fn end_relay_namespace_subscription(
@@ -222,10 +243,20 @@ mod tests {
     const LEAVING_PUBLISHER: SessionId = 1;
     const REMAINING_PUBLISHER: SessionId = 2;
     const NAMESPACE_SUBSCRIBER: SessionId = 3;
+    const EARLIER_REQUEST: u64 = 0;
+    const LATER_REQUEST: u64 = 2;
 
     async fn withdraw(
         table: &InMemoryLocalPubSubDirectory,
         publisher_peer: SessionPeer,
+    ) -> RecordedControlMessages {
+        withdraw_request(table, publisher_peer, None).await
+    }
+
+    async fn withdraw_request(
+        table: &InMemoryLocalPubSubDirectory,
+        publisher_peer: SessionPeer,
+        request_id: Option<u64>,
     ) -> RecordedControlMessages {
         let (subscriber_session, recorded) =
             recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
@@ -261,7 +292,7 @@ mod tests {
                 &PublishNamespaceDoneHandler {
                     track_namespace: NAMESPACE.to_string(),
                     track_namespace_tuple: NAMESPACE.split('/').map(str::to_string).collect(),
-                    request_id: None,
+                    request_id,
                 },
             )
             .await;
@@ -283,6 +314,21 @@ mod tests {
         table
     }
 
+    /// The leaving publisher published the namespace again before its first
+    /// request's end was read.
+    fn table_published_twice_by_one_session() -> InMemoryLocalPubSubDirectory {
+        let table = table_with_namespace_publishers(&[]);
+        for request_id in [EARLIER_REQUEST, LATER_REQUEST] {
+            table.register_publish_namespace(
+                LEAVING_PUBLISHER,
+                request_id,
+                NAMESPACE.to_string(),
+                SessionPeer::Client,
+            );
+        }
+        table
+    }
+
     #[tokio::test]
     async fn subscribers_are_not_told_done_while_another_session_publishes_the_namespace() {
         // Arrange
@@ -296,6 +342,65 @@ mod tests {
 
         // Assert
         assert!(recorded.publish_namespace_dones().is_empty());
+    }
+
+    #[tokio::test]
+    async fn subscribers_see_the_namespace_withdrawn_and_published_again_when_an_earlier_request_ends_late()
+     {
+        // Arrange
+        let table = table_published_twice_by_one_session();
+
+        // Act
+        let recorded = withdraw_request(&table, SessionPeer::Client, Some(EARLIER_REQUEST)).await;
+
+        // Assert: as if the DONE had been read before the later PUBLISH_NAMESPACE
+        assert_eq!(
+            recorded.namespace_announcements(),
+            [
+                format!("publish {NAMESPACE}"),
+                format!("done {NAMESPACE}"),
+                format!("publish {NAMESPACE}"),
+            ]
+        );
+        assert!(table.has_client_namespace_publisher(NAMESPACE));
+    }
+
+    #[tokio::test]
+    async fn subscribers_are_not_told_of_a_late_request_end_while_another_session_publishes() {
+        // Arrange
+        let table = table_published_twice_by_one_session();
+        table.register_publish_namespace(
+            REMAINING_PUBLISHER,
+            0,
+            NAMESPACE.to_string(),
+            SessionPeer::Client,
+        );
+
+        // Act
+        let recorded = withdraw_request(&table, SessionPeer::Client, Some(EARLIER_REQUEST)).await;
+
+        // Assert
+        assert_eq!(
+            recorded.namespace_announcements(),
+            [format!("publish {NAMESPACE}")]
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribers_are_told_done_only_when_the_later_request_of_the_session_ends() {
+        // Arrange
+        let table = table_published_twice_by_one_session();
+        withdraw_request(&table, SessionPeer::Client, Some(EARLIER_REQUEST)).await;
+
+        // Act
+        let recorded = withdraw_request(&table, SessionPeer::Client, Some(LATER_REQUEST)).await;
+
+        // Assert
+        assert_eq!(
+            recorded.namespace_announcements(),
+            [format!("publish {NAMESPACE}"), format!("done {NAMESPACE}")]
+        );
+        assert!(!table.has_namespace_publishers(NAMESPACE));
     }
 
     #[tokio::test]

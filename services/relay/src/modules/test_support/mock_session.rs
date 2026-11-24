@@ -81,6 +81,7 @@ pub(crate) struct RecordedControlMessages {
     go_aways: Arc<Mutex<Vec<String>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
     publish_namespace_dones: Arc<Mutex<Vec<String>>>,
+    namespace_announcements: Arc<Mutex<Vec<String>>>,
     namespace_subscriptions: Arc<Mutex<Vec<String>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
     publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
@@ -105,6 +106,7 @@ impl Default for RecordedControlMessages {
             go_aways: Arc::default(),
             publish_namespaces: Arc::default(),
             publish_namespace_dones: Arc::default(),
+            namespace_announcements: Arc::default(),
             namespace_subscriptions: Arc::default(),
             publishes: Arc::default(),
             publish_dones: Arc::default(),
@@ -197,6 +199,12 @@ impl RecordedControlMessages {
 
     pub(crate) fn publish_namespace_dones(&self) -> Vec<String> {
         self.publish_namespace_dones.lock().unwrap().clone()
+    }
+
+    /// `publish <namespace>` per PUBLISH_NAMESPACE and `done <namespace>` per
+    /// PUBLISH_NAMESPACE_DONE, in order.
+    pub(crate) fn namespace_announcements(&self) -> Vec<String> {
+        self.namespace_announcements.lock().unwrap().clone()
     }
 
     /// `subscribe <prefix>` or `unsubscribe <prefix>` per request, in order.
@@ -652,6 +660,11 @@ impl Publisher for MockUpstreamPublisher {
         namespaces: String,
     ) -> anyhow::Result<PublishNamespaceResponse> {
         self.recorded
+            .namespace_announcements
+            .lock()
+            .unwrap()
+            .push(format!("publish {namespaces}"));
+        self.recorded
             .publish_namespaces
             .lock()
             .unwrap()
@@ -663,6 +676,11 @@ impl Publisher for MockUpstreamPublisher {
     }
 
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
+        self.recorded
+            .namespace_announcements
+            .lock()
+            .unwrap()
+            .push(format!("done {namespace}"));
         self.recorded
             .publish_namespace_dones
             .lock()
