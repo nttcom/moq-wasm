@@ -28,10 +28,12 @@ pub enum RequestFailure {
     /// request was not sent.
     #[error("the peer cannot understand the track's Mandatory Track Properties")]
     TrackNotUnderstood,
-    /// A PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers found the
-    /// peer's stream limit reached, so PUBLISH_BLOCKED went on that
-    /// SUBSCRIBE_TRACKS instead, and no PUBLISH for the track may follow on
-    /// it (draft-18 §6.1 MUST NOT). draft-14 never fails so.
+    /// A PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers was not
+    /// sent: the peer's stream limit was reached, so PUBLISH_BLOCKED went on
+    /// that SUBSCRIBE_TRACKS, or PUBLISH_BLOCKED had already gone out for the
+    /// track on it. No PUBLISH for the track follows while that
+    /// SUBSCRIBE_TRACKS lives (draft-18 §6.1 MUST NOT). draft-14 never fails
+    /// so.
     #[error("no stream for the PUBLISH; PUBLISH_BLOCKED was sent")]
     PublishBlocked,
 }
