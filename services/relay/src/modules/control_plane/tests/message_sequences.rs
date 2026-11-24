@@ -258,8 +258,6 @@ struct Slot {
     namespace_subscriptions: BTreeSet<(usize, usize)>,
     /// The namespaces the relay announced to the peer and has not withdrawn.
     announced: BTreeSet<usize>,
-    /// The tracks the relay sent PUBLISH_BLOCKED for.
-    blocked: BTreeSet<usize>,
     /// The subscriptions the peer serves as a publisher, by Request ID: its
     /// PUBLISHes (even) and the relay's SUBSCRIBEs (odd).
     upstreams: BTreeMap<u64, Subscription>,
@@ -279,7 +277,6 @@ impl Slot {
             namespaces: BTreeMap::new(),
             namespace_subscriptions: BTreeSet::new(),
             announced: BTreeSet::new(),
-            blocked: BTreeSet::new(),
             upstreams: BTreeMap::new(),
             downstreams: BTreeMap::new(),
             left: false,
@@ -436,15 +433,10 @@ impl Harness {
                 let (slot, prefix, interest) = held[pick.index(held.len())];
                 let slot = &mut self.slots[slot];
                 slot.namespace_subscriptions.remove(&(prefix, interest));
-                // What a subscription was told and what was blocked on it end with it.
+                // The namespaces announced under a subscription end with it.
                 if INTERESTS[interest].includes_namespaces() {
                     slot.announced.retain(|namespace| {
                         !namespace_has_prefix(NAMESPACES[*namespace], PREFIXES[prefix])
-                    });
-                }
-                if INTERESTS[interest].includes_tracks() {
-                    slot.blocked.retain(|track| {
-                        !namespace_has_prefix(NAMESPACES[TRACKS[*track].0], PREFIXES[prefix])
                     });
                 }
                 slot.peer
@@ -519,13 +511,10 @@ impl Harness {
                             downstream.state = State::Live;
                         }
                     }
-                    PublishAnswer::Refuse => {
+                    // moqt refuses later PUBLISHes of a PUBLISH_BLOCKED track
+                    // while its SUBSCRIBE_TRACKS lives (draft-18 §6.1).
+                    PublishAnswer::Refuse | PublishAnswer::Blocked => {
                         slot.downstreams.remove(&request_id);
-                    }
-                    PublishAnswer::Blocked => {
-                        if let Some(downstream) = slot.downstreams.remove(&request_id) {
-                            slot.blocked.insert(downstream.track);
-                        }
                     }
                 }
                 slot.peer.answer_publish(request_id, answer);
@@ -711,10 +700,6 @@ impl Harness {
                 prop_assert!(
                     interest != Some(NamespaceInterest::Tracks) || !slot.publishes(track),
                     "session {session_id} got PUBLISH for {track_key}, which it publishes itself"
-                );
-                prop_assert!(
-                    !slot.blocked.contains(&track),
-                    "session {session_id} got PUBLISH for {track_key} after PUBLISH_BLOCKED"
                 );
                 // A PUBLISH the peer has yet to answer may be one of a track
                 // that ended since, so it bars no PUBLISH of the track.

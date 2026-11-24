@@ -31,10 +31,10 @@ pub(crate) struct DownstreamPublish {
 
 impl DownstreamPublish {
     /// A subscriber that already receives the track, e.g. from an earlier
-    /// publisher of it, gets no second PUBLISH, nor does one whose
-    /// subscription the track's PUBLISH was blocked on (draft-18 §6.1 MUST
-    /// NOT). `forward` is the Forward State
-    /// the PUBLISH asks for (draft-18 §10.19: its SUBSCRIBE_TRACKS's FORWARD).
+    /// publisher of it, gets no second PUBLISH. moqt refuses a PUBLISH of a
+    /// track the subscriber's SUBSCRIBE_TRACKS got PUBLISH_BLOCKED for
+    /// (draft-18 §6.1). `forward` is the Forward State the PUBLISH asks for
+    /// (draft-18 §10.19: its SUBSCRIBE_TRACKS's FORWARD).
     #[tracing::instrument(
         level = "info",
         name = "relay.sequence.downstream_publish",
@@ -50,12 +50,6 @@ impl DownstreamPublish {
         let Some(upstream_track) = self.table.track_state(track_key) else {
             bail!("upstream track ended before PUBLISH was sent");
         };
-        if self
-            .table
-            .is_publish_blocked(subscriber_session_id, track_key)
-        {
-            return Ok(());
-        }
         let Some(forwarding) = self
             .table
             .begin_forwarded_publish(track_key, subscriber_session_id)
@@ -87,10 +81,7 @@ impl DownstreamPublish {
                     Some(moqt::RequestFailure::PublishBlocked)
                 ) =>
             {
-                tracing::info!(
-                    "the subscriber had no stream for the PUBLISH; not sending it again"
-                );
-                self.table.block_publish(subscriber_session_id, track_key);
+                tracing::debug!("PUBLISH_BLOCKED went to the subscriber instead of the PUBLISH");
                 return Ok(());
             }
             Err(error) => return Err(error),
@@ -160,11 +151,9 @@ impl DownstreamPublish {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moqt::namespace::NamespaceInterest;
 
     use crate::modules::{
-        directory::track::{NamespaceSubscription, ProducerOrigin},
-        domain::session_peer::SessionPeer,
+        directory::track::ProducerOrigin,
         session::session_repository::SessionRepository,
         test_support::{
             directory_fixtures::{
@@ -390,65 +379,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_track_whose_publish_was_blocked_is_never_published_to_the_subscriber_again() {
+    async fn a_publish_moqt_answers_with_publish_blocked_registers_nothing() {
         // Arrange
         let ctx = downstream_publish_context(published_table(), blocked).await;
-        let _ = send_publish(&ctx).await;
 
         // Act
-        let _ = send_publish(&ctx).await;
+        let result = send_publish(&ctx).await;
 
-        // Assert: draft-18 §6.1 MUST NOT send a PUBLISH for the track after PUBLISH_BLOCKED
-        assert_eq!(ctx.subscriber.publishes().len(), 1);
+        // Assert
+        assert!(result.is_ok(), "{result:?}");
         assert!(ctx.table.downstream_subscription_states().is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_new_tracks_subscription_gets_the_publish_an_ended_one_was_blocked_from() {
-        // Arrange
-        let answered = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let ctx = downstream_publish_context(published_table(), {
-            let answered = answered.clone();
-            move || {
-                if answered.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                    Ok(true)
-                } else {
-                    blocked()
-                }
-            }
-        })
-        .await;
-        let tracks = NamespaceSubscription {
-            interest: NamespaceInterest::Tracks,
-            peer: SessionPeer::Client,
-            forward: true,
-        };
-        ctx.table.register_subscribe_namespace(
-            NAMESPACE_SUBSCRIBER_SESSION,
-            "ns".to_string(),
-            tracks,
-        );
-        let _ = send_publish(&ctx).await;
-        ctx.table.unregister_subscribe_namespace(
-            NAMESPACE_SUBSCRIBER_SESSION,
-            "ns",
-            NamespaceInterest::Tracks,
-        );
-        ctx.table.register_subscribe_namespace(
-            NAMESPACE_SUBSCRIBER_SESSION,
-            "ns".to_string(),
-            tracks,
-        );
-
-        // Act
-        send_publish(&ctx).await.unwrap();
-
-        // Assert: draft-18 §6.1, PUBLISH_BLOCKED bars the track from the subscription it went on only
-        assert_eq!(ctx.subscriber.publishes().len(), 2);
-        assert!(
-            ctx.table
-                .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
-                .is_some()
-        );
     }
 }

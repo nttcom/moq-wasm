@@ -3,7 +3,7 @@ pub(crate) mod track;
 use std::{
     collections::{BTreeSet, HashMap, HashSet, btree_map},
     sync::{
-        Arc, Mutex, OnceLock, PoisonError,
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -222,11 +222,6 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     /// The track of each consumer, keyed like `Track::consumers`. A track
     /// entry is locked before this index.
     consumer_tracks: DashMap<(SessionId, u64), TrackKey>,
-    /// Tracks whose PUBLISH a session's track subscription answered with
-    /// PUBLISH_BLOCKED (draft-18 §6.1), kept until that subscription ends.
-    /// Track subscriptions of a session do not overlap, so the session and
-    /// the track name the subscription.
-    blocked_publishes: Mutex<HashSet<(SessionId, TrackKey)>>,
     /// Unix milliseconds of the start of the drain.
     draining_since_ms: OnceLock<u64>,
 }
@@ -239,7 +234,6 @@ impl InMemoryLocalPubSubDirectory {
             upstream_tracks: DashMap::new(),
             next_track_generation: AtomicU64::new(0),
             consumer_tracks: DashMap::new(),
-            blocked_publishes: Mutex::new(HashSet::new()),
             draining_since_ms: OnceLock::new(),
         }
     }
@@ -585,12 +579,6 @@ impl InMemoryLocalPubSubDirectory {
             return true;
         };
         subscriptions.remove(&(session_id, interest));
-        if interest.includes_tracks() {
-            self.blocked_publishes().retain(|(subscriber, track_key)| {
-                *subscriber != session_id
-                    || !namespace_has_prefix(&track_key.track_namespace, track_namespace_prefix)
-            });
-        }
         let no_clients_remain = !has_client_subscription(&subscriptions);
         let is_empty = subscriptions.is_empty();
         drop(subscriptions);
@@ -603,8 +591,6 @@ impl InMemoryLocalPubSubDirectory {
     /// Returns the prefixes whose last client subscription was the removed
     /// session's; relay peers don't own Redis routes.
     fn remove_namespace_subscriptions(&self, session_id: SessionId) -> Vec<String> {
-        self.blocked_publishes()
-            .retain(|(subscriber, _)| *subscriber != session_id);
         let mut last_client_left = Vec::new();
         let mut empty_prefixes = Vec::new();
         for entry in self.subscriber_namespaces.iter() {
@@ -679,24 +665,6 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
         matching
-    }
-
-    /// draft-18 §6.1: after PUBLISH_BLOCKED no PUBLISH for the track goes to
-    /// the session's track subscription that covers it (MUST NOT).
-    pub(crate) fn block_publish(&self, session_id: SessionId, track_key: &TrackKey) {
-        self.blocked_publishes()
-            .insert((session_id, track_key.clone()));
-    }
-
-    pub(crate) fn is_publish_blocked(&self, session_id: SessionId, track_key: &TrackKey) -> bool {
-        self.blocked_publishes()
-            .contains(&(session_id, track_key.clone()))
-    }
-
-    fn blocked_publishes(&self) -> std::sync::MutexGuard<'_, HashSet<(SessionId, TrackKey)>> {
-        self.blocked_publishes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether the PUBLISH of the track goes to `session_id`'s namespace
@@ -3142,32 +3110,6 @@ mod tests {
         // Act / Assert
         assert!(!table.is_watched_by_client("room/member"));
         assert!(table.is_watched_by_client("lobby/member"));
-    }
-
-    #[test]
-    fn ending_a_track_subscription_unblocks_only_the_publishes_it_blocked() {
-        // Arrange: session 2 blocked tracks under two prefixes, session 3 the same room track
-        let table = InMemoryLocalPubSubDirectory::new();
-        let room_track = TrackKey::new("room/member", "video");
-        let lobby_track = TrackKey::new("lobby/member", "video");
-        for (session_id, prefix) in [(2, "room"), (2, "lobby"), (3, "room")] {
-            table.register_subscribe_namespace(
-                session_id,
-                prefix.to_string(),
-                client_subscription(NamespaceInterest::Tracks),
-            );
-        }
-        table.block_publish(2, &room_track);
-        table.block_publish(2, &lobby_track);
-        table.block_publish(3, &room_track);
-
-        // Act
-        table.unregister_subscribe_namespace(2, "room", NamespaceInterest::Tracks);
-
-        // Assert
-        assert!(!table.is_publish_blocked(2, &room_track));
-        assert!(table.is_publish_blocked(2, &lobby_track));
-        assert!(table.is_publish_blocked(3, &room_track));
     }
 
     #[tokio::test]

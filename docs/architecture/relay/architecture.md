@@ -524,9 +524,9 @@ establishes a subscription):
   gets no second PUBLISH;
 - a PUBLISH moqt answers with `RequestFailure::PublishBlocked` (the
   subscriber's stream limit left no stream, so moqt sent PUBLISH_BLOCKED on
-  its SUBSCRIBE_TRACKS) registers nothing, and the directory keeps the
-  session and track until that track subscription ends, so no PUBLISH for
-  the track goes to it again (draft-18 §6.1 MUST NOT);
+  its SUBSCRIBE_TRACKS, or had sent it for the track earlier) registers
+  nothing; moqt refuses every later PUBLISH of the track while that
+  SUBSCRIBE_TRACKS lives (draft-18 §6.1 MUST NOT);
 - the PUBLISH advertises the Largest Location resolved like a fresh
   SUBSCRIBE (max of the cache and the track's Content Exists), and the egress
   runner starts from the same location;
