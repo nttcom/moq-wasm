@@ -87,12 +87,7 @@ async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<Tra
 }
 
 fn describe_track(catalog: &msf::Catalog, track_name: &str) {
-    let Some(track) = catalog
-        .tracks
-        .iter()
-        .flatten()
-        .find(|track| track.name == track_name)
-    else {
+    let Some(track) = catalog.tracks.iter().find(|track| track.name == track_name) else {
         info!(track_name, "the catalog does not list the track");
         return;
     };

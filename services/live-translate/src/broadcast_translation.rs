@@ -618,8 +618,8 @@ mod tests {
                 .expect("a translatable catalog");
 
         // Assert: the second catalog is used, and its video is referenced by the translated one
-        assert_eq!(source.tracks.as_ref().map(Vec::len), Some(2));
-        let translated_tracks = translated.tracks.expect("tracks");
+        assert_eq!(source.tracks.len(), 2);
+        let translated_tracks = translated.tracks;
         assert!(translated_tracks.iter().any(|track| track.name == "video"));
         assert_eq!(
             translated_tracks.len(),

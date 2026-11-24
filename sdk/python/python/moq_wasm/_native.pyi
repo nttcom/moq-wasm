@@ -43,7 +43,7 @@ def wait_log_records() -> list[tuple[str, str, str | None]]:
 def parse_catalog(payload: bytes) -> dict:
     """Parse an independent MSF `draft-02` catalog (draft-ietf-moq-msf-02 §5, §8.3).
 
-    Raises `ValueError` for malformed JSON, unsupported versions, delta updates, or invalid tracks.
+    Raises `ValueError` for malformed JSON, a missing `tracks` array, unsupported versions, delta updates, or invalid tracks.
     """
 
 class Session:

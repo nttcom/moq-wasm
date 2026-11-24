@@ -859,7 +859,7 @@ mod tests {
         let catalog = relay.newest_catalog().await;
 
         // Assert
-        let tracks = catalog.tracks.unwrap();
+        let tracks = catalog.tracks;
         let track = |name: &str| tracks.iter().find(|track| track.name == name);
         let video = track("video/profile_1").expect("the video must be listed");
         let other = track("video/profile_2").unwrap();

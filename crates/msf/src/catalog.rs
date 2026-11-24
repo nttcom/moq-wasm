@@ -23,8 +23,7 @@ pub struct Catalog {
     pub generated_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_complete: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tracks: Option<Vec<Track>>,
+    pub tracks: Vec<Track>,
     /// Declared after `tracks`: serde writes the fields in declaration order,
     /// and draft-ietf-moq-msf-02 §5.1.7 recommends the list follow the
     /// tracks array.
@@ -35,7 +34,7 @@ pub struct Catalog {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum CatalogParseError {
-    /// Not JSON, or not an MSF catalog.
+    /// Not JSON, or not an MSF catalog, such as one without `tracks`.
     Malformed(serde_json::Error),
     /// A `version` this crate does not understand, or none; draft-ietf-moq-msf-02
     /// §5.1.1 forbids parsing it.
@@ -82,14 +81,14 @@ impl Catalog {
             version: Some(MSF_VERSION.to_string()),
             generated_at: Some(generated_at_ms),
             is_complete: None,
-            tracks: Some(tracks),
+            tracks,
             init_data_list: None,
         }
     }
 
-    /// Reads a catalog object, refusing one this crate cannot read as
-    /// draft-ietf-moq-msf-02 requires (§5.1.1, §5.1.6) and one the draft
-    /// calls invalid (§5.2.2, §5.2.3, §5.2.4.1, §5.2.15, §8.3).
+    /// Reads a catalog object, refusing one without a `tracks` array (draft-ietf-moq-msf-02
+    /// §5.1.4), one this crate cannot read as the draft requires (§5.1.1, §5.1.6) and one the
+    /// draft calls invalid (§5.2.2, §5.2.3, §5.2.4.1, §5.2.15, §8.3).
     pub fn parse(payload: &[u8]) -> Result<Self, CatalogParseError> {
         let document: Value =
             serde_json::from_slice(payload).map_err(CatalogParseError::Malformed)?;
@@ -113,7 +112,6 @@ impl Catalog {
     pub fn loc_tracks(&self) -> impl Iterator<Item = &Track> {
         self.tracks
             .iter()
-            .flatten()
             .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
     }
 
@@ -189,6 +187,23 @@ mod tests {
         assert!(matches!(
             Catalog::parse(json),
             Err(CatalogParseError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn parse_refuses_a_catalog_without_a_tracks_array() {
+        // Arrange: draft-ietf-moq-msf-02 §5.1.4 requires the array
+        let absent = br#"{"version":"draft-02"}"#;
+        let null = br#"{"version":"draft-02","tracks":null}"#;
+
+        // Act / Assert
+        assert!(matches!(
+            Catalog::parse(absent),
+            Err(CatalogParseError::Malformed(_))
+        ));
+        assert!(matches!(
+            Catalog::parse(null),
+            Err(CatalogParseError::Malformed(_))
         ));
     }
 
@@ -290,9 +305,6 @@ mod tests {
 
         // Assert
         assert_eq!(catalog.init_data_list.unwrap()[0].r#type, "url");
-        assert_eq!(
-            catalog.tracks.unwrap()[0].init_ref.as_deref(),
-            Some("init-hd")
-        );
+        assert_eq!(catalog.tracks[0].init_ref.as_deref(), Some("init-hd"));
     }
 }

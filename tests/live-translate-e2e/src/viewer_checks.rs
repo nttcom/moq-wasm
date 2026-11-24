@@ -71,7 +71,7 @@ async fn first_catalog_object(session: &Session, namespace: &str) -> Result<moqt
 }
 
 fn check_catalog(catalog: &Catalog, broadcast_namespace: &str) -> Result<()> {
-    let tracks = catalog.tracks.as_deref().unwrap_or_default();
+    let tracks = catalog.tracks.as_slice();
     let find = |name: &str| tracks.iter().find(|track| track.name == name);
     let video = find("video").context("catalog lists the source video")?;
     ensure!(

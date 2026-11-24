@@ -295,11 +295,7 @@ struct Listed {
 fn listed_tracks(catalogs: &[Catalog], names: &[&str]) -> Listed {
     let described = |name: &str| {
         catalogs.iter().rev().find_map(|catalog| {
-            let track = catalog
-                .tracks
-                .iter()
-                .flatten()
-                .find(|track| track.name == name)?;
+            let track = catalog.tracks.iter().find(|track| track.name == name)?;
             Some((catalog, track))
         })
     };
@@ -321,7 +317,7 @@ fn listed_tracks(catalogs: &[Catalog], names: &[&str]) -> Listed {
                 let named: BTreeSet<&str> = catalogs
                     .iter()
                     .flat_map(|catalog| {
-                        let tracks = catalog.tracks.as_deref().unwrap_or_default();
+                        let tracks = catalog.tracks.as_slice();
                         tracks
                             .iter()
                             .filter(|other| other.name == track.name)
@@ -503,7 +499,7 @@ mod tests {
             (catalog.is_complete, catalog.generated_at),
             (Some(true), None)
         );
-        let tracks = catalog.tracks.unwrap();
+        let tracks = catalog.tracks;
         for track in &tracks {
             assert!(!track.is_live, "{}", track.name);
             assert_eq!(track.track_duration, Some(2_000), "{}", track.name);
@@ -695,7 +691,7 @@ mod tests {
             .find(|track| track.namespace == ALICE_FIRST && track.name == CATALOG_TRACK_NAME)
             .unwrap();
         let catalog: Catalog = serde_json::from_slice(&catalog.object.payload).unwrap();
-        let tracks = catalog.tracks.unwrap();
+        let tracks = catalog.tracks;
         let mut transcript = Track::new("transcript", KnownPackaging::EventTimeline, false);
         transcript.event_type = Some("io.skyway.research.moqt.transcript.v1".to_string());
         transcript.role = Some(KnownTrackRole::Subtitle.into());

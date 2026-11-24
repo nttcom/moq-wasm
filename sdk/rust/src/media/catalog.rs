@@ -36,7 +36,7 @@ impl Catalog {
     }
 
     pub fn tracks(&self) -> &[Track] {
-        self.catalog.tracks.as_deref().unwrap_or_default()
+        &self.catalog.tracks
     }
 
     pub fn select(&self, query: &TrackQuery) -> Option<&Track> {

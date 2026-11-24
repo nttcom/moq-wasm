@@ -67,7 +67,6 @@ impl CatalogTrack {
         let published_tracks = catalog
             .tracks
             .iter()
-            .flatten()
             .filter(|track| !is_cmaf(track))
             .map(|track| track.name.as_str());
         for track_name in published_tracks.chain([CATALOG_TRACK_NAME]) {

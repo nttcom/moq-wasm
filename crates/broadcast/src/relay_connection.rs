@@ -669,7 +669,6 @@ fn catalog_track_names(
     Ok(build_catalog(namespace_path, metadata)?
         .tracks
         .into_iter()
-        .flatten()
         .map(|track| track.name)
         .collect())
 }
@@ -914,7 +913,6 @@ mod tests {
             catalog
                 .tracks
                 .iter()
-                .flatten()
                 .any(|track| track.name == VIDEO_TRACK_NAME),
             "{catalog:?}"
         );
@@ -1352,7 +1350,6 @@ mod tests {
         let names: Vec<&str> = newest
             .tracks
             .iter()
-            .flatten()
             .map(|track| track.name.as_str())
             .collect();
         assert_eq!(names, ["video_480p", "video_480p_cmaf", "video_timeline"]);
@@ -1426,11 +1423,7 @@ mod tests {
             serde_json::from_slice(&catalogs.last().expect("a catalog must arrive").payload)
                 .unwrap();
         assert!(
-            newest
-                .tracks
-                .iter()
-                .flatten()
-                .all(|track| track.name != "audio"),
+            newest.tracks.iter().all(|track| track.name != "audio"),
             "{newest:?}"
         );
         assert!(

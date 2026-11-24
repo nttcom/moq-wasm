@@ -151,12 +151,7 @@ async fn fetch_catalog_track_names(
             Fetch::Object(object) => {
                 if !object.payload.is_empty() {
                     let catalog: Catalog = serde_json::from_slice(&object.payload)?;
-                    return Ok(catalog
-                        .tracks
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|track| track.name)
-                        .collect());
+                    return Ok(catalog.tracks.into_iter().map(|track| track.name).collect());
                 }
             }
             Fetch::UnknownRange { last } => bail!("catalog FETCH: unknown range through {last:?}"),

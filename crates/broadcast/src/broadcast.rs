@@ -407,7 +407,6 @@ pub(crate) fn awaits_subscribe(catalog: &Catalog, track_name: &str) -> bool {
     catalog
         .tracks
         .iter()
-        .flatten()
         .any(|track| track.name == track_name && is_cmaf(track))
 }
 
@@ -744,8 +743,6 @@ mod tests {
     fn track_named<'a>(catalog: &'a Catalog, name: &str) -> &'a Track {
         catalog
             .tracks
-            .as_ref()
-            .unwrap()
             .iter()
             .find(|track| track.name == name)
             .unwrap_or_else(|| panic!("missing track {name}"))
@@ -777,7 +774,6 @@ mod tests {
         let names: Vec<&str> = catalog
             .tracks
             .iter()
-            .flatten()
             .map(|track| track.name.as_str())
             .collect();
         assert_eq!(names, [CHAT_TRACK_NAME]);
@@ -942,7 +938,6 @@ mod tests {
         let timelines: Vec<(&str, Vec<Dependency>)> = catalog
             .tracks
             .iter()
-            .flatten()
             .filter(|track| track.packaging == Packaging::Known(KnownPackaging::MediaTimeline))
             .map(|track| {
                 (
@@ -1104,7 +1099,6 @@ mod tests {
         let names: Vec<&str> = catalog
             .tracks
             .iter()
-            .flatten()
             .map(|track| track.name.as_str())
             .collect();
         assert!(
@@ -1319,7 +1313,6 @@ mod tests {
         let mut init_refs: Vec<&str> = catalog
             .tracks
             .iter()
-            .flatten()
             .filter_map(|track| track.init_ref.as_deref())
             .collect();
         init_refs.sort();
@@ -1359,7 +1352,6 @@ mod tests {
             catalog
                 .tracks
                 .iter()
-                .flatten()
                 .all(|track| track.name != "audio_cmaf")
         );
     }
@@ -1390,7 +1382,6 @@ mod tests {
         let names: Vec<&str> = catalog
             .tracks
             .iter()
-            .flatten()
             .map(|track| track.name.as_str())
             .collect();
         assert_eq!(
@@ -1431,7 +1422,6 @@ mod tests {
             catalog
                 .tracks
                 .iter()
-                .flatten()
                 .any(|track| track.name == CHAT_TRACK_NAME),
             "{catalog:?}"
         );
@@ -1460,7 +1450,7 @@ mod tests {
         let catalog = relay.newest_catalog().await;
 
         // Assert
-        assert_eq!(catalog.tracks, Some(vec![track]));
+        assert_eq!(catalog.tracks, vec![track]);
     }
 
     #[tokio::test]
@@ -1509,7 +1499,7 @@ mod tests {
         let catalog = relay.newest_catalog().await;
 
         // Assert
-        assert_eq!(catalog.tracks, Some(vec![replacement]));
+        assert_eq!(catalog.tracks, vec![replacement]);
     }
 
     #[tokio::test]
@@ -1531,7 +1521,6 @@ mod tests {
         let names: Vec<&str> = catalog
             .tracks
             .iter()
-            .flatten()
             .map(|track| track.name.as_str())
             .collect();
         assert_eq!(names, [CHAT_TRACK_NAME]);
@@ -1566,11 +1555,7 @@ mod tests {
 
         // Assert
         assert!(
-            catalog
-                .tracks
-                .iter()
-                .flatten()
-                .any(|track| track.name == "audio_en"),
+            catalog.tracks.iter().any(|track| track.name == "audio_en"),
             "{catalog:?}"
         );
     }

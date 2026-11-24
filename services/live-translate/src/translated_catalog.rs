@@ -26,7 +26,6 @@ pub(crate) fn build_translated_catalog(
     let video = source
         .tracks
         .iter()
-        .flatten()
         .filter(|track| track.has_role(KnownTrackRole::Video))
         .map(|track| referencing(track, source_namespace));
     let original_audio = source
@@ -122,7 +121,6 @@ mod tests {
         catalog
             .tracks
             .iter()
-            .flatten()
             .find(|track| track.name == name)
             .expect("track exists")
     }
@@ -179,8 +177,8 @@ mod tests {
         assert_eq!(english.codec.as_deref(), Some("opus"));
         assert_eq!(english.bitrate, Some(32_000));
         assert_eq!(
-            catalog.tracks.as_ref().map(Vec::len),
-            Some(3 + TARGET_LANGUAGES.len() + 1 + TARGET_LANGUAGES.len())
+            catalog.tracks.len(),
+            3 + TARGET_LANGUAGES.len() + 1 + TARGET_LANGUAGES.len()
         );
     }
 
@@ -213,12 +211,9 @@ mod tests {
     fn catalog_without_opus_audio_has_nothing_to_translate() {
         // Arrange
         let mut source = browser_publisher_catalog();
-        source.tracks = source.tracks.map(|tracks| {
-            tracks
-                .into_iter()
-                .filter(|track| track.role == Some(TrackRole::Known(KnownTrackRole::Video)))
-                .collect()
-        });
+        source
+            .tracks
+            .retain(|track| track.role == Some(TrackRole::Known(KnownTrackRole::Video)));
 
         // Act / Assert
         assert!(build_translated_catalog(&source, SOURCE_NAMESPACE).is_none());
