@@ -12,6 +12,17 @@ export type FollowNamespacesOptions<B> = {
   onRemove(broadcast: B): void
 }
 
+/// Calls a callback of the page. What it throws is the page's bug, reported
+/// as an event listener's would be, and the watch goes on; `undefined` then.
+function callPage<T>(callback: () => T): T | undefined {
+  try {
+    return callback()
+  } catch (error) {
+    reportError(error)
+    return undefined
+  }
+}
+
 /// Takes `play` rather than making the `RemoteBroadcast` itself, so that it
 /// runs where the wasm module cannot load, as in the unit tests.
 export async function followNamespaces<B extends { dispose(): Promise<void> }>(
@@ -22,30 +33,61 @@ export async function followNamespaces<B extends { dispose(): Promise<void> }>(
   closed: () => boolean
 ): Promise<void> {
   const { filter, play, onAdd, onRemove } = options
-  const remove = async (key: string) => {
+  const remove = async (namespace: string[], key: string) => {
     const broadcast = broadcasts.get(key)
     if (!broadcast) {
       return
     }
     broadcasts.delete(key)
-    await broadcast.dispose()
-    onRemove(broadcast)
+    try {
+      await broadcast.dispose()
+    } catch (error) {
+      sdkLog(session, 'error', TARGET, 'disposing of a broadcast failed', {
+        track_namespace: namespace.join('/'),
+        error: getErrorMessage(error)
+      })
+    }
+    // `close()` during the disposal took the page's view down without `onRemove`.
+    if (!closed()) {
+      callPage(() => onRemove(broadcast))
+    }
+  }
+  const add = (namespace: string[], key: string) => {
+    let broadcast: B
+    try {
+      broadcast = play(namespace)
+    } catch (error) {
+      sdkLog(session, 'error', TARGET, 'playing a broadcast failed', {
+        track_namespace: namespace.join('/'),
+        error: getErrorMessage(error)
+      })
+      return
+    }
+    broadcasts.set(key, broadcast)
+    callPage(() => onAdd(broadcast))
   }
   try {
     for await (const { kind, namespace } of watch) {
       if (closed()) {
         return
       }
-      if (isOwnBroadcast(session, namespace) || (filter && !filter(namespace))) {
+      const key = JSON.stringify(namespace)
+      await remove(namespace, key)
+      // `close()` disposes of only what the map holds, so nothing is played
+      // after it, called during the disposal or by `filter`.
+      if (closed()) {
+        return
+      }
+      if (kind !== 'announced' || isOwnBroadcast(session, namespace)) {
         continue
       }
-      const key = JSON.stringify(namespace)
-      await remove(key)
-      if (kind === 'announced') {
-        const broadcast = play(namespace)
-        broadcasts.set(key, broadcast)
-        onAdd(broadcast)
+      if (filter && !callPage(() => filter(namespace))) {
+        continue
       }
+      if (closed()) {
+        return
+      }
+      add(namespace, key)
     }
   } catch (error) {
     sdkLog(session, 'error', TARGET, 'watching broadcasts failed', { error: getErrorMessage(error) })
