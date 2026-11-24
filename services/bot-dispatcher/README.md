@@ -78,6 +78,8 @@ Content-Type: application/json
 }
 ```
 
+While a bot's latest heartbeat reports a type-specific JSON object as `output`, `GET` responses include `"output"` (absent otherwise, so `201` never has it); a bot that wants it shown sends it with every heartbeat. For example, a running recorder returns `"output": {"recording_id": "1795007144545-a1b2c3"}`.
+
 | Status | `error` | Meaning |
 | --- | --- | --- |
 | `400` | `invalid_request` | Invalid JSON body or missing `namespace_prefix` |
@@ -120,7 +122,7 @@ Deployed types come from `BOT_DISPATCHER_TYPES`. Built-in bots:
 
 `options` are forwarded unchecked; invalid options (such as `composite: true` with `format: moq`) cause the bot to enter `failed` with the reason in `error`.
 
-Note: a recorder bot's `id` differs from its recording ID; list recordings via `GET /recordings?namespace_prefix=` on `recorder serve`.
+Note: a recorder bot's `id` differs from its recording ID. Once the recording exists, the bot reports `"output": {"recording_id": "<id>"}` (absent if it fails before creating the recording); pass `output.recording_id` to `GET /recordings/{id}` on `recorder serve` (or list via `GET /recordings?namespace_prefix=`).
 
 ## Room namespace
 

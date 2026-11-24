@@ -36,7 +36,7 @@ cargo run -p recorder -- \
 
 ## Recording API (`recorder serve`)
 
-`bot-dispatcher` runs room recordings as `recorder bot` jobs and composites as `recorder composite` jobs ([design](../../docs/architecture/bot-dispatcher/architecture.md)). `recorder serve` reads their state from the store (`make recorder-serve` locally):
+`bot-dispatcher` runs room recordings as `recorder bot` jobs (which report `output.recording_id` in heartbeats once the recording exists) and composites as `recorder composite` jobs ([design](../../docs/architecture/bot-dispatcher/architecture.md)). `recorder serve` reads their state from the store (`make recorder-serve` locally):
 
 ```bash
 cargo run -p recorder -- serve \
