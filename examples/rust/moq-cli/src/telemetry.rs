@@ -105,6 +105,7 @@ impl Reporter {
             page: self.target.page.to_owned(),
             logs,
             stats: Vec::new(),
+            publisher_stats: Vec::new(),
             spans,
         };
         let result = self
