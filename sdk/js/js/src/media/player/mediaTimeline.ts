@@ -42,16 +42,6 @@ export class MediaTimeline {
     return this.records.map(({ groupId, timestampMs }) => ({ groupId, captureMicros: timestampMs * MICROS_PER_MILLI }))
   }
 
-  /// Presentation times are measured from the start of the broadcast, so any
-  /// record places that start on the capture timestamp axis the seek bar uses.
-  broadcastStartMicros(): number | undefined {
-    const record = this.records[this.records.length - 1]
-    if (!record) {
-      return undefined
-    }
-    return (record.timestampMs - record.presentationTimeMs) * MICROS_PER_MILLI
-  }
-
   /// A group's LOC Timestamp and its record's `timestampMs` are the same
   /// instant, so a position resolves to a presentation time by offsetting from
   /// the newest record at or before it.

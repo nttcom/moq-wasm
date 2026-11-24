@@ -2,10 +2,8 @@ import { expect, test, type Locator } from '@playwright/test'
 import {
   arrangeLiveViewerE2ESession,
   closeLiveViewerE2ESession,
-  elapsedAtPosition,
   expectVideoDecoded,
   type LiveViewerPageModel,
-  parseClock,
   rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
@@ -18,7 +16,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
   try {
     // Assert
     await expect(viewer.seekbar).toBeDisabled()
-    await expect(viewer.seekElapsed).toHaveText('--:-- / --:--')
+    await expect(viewer.seekElapsed).toBeHidden()
 
     // Act
     await viewer.watchButton.click()
@@ -37,10 +35,10 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
-    await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
+    await expect(viewer.seekElapsed).toBeHidden()
 
-    // Assert: 軸は配信開始から始まる
-    await expect(viewer.seekStart).toHaveText(/^0:0\d$/)
+    // Assert: the axis starts at the oldest replayable group, labelled by how far it is behind live
+    await expect(viewer.seekStart).toHaveText(/^-\d+:\d{2}$/)
 
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
@@ -62,17 +60,11 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
 
     await expect(viewer.seekPosition).toHaveText(/-\d+\.\ds/)
 
-    // Assert: MSF media timeline が配信開始からの経過を返し、シーク位置がライブより手前になる
-    const [atPosition, broadcast] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
-    expect(atPosition).toBeLessThan(broadcast)
-
     const thumbBefore = await thumbValue(viewer)
     const playedBefore = await playedWidth(viewer)
 
     // Assert: 1 ウィンドウ分 (4 group = 8 秒) を超えて再生が続く
-    await expect
-      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 30_000 })
-      .toBeGreaterThan(atPosition + 9)
+    await expect.poll(async () => reviewedSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(9)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects/)
 
     // Assert: つまみはシークした位置に留まり、再生の進みは塗りが表す
@@ -131,9 +123,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.seekPosition).toHaveText(/-[5-7]\.\ds/)
     const skippedTo = await thumbValue(viewer)
     expect(skippedTo).toBeLessThan(Number(await viewer.seekbar.getAttribute('max')))
-    await expect
-      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 15_000 })
-      .toBeGreaterThan(0)
+    await expect.poll(async () => reviewedSeconds(viewer), { timeout: 15_000 }).toBeGreaterThan(0)
 
     // Act
     await viewer.page.keyboard.press('ArrowRight')
@@ -186,7 +176,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.seekAvailableWindow).toHaveAttribute('data-seconds', '0.0')
     await expect(viewer.seekbar).toBeDisabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
-    await expect(viewer.seekElapsed).toHaveText('--:-- / --:--')
+    await expect(viewer.seekElapsed).toBeHidden()
   } finally {
     await closeLiveViewerE2ESession(session)
   }
@@ -319,15 +309,13 @@ test('live viewer rewinds to groups from before it started watching, placed by t
   browser
 }) => {
   test.setTimeout(180_000)
-  // Arrange: the bridge has published for longer than the 60 s its media timeline lists
+  // Arrange: the bridge has published for about the 60 s its media timeline lists
   const session = await arrangeLiveViewerE2ESession(browser)
   const { viewer } = session
 
   try {
     await viewer.watchButton.click()
-    await expect
-      .poll(async () => parseClock((await viewer.seekElapsed.innerText()).split(' / ')[1]), { timeout: 90_000 })
-      .toBeGreaterThan(70)
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 90_000 }).toBeGreaterThan(55)
     await viewer.stopButton.click()
     await expect(viewer.seekbar).toBeDisabled()
 
@@ -339,13 +327,13 @@ test('live viewer rewinds to groups from before it started watching, placed by t
     // Assert: the timeline lists at once what live playback alone would take 40 s to observe
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 10_000 }).toBeGreaterThan(40)
 
-    // Assert: FETCH できる区間は配信開始から始まる軸の一部として示される
+    // Assert: the live axis is exactly the window FETCH can replay
     const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
       offset: Number.parseFloat((element as HTMLElement).style.left),
       width: Number.parseFloat((element as HTMLElement).style.width)
     }))
-    expect(replayable.offset).toBeGreaterThan(0)
-    expect(replayable.width).toBeLessThan(100)
+    expect(replayable.offset).toBeCloseTo(0, 1)
+    expect(replayable.width).toBeCloseTo(100, 1)
 
     // Act: 40 秒前へシークする（range input が書き直さない整数で渡す）
     await viewer.seekbar.fill(String(Math.round(Number(await viewer.seekbar.getAttribute('max')) - 40)))
@@ -354,10 +342,7 @@ test('live viewer rewinds to groups from before it started watching, placed by t
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
     expect(rewoundSeconds(await viewer.rewindStatus.innerText())).toBeGreaterThan((Date.now() - watchedAt) / 1_000 + 20)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
-    const [atPosition] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
-    await expect
-      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 20_000 })
-      .toBeGreaterThan(atPosition + 3)
+    await expect.poll(async () => reviewedSeconds(viewer), { timeout: 20_000 }).toBeGreaterThan(3)
 
     // Act: Home は timeline が載せる最古の group へ戻る
     await viewer.seekbar.focus()
@@ -367,10 +352,7 @@ test('live viewer rewinds to groups from before it started watching, placed by t
     await expect
       .poll(async () => rewoundSeconds(await viewer.rewindStatus.innerText()), { timeout: 20_000 })
       .toBeGreaterThan(45)
-    const [atOldest] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
-    await expect
-      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 20_000 })
-      .toBeGreaterThan(atOldest + 3)
+    await expect.poll(async () => reviewedSeconds(viewer), { timeout: 20_000 }).toBeGreaterThan(3)
   } finally {
     await closeLiveViewerE2ESession(session)
   }
@@ -394,6 +376,13 @@ async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {
 
 async function playedWidth(viewer: LiveViewerPageModel): Promise<number> {
   return viewer.seekReviewProgress.evaluate((element) => Number.parseFloat((element as HTMLElement).style.width))
+}
+
+/// Seconds played since the last seek: the review progress drawn on the axis.
+async function reviewedSeconds(viewer: LiveViewerPageModel): Promise<number> {
+  const axisSeconds =
+    Number(await viewer.seekbar.getAttribute('max')) - Number(await viewer.seekbar.getAttribute('min'))
+  return ((await playedWidth(viewer)) / 100) * axisSeconds
 }
 
 async function autoRenditionWidth(viewer: LiveViewerPageModel): Promise<number> {

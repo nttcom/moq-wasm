@@ -9,6 +9,7 @@ import { getErrorMessage } from '../internal/status'
 import type { MediaCatalogTrack } from '../catalog'
 
 const MICROS_PER_SECOND = 1_000_000
+const MILLIS_PER_SECOND = 1_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const POINTER_IDLE_MS = 2_500
 
@@ -263,7 +264,7 @@ export class PlayerControls {
     const anchor = seek.anchorSeconds ?? latest
     const playhead = seek.playheadSeconds ?? latest
     seekbar.valueAsNumber = anchor
-    this.renderReplayableWindow(seek.replayableStartSeconds, latest)
+    this.renderReplayableWindow(seek.replayableStartSeconds, latest, state.isLive)
     this.renderReviewProgress(reviewing, anchor, playhead, latest)
     this.renderSeekPosition(anchor, playhead, latest, state.isLive && !reviewing)
   }
@@ -278,12 +279,15 @@ export class PlayerControls {
     played.style.width = this.percentOfAxis(Math.max(0, playhead - anchor), latest)
   }
 
-  private renderReplayableWindow(replayableStart: number, latest: number): void {
+  /// A live axis starts at the oldest replayable group, labelled by how far it
+  /// is behind the live edge.
+  private renderReplayableWindow(replayableStart: number, latest: number, live: boolean): void {
     const min = Number(this.seekbar.min)
     const window = this.part('seek-available-window')
     window.style.left = this.percentOfAxis(replayableStart - min, latest)
     window.style.width = this.percentOfAxis(latest - replayableStart, latest)
-    this.part('seek-start').textContent = this.timeLabel(min)
+    this.part('seek-start').textContent =
+      live && min > 0 ? `-${formatElapsed((latest - min) * MILLIS_PER_SECOND)}` : this.timeLabel(min)
   }
 
   private percentOfAxis(seconds: number, latest: number): string {
@@ -317,17 +321,18 @@ export class PlayerControls {
     this.renderSeekElapsed(playhead, latest)
   }
 
+  /// Hidden while live: the seek position already shows how far behind the live edge it is.
   private renderSeekElapsed(position: number, latest: number): void {
-    this.part('seek-elapsed').textContent = `${this.timeLabel(position)} / ${this.timeLabel(latest)}`
+    const live = this.player.state.isLive
+    const elapsed = this.part('seek-elapsed')
+    elapsed.hidden = live
+    elapsed.textContent = live ? '' : `${this.timeLabel(position)} / ${this.timeLabel(latest)}`
   }
 
-  /// Elapsed broadcast time when a media timeline exists, else the capture
-  /// wall-clock time (continuous cameras have no timeline); a stopped player
-  /// has no time to show.
+  /// Time from the start of a broadcast that is not live; `--:--` while live or stopped.
   private timeLabel(captureSeconds: number): string {
-    if (captureSeconds <= 0) return '--:--'
-    const elapsed = this.player.elapsedMsAt(captureSeconds * MICROS_PER_SECOND)
-    return elapsed === undefined ? formatClock(captureSeconds) : formatElapsed(elapsed)
+    const elapsed = captureSeconds > 0 ? this.player.elapsedMsAt(captureSeconds * MICROS_PER_SECOND) : undefined
+    return elapsed === undefined ? '--:--' : formatElapsed(elapsed)
   }
 }
 
@@ -374,8 +379,4 @@ function describeAutoTrack(state: LivePlayerState): string {
 function describeVideoTrack(track: MediaCatalogTrack): string {
   const resolution = track.width && track.height ? ` (${track.width}x${track.height})` : ''
   return `${track.label}${resolution}`
-}
-
-function formatClock(captureSeconds: number): string {
-  return new Date(captureSeconds * 1000).toLocaleTimeString([], { hour12: false })
 }

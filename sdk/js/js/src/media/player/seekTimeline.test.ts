@@ -108,6 +108,29 @@ test('the audio of the source the timeline follows shares the video ids even whe
   expect([sameSource, otherSource]).toEqual([true, false])
 })
 
+test('a live axis is the replayable window, whatever presentation times the timeline lists', () => {
+  // Arrange: groups 100 to 110 start every 2 s, with presentation times from 60 s
+  const seek = followingVideoTimeline()
+  const records = Array.from({ length: 11 }, (_, index) => [
+    60_000 + index * GROUP_MS,
+    [100 + index, 0],
+    FIRST_ENCODED_AT_MS + index * GROUP_MS
+  ])
+
+  // Act
+  seek.replaceMediaTimeline(JSON.stringify(records), 'video')
+
+  // Assert
+  const liveEdgeSeconds = (FIRST_ENCODED_AT_MS + 10 * GROUP_MS) / 1_000
+  expect(seek.axis()).toEqual({
+    liveEdgeSeconds,
+    replayableStartSeconds: liveEdgeSeconds - 20,
+    broadcastStartSeconds: undefined,
+    replayableSeconds: 20,
+    seekable: true
+  })
+})
+
 test('the axis of a broadcast that is not live runs from the first timeline record for its duration', () => {
   // Arrange: groups 100 to 109 start every 2 s, and the last one lasts 2 s
   const seek = followingVideoTimeline()

@@ -11,6 +11,9 @@ export type SeekAxis = {
   /// The right end: the live edge, or the end of a broadcast that is not live.
   liveEdgeSeconds: number
   replayableStartSeconds: number
+  /// The left end of a broadcast that is not live: its first group. `undefined`
+  /// while live, since a live media timeline does not say when the broadcast
+  /// started.
   broadcastStartSeconds: number | undefined
   replayableSeconds: number
   seekable: boolean
@@ -91,20 +94,16 @@ export class SeekTimeline {
     this.audio.reset()
   }
 
-  /// The axis runs from the start of the broadcast, which the media timeline
-  /// places, so the bar keeps its meaning as cache retention grows. Until the
-  /// first timeline object arrives it falls back to the replayable window.
   axis(): SeekAxis {
     if (!this.live) {
       return this.vodAxis()
     }
     const liveEdgeSeconds = (this.groups.latest?.captureMicros ?? 0) / MICROS_PER_SECOND
     const replayableSeconds = this.groups.span
-    const broadcastStart = this.media.broadcastStartMicros()
     return {
       liveEdgeSeconds,
       replayableStartSeconds: liveEdgeSeconds - replayableSeconds,
-      broadcastStartSeconds: broadcastStart === undefined ? undefined : broadcastStart / MICROS_PER_SECOND,
+      broadcastStartSeconds: undefined,
       replayableSeconds,
       seekable: this.groups.newestClosed !== undefined && replayableSeconds > 0
     }

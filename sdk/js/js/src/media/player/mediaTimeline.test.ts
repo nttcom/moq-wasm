@@ -10,7 +10,6 @@ test('a live record places its group at its wallclock', () => {
 
   // Assert
   expect(timeline.groupMarks()).toEqual([{ groupId: 1n, captureMicros: 1_700_000_000_000_000 }])
-  expect(timeline.elapsedMsAt(1_700_000_000_500_000)).toBe(500)
 })
 
 test('a VOD record without a wallclock places its group at its presentation time', () => {
