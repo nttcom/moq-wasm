@@ -20,6 +20,8 @@ pub struct PublishOk {
     pub group_order: GroupOrder,
     pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
+    /// Draft-18 §10.2.13. Not encoded on draft-14, which decodes it as `None`.
+    pub new_group_request: Option<u64>,
 }
 
 impl PublishOk {
@@ -51,6 +53,7 @@ impl PublishOk {
             group_order,
             filter_type,
             delivery_timeout,
+            new_group_request: None,
         })
     }
 
@@ -108,6 +111,7 @@ mod tests {
                     },
                 },
                 delivery_timeout: Some(1000),
+                new_group_request: None,
             };
 
             // Act
@@ -133,6 +137,7 @@ mod tests {
                     end_group: 30,
                 },
                 delivery_timeout: Some(1000),
+                new_group_request: None,
             };
 
             // Act
@@ -152,6 +157,7 @@ mod tests {
                 group_order: GroupOrder::Ascending,
                 filter_type: FilterType::NextGroupStart,
                 delivery_timeout: None,
+                new_group_request: None,
             };
 
             // Act
@@ -171,6 +177,7 @@ mod tests {
                 group_order: GroupOrder::Descending,
                 filter_type: FilterType::NextGroupStart,
                 delivery_timeout: Some(10),
+                new_group_request: None,
             };
 
             // Act

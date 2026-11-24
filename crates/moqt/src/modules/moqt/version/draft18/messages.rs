@@ -999,6 +999,9 @@ pub(crate) fn encode_publish_ok(publish_ok: &PublishOk) -> anyhow::Result<BytesM
     if let Some(timeout) = publish_ok.delivery_timeout {
         parameters.push(Parameter::ObjectDeliveryTimeout(timeout));
     }
+    if let Some(new_group_request) = publish_ok.new_group_request {
+        parameters.push(Parameter::NewGroupRequest(new_group_request));
+    }
     encode_request_ok(&parameters, &TrackProperties::default())
 }
 
@@ -1021,6 +1024,7 @@ impl RequestOkMessage {
             group_order: GroupOrder::Publisher,
             filter_type: UNFILTERED,
             delivery_timeout: None,
+            new_group_request: None,
         };
         for parameter in self.parameters {
             match parameter {
@@ -1033,11 +1037,11 @@ impl RequestOkMessage {
                 Parameter::ObjectDeliveryTimeout(timeout) => {
                     publish_ok.delivery_timeout = Some(timeout)
                 }
+                Parameter::NewGroupRequest(group) => publish_ok.new_group_request = Some(group),
                 // `REQUEST_OK_PARAMETERS` lists these and they are not acted on.
                 Parameter::SubgroupDeliveryTimeout(_)
                 | Parameter::Expires(_)
-                | Parameter::LargestObject(_)
-                | Parameter::NewGroupRequest(_) => {}
+                | Parameter::LargestObject(_) => {}
                 // `get_parameters` refused these: `REQUEST_OK_PARAMETERS`
                 // does not list them.
                 Parameter::AuthorizationToken(_)
@@ -1506,6 +1510,7 @@ mod tests {
             group_order: GroupOrder::Ascending,
             filter_type: FilterType::LargestObject,
             delivery_timeout: Some(50),
+            new_group_request: Some(9),
         };
         let fetch_ok = FetchOk {
             request_id: 6,

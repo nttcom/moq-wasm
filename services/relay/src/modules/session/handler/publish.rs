@@ -82,6 +82,7 @@ impl PublishHandler for moqt::publish::PublishHandler {
             forward: self.forward,
             filter_type,
             delivery_timeout: self.delivery_timeout,
+            new_group_request: None,
             track_properties: self.track_properties.clone(),
             last_update: moqt::LastSubscribeUpdate::default(),
         })

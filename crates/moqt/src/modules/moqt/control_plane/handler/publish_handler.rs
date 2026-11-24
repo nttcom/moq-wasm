@@ -37,6 +37,9 @@ pub struct PublishHandler {
     /// What the PUBLISH said about the track.
     pub track_properties: TrackProperties,
     pub delivery_timeout: Option<u64>,
+    /// Sent in PUBLISH_OK (draft-18 §10.2.13); not sent on draft-14 or for a
+    /// track without DYNAMIC_GROUPS.
+    pub new_group_request: Option<u64>,
     trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
@@ -85,6 +88,7 @@ impl PublishHandler {
             track_properties: publish_message.track_properties,
             trace_context: publish_message.trace_context,
             delivery_timeout: None,
+            new_group_request: None,
         }
     }
 
@@ -96,6 +100,9 @@ impl PublishHandler {
         filter_type: FilterType,
         forward: bool,
     ) -> Result<Subscription, TransportSendError> {
+        let new_group_request = self
+            .new_group_request
+            .filter(|_| self.track_properties.dynamic_groups());
         let publish_ok = PublishOk {
             request_id: self.guard.request_id(),
             forward,
@@ -103,6 +110,7 @@ impl PublishHandler {
             group_order: self.group_order,
             filter_type,
             delivery_timeout: self.delivery_timeout,
+            new_group_request,
         };
         self.guard
             .accept(OutgoingResponse::PublishOk(publish_ok))
@@ -120,6 +128,7 @@ impl PublishHandler {
                 forward,
                 filter_type,
                 delivery_timeout: self.delivery_timeout,
+                new_group_request,
                 track_properties: self.track_properties.clone(),
                 last_update: LastSubscribeUpdate::default(),
             },
