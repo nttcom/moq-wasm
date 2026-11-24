@@ -1,38 +1,98 @@
 # broadcast
 
-Publishes and reads MSF broadcasts (`catalog` + LOC/CMAF tracks + timelines) over `moqt` using `mediapack::MediaEvent` streams. Shared by `ingest-gateway`, `moqtsink`, `egress-gateway`, Live Viewer's MP4 publisher, and the SDKs so one player works across all of them.
+Publishes and reads **MSF broadcasts** (`catalog`, LOC/CMAF media tracks, media timelines, and event timelines) over [`moqt`](../moqt/README.md) using [`mediapack`](../mediapack/README.md) `MediaEvent`s.
 
-> **Building a standalone Rust application?** Use [`sdk/rust`](../../sdk/rust/README.md) (`moq-wasm`) for reconnects, token refresh, and a simpler broadcast API.
+Shared by `ingest-gateway`, `egress-gateway`, `sip-gateway`, `recorder`, [`gst-plugin-moqt`](../gst-plugin-moqt/README.md), [`robotics`](../robotics/README.md), and all three SDKs so every publisher works with every player. Compiles on native targets and `wasm32`.
+
+> **Building a standalone Rust app?** Use [`sdk/rust`](../../sdk/rust/README.md) (`moq-wasm`) for automatic reconnects, token refresh, and a simpler broadcast API. Use `broadcast` directly for custom `mediapack` pipelines, gateways, or plugins.
+
+## Install
+
+```toml
+[dependencies]
+broadcast = { git = "https://github.com/nttcom/moq-wasm", rev = "<commit>" }
+mediapack = { git = "https://github.com/nttcom/moq-wasm", rev = "<commit>" }
+moqt = { git = "https://github.com/nttcom/moq-wasm", rev = "<commit>" }
+```
+
+No Cargo features are required (`broadcast` enables `mediapack/moqt` internally).
+
+## Quickstart: Publish `MediaEvent`s
+
+1. Start a local relay (`make relay`, which writes `services/relay/keys/cert.pem`).
+2. Inside an `async fn` returning `anyhow::Result<()>` on a Tokio runtime:
+
+```rust
+use std::sync::Arc;
+use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
+use moqt::{CertificateVerification, ClientConfig, client::Session};
+
+let config = ClientConfig {
+    // Use `ClientConfig::default()` for relays with a publicly trusted TLS certificate.
+    certificate_verification: CertificateVerification::TrustedCertificates(
+        "services/relay/keys/cert.pem".into(),
+    ),
+    ..Default::default()
+};
+let session = Arc::new(Session::connect("moqt://127.0.0.1:4433", &config).await?);
+let conn = RelayConnection::with_client_session(&session);
+let _handler = session.add_handler(Arc::new(conn.clone()));
+
+let broadcast = Broadcast::new(conn, vec!["anon".into(), "live".into()]);
+// Spawns background tasks and announces the namespace automatically.
+let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+
+// Push MediaEvent::VideoConfig, AudioConfig, Video, and Audio as they arrive:
+// let outcome = writer.push(event)?;
+```
+
+To let `RelayConnection` dial its own session lazily instead of sharing an existing `Session`, pass `RelayConnection::new(Some(MoqtTarget { url, auth_token, verify_certificate }))` (set `verify_certificate: false` only for local self-signed relays).
+
+## Quickstart: Read a broadcast
+
+`BroadcastReader::run` takes the underlying `&moqt::Session` (via `session.moqt_session()` on a `moqt::client::Session`):
+
+```rust
+use broadcast::{BroadcastReader, selection::TrackChoice};
+
+let mut reader =
+    BroadcastReader::run(session.moqt_session(), "anon/live", TrackChoice::default()).await?;
+while let Some(event) = reader.next_event().await {
+    // Yields aligned MediaEvent::VideoConfig, AudioConfig, Video, and Audio
+}
+```
 
 ## Main entry points
 
-| Type | Role |
+| Type / Module | Role |
 | --- | --- |
-| `RelayConnection`, `MoqtTarget` | Connects to a relay (or wraps an existing `moqt::Session`) and owns shared broadcast state |
-| `Broadcast` | Namespace-scoped handle to announce, declare tracks, wait for subscribers, and send objects |
-| `BroadcastWriter` | Push `mediapack::MediaEvent`s (`push()`) to publish LOC/CMAF tracks, media timelines, and catalog updates with backpressure handling |
-| `MediaSource` | Pre-encoded frame/rendition publisher with optional `on_demand` publishing (used by the browser, Python, and Rust SDKs) |
-| `BroadcastReader` | Subscribes to the LOC video and audio tracks selected by `TrackChoice`, yielding aligned `mediapack::MediaEvent`s |
+| `RelayConnection`, `MoqtTarget` | Owns or borrows a `moqt` session and manages the shared `Origin` and catalog refresh |
+| `Broadcast` | Namespace-scoped handle to announce, declare tracks, offer event timelines (`offer_chat`, `offer_event_timeline`), and send objects |
+| `BroadcastWriter`, `RenditionTrack` | Non-blocking `push(MediaEvent)` publisher for LOC/CMAF tracks, media timelines, and catalog updates; `RenditionTrack` adds ABR renditions |
+| `MediaSource`, `MediaRendition` | Pre-encoded frame publisher with `on_demand` media publishing and keyframe request notifications (used by the SDKs) |
+| `BroadcastReader`, `CatalogReader`, `selection` | Subscribes to `catalog` and selected LOC tracks (`TrackChoice`), yielding aligned `MediaEvent`s |
 
 ## Track layout
 
 | Track | Packaging | Content |
 | --- | --- | --- |
 | `catalog` | MSF (`draft-ietf-moq-msf-02`) | Track list; `initDataList` holds AAC config and CMAF init segments |
-| `video`, `video_<height>p` | LOC (`draft-ietf-moq-loc-04`) | H.264 Annex-B with in-band SPS/PPS and capture timestamp |
+| `video`, `video_<height>p` | LOC (`draft-ietf-moq-loc-04`) | H.264/H.265 Annex-B (in-band parameter sets), VP8, VP9, or AV1 with capture timestamp |
 | `audio` | LOC | Raw AAC, G.711 A-law, Opus, or MP3 frames |
-| `<track>_cmaf` | CMAF (`draft-ietf-moq-cmsf-01`) | One `moof` + `mdat` fragment per sample (AAC only for audio) |
-| `<video>_timeline` | MSF media timeline | Per-group presentation time, location, and encode wallclock |
-| `chat`, event timelines | MSF event timeline | Publisher records indexed by wallclock or media time |
+| `<track>_cmaf` | CMAF (`draft-ietf-moq-cmsf-01`) | Single-track `moof` + `mdat` fragments (video, and AAC audio only) |
+| `<video>_timeline` / `chat` | MSF timelines | Media timeline (`[pts_ms, [group, obj], encoded_at_ms]`) and event timelines |
 
-`video_720p` / `video_480p` / `video_360p` are added when transcoding ([`crates/transcode`](../transcode/README.md)). Customise track names via `SourceTracks` (e.g. `ingest-gateway pull` per camera profile).
+Customize default track names via `SourceTracks`.
 
-## Behaviour
+## Key caveats
 
-- Video keyframes open new groups; audio joins the current video group so group IDs align across tracks.
-- Group IDs are wall-clock based so publisher restarts never reuse locations.
-- LOC tracks are pushed with `PUBLISH` immediately (or only while subscribed when `on_demand` is enabled); CMAF tracks are served only while the relay subscribes to them.
-- Media objects are retained for 60 s to answer relay `FETCH` misses; `catalog` keeps only the newest object (`Retention::NewestOnly`).
-- `catalog` is re-sent on change and at least every 30 s.
+- **Group alignment**: Video keyframes open new wall-clock-seeded groups; audio joins the latest video group (dropped before the first video keyframe; audio-only opens a group every 1 s).
+- **ABR keyframe ordering**: Push the source video sample to `BroadcastWriter::push()` **before** sending it to [`transcode::Transcoder`](../transcode/README.md) so `FollowSource` renditions match the synchronously assigned keyframe group ID.
+- **Publishing policy**: `catalog` is always eagerly `PUBLISH`ed at `Forward State 1` (refreshed on change and every 30 s, `Retention::NewestOnly`). LOC media tracks use `Forward State 1` by default, or `Forward State 0` when `on_demand` is enabled (media flows only while subscribed). CMAF siblings wait for incoming `SUBSCRIBE`.
+- **Backpressure & retention**: Media tracks keep 60 s for relay `FETCH`. `BroadcastWriter` buffers 2,310 slots (8 reserved for configs); when full, `push()` returns `PushOutcome::Dropped` and drops video until a keyframe fits.
+- **Reader alignment**: `BroadcastReader` subscribes video with `NextGroupStart` (`NEW_GROUP_REQUEST = 0`) and audio with `LargestObject`, dropping audio captured before the first admitted video object.
 
-Design: [architecture.md](../../docs/architecture/broadcast/architecture.md).
+## Further reading
+
+- Architecture: [docs/architecture/broadcast/architecture.md](../../docs/architecture/broadcast/architecture.md)
+- Specifications: [`draft-ietf-moq-msf-02.txt`](../../docs/spec/draft-ietf-moq-msf-02.txt), [`draft-ietf-moq-cmsf-01.txt`](../../docs/spec/draft-ietf-moq-cmsf-01.txt)
