@@ -965,7 +965,7 @@ dev = [
     { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "pytest-asyncio", specifier = ">=1.4" },
     { name = "pytest-xdist", specifier = ">=3.6" },
 ]
 

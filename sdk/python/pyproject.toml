@@ -26,7 +26,7 @@ codecs = ["av>=15", "numpy>=1.26"]
 pipecat = ["moq-wasm[codecs]", "pipecat-ai>=1.13,<2"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-xdist>=3.6", "pipecat-ai>=1.13", "av>=15", "pdoc>=16", "pyright>=1.1.414"]
+dev = ["pytest>=8", "pytest-asyncio>=1.4", "pytest-xdist>=3.6", "pipecat-ai>=1.13", "av>=15", "pdoc>=16", "pyright>=1.1.414"]
 
 [tool.maturin]
 python-source = "python"

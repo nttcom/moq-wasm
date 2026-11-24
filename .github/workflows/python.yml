@@ -122,7 +122,7 @@ jobs:
         working-directory: sdk/python
         run: |
           uv venv -p 3.11 "$RUNNER_TEMP/lowest"
-          uv pip install -p "$RUNNER_TEMP/lowest" --resolution lowest-direct ".[pipecat]" "pytest>=8" "pytest-asyncio>=0.24" "pytest-xdist>=3.6"
+          uv pip install -p "$RUNNER_TEMP/lowest" --resolution lowest-direct ".[pipecat]" "pytest>=8" "pytest-asyncio>=1.4" "pytest-xdist>=3.6"
           uv run -p 3.11 pyright --pythonpath "$RUNNER_TEMP/lowest/bin/python"
           "$RUNNER_TEMP/lowest/bin/python" -m pytest -p no:cacheprovider -n auto --basetemp="$RUNNER_TEMP/pytest-lowest"
 
