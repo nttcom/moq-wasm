@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Robot Teleop · MoQT Playground</title>
+    <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
+    <link rel="stylesheet" href="./robot-teleop.css" />
+  </head>
+  <body data-title="Robot Teleop">
+    <main class="page">
+      <details class="card setup-toggle">
+        <summary><h2>使い方</h2></summary>
+        <ol class="usage">
+          <li><code>cargo run -p moq-robot-sim -- --insecure</code> でシミュレーションのロボットを起動する</li>
+          <li>同じルームを入れて「接続」する</li>
+          <li>矢印キーか WASD で動かす。キーを離すとロボットは止まる</li>
+        </ol>
+      </details>
+
+      <section class="card">
+        <div class="card-head"><h2>接続</h2></div>
+        <div class="controls">
+          <div class="relay">
+            <div id="urlPresets"></div>
+            <input type="url" id="url" aria-label="Relay URL" />
+          </div>
+          <label>ルーム <input type="text" id="room" value="anon/robot-teleop" data-testid="robot-teleop-room" /></label>
+          <div class="button-row">
+            <button type="button" id="connectBtn" data-testid="robot-teleop-connect">接続</button>
+          </div>
+        </div>
+        <p class="hint connection-status" id="status" data-testid="robot-teleop-status">未接続</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>ロボット</h2></div>
+        <canvas class="pad" id="pad" width="400" height="400" tabindex="0"></canvas>
+        <dl class="robot-stats">
+          <dt>位置</dt>
+          <dd id="position" data-testid="robot-teleop-position">-</dd>
+          <dt>操縦者</dt>
+          <dd id="driver" data-testid="robot-teleop-driver">-</dd>
+          <dt>自分</dt>
+          <dd id="operator" data-testid="robot-teleop-operator">-</dd>
+        </dl>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+    <script type="module" src="../../utils/shell.ts"></script>
+  </body>
+</html>

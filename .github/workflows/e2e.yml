@@ -137,6 +137,7 @@ jobs:
     outputs:
       media: ${{ steps.filter.outputs.media }}
       message: ${{ steps.filter.outputs.message }}
+      robot_teleop: ${{ steps.filter.outputs.robot_teleop }}
       chat_moderation: ${{ steps.filter.outputs.chat_moderation }}
       meeting_transcription: ${{ steps.filter.outputs.meeting_transcription }}
       camera_detection: ${{ steps.filter.outputs.camera_detection }}
@@ -166,6 +167,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             media=true
             message=true
+            robot_teleop=true
             chat_moderation=true
             meeting_transcription=true
             camera_detection=true
@@ -187,6 +189,7 @@ jobs:
 
             media=false
             message=false
+            robot_teleop=false
             chat_moderation=false
             meeting_transcription=false
             camera_detection=false
@@ -207,6 +210,7 @@ jobs:
                 sdk/js/js/*|examples/browser/lib/*|examples/browser/utils/*|examples/browser/public/*|examples/browser/index.html|package.json|package-lock.json|examples/browser/package.json|examples/browser/vite.config.mjs|examples/browser/tsconfig.json|examples/browser/postcss.config.cjs|examples/browser/playwright.config.ts|examples/browser/playwright.helpers.ts)
                   media=true
                   message=true
+                  robot_teleop=true
                   chat_moderation=true
                   meeting_transcription=true
                   camera_detection=true
@@ -226,6 +230,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-message-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/message/*|examples/browser/tests/message-e2e*|sdk/js/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   message=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-robot-teleop-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/robot-teleop/*|examples/browser/tests/robot-teleop-e2e*|examples/rust/moq-robot-sim/*|sdk/rust/*|crates/robotics/*|sdk/js/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  robot_teleop=true
                   ;;
               esac
 
@@ -338,6 +348,7 @@ jobs:
           {
             echo "media=$media"
             echo "message=$message"
+            echo "robot_teleop=$robot_teleop"
             echo "chat_moderation=$chat_moderation"
             echo "meeting_transcription=$meeting_transcription"
             echo "camera_detection=$camera_detection"
@@ -678,6 +689,65 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: message-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  robot_teleop_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.robot_teleop == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+          shared-key: wasm-relay-vts
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Prepare browser E2E environment
+        run: node tests/browser-e2e/setup-media-e2e.mjs
+
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
+
+      - name: Run robot teleop E2E
+        env:
+          CI: "true"
+        run: node tests/browser-e2e/run-robot-teleop-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: robot-teleop-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report

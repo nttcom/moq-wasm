@@ -18,6 +18,7 @@
     "e2e:media": "playwright test tests/media-e2e.spec.ts tests/media-cmaf-e2e.spec.ts tests/remote-broadcast-e2e.spec.ts",
     "e2e:meeting": "playwright test tests/meeting-e2e.spec.ts",
     "e2e:message": "playwright test tests/message-e2e.spec.ts",
+    "e2e:robot-teleop": "playwright test tests/robot-teleop-e2e.spec.ts",
     "e2e:datagram": "playwright test tests/datagram-e2e.spec.ts",
     "e2e:whiteboard": "playwright test tests/whiteboard-e2e.spec.ts",
     "e2e:phone": "playwright test tests/phone-e2e.spec.ts",

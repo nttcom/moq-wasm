@@ -121,8 +121,10 @@ dataset columns by configuration.
   `state` record, or the LOC Timestamp of the newest camera frame it showed
   (converted to milliseconds), whichever is newer.
 - `actions` is a chunk: entry `i` is meant for robot time
-  `basis + (i + 1) × dt_ms`. Teleoperation sends chunks of one; a policy
-  sends its action horizon.
+  `basis + (i + 1) × dt_ms`, and the robot drops an entry whose time has
+  passed when the action arrives. A chunk therefore reaches at least
+  `max_action_age_ms` past `basis`: teleoperation repeats the held velocity,
+  a policy sends its action horizon.
 - `T` is the sender's clock and is informational only.
 
 `control`: `{"T": …, "data": {"driver": "operators/alice", "reason": "action"}}`,
@@ -342,9 +344,10 @@ Each step is its own pull request, stacked:
    `episode` publishing).
 4. The Rust SDK's `moq_wasm::robotics`; the Python SDK's module follows
    when a Python robot needs it.
-5. Example: a simulated robot on the Rust SDK and an operator page in
-   `examples/browser` (cameras, keyboard or gamepad actions), with an E2E
-   test.
+5. Example: a simulated robot on the Rust SDK (`examples/rust/moq-robot-sim`,
+   a point driven by velocity) and an operator page
+   (`examples/browser/examples/robot-teleop`, keyboard actions), with an E2E
+   test through the relay. Cameras come with a robot that has one.
 6. `recorder`: archive every broadcast's event timelines in a room.
 7. `bot-dispatcher`: the `policy` bot type and an example policy bot.
 8. Later: the LeRobot exporter, MCAP export, and a ROS 2 bridge (its own

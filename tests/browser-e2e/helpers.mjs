@@ -15,6 +15,7 @@ import {
 export const jsDir = resolve(repoRoot, "examples", "browser");
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
+export const robotTeleopIndexPath = "/moq-wasm/examples/robot-teleop/index.html";
 export const datagramIndexPath = "/moq-wasm/examples/datagram/index.html";
 export const whiteboardIndexPath = "/moq-wasm/examples/whiteboard/index.html";
 export const liveViewerPath = "/moq-wasm/examples/live-viewer/index.html";

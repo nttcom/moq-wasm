@@ -2442,6 +2442,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moq-robot-sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "moq-wasm",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "moq-wasm"
 version = "0.0.1"
 dependencies = [

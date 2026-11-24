@@ -6,6 +6,7 @@ members = [
     'sdk/*',
     'examples/rust/moq-broadcast',
     'examples/rust/moq-cli',
+    'examples/rust/moq-robot-sim',
     'tests/*',
 ]
 exclude = ['tests/browser-e2e']
