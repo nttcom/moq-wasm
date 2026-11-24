@@ -1,5 +1,6 @@
-import { MoqSession, reportLog } from 'moq-wasm'
-import { LivePlayer, formatLiveStats } from 'moq-wasm/media'
+import { MoqSession } from 'moq-wasm'
+import 'moq-wasm/element'
+import { formatLiveStats } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import { connectOptions } from '../../../utils/access'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
@@ -8,37 +9,30 @@ import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
-const stage = element<HTMLDivElement>('stage')
-const player = new LivePlayer({
-  container: stage,
-  callbacks: {
-    onStateChange: renderPlayer,
-    onLiveFrame: renderStats,
-    onLog: (level, message) => {
-      reportLog(level, 'media-subscriber', message)
-      console[level](`[MediaSubscriber] ${message}`)
-    }
-  }
-})
+const stage = element<HTMLElementTagNameMap['moq-player']>('stage')
+stage.addEventListener('statechange', renderPlayer)
+stage.addEventListener('liveframe', renderStats)
 startPageTelemetry('media-subscriber', () => form.url.value)
 const catalogPicker = setUpCatalogPicker(() => session, form)
 
 function renderPlayer(): void {
-  stage.toggleAttribute('data-started', player.state.started)
-  const { started, playbackStatus } = player.state
-  if (started) {
-    setStatusText('subscriber-playback-status', playbackStatus.text)
+  const state = stage.player?.state
+  stage.toggleAttribute('data-started', state?.started ?? false)
+  if (state?.started) {
+    setStatusText('subscriber-playback-status', state.playbackStatus.text)
   }
 }
 
 function renderStats(): void {
-  const stats = player.stats()
+  const stats = stage.player?.stats()
   setStatusText(
     'subscriber-receive-status',
-    `Received video objects: ${stats.videoObjects}, audio objects: ${stats.audioObjects}`
+    `Received video objects: ${stats?.videoObjects ?? 0}, audio objects: ${stats?.audioObjects ?? 0}`
   )
   element('playout-stats').textContent =
-    stats.bufferMs === undefined && stats.frameSize === undefined ? 'Waiting for media' : formatLiveStats(stats)
+    !stats || (stats.bufferMs === undefined && stats.frameSize === undefined)
+      ? 'Waiting for media'
+      : formatLiveStats(stats)
 }
 
 function initializeStatuses(): void {
@@ -49,7 +43,7 @@ function initializeStatuses(): void {
   setStatusText('subscriber-playback-status', 'Playback idle')
 }
 
-element('sendSubscribeBtn').addEventListener('click', async () => {
+element('sendSubscribeBtn').addEventListener('click', () => {
   const { video, audio } = catalogPicker.pick
   if (!session) {
     setStatusText('subscriber-track-status', 'Connect first')
@@ -60,22 +54,23 @@ element('sendSubscribeBtn').addEventListener('click', async () => {
     return
   }
   const description = `video=${video.selected.name}, audio=${audio.selected?.name ?? 'none'}`
-  await player.stop()
   // Without the picked tracks, the player subscribes the catalog itself and picks its own.
-  await player.start(session, parseTrackNamespace(form['subscribe-track-namespace'].value), {
-    video: [video.selected],
-    audio: audio.selected ? [audio.selected] : []
-  })
+  stage.tracks = { video: [video.selected], audio: audio.selected ? [audio.selected] : [] }
+  stage.setAttribute('namespace', parseTrackNamespace(form['subscribe-track-namespace'].value).join('/'))
+  stage.session = session
   setStatusText('subscriber-track-status', `Subscribed ${description}`)
 })
 
 element('closeBtn').addEventListener('click', async () => {
-  await player.stop()
+  // Unsubscribes before the session closes; the element then disposes the stopped player.
+  await stage.player?.stop()
+  stage.session = undefined
   session?.close()
   session = undefined
   catalogPicker.reset()
   initializeStatuses()
   renderStats()
+  stage.removeAttribute('data-started')
   setStatusText('subscriber-connection-status', 'Disconnected')
   setStatusText('catalog-track-status', 'Disconnected')
 })

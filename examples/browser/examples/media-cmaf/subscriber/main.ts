@@ -1,5 +1,6 @@
-import { MoqSession, reportLog } from 'moq-wasm'
-import { LivePlayer, formatLiveStats } from 'moq-wasm/media'
+import { MoqSession } from 'moq-wasm'
+import 'moq-wasm/element'
+import { formatLiveStats } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import { connectOptions } from '../../../utils/access'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
@@ -7,33 +8,29 @@ import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
-const stage = element<HTMLDivElement>('stage')
-const player = new LivePlayer({
-  container: stage,
-  callbacks: {
-    onStateChange: renderPlayer,
-    onLiveFrame: renderStats,
-    onLog: (level, message) => {
-      reportLog(level, 'media-cmaf-subscriber', message)
-      console[level](`[CmafSubscriber] ${message}`)
-    }
-  }
-})
+const stage = element<HTMLElementTagNameMap['moq-player']>('stage')
+stage.addEventListener('statechange', renderPlayer)
+stage.addEventListener('liveframe', renderStats)
 startPageTelemetry('media-cmaf-subscriber', () => form.url.value)
 
 function renderPlayer(): void {
-  stage.toggleAttribute('data-started', player.state.started)
-  const { started, catalogStatus, playbackStatus } = player.state
-  setStatusText('catalog-track-status', catalogStatus.text)
-  if (started) {
-    setStatusText('subscriber-playback-status', playbackStatus.text)
+  const state = stage.player?.state
+  stage.toggleAttribute('data-started', state?.started ?? false)
+  if (!state) {
+    return
+  }
+  setStatusText('catalog-track-status', state.catalogStatus.text)
+  if (state.started) {
+    setStatusText('subscriber-playback-status', state.playbackStatus.text)
   }
 }
 
 function renderStats(): void {
-  const stats = player.stats()
+  const stats = stage.player?.stats()
   element('playout-stats').textContent =
-    stats.bufferMs === undefined && stats.frameSize === undefined ? 'Waiting for media' : formatLiveStats(stats)
+    !stats || (stats.bufferMs === undefined && stats.frameSize === undefined)
+      ? 'Waiting for media'
+      : formatLiveStats(stats)
 }
 
 function initializeStatuses(): void {
@@ -42,23 +39,25 @@ function initializeStatuses(): void {
   setStatusText('subscriber-playback-status', 'Playback idle')
 }
 
-element('sendSubscribeBtn').addEventListener('click', async () => {
+element('sendSubscribeBtn').addEventListener('click', () => {
   if (!session) {
     setStatusText('subscriber-playback-status', 'Connect first')
     return
   }
-  await player.stop()
-  await player.setPackaging('cmaf')
   // The audio has no CMAF track, so the player plays the video alone.
-  await player.start(session, parseTrackNamespace(form['subscribe-track-namespace'].value))
+  stage.setAttribute('namespace', parseTrackNamespace(form['subscribe-track-namespace'].value).join('/'))
+  stage.session = session
 })
 
 element('closeBtn').addEventListener('click', async () => {
-  await player.stop()
+  // Unsubscribes before the session closes; the element then disposes the stopped player.
+  await stage.player?.stop()
+  stage.session = undefined
   session?.close()
   session = undefined
   initializeStatuses()
   renderStats()
+  stage.removeAttribute('data-started')
   setStatusText('subscriber-connection-status', 'Disconnected')
 })
 
