@@ -29,6 +29,7 @@ export {
   type SourceViewState,
   RemoteBroadcast
 } from './remoteBroadcast'
+export { botNamespace, botTypeOf } from './bots'
 export { type BroadcastWatch, type WatchBroadcastsOptions, watchBroadcasts } from './watchBroadcasts'
 export { type PhoneCallState } from './callStates'
 export { type PhoneCallListener, type PhoneCallOptions, PhoneCall } from './phoneCall'

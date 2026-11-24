@@ -12,6 +12,19 @@ export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
   /// not played. Not asked on a withdrawal: a withdrawn namespace that is
   /// played is always removed.
   filter?: (namespace: string[]) => boolean
+  /// Called with `true` when the namespace of a bot of the room, one that
+  /// `botTypeOf(prefix, namespace)` names, is announced under `prefix`, those
+  /// announced before the call included, and with `false` when it is withdrawn.
+  /// It is independent of `filter` and of playing: the namespace of a bot
+  /// another session published is still offered to `filter` and played like
+  /// any other broadcast, so a page that does not play bots excludes them with
+  /// `filter`. For one namespace event it is called before `filter`,
+  /// `onRemove` and `onAdd`. A bot announced again is reported `true` again,
+  /// with no `false` in between, and a bot this session published itself is
+  /// reported although it is never played. Not called on `close`.
+  /// Follow bots here rather than with a second watch: a relay rejects a
+  /// SUBSCRIBE_NAMESPACE that overlaps this one.
+  onBotChange?(botType: string, present: boolean): void
   onAdd(broadcast: RemoteBroadcast): void
   /// After the SDK disposed of the broadcast or failed to.
   onRemove(broadcast: RemoteBroadcast): void
@@ -37,9 +50,16 @@ export async function watchBroadcasts(
   const watch = await session.watchNamespaces(prefix)
   const broadcasts = new Map<string, RemoteBroadcast>()
   let closed = false
-  const { filter, onAdd, onRemove, ...broadcastOptions } = options
+  const { filter, onBotChange, onAdd, onRemove, ...broadcastOptions } = options
   const play = (namespace: string[]) => new RemoteBroadcast(session, namespace, broadcastOptions)
-  void followNamespaces(session, watch, broadcasts, { filter, play, onAdd, onRemove }, () => closed)
+  void followNamespaces(
+    session,
+    prefix,
+    watch,
+    broadcasts,
+    { filter, onBotChange, play, onAdd, onRemove },
+    () => closed
+  )
   return {
     close: async () => {
       closed = true

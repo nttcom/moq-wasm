@@ -64,6 +64,12 @@ export type AudioPublishStats = EncodedRateStats & {
 };
 
 // @public (undocumented)
+export function botNamespace(room: string[], botType: string): string[];
+
+// @public (undocumented)
+export function botTypeOf(room: string[], namespace: string[]): string | undefined;
+
+// @public (undocumented)
 export class BroadcastCatalog {
     constructor(session: MoqSession, namespace: string[], options?: BroadcastCatalogOptions);
     // (undocumented)
@@ -795,6 +801,7 @@ export function watchBroadcasts(session: MoqSession, prefix: string[], options: 
 // @public (undocumented)
 export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
     filter?: (namespace: string[]) => boolean;
+    onBotChange?(botType: string, present: boolean): void;
     onAdd(broadcast: RemoteBroadcast): void;
     onRemove(broadcast: RemoteBroadcast): void;
 };
