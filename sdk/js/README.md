@@ -1,16 +1,9 @@
 # wasm
 
-WebAssembly bindings that expose `moqt` to the browser over WebTransport.
-`Session` (`src/session.rs`) runs `moqt::Endpoint::<BROWSER>` and hands its
-requests and objects to JavaScript. The crate also exports `MediaBroadcast`,
-the MSF catalog parser and LOC helpers.
+> Looking for the JavaScript/TypeScript browser SDK? See [`sdk/js/js/README.md`](js/README.md).
 
-The `moq-wasm` npm package in [`js/`](js/README.md) wraps the generated glue
-in `MoqSession`, `createBroadcast()` and `LivePlayer`; `examples/browser`
-depends on it as an npm workspace.
+Internal Rust/WebAssembly bindings exposing `moqt::Endpoint::<BROWSER>`, `MediaBroadcast`, MSF catalog parsing, and LOC helpers to the `moq-wasm` npm package in [`js/`](js/README.md).
 
 ```shell
-npm --prefix sdk/js/js run wasm         # wasm-pack build --target web
+npm --prefix sdk/js/js run wasm   # wasm-pack build --target web (also run by `make browser`)
 ```
-
-`make browser` runs this before starting Vite.

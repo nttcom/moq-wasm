@@ -1,29 +1,30 @@
 # moq-wasm (Rust)
 
-The Rust SDK of this repository: connect to a MoQT relay, publish and
-subscribe to tracks and watch namespaces, in the same shapes as the
-[browser SDK](../js/js/README.md) and the [Python SDK](../python/README.md).
-Clients offer MoQT draft-18 first, then draft-14. The design is in
-[docs/architecture/moq-wasm/sdk.md](../../docs/architecture/moq-wasm/sdk.md).
+Async Rust SDK for Media over QUIC Transport (MoQT) relays, matching the [JavaScript](https://github.com/nttcom/moq-wasm/blob/master/sdk/js/js/README.md) and [Python](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/README.md) SDKs. Clients offer draft-18 first, then draft-14.
+
+## What's included
+
+| Module               | Use for                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `moq_wasm::*`        | `connect`, `Session` (derefs to `moqt::client::Session`), raw tracks, token refresh   |
+| `moq_wasm::media`    | MSF broadcasts (`create_broadcast`, `watch_broadcasts`), `MediaSource`, `EventTimeline` |
+| `moq_wasm::robotics` | Robot-room arbiter and action/state tracks (`run_robot`, `offer_actions`)             |
 
 ## Install
-
-Depend on a release tag:
 
 ```toml
 [dependencies]
 moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.0.1" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1"
+serde_json = "1" # needed for the media broadcast example
 ```
 
-The SDK runs on tokio. It builds `aws-lc-sys`, so a build needs a C
-compiler, and a cross build a C toolchain for the target. It is tested on
-Linux x86_64, Linux aarch64 and macOS arm64 with Rust 1.100.
+Requires `tokio` and a C compiler (for `aws-lc-sys`; cross-compilation requires a target C toolchain). Tested on Linux x86_64/aarch64 and macOS arm64 with Rust 1.100.
 
-## Send and receive a message
+## Quickstart: Send and receive a message
 
-Run `make relay` from the repository root, then run this with the relay's
-certificate, `services/relay/keys/cert.pem`. It prints `hello`.
+Start a local relay with `make relay`, then run this example passing `services/relay/keys/cert.pem` — it prints `hello` (subscribe before writing because live subscriptions receive objects published afterwards):
 
 ```rust,no_run
 use moq_wasm::{CertificateVerification, ConnectOptions};
@@ -53,15 +54,11 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-`moqt://` connects over raw QUIC, `https://` over WebTransport.
+Use `moqt://` for raw QUIC or `https://` for WebTransport.
 
-## Publish a broadcast
+## Publish a media broadcast
 
-`media::create_broadcast` registers tracks before it publishes the
-namespace, so a SUBSCRIBE the relay forwards at once finds them. A media
-source takes frames you encode (H.264, H.265, VP8, VP9, AV1, AAC, Opus) and
-publishes them as LOC tracks with the MSF catalog that the browser and
-Python SDKs read; the SDK neither encodes nor decodes.
+Register any static tracks or event timelines on the `BroadcastBuilder`, call `announce()`, then add a `MediaSource` and push pre-encoded frames (H.264, H.265, VP8, VP9, AV1, AAC, Opus). The SDK publishes LOC tracks and an MSF catalog readable by the browser and Python SDKs (it does not encode or decode):
 
 ```rust,no_run
 use moq_wasm::{Retention, media::{self, MediaSourceOptions}};
@@ -69,7 +66,7 @@ use serde_json::json;
 use std::time::Duration;
 
 # async fn run(session: &moq_wasm::Session, access_unit: Vec<u8>, timestamp_micros: u64) -> anyhow::Result<()> {
-let builder = media::create_broadcast(session, &["anon", "robot-1"]);
+let builder = media::create_broadcast(session, &["anon", "room", "robot-1"]);
 let events = builder
     .event_timeline("events", Retention::For(Duration::from_secs(3600)))
     .await?;
@@ -77,7 +74,7 @@ let broadcast = builder.announce().await?;
 
 let camera = broadcast.add_media_source(MediaSourceOptions::new("camera"));
 camera.configure_video("avc1.42e01f")?;
-camera.push_video(access_unit, timestamp_micros)?; // Annex B; a keyframe opens a group
+camera.push_video(access_unit, timestamp_micros)?; // Annex B; keyframes open a new group
 events.append(&json!({"T": 0, "data": "started"})).await?;
 
 broadcast.close().await?;
@@ -85,13 +82,9 @@ broadcast.close().await?;
 # }
 ```
 
-## Follow broadcasts
+## Watch and follow broadcasts
 
-`media::watch_broadcasts` runs a handler for each broadcast published under
-a prefix, skipping this session's own, and aborts it when the broadcast is
-withdrawn. A `RemoteBroadcast` reads the MSF catalog, follows a track
-(subscribing again after it ends) and reads an event timeline from the
-records the relay keeps.
+`media::watch_broadcasts` spawns a handler for each remote broadcast under a prefix (skipping this session's own) and aborts it on withdrawal. `RemoteBroadcast` reads the MSF catalog, follows tracks across restarts, and reads retained event timelines:
 
 ```rust,no_run
 use moq_wasm::media::{self, EventTimelineOptions, FollowOptions, TrackQuery, WatchOptions};
@@ -104,7 +97,7 @@ media::watch_broadcasts(session, &["anon", "room"], WatchOptions::default(), |re
         println!("{:?} offers {:?}", remote.namespace(), audio.map(|track| &track.name));
     }
     let mut events = remote.event_timeline("events", EventTimelineOptions::default());
-    let mut status = remote.follow("status", FollowOptions::default());
+    let mut status = remote.follow("status", FollowOptions::default()); // optional track if the publisher adds one
     loop {
         tokio::select! {
             record = events.next() => println!("event {record}"),
@@ -117,18 +110,11 @@ media::watch_broadcasts(session, &["anon", "room"], WatchOptions::default(), |re
 # }
 ```
 
-[`examples/rust/moq-broadcast`](../../examples/rust/moq-broadcast/README.md)
-runs both sides against a relay.
+See [`examples/rust/moq-broadcast`](https://github.com/nttcom/moq-wasm/blob/master/examples/rust/moq-broadcast/README.md) for a complete runnable publisher and watcher.
 
 ## A robot
 
-`robotics::run_robot` runs the robot side of a robot room
-(`docs/architecture/robotics/architecture.md` in this repository) on the
-broadcast `<room>/robot`: it publishes `state`, `control` and `episode`,
-reads the `action` track of each operator (`<room>/operators/<id>`) and of
-the policy (`<room>/bots/policy`), and hands the control loop one command
-at a time. It holds when nobody drives, the driver's actions stop, or the
-session ends.
+`robotics::run_robot` runs the robot side of a [robot room](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/robotics/architecture.md) on `<room>/robot`: it publishes `state`, `control`, and `episode`, reads `action` from operators (`<room>/operators/<id>`) and policy (`<room>/bots/policy`), and yields one command at a time (holding when nobody drives, actions stop, or the session ends):
 
 ```rust,no_run
 use moq_wasm::{media, robotics::{self, ArbiterConfig, Command}};
@@ -152,18 +138,18 @@ while let Some(command) = robot.next_command().await {
 # }
 ```
 
-## Tokens and the end of a session
+## Authentication & session lifecycle
 
-A relay that verifies tokens takes a JWT in `ConnectOptions::token`. Give
-`refresh_token` too, and the session asks it for a later token five minutes
-before the current one expires, retrying every 30 s:
+Pass a JWT in `ConnectOptions::token`. With `refresh_token`, the SDK requests a fresh token 5 minutes before `exp` (retrying every 30 s on error):
 
 ```rust,no_run
 use moq_wasm::{ConnectOptions, RefreshToken, SessionEnd};
 
 async fn later_token(current: String) -> anyhow::Result<String> {
-    // Ask your app server for a new token of the same app.
-    Ok(current)
+    // Request a fresh JWT with a later `exp` for the same app from your app server.
+    // Returning an unchanged token near `exp` will retry immediately; returning Err backs off for 30 s.
+    let _ = current;
+    anyhow::bail!("replace with a call to your token endpoint")
 }
 
 # async fn work(_: &moq_wasm::Session) -> anyhow::Result<()> { Ok(()) }
@@ -190,11 +176,9 @@ tokio::select! {
 # }
 ```
 
-The session follows GOAWAY and replaces a lost connection for up to 60 s by
-itself, sending its namespaces and subscriptions again. `closed()` resolves
-when it cannot, when the token expired, or after `close()`.
+The session follows `GOAWAY` and reconnects for up to 60 s automatically, restoring its namespaces and subscriptions. `session.closed()` resolves on unrecoverable connection loss, token expiry, or `session.close()`.
 
-## Logs
+## Logging & design
 
-The SDK logs through [`tracing`](https://docs.rs/tracing) and installs no
-subscriber: install your own, such as `tracing-subscriber`.
+- Logs through [`tracing`](https://docs.rs/tracing); install your own subscriber (e.g. `tracing-subscriber`).
+- Architecture & internals: [docs/architecture/moq-wasm/sdk.md](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/moq-wasm/sdk.md).
