@@ -392,8 +392,12 @@ call through the adapter; a draft never gets a task of its own (see
       Sending, a PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers (the
       longest prefix) opens its stream with `try_open_bi`; when the limit
       allows none, PUBLISH_BLOCKED goes on that SUBSCRIBE_TRACKS stream and
-      `publish` fails with `RequestFailure::PublishBlocked`. Other requests
-      wait for a stream. draft-14 sends PUBLISH on the control stream.
+      `publish` fails with `RequestFailure::PublishBlocked`. That
+      SUBSCRIBE_TRACKS stream records the track across prefix updates, and
+      every later `publish` of the track fails with
+      `RequestFailure::PublishBlocked` without writing until that
+      SUBSCRIBE_TRACKS ends (§6.1 MUST NOT, §10.9.2). Other requests wait for
+      a stream. draft-14 sends PUBLISH on the control stream.
     - `NamespaceInterest` says what `Subscriber::subscribe_namespace` asks
       for. `version::ControlChannel::namespace_requests` splits it per draft:
       draft-18 sends SUBSCRIBE_NAMESPACE for namespaces and SUBSCRIBE_TRACKS

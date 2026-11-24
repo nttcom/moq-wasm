@@ -144,6 +144,10 @@ struct RequestStream {
     /// first: the peer answers each with exactly one REQUEST_OK or
     /// REQUEST_ERROR, in order (§10.9).
     update_waiters: Arc<std::sync::Mutex<VecDeque<UpdateAnswerSender>>>,
+    /// For a SUBSCRIBE_TRACKS the peer sent: the tracks PUBLISH_BLOCKED went
+    /// out for on it. No PUBLISH for them follows while the stream lives
+    /// (§6.1), whatever prefix it moves to (§10.9.2).
+    blocked_tracks: HashSet<(Vec<String>, String)>,
 }
 
 impl RequestStream {
@@ -157,6 +161,7 @@ impl RequestStream {
             reader_stop: Arc::default(),
             held_namespaces: None,
             update_waiters: Arc::default(),
+            blocked_tracks: HashSet::new(),
         }
     }
 }
@@ -637,7 +642,8 @@ impl ControlChannel {
     /// SUBSCRIBE_TRACKS covers does not wait for the peer's stream limit;
     /// when it allows none, PUBLISH_BLOCKED goes on that SUBSCRIBE_TRACKS
     /// instead, its suffix relative to the prefix the peer last heard of
-    /// (§10.9.2).
+    /// (§10.9.2). A track PUBLISH_BLOCKED went out for gets no PUBLISH while
+    /// that SUBSCRIBE_TRACKS lives (§6.1 MUST NOT).
     async fn open_publish_stream(
         &self,
         connection: &Connection,
@@ -645,6 +651,10 @@ impl ControlChannel {
         track_name: &str,
     ) -> Result<(BoxedSendStream, BoxedReceiveStream), RequestFailure> {
         let namespace_writes = self.namespace_writes.lock().await;
+        if self.is_publish_blocked(track_namespace, track_name) {
+            tracing::debug!("PUBLISH_BLOCKED went out for the track; not sending its PUBLISH");
+            return Err(RequestFailure::PublishBlocked);
+        }
         let Some(blocked) = self.publish_blocked_for(track_namespace, track_name) else {
             drop(namespace_writes);
             return connection
@@ -653,10 +663,11 @@ impl ControlChannel {
                 .await
                 .map_err(|_| RequestFailure::SessionClosed);
         };
-        let (subscribe_tracks, publish_blocked) = blocked.map_err(|error| {
-            tracing::error!(%error, "PUBLISH_BLOCKED could not be encoded");
-            RequestFailure::ProtocolViolation("request could not be encoded")
-        })?;
+        let (subscribe_tracks_id, subscribe_tracks, publish_blocked) =
+            blocked.map_err(|error| {
+                tracing::error!(%error, "PUBLISH_BLOCKED could not be encoded");
+                RequestFailure::ProtocolViolation("request could not be encoded")
+            })?;
         match connection
             .transport
             .try_open_bi()
@@ -666,35 +677,50 @@ impl ControlChannel {
             Some(streams) => Ok(streams),
             None => {
                 tracing::info!("no stream for a PUBLISH; sending PUBLISH_BLOCKED");
+                if let Some(stream) = self.requests().incoming.get_mut(&subscribe_tracks_id) {
+                    stream
+                        .blocked_tracks
+                        .insert((track_namespace.to_vec(), track_name.to_string()));
+                }
                 subscribe_tracks.send(&publish_blocked).await?;
                 Err(RequestFailure::PublishBlocked)
             }
         }
     }
 
+    /// Whether PUBLISH_BLOCKED went out for the track on a SUBSCRIBE_TRACKS
+    /// of the peer that is still open.
+    fn is_publish_blocked(&self, track_namespace: &[String], track_name: &str) -> bool {
+        let track = (track_namespace.to_vec(), track_name.to_string());
+        self.requests()
+            .incoming
+            .values()
+            .any(|stream| stream.blocked_tracks.contains(&track))
+    }
+
     /// The PUBLISH_BLOCKED for a track the peer's SUBSCRIBE_TRACKS covers,
-    /// with the stream of that SUBSCRIBE_TRACKS.
+    /// with the Request ID and stream of that SUBSCRIBE_TRACKS.
     fn publish_blocked_for(
         &self,
         track_namespace: &[String],
         track_name: &str,
-    ) -> Option<anyhow::Result<(Arc<StreamSender>, BytesMut)>> {
-        let (sender, prefix_len) = self
+    ) -> Option<anyhow::Result<(RequestId, Arc<StreamSender>, BytesMut)>> {
+        let (request_id, sender, prefix_len) = self
             .requests()
             .incoming
-            .values()
-            .filter_map(|stream| match &stream.kind {
+            .iter()
+            .filter_map(|(request_id, stream)| match &stream.kind {
                 RequestStreamKind::SubscribeTracks(prefix)
                     if track_namespace.starts_with(prefix) =>
                 {
-                    Some((stream.sender.clone(), prefix.len()))
+                    Some((*request_id, stream.sender.clone(), prefix.len()))
                 }
                 _ => None,
             })
-            .max_by_key(|(_, prefix_len)| *prefix_len)?;
+            .max_by_key(|(_, _, prefix_len)| *prefix_len)?;
         Some(
             messages::encode_publish_blocked(&track_namespace[prefix_len..], track_name)
-                .map(|message| (sender, message)),
+                .map(|message| (request_id, sender, message)),
         )
     }
 
@@ -4677,6 +4703,50 @@ mod tests {
                 }
             ))
         );
+    }
+
+    #[tokio::test]
+    async fn a_track_blocked_on_a_subscribe_tracks_gets_no_publish_after_its_prefix_moves() {
+        // Arrange: PUBLISH_BLOCKED for live/room/alice, then the SUBSCRIBE_TRACKS
+        // moves to the empty prefix and the peer's streams are free again
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked-kept", "moqt").await;
+        let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
+        let streams = use_up_bidi_streams(&server).await;
+        let publisher = server.publisher();
+        let publish = || {
+            publisher.publish(
+                "live/room/alice".into(),
+                "video".into(),
+                PublishOption::default(),
+            )
+        };
+        let first = publish().await;
+        let blocked = within(receiver.receive()).await.unwrap();
+        let handler = requested_namespace_update(&client, &server, &sender, &[]).await;
+        handler.ok().await;
+        within(receiver.receive()).await.unwrap();
+        drop(streams);
+
+        // Act
+        let second = within(publish()).await;
+        let after =
+            tokio::time::timeout(std::time::Duration::from_millis(200), receiver.receive()).await;
+
+        // Assert: §6.1 MUST NOT, no PUBLISH and no second PUBLISH_BLOCKED for the track
+        assert!(
+            matches!(first, Err(RequestFailure::PublishBlocked)),
+            "{first:?}"
+        );
+        assert!(
+            matches!(blocked, Some(messages::Message::PublishBlocked(_))),
+            "{blocked:?}"
+        );
+        assert!(
+            matches!(second, Err(RequestFailure::PublishBlocked)),
+            "{second:?}"
+        );
+        assert!(after.is_err(), "{after:?}");
     }
 
     #[tokio::test]
