@@ -2,25 +2,31 @@ import { sdkLog } from '../core/log'
 import { type MoqConnectOptions, MoqSession } from '../core/session'
 import { PlayerControls } from '../media/controls/playerControls'
 import { getErrorMessage } from '../media/internal/status'
-import { LivePlayer } from '../media/player/livePlayer'
+import { LivePlayer, type LiveTracks } from '../media/player/livePlayer'
+import type { Packaging } from '../media/player/trackContext'
 
 const TARGET = 'moq-wasm::element::moq_player'
 
-type Watch = { session: MoqSession; player: LivePlayer }
+/// `ownedSession` is the session the element opened from `src`, which it closes.
+type Watch = { player: LivePlayer; ownedSession: MoqSession | undefined }
 
 /// `<moq-player src="https://relay.example/moq" namespace="room/alice" token="..." controls>`
 /// plays the broadcast of a `/`-separated track namespace, as `LivePlayer` does. It
-/// connects once it is in the page with `src` and `namespace`, connects again when
-/// `src`, `namespace` or the token changes, and closes the session when it is removed.
-/// `controls` shows `PlayerControls`. A failed connect fires an `ErrorEvent` named `error`.
+/// plays once it is in the page with `namespace` and either `src` or a `session`, starts
+/// again when `src`, `namespace`, the token, `session` or `tracks` changes, and stops when
+/// it is removed. `controls` shows `PlayerControls`, and `packaging="cmaf"` plays the CMAF
+/// tracks. It fires `statechange` and `liveframe` as `LivePlayerCallbacks` are called, and
+/// an `ErrorEvent` named `error` when it fails to start.
 export class MoqPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'namespace', 'token', 'controls']
+  static readonly observedAttributes = ['src', 'namespace', 'token', 'controls', 'packaging']
 
   private tokenProperty: MoqConnectOptions['token']
+  private sessionProperty: MoqSession | undefined
+  private tracksProperty: LiveTracks | undefined
   private watch: Watch | undefined
   private controlsPart: PlayerControls | undefined
   private work: Promise<void> = Promise.resolve()
-  private reconnectQueued = false
+  private restartQueued = false
 
   /// The `token` attribute, unless a token or a function that returns one was set
   /// here; the function is called before each CLIENT_SETUP.
@@ -30,20 +36,41 @@ export class MoqPlayerElement extends HTMLElement {
 
   set token(value: MoqConnectOptions['token']) {
     this.tokenProperty = value
-    this.queueReconnect()
+    this.queueRestart()
   }
 
-  /// The `LivePlayer` while a session is open, `undefined` otherwise.
+  /// A session the page opened, played on instead of connecting to `src`; the
+  /// element never closes it.
+  get session(): MoqSession | undefined {
+    return this.sessionProperty
+  }
+
+  set session(value: MoqSession | undefined) {
+    this.sessionProperty = value
+    this.queueRestart()
+  }
+
+  /// The tracks to play instead of those the catalog lists, as in `LivePlayer.start`.
+  get tracks(): LiveTracks | undefined {
+    return this.tracksProperty
+  }
+
+  set tracks(value: LiveTracks | undefined) {
+    this.tracksProperty = value
+    this.queueRestart()
+  }
+
+  /// The `LivePlayer` while it plays, `undefined` otherwise.
   get player(): LivePlayer | undefined {
     return this.watch?.player
   }
 
   connectedCallback(): void {
-    this.queueReconnect()
+    this.queueRestart()
   }
 
   disconnectedCallback(): void {
-    this.queueReconnect()
+    this.queueRestart()
   }
 
   attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null): void {
@@ -52,56 +79,69 @@ export class MoqPlayerElement extends HTMLElement {
     }
     if (name === 'controls') {
       this.showControls()
+    } else if (name === 'packaging') {
+      void this.watch?.player.setPackaging(this.packaging())
     } else {
-      this.queueReconnect()
+      this.queueRestart()
     }
   }
 
-  /// Attribute changes during a connect are applied once it settles, reading the
-  /// attributes as they are then.
-  private queueReconnect(): void {
-    if (this.reconnectQueued) {
+  /// Changes made while it starts are applied once it settles, reading the
+  /// attributes and properties as they are then.
+  private queueRestart(): void {
+    if (this.restartQueued) {
       return
     }
-    this.reconnectQueued = true
+    this.restartQueued = true
     this.work = this.work.then(() => {
-      this.reconnectQueued = false
-      return this.reconnect()
+      this.restartQueued = false
+      return this.restart()
     })
   }
 
-  private async reconnect(): Promise<void> {
-    await this.close()
-    const src = this.getAttribute('src')
+  private async restart(): Promise<void> {
+    await this.stop()
+    const source = this.sessionProperty ?? (this.getAttribute('src') || undefined)
     const namespace = (this.getAttribute('namespace') ?? '').split('/').filter((part) => part.length > 0)
-    if (!this.isConnected || !src || namespace.length === 0) {
+    if (!this.isConnected || !source || namespace.length === 0) {
       return
     }
     const player = new LivePlayer({
       container: this,
       callbacks: {
-        onStateChange: () => this.controlsPart?.render(),
-        onLiveFrame: () => this.controlsPart?.renderBuffer(player.stats()),
+        onStateChange: () => {
+          this.controlsPart?.render()
+          this.dispatchEvent(new Event('statechange'))
+        },
+        onLiveFrame: () => {
+          this.controlsPart?.renderBuffer(player.stats())
+          this.dispatchEvent(new Event('liveframe'))
+        },
         onLog: () => {}
       }
     })
-    let session: MoqSession | undefined
+    let ownedSession: MoqSession | undefined
     try {
-      session = await MoqSession.connect(src, { token: this.token })
-      this.watch = { session, player }
+      const session =
+        typeof source === 'string' ? (ownedSession = await MoqSession.connect(source, { token: this.token })) : source
+      this.watch = { player, ownedSession }
       this.showControls()
-      await player.start(session, namespace)
+      await player.setPackaging(this.packaging())
+      await player.start(session, namespace, this.tracksProperty)
     } catch (error) {
       this.watch = undefined
       this.showControls()
       await player.dispose()
-      session?.close()
-      sdkLog(undefined, 'error', TARGET, 'moq-player failed to play', { url: src, error })
+      ownedSession?.close()
+      sdkLog(undefined, 'error', TARGET, 'moq-player failed to play', {
+        url: typeof source === 'string' ? source : undefined,
+        error
+      })
       this.dispatchEvent(new ErrorEvent('error', { error, message: getErrorMessage(error) }))
     }
   }
 
-  private async close(): Promise<void> {
+  private async stop(): Promise<void> {
     const watch = this.watch
     if (!watch) {
       return
@@ -109,7 +149,11 @@ export class MoqPlayerElement extends HTMLElement {
     this.watch = undefined
     this.showControls()
     await watch.player.dispose()
-    watch.session.close()
+    watch.ownedSession?.close()
+  }
+
+  private packaging(): Packaging {
+    return this.getAttribute('packaging') === 'cmaf' ? 'cmaf' : 'loc'
   }
 
   private showControls(): void {

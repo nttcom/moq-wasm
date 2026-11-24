@@ -846,9 +846,14 @@ import すると `customElements.define('moq-player', …)` が走る。副作�
 ```
 
 - **属性。** `src`（relay の URL）、`namespace`（`/` 区切りの track namespace）、`token`、
-  `controls`。`src` と `namespace` がそろい、ページに入っている間だけ接続する。`src`、
-  `namespace`、トークンが変わると接続し直し、ページから外れると player を `dispose` して
-  session を閉じる。接続中の変更はまとめ、接続が終わった時点の属性で1回だけ接続し直す。
+  `controls`、`packaging`。`namespace` と、`src` か `session` プロパティがそろい、ページに
+  入っている間だけ再生する。`src`、`namespace`、トークン、`session`、`tracks` が変わると
+  player を作り直し、ページから外れると player を `dispose` して、`src` から開いた session
+  を閉じる。開始中の変更はまとめ、開始が終わった時点の値で1回だけ作り直す。
+- **ページの session。** `session` プロパティに入れた session で再生し、`src` には接続
+  しない。同じ session で別の track も扱うページのためで、要素はこの session を閉じない。
+- **`tracks` と `packaging`。** `tracks` は `LivePlayer.start` に渡すトラック。`packaging`
+  属性は `setPackaging` に渡し、再生中に変えても作り直さない。
 - **トークン。** `token` 属性は文字列。`token` プロパティには `MoqConnectOptions.token` と
   同じく、接続のたびに呼ばれる関数も入れられる。属性に書いたトークンは HTML から読めるので、
   期限の短いトークンを使うページはプロパティに関数を入れる。
@@ -856,8 +861,11 @@ import すると `customElements.define('moq-player', …)` が走る。副作�
   接続はそのまま続く。
 - **見た目。** Shadow DOM は使わず、要素自身を `LivePlayer` の container にする。ページは
   `LivePlayer` と同じく `player.css`（`controls` なら `controls.css` も）を import する。
-- **それ以上の操作。** `player` プロパティが接続中の `LivePlayer` を返す（`setVolume`、
-  `stats` など）。接続や再生の開始に失敗すると、要素に `error` の `ErrorEvent` を投げる。
+- **それ以上の操作。** `player` プロパティが再生中の `LivePlayer` を返す（`setVolume`、
+  `stats` など）。`LivePlayerCallbacks` の `onStateChange` と `onLiveFrame` は、要素の
+  `statechange` と `liveframe` イベントになる。接続や再生の開始に失敗すると、要素に
+  `error` の `ErrorEvent` を投げる。`LivePlayerOptions`（`deliveryObserver` など）は渡せ
+  ない。それが要るページは `LivePlayer` を直接使う。
 
 ## core API
 
