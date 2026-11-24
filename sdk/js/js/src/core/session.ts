@@ -35,42 +35,25 @@ export type MoqConnectOptions = {
 }
 
 export type PublishTrackOptions = {
-  /// How long the session keeps each object to answer FETCH; 60 s by
-  /// default, and 0 keeps only the newest object.
+  /// Object retention for `FETCH` in ms (default 60000 = 60 s; `0` keeps only the newest object).
   retentionMs?: number
-  /// Sends PUBLISH so the relay takes the track before anyone subscribes;
-  /// announce the namespace first.
+  /// Also send `PUBLISH` so the relay takes the track before anyone subscribes (announce the namespace first).
   publish?: boolean
-  /// Sends each object in its own datagram (draft-14 §10.3) instead of on
-  /// subgroup streams: a lost object is not resent and never holds back the
-  /// next one. An object larger than the path's datagram size (about 1 KB is
-  /// safe) is dropped. A subscriber reads the track with the async iterator,
-  /// not `groups()`. A track registered again keeps its objects, so once it
-  /// has one, `publishTrack` with the other `datagram` rejects.
+  /// Send each object as an unreliable datagram (draft-14 §10.3; objects exceeding the path MTU, ~1 KB safe limit, are dropped; read via async iterator, not `groups()`).
+  /// Rejects if re-registered with a different mode after objects exist.
   datagram?: boolean
-  /// The Publisher Priority (draft-14 §7.1), 0 to 255, 128 by default: among
-  /// the session's tracks, a lower value is sent first.
+  /// Publisher Priority (draft-14 §7.1, 0–255, default 128; lower is sent first among this session's tracks).
   priority?: number
 }
 
 export type MoqSubscribeOptions = {
   filter?: 'largestObject' | 'nextGroupStart'
   forward?: boolean
-  /// The Subscriber Priority (draft-14 §7.2), 128 by default: the relay sends a
-  /// lower value first.
+  /// Subscriber Priority (draft-14 §7.2, default 128; lower goes first).
   priority?: number
-  /// The DELIVERY TIMEOUT (draft-14 §9.2.1.2) in milliseconds. When the relay
-  /// has not delivered an object that long after receiving it, it resets the
-  /// stream of the object's subgroup and sends no later object of that
-  /// subgroup. A congested link then carries recent objects instead of a
-  /// growing backlog. Without it every object is delivered.
+  /// `DELIVERY TIMEOUT` in ms (draft-14 §9.2.1.2): measured from relay receipt; on expiry the relay resets that subgroup stream and skips its remaining objects (omitted disables timeout-based resets).
   deliveryTimeoutMs?: number
-  /// The Group Order (draft-14 §7), `'ascending'` by default: which of the
-  /// track's groups the relay sends first when more than one waits on a
-  /// congested link. `'ascending'` sends the oldest first, so the delay
-  /// grows; `'descending'` sends the newest first, so
-  /// the rest of an older group arrives late or, with `deliveryTimeoutMs`,
-  /// not at all. It cannot be changed after the SUBSCRIBE.
+  /// Group Order (draft-14 §7, default `'ascending'`; immutable after `SUBSCRIBE`). `'ascending'` sends older groups first (delay grows on congestion); `'descending'` sends newest first (older groups arrive late or drop with `deliveryTimeoutMs`).
   groupOrder?: 'ascending' | 'descending'
 }
 
@@ -197,11 +180,8 @@ export class MoqSession {
     return new MoqSubscription(subscription, this)
   }
 
-  /// SUBSCRIBE that reads from the first object of a group (draft-18 §5.1.3.1).
-  /// The group the largest object is in comes first, through a joining FETCH,
-  /// unless the track starts a group on request and the largest object ID is
-  /// `newGroupAfter` or more: then the publisher is asked for a new
-  /// group (NEW_GROUP_REQUEST, §10.2.13) and the objects start with it.
+  /// Subscribe from the start of a group (draft-18 §5.1.3.1): joins the current group via joining `FETCH`,
+  /// or sends `NEW_GROUP_REQUEST` (§10.2.13) when a dynamic-group track's largest object ID is >= `newGroupAfter`.
   async subscribeGroupStart(
     namespace: string[],
     track: string,
@@ -336,11 +316,8 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     await this.call(() => this.inner.setPriority(priority))
   }
 
-  /// Asks the publisher to start a new group (NEW_GROUP_REQUEST, draft-18
-  /// §10.2.13). `largestGroup` is the largest group ID of the track seen so
-  /// far. Resolves to false, without asking, for a track that does not start
-  /// groups on request. The relay does not pass on a request that follows
-  /// another within 2 seconds.
+  /// Send `NEW_GROUP_REQUEST` (draft-18 §10.2.13) with `largestGroup + 1`, or `0` if omitted (`largestGroup` is the largest group ID seen).
+  /// Returns `false` without sending for non-dynamic tracks; relays suppress requests for already-started groups or duplicate outstanding requests.
   async requestNewGroup(largestGroup?: bigint): Promise<boolean> {
     return (await this.call(() => this.inner.requestNewGroup(largestGroup))) ?? false
   }

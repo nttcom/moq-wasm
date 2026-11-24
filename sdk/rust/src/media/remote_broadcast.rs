@@ -87,19 +87,15 @@ impl RemoteBroadcast {
         })
     }
 
-    /// The objects written after it subscribes. It subscribes again a second
-    /// after the track ends or its SUBSCRIBE fails, as when the publisher
-    /// leaves and another takes the track over.
+    /// Subscribe to objects written after subscribe, retrying 1 s after track end or failure.
     pub fn follow(&self, name: &str, options: FollowOptions) -> FollowedTrack {
         FollowedTrack {
             resubscriber: Resubscriber::new(self, name, TrackStart::LargestObject(options)),
         }
     }
 
-    /// The records of an event timeline track (draft-ietf-moq-msf-02 §8),
-    /// starting from the first object of the current group (a Joining
-    /// FETCH), the whole timeline for one an `EventTimeline` writes, and
-    /// subscribing again as `follow` does.
+    /// Subscribe to an MSF event timeline (`draft-ietf-moq-msf-02` §8) from the current group via joining `FETCH`,
+    /// retrying on end/failure like `follow()`.
     pub fn event_timeline(&self, name: &str, options: EventTimelineOptions) -> RemoteEventTimeline {
         RemoteEventTimeline {
             resubscriber: Resubscriber::new(self, name, TrackStart::CurrentGroup(options)),

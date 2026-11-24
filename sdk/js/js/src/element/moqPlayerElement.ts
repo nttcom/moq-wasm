@@ -10,13 +10,9 @@ const TARGET = 'moq-wasm::element::moq_player'
 /// `ownedSession` is the session the element opened from `src`, which it closes.
 type Watch = { player: LivePlayer; ownedSession: MoqSession | undefined }
 
-/// `<moq-player src="https://relay.example/moq" namespace="room/alice" token="..." controls>`
-/// plays the broadcast of a `/`-separated track namespace, as `LivePlayer` does. It
-/// plays once it is in the page with `namespace` and either `src` or a `session`, starts
-/// again when `src`, `namespace`, the token, `session` or `tracks` changes, and stops when
-/// it is removed. `controls` shows `PlayerControls`, and `packaging="cmaf"` plays the CMAF
-/// tracks. It fires `statechange` and `liveframe` as `LivePlayerCallbacks` are called, and
-/// an `ErrorEvent` named `error` when it fails to start.
+/// Custom element `<moq-player src="..." namespace="..." token="..." controls packaging="loc|cmaf">`
+/// wrapping `LivePlayer`. Plays while connected with `namespace` + (`src` or `session`), restarts when
+/// `src`, `session`, `namespace`, `token`, or `tracks` changes, and emits `statechange`, `liveframe`, and `error` (`ErrorEvent`).
 export class MoqPlayerElement extends HTMLElement {
   static readonly observedAttributes = ['src', 'namespace', 'token', 'controls', 'packaging']
 

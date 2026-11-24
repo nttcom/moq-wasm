@@ -20,14 +20,11 @@ pub struct WatchOptions {
     pub empty_timeout: Option<Duration>,
 }
 
-/// Runs `handler` on a task for each namespace published under `prefix`,
-/// including those published before the call, except this session's own.
-/// A withdrawal aborts the namespace's task; publishing it again starts a
-/// new one. A handler's `Err` is logged.
+/// Spawn `handler` for each remote namespace published under `prefix` (including those already published, skipping this session's own).
+/// Withdrawal aborts the task; republishing starts a new one; handler errors are logged.
 ///
-/// Returns when the session ends or `options.empty_timeout` passes, and
-/// aborts every task when it returns or is dropped. Fails when the relay
-/// refuses the SUBSCRIBE_NAMESPACE.
+/// Returns when the session ends or `options.empty_timeout` elapses, aborting all tasks on return/drop.
+/// Fails if `SUBSCRIBE_NAMESPACE` is rejected.
 pub async fn watch_broadcasts<H, F>(
     session: &Session,
     prefix: &[impl AsRef<str>],

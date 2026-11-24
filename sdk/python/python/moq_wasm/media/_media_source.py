@@ -22,15 +22,11 @@ CHAT = "chat"
 
 
 class MediaSource:
-    """A video and an audio track of a broadcast, fed with encoded frames, as the browser SDK's
-    source is: `broadcast` builds the catalog, the LOC tracks and the media timeline. Frames pushed
-    before the broadcast is published, the relay having accepted its namespace, or after it was
-    left or the session ended, are dropped; the configurations reach the native source as soon as
-    it is built, since its catalog lists them. Once publishing the source failed, as the relay
-    refused the broadcast's namespace or the native publishing of a live session's source failed in
-    a push or a configuration, the pushes, configurations, `add_rendition`, the renditions'
-    configurations and pushes and `remove_track` raise RuntimeError from that failure, and
-    `keyframe_request` and `demand_change` raise it."""
+    """Video and audio source for a `LocalBroadcast` (MSF catalog, LOC tracks, media timeline).
+
+    Frames pushed before the broadcast is announced, after exit, or after session end are dropped.
+    Once publishing fails (e.g. relay rejection or push error), subsequent calls raise `RuntimeError`.
+    """
 
     def __init__(
         self,
@@ -106,15 +102,13 @@ class MediaSource:
     def add_rendition(
         self, name: str, *, label: str, bitrate: int | None = None, framerate: int | None = None
     ) -> "Rendition":
-        """Another encoding of the video, in the track `<video>_<name>`, and with `cmaf` its
-        `_cmaf` sibling (`_native.MediaSource.add_rendition`): feed it frames of the same pictures,
-        with a keyframe on the same pictures as the video's. `bitrate` (bits per second) and
-        `framerate` go into the catalog. Raises ValueError for a negative `bitrate` or `framerate`,
-        or one too large, TypeError for an option of another type, such as a float `framerate`,
-        and RuntimeError once publishing the source failed, and while another track of the
-        broadcast, or once it was entered of the session, has the name of one of its tracks;
-        ValueError as well for a track the session registered in datagrams or with another
-        retention than 60 s."""
+        """Add a video rendition `<video>_<name>` (plus `_cmaf` if enabled).
+
+        Feed the same pictures and keyframe positions as the primary video
+        (`bitrate` in bits/s and `framerate` go in the catalog).
+        Raises `ValueError`/`TypeError` for invalid options or conflicting prior registrations,
+        and `RuntimeError` on track-name collision or after publishing failure.
+        """
         _check_type("name", name, str)
         _check_type("label", label, str)
         _check_optional_unsigned("bitrate", bitrate, 64)
@@ -130,15 +124,11 @@ class MediaSource:
         return rendition
 
     def push_video(self, data: bytes, timestamp_micros: int) -> bool:
-        """One encoded frame; a keyframe opens a group. `timestamp_micros` must not run
-        backwards. Returns whether the native source took the frame: False for one dropped, before
-        the broadcast was published, the relay having accepted its namespace, after it was left or
-        once the session ended, for one the native source's publish queue dropped while the relay
-        does not keep up (up to the next keyframe that fits, which `keyframe_request` asks for), and
-        for one without a picture, as an H.264 access unit without NAL units or without a slice (an
-        access unit delimiter or parameter sets alone), which is not published, though the parameter
-        sets go to the keyframes after it. Raises RuntimeError before `configure_video`, and once
-        publishing the source failed."""
+        """Push one encoded video frame (`timestamp_micros` must be monotonic; keyframes start a new group).
+
+        Returns `False` if dropped (before announce, after exit/session end, on backpressure, or non-picture AU).
+        Raises `RuntimeError` before `configure_video()` or after publishing failure.
+        """
         if self._video_codec is None:
             raise RuntimeError("call configure_video first")
         return self._publish(lambda source: source.push_video(data, timestamp_micros), push=True)

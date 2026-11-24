@@ -24,9 +24,7 @@ pub struct MediaSourceOptions {
     pub video_bitrate: Option<u64>,
     /// The frames per second the encoder is capped at, for the catalog.
     pub video_framerate: Option<u32>,
-    /// Has the relay ask for the tracks only while a subscriber takes them
-    /// (draft-18 §10.10), reported by `MediaSource::demand_change`; `true`
-    /// by default.
+    /// Send tracks only while subscribed (draft-18 §10.10), reported via `demand_change()`; default `true`.
     pub on_demand: bool,
 }
 
@@ -123,11 +121,8 @@ impl MediaSource {
         })
     }
 
-    /// Another encoding of the video in the track `<video>_<name>`: feed it
-    /// frames of the same pictures, with keyframes on the same pictures as
-    /// the video's. It joins the video's switching set
-    /// (draft-ietf-moq-cmsf-01 §3.2). `bitrate` (bits per second) and
-    /// `framerate` go into the catalog.
+    /// Add a video rendition `<video>_<name>` in the video's switching set (`draft-ietf-moq-cmsf-01` §3.2).
+    /// Feed the same pictures and keyframe positions as the primary video (`bitrate` in bits/s).
     pub fn add_rendition(
         &self,
         name: &str,
@@ -143,26 +138,20 @@ impl MediaSource {
         })
     }
 
-    /// Ends the video (with its renditions) or the audio with PUBLISH_DONE
-    /// and sends the catalog without it. Stop pushing its media first;
-    /// configuring it again and pushing publishes it again. Fails when the
-    /// relay session has ended.
+    /// End video (plus renditions) or audio with `PUBLISH_DONE` and update the catalog.
+    /// Stop pushing first; re-configure and push to resume. Fails if the session ended.
     pub async fn remove_track(&self, kind: TrackKind) -> anyhow::Result<()> {
         let removal = self.with(|source| Ok(source.remove_track(kind)))?;
         removal.await
     }
 
-    /// Resolves the next time a subscriber asks for a new group
-    /// (NEW_GROUP_REQUEST) or the broadcast needs one: encode the next frame
-    /// of the video and of every rendition as a keyframe then. It does not
-    /// end with the session: wait for `Session::closed` beside it.
+    /// Resolves when a subscriber sends `NEW_GROUP_REQUEST` or the broadcast needs a keyframe
+    /// (encode the next video and rendition frames as keyframes). Does not resolve on session end; select against `Session::closed()`.
     pub async fn keyframe_request(&self) -> anyhow::Result<()> {
         self.end.until(self.keyframe_requests.notified()).await
     }
 
-    /// The next change of whether a subscriber takes one of the source's
-    /// tracks. A change replaces its track's unread one, so a late reader
-    /// gets each track's latest. Fails for a source added without `on_demand`.
+    /// Resolves with the latest subscriber demand change per track (coalesced). Fails if `on_demand` is `false`.
     pub async fn demand_change(&self) -> anyhow::Result<TrackDemand> {
         let demand_changes = self
             .demand_changes

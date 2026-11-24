@@ -34,18 +34,14 @@ pub struct ConnectOptions {
 pub enum SessionEnd {
     /// `Session::close` was called.
     Closed,
-    /// The relay connection ended and could not be replaced: retrying
-    /// stopped after 60 s, or the relay closed it with a termination code
-    /// other than EXPIRED_AUTH_TOKEN.
+    /// Relay connection ended and could not be restored within 60 s (or closed with a non-`EXPIRED_AUTH_TOKEN` code).
     ConnectionLost(TransportClose),
-    /// The token expired while `RefreshToken` kept failing.
+    /// Token expired while `RefreshToken` kept failing.
     TokenExpired,
 }
 
-/// Connects to `url`: `moqt://` over raw QUIC, `https://` over
-/// WebTransport. Fails when the relay cannot be reached or refuses the
-/// session, when `refresh_token` is given without `token`, or when `token`
-/// is no JWT with an `appId` claim.
+/// Connect to a relay (`moqt://` QUIC, `https://` WebTransport).
+/// Fails if unreachable/rejected, if `refresh_token` is set without `token`, or if `token` lacks an `appId` claim.
 pub async fn connect(url: &str, options: ConnectOptions) -> anyhow::Result<Session> {
     let keeper = match (&options.token, options.refresh_token) {
         (Some(token), Some(refresh)) => Some(TokenKeeper::new(token.clone(), refresh)?),
@@ -82,10 +78,8 @@ pub async fn connect(url: &str, options: ConnectOptions) -> anyhow::Result<Sessi
     })
 }
 
-/// A relay session: the requests of `moqt::client::Session`, through
-/// `Deref`, with its token kept fresh. It follows GOAWAY and replaces a lost
-/// connection for up to 60 s, sending its namespaces and subscriptions
-/// again; when it cannot, the session ends with `SessionEnd::ConnectionLost`.
+/// Relay session wrapping `moqt::client::Session` (via `Deref`) with automatic token refresh,
+/// `GOAWAY` handling, and up to 60 s reconnection restoring namespaces and subscriptions.
 pub struct Session {
     client: Arc<client::Session>,
     end_sender: Arc<watch::Sender<Option<SessionEnd>>>,

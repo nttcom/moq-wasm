@@ -12,9 +12,7 @@ export type OpenRecordingOptions = {
   token?: string | (() => Promise<string>)
 }
 
-/// The recorder refused `publish`: 404 for an unknown recording, 409 for one not finished or
-/// not in the moq format, 401 or 403 for the token or a room it cannot replay, 503 when it
-/// replays too many recordings or cannot verify the token.
+/// Recorder `publish` error (401/403 auth, 404 unknown, 409 unfinished or non-moq, 503 busy or cannot verify token).
 export class RecorderError extends Error {
   constructor(
     readonly status: number,
@@ -39,12 +37,9 @@ const PAGE: RecordingEnvironment = {
 
 type PublishRequest = { url: string; token: OpenRecordingOptions['token'] }
 
-/// Asks the recorder to replay recording `id` to its relay and holds the answer, which keeps
-/// the replay running, until `close()` or until `session` closes. Every `renew_after_seconds`
-/// the recorder names, it opens a new answer and closes the previous one a minute later. When
-/// an answer ends on its own, it opens a new one at once. Rejects with a `RecorderError` when
-/// the recorder refuses, and with another `Error` when the request fails or the answer does not
-/// describe the replay.
+/// Request replay of recording `id` and hold the stream open until `close()` or `session.closed`.
+/// Renews every `renew_after_seconds` (closing the previous response 60 s later) and reopens immediately if a response ends on its own.
+/// Rejects with `RecorderError` on HTTP rejection or `Error` on network/protocol failure.
 export function openRecording(
   session: MoqSession,
   recorderUrl: string,

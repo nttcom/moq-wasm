@@ -51,15 +51,11 @@ from moq_wasm.pipecat._participant import (
 from moq_wasm.pipecat._room import Room, RoomOptions
 
 DEFAULT_VIDEO_OUT_CODEC = "H264"
-# Seconds an output ending gracefully waits for the still it was given last to be written.
+# Grace period for flushing the last still image during graceful shutdown.
 STILL_WRITE_TIMEOUT_SECONDS = 1.0
-# Seconds of pictures at `video_out_framerate` a live output queues at most: the oldest are dropped
-# past them, as when pictures come faster than the framerate. An output holds as many synchronized
-# pictures not yet written at most, and drops those that come past them.
+# Max buffered seconds of live/synced video frames before dropping oldest.
 LIVE_VIDEO_QUEUE_SECONDS = 2.0
-# Seconds an output ending gracefully waits for its live sender to write the pictures queued, and
-# for the synchronized pictures released to be written: two seconds of them at its framerate, and a
-# second to spare.
+# Grace period for draining queued live/synced video frames during graceful shutdown.
 LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS = LIVE_VIDEO_QUEUE_SECONDS + 1.0
 
 logger = logging.getLogger("moq_wasm")
@@ -69,33 +65,21 @@ ParamsT = TypeVar("ParamsT", bound=TransportParams)
 
 
 class MoqWasmInputParams(TransportParams):
-    """`TransportParams` with how a participant's broadcast is received.
+    """`TransportParams` configuring how participant broadcasts are received.
 
-    A video source names a track of each participant's catalog: `"camera"` is the track
-    `video_in_track` picks (by default the decodable LOC video track with the lowest bitrate); any
-    other source is the video track of that name, when it is LOC and decodable. As in pipecat,
-    `video_in_enabled` receives the sources `video_in_sources` lists as each participant joins, and
-    others only when asked for, by `MoqWasmTransport.capture_participant_video` or a
-    `UserImageRequestFrame`.
-
-    `audio_in_channels` (1, the default, or 2) is the channel count the participants' audio is
-    pushed in. pipecat's stock VAD and turn analyzers (Silero, Smart Turn) read the PCM as mono, so
-    they need 1: stereo would end each turn early. A pipeline that needs stereo elsewhere downmixes
-    it before them.
-
-    Leave `audio_in_sample_rate` unset and set the rate once, with
-    `PipelineParams(audio_in_sample_rate=...)`: the inputs then decode at the pipeline's rate, which
-    pipecat also starts its stock analyzers at, such as Silero. An input rate that differs from the
-    pipeline's reaches them as audio they misread (8 kHz in a 16 kHz pipeline gives no speech at
-    all), so a processor that needs another rate resamples the audio for itself, leaving the
-    frames the analyzers read at the pipeline's rate.
+    - **Video sources**: `"camera"` uses `video_in_track` (default: lowest-bitrate decodable LOC video);
+      other source names match that track name directly. `video_in_enabled` subscribes to `video_in_sources`
+      on join; other sources subscribe on demand (`capture_participant_video` / `UserImageRequestFrame`).
+    - **Audio channels**: `audio_in_channels` (`1` default, or `2`). Keep `1` when using Pipecat's stock
+      VAD/turn analyzers (Silero, Smart Turn), which expect mono PCM.
+    - **Sample rate**: leave `audio_in_sample_rate` unset and configure `PipelineParams(audio_in_sample_rate=...)`
+      so inputs match the pipeline's analyzers (a mismatch causes analyzers to misread audio, e.g. 8 kHz in a
+      16 kHz pipeline yields no speech).
 
     Parameters:
-        video_in_track: Picks the `"camera"` video track of a participant's catalog. What it
-            raises is reported to `on_error` (as an `ErrorFrame` by `MoqWasmParticipantInput`),
-            and the camera track received before stays.
-        data_in_tracks: Tracks of each participant whose objects are pushed as
-            `InputTransportMessageFrame`s carrying a `MoqWasmTrackMessage`.
+        video_in_track: Selector for each participant's `"camera"` track (errors go to `on_error` / `ErrorFrame`
+            without dropping the active track).
+        data_in_tracks: Participant data track names emitted as `InputTransportMessageFrame(MoqWasmTrackMessage)`.
     """
 
     video_in_track: Callable[[Catalog], CatalogTrack | None] | None = None
@@ -103,22 +87,15 @@ class MoqWasmInputParams(TransportParams):
 
 
 class MoqWasmParams(MoqWasmInputParams):
-    """`MoqWasmInputParams` with the room the transport joins and the tracks it publishes.
+    """`MoqWasmInputParams` plus room namespace and published tracks.
 
     Parameters:
-        room: The namespace whose broadcasts one level below are the participants.
-        participant_id: Labels the transport's media source, and names its broadcast
-            `[*room, participant_id]` unless `broadcast` does.
-        broadcast: The namespace of the transport's own broadcast, such as `[*room, "bots",
-            "chat-moderation"]`, the namespace the bot service lets its bots publish at.
-        data_out_tracks: Tracks of the transport's broadcast, by name, with the seconds each keeps
-            its objects for FETCH; an `OutputTransportMessageFrame` carrying a
-            `MoqWasmTrackObject` writes one.
-        event_timelines_out: Event timeline tracks of the transport's broadcast, by name, with
-            the seconds each keeps its records; an `OutputTransportMessageFrame` carrying a
-            `MoqWasmEventRecord` appends one.
-        empty_timeout: Seconds without any participant after which `on_room_empty` fires and
-            the transport stops following the room.
+        room: Room prefix; direct child namespaces are treated as participants.
+        participant_id: Media source label and default broadcast suffix (`[*room, participant_id]`).
+        broadcast: Explicit broadcast namespace override (e.g. `[*room, "bots", "chat-moderation"]`).
+        data_out_tracks: Map of output data track names to `FETCH` retention seconds (`MoqWasmTrackObject`).
+        event_timelines_out: Map of output event timeline names to retention seconds (`MoqWasmEventRecord`).
+        empty_timeout: Seconds with no participants before `on_room_empty` fires and room watching stops.
     """
 
     room: list[str]
@@ -336,23 +313,14 @@ class MoqWasmInputTransport(_ReceivingInput):
 
 
 class MoqWasmParticipantInput(_ReceivingInput):
-    """The input of one participant's broadcast, for a pipeline per participant (a voice activity
-    detector must hear one speaker). Picks and decodes the tracks as `MoqWasmTransport` does, from
-    the `StartFrame` until the `EndFrame`, the `CancelFrame` or its `cleanup`, each of which returns
-    once every track is unsubscribed and the image requests waiting are answered, even after pipecat
-    cancelled an earlier one. Publishes nothing: follow the room with `watch_broadcasts` and
-    publish with `create_broadcast`. It keeps a copy of `params` and of its lists and mappings:
-    assigning its fields or changing those once it is built changes nothing.
+    """Receive-only input for a single participant's `RemoteBroadcast` (use one pipeline per speaker when running VAD).
 
-    It serves one pipeline run: create a new one for each pipeline. Set up again once its pipeline
-    cleaned it up, it pushes an `ErrorFrame` treated as permanent and receives nothing. A
-    `StopFrame` does not end its run, as pipecat keeps a stopped processor running: it keeps its
-    subscriptions, drops what they bring until the next `StartFrame`, and then resumes them.
-
-    Event handlers: `on_track_subscribed` (takes a `MoqWasmTrack`). A failed track, such as one
-    PyAV cannot decode, is pushed upstream as a non-fatal `ErrorFrame`, which reaches pipecat's
-    `on_error`; an audio or video track is then received again with a fresh decoder, after a
-    delay that doubles with each failure in a row."""
+    - Subscribes from `StartFrame` until `EndFrame`/`CancelFrame`/`cleanup`, returning only after unsubscribing
+      and answering pending image requests. `StopFrame` pauses delivery without dropping subscriptions.
+    - Single-use per pipeline run; create a new instance for the next pipeline. Snapshots `params` on init.
+    - Event handler: `on_track_subscribed(MoqWasmTrack)`. Track decode errors emit a non-fatal `ErrorFrame`
+      and retry with exponential backoff.
+    """
 
     def __init__(self, broadcast: RemoteBroadcast, params: MoqWasmInputParams, **kwargs):
         params = _snapshot(params)
@@ -475,15 +443,13 @@ def _log_failure(receiving: asyncio.Task) -> None:
 
 
 class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
-    """Publishes `OutputAudioRawFrame` as Opus and `OutputImageRawFrame` as `video_out_codec` in the
-    transport's broadcast, with its MSF catalog, and writes the `MoqWasmTrackObject` or
-    `MoqWasmEventRecord` an `OutputTransportMessageFrame` carries as the frame reaches it, in frame
-    order: the write is paced neither with the audio queued before it nor with its `pts`, which
-    time only when pipecat passes the frame on, and an interruption that drops the frame before
-    then leaves it written. It serves one pipeline run: the next pipeline takes a new output from
-    `MoqWasmTransport.output`. Once publishing its media failed, which it does for good, an output
-    that writes no data track or event timeline can do nothing more: the failure is pushed as an
-    `ErrorFrame` treated as permanent, as a room that cannot open is."""
+    """Publishes audio (Opus), video (`video_out_codec`), and immediate `MoqWasmTrackObject` / `MoqWasmEventRecord`
+    messages in frame order (not paced to queued audio or `pts`, which only times downstream forwarding; messages
+    stay written even if a later interruption drops the frame).
+
+    Single-use per pipeline run; obtain a fresh instance from `MoqWasmTransport.output()` for each pipeline.
+    Permanent media failure emits a permanent `ErrorFrame` when no data/timeline tracks are configured.
+    """
 
     def __init__(self, room: Room, params: MoqWasmParams, **kwargs):
         super().__init__(params, **kwargs)
@@ -1374,44 +1340,20 @@ def _has_soundfile_mixer(mixer: object) -> bool:
 
 
 class MoqWasmTransport(BaseTransport):
-    """Takes the place of pipecat's `MOQTransport` on a `moq_wasm.Session`, which owns the connection
-    and tokens. Every broadcast one level under `params.room` is a participant. It keeps a copy of
-    `params` and of its lists and mappings, as `room` and an `audio_out_mixer` by destination:
-    assigning its fields or changing those once it is built changes nothing.
+    """Pipecat transport backed by a `moq_wasm.Session` (each child namespace under `params.room` is a participant).
 
-    Event handlers, as `MOQTransport`'s: `on_connected` and `on_disconnected` (the transport started
-    and stopped), `on_client_connected` and `on_client_disconnected` (a participant's broadcast was
-    published and withdrawn; they take the participant id), `on_track_subscribed` (takes a
-    `MoqWasmTrack`), `on_error` (takes a message and the exception) and `on_room_empty` (no
-    participant for `empty_timeout` seconds).
-
-    A room that cannot open, as when the relay refuses the broadcast or the room's
-    SUBSCRIBE_NAMESPACE, leaves the input and the output unusable: each pushes an `ErrorFrame`
-    treated as permanent. pipecat's `PipelineWorker` keeps running by default
-    (`ProcessorUnusablePolicy.CONTINUE`), so build it with
-    `processor_unusable_policy=ProcessorUnusablePolicy.CANCEL` (or `END`) to end the pipeline then.
-    An output that keeps running without a media sender passes on the frames other than audio and
-    pictures, which pipecat would route to that sender, so a `StopFrame` still stops the pipeline.
-    The output does the same once publishing its media failed when it writes no data track or event
-    timeline, and when its audio sample rate, under 100 Hz, leaves no sample in pipecat's 10 ms
-    chunks. A nonpositive `audio_out_10ms_chunks` raises ValueError, as does an `audio_out_mixer`
-    that is or holds pipecat's `SoundfileMixer` with `audio_out_channels=2`: it mixes its mono files
-    into mono audio only. An `audio_in_filter` raises ValueError too: the input carries every
-    participant's audio, and one filter, such as pipecat's `RNNoiseFilter`, would carry one
-    speaker's state into another's audio; run a `MoqWasmParticipantInput` per participant, each
-    with a filter of its own.
-    A room that cannot be left at an `EndFrame` or a `CancelFrame` is reported
-    with a non-fatal `ErrorFrame`, and the frame goes on, so the pipeline ends.
-
-    A processor serves one pipeline run: once pipecat cleaned up the input or the output at the end
-    of its pipeline, `input()` or `output()` returns a new one, which opens the room again, so
-    build each pipeline from them rather than from the processors of an earlier one. A `StopFrame`
-    does not end the run: pipecat keeps the stopped processors running, in the room, and the next
-    pipeline's `StartFrame` resumes them, the output's media senders replaced by new ones; the
-    output writes all the speech queued before the `StopFrame`, its last chunk and packet padded
-    with silence, as at an `EndFrame`. The probe of `PipelineWorker.flush_pipeline` passes the
-    output only once it wrote the speech and the pictures given before it the same way: the still
-    and the live pictures it found on reaching the output, not those given after it."""
+    - **Events**: `on_connected`, `on_disconnected`, `on_client_connected(id)`, `on_client_disconnected(id)`,
+      `on_track_subscribed(MoqWasmTrack)`, `on_error(message, exc)`, `on_room_empty`.
+    - **Errors**: If opening the room fails, input and output emit a permanent `ErrorFrame`; configure
+      `PipelineWorker(processor_unusable_policy=ProcessorUnusablePolicy.CANCEL)` (or `END`) to stop the pipeline.
+      Leave errors emit a non-fatal `ErrorFrame` so shutdown still completes.
+    - **Validation**: Raises `ValueError` for output destinations, `audio_in_filter` (use per-participant
+      `MoqWasmParticipantInput` instead), non-mono/stereo `audio_out_channels`, `SoundfileMixer` with stereo,
+      or non-positive `audio_out_10ms_chunks`. Snapshots `params` on init.
+    - **Lifecycle**: Each `input()`/`output()` serves one pipeline run; after cleanup, calling `input()`/`output()`
+      returns a fresh instance. `StopFrame` pauses without leaving the room and flushes queued audio/pictures
+      (as does `PipelineWorker.flush_pipeline`).
+    """
 
     def __init__(
         self,

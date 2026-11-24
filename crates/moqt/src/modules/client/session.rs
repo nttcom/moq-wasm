@@ -228,12 +228,8 @@ impl Session {
         Ok(self.subscription(subscription, Reading::Objects(reader)))
     }
 
-    /// Subscribes and reads the track from the first object of a group
-    /// (draft-18 §5.1.3.1), chosen once the SUBSCRIBE_OK arrives: the
-    /// current group, through a Joining FETCH, or, when the track has
-    /// dynamic groups and its largest object ID is `new_group_after` or
-    /// more, a new group it asks the publisher to start (NEW_GROUP_REQUEST,
-    /// §10.2.13).
+    /// Subscribe from group start (draft-18 §5.1.3.1): joins the current group via Joining `FETCH`,
+    /// or sends `NEW_GROUP_REQUEST` (§10.2.13) when a dynamic-group track's largest object ID is >= `new_group_after`.
     pub async fn subscribe_group_start(
         &self,
         namespace: &[impl AsRef<str>],
@@ -308,10 +304,8 @@ impl Session {
         Ok(status.content_exists.largest())
     }
 
-    /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
-    /// `prefix`. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one whose
-    /// prefix overlaps another `watch_namespaces`, `watch_tracks` or
-    /// `follow_track` of this session is (NAMESPACE_PREFIX_OVERLAP).
+    /// `SUBSCRIBE_NAMESPACE` (draft-14 §9.28) for namespaces under `prefix`.
+    /// Fails on rejection (e.g. `NAMESPACE_PREFIX_OVERLAP` with another `watch_namespaces`, `watch_tracks`, or `follow_track` on this session).
     pub async fn watch_namespaces(
         &self,
         prefix: &[impl AsRef<str>],
@@ -320,8 +314,7 @@ impl Session {
             .iter()
             .map(|element| element.as_ref().to_string())
             .collect();
-        // Watched before the request: the peer publishes the namespaces it
-        // knows right away.
+        // Register before sending the request so immediate peer announcements aren't missed.
         let events = self.routes.watchers.watch(elements);
         let prefix = join_namespace(prefix);
         self.session
@@ -332,12 +325,8 @@ impl Session {
         Ok(NamespaceWatch::new(self.session.clone(), prefix, events))
     }
 
-    /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
-    /// `prefix` and their tracks: the watch reports each namespace and hands
-    /// over each PUBLISH under it, which nothing else on the session then
-    /// sees. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one whose
-    /// prefix overlaps another `watch_namespaces`, `watch_tracks` or
-    /// `follow_track` of this session is (NAMESPACE_PREFIX_OVERLAP).
+    /// `SUBSCRIBE_NAMESPACE` (draft-14 §9.28) for namespaces and tracks under `prefix`: reports each namespace and hands over each matching `PUBLISH`, which nothing else on the session then sees.
+    /// Fails on rejection (e.g. `NAMESPACE_PREFIX_OVERLAP` with another `watch_namespaces`, `watch_tracks`, or `follow_track` on this session).
     pub async fn watch_tracks(
         &self,
         prefix: &[impl AsRef<str>],
