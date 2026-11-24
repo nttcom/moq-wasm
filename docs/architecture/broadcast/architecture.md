@@ -355,19 +355,26 @@ groups on a seek axis.
 
 ## Reading a broadcast
 `BroadcastReader` is the subscriber side of the same broadcast, used by
-`egress-gateway`: it subscribes to one and yields its media as `mediapack` media
+`egress-gateway` and `sip-gateway`: it subscribes to one and yields its media as `mediapack` media
 events on one channel. Each track is read by a `TrackReceiveTask` spawned
 through `moqt::executor`, aborted when the reader is dropped.
 
 ### Track selection
-The reader takes the first LOC track with role `video` and the first with role
-`audio` in catalog order, which is the source rendition in a `broadcast`
-catalog. An AAC track's AudioSpecificConfig comes from the `initDataList`
-entry its `initRef` names (draft-ietf-moq-msf-02 §5.1.7, §5.2.14); an AAC
-track without one is skipped with a warning. A-law and Opus tracks carry no
-initialization data, so their `codec`, `samplerate` and `channelConfig`
+`selection::select_tracks` picks the tracks from a `TrackChoice`, the same
+choice `recorder` makes; how it finds a source and ranks its renditions is
+recorded in the [`recorder` architecture document](../recorder/architecture.md)
+under "Sources". By default the reader takes the main source's tallest video,
+which is the source rendition in a `broadcast` catalog, and its audio with the
+highest `bitrate`; `VideoChoice::Off` and `AudioChoice::Off` leave a kind out.
+The video codec comes from the catalog's `codec`, and a track whose codec
+`mediapack` cannot demux is not taken. An AAC track's AudioSpecificConfig comes
+from the `initDataList` entry its `initRef` names (draft-ietf-moq-msf-02
+§5.1.7, §5.2.14). `broadcast` lists AAC audio before the first audio frame
+delivers that entry, so while the catalog lists nothing the choice can read,
+the reader waits for the next catalog object. A-law, Opus and MP3 tracks carry
+no initialization data, so their `codec`, `samplerate` and `channelConfig`
 (§5.2.19, §5.2.29, §5.2.30) make up the configuration. CMAF tracks and the
-timeline are ignored.
+timelines are ignored.
 
 ### Joining
 The catalog is read with `Subscriber::subscribe_current_group`, the SUBSCRIBE

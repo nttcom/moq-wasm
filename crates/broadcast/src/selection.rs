@@ -30,6 +30,16 @@ pub struct TrackChoice<'a> {
     pub audio: AudioChoice<'a>,
 }
 
+impl Default for TrackChoice<'_> {
+    fn default() -> Self {
+        Self {
+            source: SourceChoice::Main,
+            video: VideoChoice::MaxHeight(u32::MAX),
+            audio: AudioChoice::HighestBitrate,
+        }
+    }
+}
+
 /// Which source of a broadcast a reader takes. A source is the LOC video
 /// and audio tracks of one `renderGroup` (draft-ietf-moq-msf-02 §5.2.12), such
 /// as a camera with its renditions and microphone, or a shared screen; the
@@ -60,6 +70,7 @@ pub enum VideoChoice<'a> {
     /// `broadcast` source's video tracks are the members of its `altGroup`
     /// (§5.2.13), or its one video.
     MaxHeight(u32),
+    Off,
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +79,7 @@ pub enum AudioChoice<'a> {
     Named(&'a str),
     /// The source's decodable audio track with the highest `bitrate`.
     HighestBitrate,
+    Off,
 }
 
 /// A source, named by its tracks' `renderGroup`; `None` names the tracks
@@ -101,6 +113,7 @@ pub fn select_video(catalog: &Catalog, choice: TrackChoice) -> Result<Option<Vid
             };
         }
         VideoChoice::MaxHeight(max_height) => max_height,
+        VideoChoice::Off => return Ok(None),
     };
     let listed: Vec<&Track> = source_tracks(catalog, choice.source)
         .filter(|track| track.has_role(KnownTrackRole::Video))
@@ -171,6 +184,7 @@ pub fn select_audio(catalog: &Catalog, choice: TrackChoice) -> Result<Option<Aud
                 .max_by_key(|(bitrate, _)| *bitrate)
                 .map(|(_, audio)| audio));
         }
+        AudioChoice::Off => return Ok(None),
     };
     let Some(track) = catalog.loc_tracks().find(|track| track.name == name) else {
         return Ok(None);
@@ -702,6 +716,30 @@ mod tests {
 
         // Assert
         assert_eq!(selection.audio, None);
+    }
+
+    #[test]
+    fn a_track_kind_turned_off_is_not_selected() {
+        // Arrange
+        let catalog = catalog(vec![video_track(), audio_track("opus")]);
+        let audio_only = TrackChoice {
+            video: VideoChoice::Off,
+            ..TrackChoice::default()
+        };
+        let video_only = TrackChoice {
+            audio: AudioChoice::Off,
+            ..TrackChoice::default()
+        };
+
+        // Act
+        let audio_only = select_tracks(&catalog, audio_only).unwrap().unwrap();
+        let video_only = select_tracks(&catalog, video_only).unwrap().unwrap();
+
+        // Assert
+        assert_eq!(audio_only.video, None);
+        assert_eq!(audio_only.audio.unwrap().name, "audio");
+        assert_eq!(video_only.video.unwrap().name, "video");
+        assert_eq!(video_only.audio, None);
     }
 
     #[test]

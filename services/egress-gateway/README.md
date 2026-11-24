@@ -31,8 +31,8 @@ ffplay -protocol_whitelist file,udp,rtp assets/egress.sdp
 | `EGRESS_GATEWAY_SDP` | `assets/egress.sdp` |
 | `EGRESS_GATEWAY_MOQT_URL` | the local relay |
 
-The first LOC video track and the first LOC audio track of the catalog are
-sent, starting at the next group.
+The tallest LOC video track and the LOC audio track with the highest bitrate
+of the catalog's main source are sent, starting at the next group.
 
 For all CLI options, including RTP payload types, SSRCs and RTCP multiplexing
 for a preconfigured receiver, run `cargo run -p egress-gateway -- --help`.

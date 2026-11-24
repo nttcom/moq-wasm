@@ -7,7 +7,10 @@
 use std::{process::Command, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use broadcast::{Broadcast, BroadcastReader, BroadcastWriter, RelayConnection, SourceTracks};
+use broadcast::{
+    Broadcast, BroadcastReader, BroadcastWriter, RelayConnection, SourceTracks,
+    selection::TrackChoice,
+};
 use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -532,7 +535,8 @@ impl Drop for ToneBroadcast {
 /// The dominant frequency of two seconds of the phone's audio, from its
 /// zero crossings.
 async fn phone_frequency(page: &client::Session, namespace: &str) -> Result<f64> {
-    let mut reader = BroadcastReader::run(page.moqt_session(), namespace).await?;
+    let mut reader =
+        BroadcastReader::run(page.moqt_session(), namespace, TrackChoice::default()).await?;
     let (pipeline, mut pcm) = pipeline_output(
         "appsrc name=source format=time is-live=true do-timestamp=true \
            caps=audio/x-opus,channel-mapping-family=(int)0,rate=(int)48000,channels=(int)1 \
