@@ -1301,10 +1301,11 @@ mod tests {
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
-                data_receiver, datagram_object, mandatory_track_properties, next_datagram,
-                next_event, next_subgroup, notify_datagram, published_track_between,
-                read_fetch_objects, sent_update, spawn_connected_draft18_sessions,
-                subscribed_track_reader, unread_events_at_the_limit, use_up_bidi_streams, within,
+                data_receiver, datagram_object, in_memory_draft18_sessions,
+                mandatory_track_properties, next_datagram, next_event, next_subgroup,
+                notify_datagram, published_track_between, read_fetch_objects, sent_update,
+                spawn_connected_draft18_sessions, subscribed_track_reader,
+                unread_events_at_the_limit, use_up_bidi_streams, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -3949,8 +3950,7 @@ mod tests {
     #[tokio::test]
     async fn an_unanswered_request_update_gets_request_error_timeout() {
         // Arrange
-        let (client, server) =
-            spawn_connected_draft18_sessions("draft18-update-timeout", "moqt").await;
+        let (client, server) = in_memory_draft18_sessions().await;
         let (sender, mut receiver) = raw_subscription(&client, &server).await;
         let handler = requested_update(&client, &server, &sender).await;
         tokio::time::pause();
@@ -4911,8 +4911,7 @@ mod tests {
     #[tokio::test]
     async fn an_unanswered_namespace_prefix_update_gets_request_error_timeout() {
         // Arrange
-        let (client, server) =
-            spawn_connected_draft18_sessions("draft18-namespace-update-timeout", "moqt").await;
+        let (client, server) = in_memory_draft18_sessions().await;
         let (sender, mut receiver) = raw_namespace_subscription(&client, &server, true).await;
         let handler =
             requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
