@@ -141,9 +141,12 @@ class _PcmResampler:
     def resample(self, pcm: bytes, sample_rate: int, num_channels: int = 1) -> bytes:
         """What `pcm` makes of the stream so far. Raises ValueError for more than two channels and
         for a `sample_rate` that is no positive integer, before it changes anything, so the stream
-        goes on with the next call."""
+        goes on with the next call. Empty `pcm` gives nothing and leaves the stream as it was: a
+        resampler refuses a frame of no samples."""
         layout = _pcm_layout(num_channels)
         sample_rate = _pcm_rate(sample_rate)
+        if not pcm:
+            return b""
         frame = av.AudioFrame.from_ndarray(np.frombuffer(pcm, np.int16).reshape(1, -1), format="s16", layout=layout)
         frame.sample_rate = sample_rate
         drained = b""
