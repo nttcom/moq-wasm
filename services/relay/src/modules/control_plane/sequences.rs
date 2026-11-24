@@ -19,6 +19,7 @@ pub(crate) mod upstream_publish_done;
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
+        namespace_routes::NamespaceRoutes,
         route_registry::{RelayInfo, RelayRouteRegistry},
     },
     control_plane::{
@@ -48,6 +49,7 @@ use tracing::Span;
 #[derive(Clone, Copy)]
 pub(crate) struct CascadingRelayContext<'a> {
     pub(crate) route_registry: &'a dyn RelayRouteRegistry,
+    pub(crate) namespace_routes: &'a NamespaceRoutes,
     pub(crate) inter_relay_connection_manager: &'a InterRelayConnectionManager,
 }
 

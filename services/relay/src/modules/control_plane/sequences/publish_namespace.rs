@@ -4,12 +4,13 @@ use std::sync::Arc;
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry,
+        namespace_routes::NamespaceRoutes, route_registry::RelayRouteRegistry,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
             CascadingRelayContext,
+            publish_namespace_done::PublishNamespaceDone,
             subscribe::pending_producer_task::{PendingProducerDeps, subscribe_publishers},
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
@@ -45,24 +46,25 @@ impl PublishNamespace {
         let peer = super::session_peer(session_id, forwarder).await;
         let is_origin = peer == SessionPeer::Client;
 
-        if is_origin
-            && !self
-                .register_route(
-                    cascading_relay_context.route_registry,
-                    track_namespace,
-                    handler,
-                )
-                .await
-        {
-            return;
-        }
-
         table.register_publish_namespace(
             session_id,
             handler.request_id(),
             track_namespace.to_string(),
             peer,
         );
+        if is_origin
+            && !self
+                .register_route(
+                    session_id,
+                    table,
+                    forwarder,
+                    cascading_relay_context.namespace_routes,
+                    handler,
+                )
+                .await
+        {
+            return;
+        }
 
         if let Err(e) = handler.ok().await {
             tracing::error!(error = ?e, "PUBLISH_NAMESPACE failed");
@@ -197,25 +199,46 @@ impl PublishNamespace {
         }
     }
 
+    /// Withdraws the publication when its route cannot be registered, from the
+    /// namespace subscribers too: one that subscribed while the route was
+    /// registering was told of it.
     #[tracing::instrument(
         level = "debug",
         name = "relay.sequence.publish_namespace.register_route",
         skip_all,
-        fields(track_namespace = %track_namespace)
+        fields(track_namespace = %handler.track_namespace())
     )]
     async fn register_route(
         &self,
-        route_registry: &dyn RelayRouteRegistry,
-        track_namespace: &str,
+        session_id: SessionId,
+        table: &InMemoryLocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
+        namespace_routes: &NamespaceRoutes,
         handler: &dyn PublishNamespaceHandler,
     ) -> bool {
-        let Err(err) = route_registry
-            .register_namespace_publisher(track_namespace)
+        let track_namespace = handler.track_namespace();
+        let Err(err) = namespace_routes
+            .reconcile_publisher(track_namespace, table)
             .await
         else {
             return true;
         };
         tracing::warn!(error = ?err, track_namespace = %track_namespace, "failed to register namespace route");
+        table.unregister_publish_namespace(session_id, Some(handler.request_id()), track_namespace);
+        PublishNamespaceDone::notify_local_subscribers(
+            session_id,
+            true,
+            track_namespace,
+            table,
+            forwarder,
+        )
+        .await;
+        if let Err(err) = namespace_routes
+            .reconcile_publisher(track_namespace, table)
+            .await
+        {
+            tracing::warn!(error = ?err, track_namespace = %track_namespace, "failed to register namespace route");
+        }
         if handler
             .error(
                 RequestErrorCode::InternalError,
@@ -280,7 +303,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
-        cascading::route_registry::NoopRelayRouteRegistry,
+        cascading::{namespace_routes::NamespaceRoutes, route_registry::NoopRelayRouteRegistry},
         directory::track::ProducerOrigin,
         domain::track_key::TrackKey,
         test_support::{
@@ -321,6 +344,7 @@ mod tests {
                 &Arc::new(local_publisher_resolver()),
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
+                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
                     inter_relay_connection_manager: &inter_relay_connection_manager,
                 },
                 &MockPublishNamespaceHandler::new("ns"),

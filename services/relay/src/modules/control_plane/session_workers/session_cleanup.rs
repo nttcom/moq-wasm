@@ -93,9 +93,9 @@ async fn cleanup_removed_session(
         if was_client {
             PublishNamespaceDone::withdraw_namespace_publication(
                 &track_namespace,
+                table,
                 forwarder,
-                deps.route_registry.as_ref(),
-                deps.inter_relay_connection_manager.as_ref(),
+                deps.cascading_relay_context(),
             )
             .await;
         }

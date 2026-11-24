@@ -1052,3 +1052,103 @@ fn a_subscriber_is_answered_once_a_publisher_of_the_namespace_accepts_the_subscr
         );
     });
 }
+
+#[test]
+fn a_namespace_published_again_while_its_route_is_withdrawn_keeps_its_route() {
+    runtime().block_on(async {
+        // Arrange: the first publisher's withdrawal of the route is in flight
+        let relay = Relay::start();
+        let first_publisher = relay.connect(1).await;
+        let second_publisher = relay.connect(2).await;
+        first_publisher.publish_namespace("room");
+        settle().await.unwrap();
+        let withdrawal = relay.route_registry.hold_next_namespace_call();
+        first_publisher.publish_namespace_done("room", None);
+        settle().await.unwrap();
+
+        // Act
+        second_publisher.publish_namespace("room");
+        settle().await.unwrap();
+        withdrawal.notify_one();
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            second_publisher.sent(),
+            vec![Sent::PublishNamespaceOk {
+                request_id: 0,
+                track_namespace: "room".to_string(),
+            }]
+        );
+        assert_eq!(
+            relay.route_registry.routes().namespace_publishers,
+            BTreeSet::from(["room".to_string()])
+        );
+    });
+}
+
+#[test]
+fn a_publish_namespace_whose_route_is_not_registered_is_refused_and_withdrawn() {
+    runtime().block_on(async {
+        // Arrange
+        let relay = Relay::start();
+        let publisher = relay.connect(1).await;
+        relay.route_registry.fail_next_namespace_registration();
+
+        // Act
+        publisher.publish_namespace("room");
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            publisher.sent(),
+            vec![Sent::PublishNamespaceError("room".to_string())]
+        );
+        assert!(
+            !relay
+                .workers
+                .local_pub_sub_directory
+                .has_namespace_publishers("room")
+        );
+        assert!(
+            relay
+                .route_registry
+                .routes()
+                .namespace_publishers
+                .is_empty()
+        );
+    });
+}
+
+#[test]
+fn a_namespace_announced_while_its_route_fails_to_register_is_withdrawn() {
+    runtime().block_on(async {
+        // Arrange: a namespace subscriber is told of the namespace while its route is registering
+        let relay = Relay::start();
+        let publisher = relay.connect(1).await;
+        let subscriber = relay.connect(2).await;
+        let registration = relay.route_registry.hold_next_namespace_call();
+        publisher.publish_namespace("room");
+        settle().await.unwrap();
+        subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+        relay.route_registry.fail_next_namespace_registration();
+
+        // Act
+        registration.notify_one();
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            subscriber.sent(),
+            vec![
+                Sent::SubscribeNamespaceOk {
+                    prefix: "room".to_string(),
+                    interest: NamespaceInterest::Namespaces,
+                },
+                Sent::PublishNamespace("room".to_string()),
+                Sent::PublishNamespaceDone("room".to_string()),
+            ]
+        );
+    });
+}

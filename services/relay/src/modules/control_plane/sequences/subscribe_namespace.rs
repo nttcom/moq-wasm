@@ -509,7 +509,7 @@ mod tests {
     use crate::modules::{
         cascading::{
             inter_relay_connection_manager::InterRelayConnectionManager,
-            route_registry::NoopRelayRouteRegistry,
+            namespace_routes::NamespaceRoutes, route_registry::NoopRelayRouteRegistry,
         },
         control_plane::sequences::{
             CascadingRelayContext, publish_namespace::PublishNamespace,
@@ -577,6 +577,7 @@ mod tests {
                     &Arc::new(local_publisher_resolver()),
                     CascadingRelayContext {
                         route_registry: &NoopRelayRouteRegistry,
+                        namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
                         inter_relay_connection_manager: &inter_relay_connection_manager,
                     },
                     &MockPublishNamespaceHandler::new("ns/alice"),
@@ -714,6 +715,7 @@ mod tests {
                 &ctx.downstream_publish(),
                 CascadingRelayContext {
                     route_registry,
+                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
                     inter_relay_connection_manager,
                 },
                 handler,
@@ -1093,6 +1095,7 @@ mod tests {
                 &ctx.downstream_publish(),
                 CascadingRelayContext {
                     route_registry,
+                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
                     inter_relay_connection_manager: &inter_relay_connection_manager,
                 },
                 handler,

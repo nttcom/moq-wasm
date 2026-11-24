@@ -10,4 +10,4 @@ Reproduced with a route registry double that holds calls: the new client is the 
 ## Plan
 
 The window is the Redis round trips for the tracks the leaving session published.
-Same shape as `high/relay-keep-namespace-route-on-republish.md`; one ordering rule may fix both.
+Same shape as the publisher route race `cascading/namespace_routes.rs` fixed: reconcile the prefix route there as well.

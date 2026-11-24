@@ -6,6 +6,7 @@ use crate::{
         auth::test_support::{StubOutcome, StubVerifier},
         cascading::{
             inter_relay_connection_manager::InterRelayConnectionManager,
+            namespace_routes::NamespaceRoutes,
             route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         },
         control_plane::{
@@ -59,6 +60,7 @@ impl RunningSessionWorkers {
                 },
                 repo: repo.clone(),
                 local_pub_sub_directory: local_pub_sub_directory.clone(),
+                namespace_routes: Arc::new(NamespaceRoutes::new(route_registry.clone())),
                 route_registry,
                 inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                 upstream_publisher_resolver,

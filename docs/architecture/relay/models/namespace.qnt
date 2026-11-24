@@ -12,6 +12,11 @@
 // unregister change together with Redis, so a route is one boolean here.
 // Relay sessions, which own no route, and other relays are left out.
 //
+// The publisher route is `NamespaceRoutes::reconcile_publisher`
+// (cascading/namespace_routes.rs): under the namespace's lock it reads the
+// directory and registers or withdraws the route to match. The lock is held
+// across the registry call, so one reconcile is one step.
+//
 // Simulate: npx @informalsystems/quint run --main relay_namespace --invariant safety namespace.qnt
 // Check every run up to 8 steps (Apalache, Java 21+):
 //   npx @informalsystems/quint verify --main relay_namespace --invariant safety --max-steps 8 namespace.qnt
@@ -21,10 +26,11 @@ module namespace {
   // A client's PUBLISH_NAMESPACE of the namespace.
   type PublishState =
     | PIdle
-    | PRegistering   // PUBLISH_NAMESPACE received, `register_namespace_publisher` in flight
-    | PRouted        // the route registered, not yet in the directory
-    | PPublished     // in the directory, PUBLISH_NAMESPACE_OK sent
-    | PWithdrawing   // left the directory as its last client, `unregister_namespace_publisher` next
+    | PJoining       // in the directory, reconcile next
+    | PPublished     // PUBLISH_NAMESPACE_OK sent
+    | PRollingBack   // its reconcile failed; it leaves the directory next
+    | PReverting     // left the directory after the failure, reconcile next
+    | PLeaving       // left the directory as its last client, reconcile next
 
   // A client's SUBSCRIBE_NAMESPACE of the prefix.
   type SubscribeState =
@@ -49,8 +55,8 @@ module namespace {
     publish: str -> PublishState,
     subscribe: str -> SubscribeState,
     cleanup: str -> Cleanup,
-    // The routes a session's cleanup withdraws: its namespace and its prefix
-    // when it was their last client.
+    // The routes a session's cleanup reconciles or withdraws: its namespace
+    // and its prefix when it was their last client.
     cleanupWithdrawsNamespace: Set[str],
     cleanupWithdrawsPrefix: Set[str],
   }
@@ -69,41 +75,56 @@ module namespace {
     cleanupWithdrawsPrefix: Set(),
   }
 
-  // A session handles one request at a time.
   def busy(c: str): bool =
     s.cleanup.get(c) != CNone or
-    Set(PRegistering, PRouted, PWithdrawing).contains(s.publish.get(c)) or
+    Set(PJoining, PRollingBack, PReverting, PLeaving).contains(s.publish.get(c)) or
     Set(SRouting, SWithdrawing).contains(s.subscribe.get(c))
 
   // --- PUBLISH_NAMESPACE -------------------------------------------------
 
+  // `reconcile_publisher`; `registered` is whether the registry call, if
+  // one is made, succeeds. Returns the route and whether it succeeded.
+  pure def reconcilePublisher(
+    publishers: Set[str], route: bool, registered: bool
+  ): { route: bool, ok: bool } =
+    if (publishers != Set() and not(route)) { route: registered, ok: registered }
+    else { route: publishers != Set(), ok: true }
+
+  // `register_publish_namespace`.
   action receivePublishNamespace(c: str): bool = all {
     not(busy(c)),
     s.publish.get(c) == PIdle,
-    s' = { ...s, publish: s.publish.set(c, PRegistering) },
-  }
-
-  // `register_route`: the upsert never conflicts; a Redis failure answers
-  // PUBLISH_NAMESPACE_ERROR.
-  action registerPublisherRoute(c: str): bool = all {
-    s.publish.get(c) == PRegistering,
-    any {
-      s' = { ...s, publisherRoute: true, publish: s.publish.set(c, PRouted) },
-      s' = { ...s, publish: s.publish.set(c, PIdle) },
-    },
-  }
-
-  // `register_publish_namespace`, then PUBLISH_NAMESPACE_OK.
-  action addPublisher(c: str): bool = all {
-    s.publish.get(c) == PRouted,
     s' = {
       ...s,
       publishers: s.publishers.union(Set(c)),
-      publish: s.publish.set(c, PPublished),
+      publish: s.publish.set(c, PJoining),
     },
   }
 
-  // `unregister_publish_namespace`; `NoClientsRemain` withdraws the route.
+  // PUBLISH_NAMESPACE_OK once the route is registered; a Redis failure
+  // withdraws the publication and answers PUBLISH_NAMESPACE_ERROR. Every
+  // directory change is followed by a reconcile.
+  action reconcilePublisherRoute(c: str): bool = all {
+    Set(PJoining, PReverting, PLeaving).contains(s.publish.get(c)),
+    nondet registered = oneOf(Set(true, false))
+    val r = reconcilePublisher(s.publishers, s.publisherRoute, registered)
+    val phase =
+      if (s.publish.get(c) != PJoining) PIdle
+      else if (r.ok) PPublished
+      else PRollingBack
+    s' = { ...s, publisherRoute: r.route, publish: s.publish.set(c, phase) },
+  }
+
+  action rollBackPublisher(c: str): bool = all {
+    s.publish.get(c) == PRollingBack,
+    s' = {
+      ...s,
+      publishers: s.publishers.exclude(Set(c)),
+      publish: s.publish.set(c, PReverting),
+    },
+  }
+
+  // `unregister_publish_namespace`; `NoClientsRemain` reconciles the route.
   action receivePublishNamespaceDone(c: str): bool = all {
     not(busy(c)),
     s.publish.get(c) == PPublished,
@@ -111,14 +132,8 @@ module namespace {
     s' = {
       ...s,
       publishers: remaining,
-      publish: s.publish.set(c, if (remaining == Set()) PWithdrawing else PIdle),
+      publish: s.publish.set(c, if (remaining == Set()) PLeaving else PIdle),
     },
-  }
-
-  // `withdraw_namespace_publication`
-  action unregisterPublisherRoute(c: str): bool = all {
-    s.publish.get(c) == PWithdrawing,
-    s' = { ...s, publisherRoute: false, publish: s.publish.set(c, PIdle) },
   }
 
   // --- SUBSCRIBE_NAMESPACE -----------------------------------------------
@@ -204,9 +219,13 @@ module namespace {
 
   action cleanupNamespace(c: str): bool = all {
     s.cleanup.get(c) == CNamespace,
+    nondet registered = oneOf(Set(true, false))
     s' = {
       ...s,
-      publisherRoute: if (s.cleanupWithdrawsNamespace.contains(c)) false else s.publisherRoute,
+      publisherRoute:
+        if (s.cleanupWithdrawsNamespace.contains(c))
+          reconcilePublisher(s.publishers, s.publisherRoute, registered).route
+        else s.publisherRoute,
       cleanupWithdrawsNamespace: s.cleanupWithdrawsNamespace.exclude(Set(c)),
       cleanup: s.cleanup.set(c, CNone),
     },
@@ -216,10 +235,9 @@ module namespace {
     nondet c = oneOf(CLIENTS)
     any {
       receivePublishNamespace(c),
-      registerPublisherRoute(c),
-      addPublisher(c),
+      reconcilePublisherRoute(c),
+      rollBackPublisher(c),
       receivePublishNamespaceDone(c),
-      unregisterPublisherRoute(c),
       receiveSubscribeNamespace(c),
       registerSubscriberRoute(c),
       receiveUnsubscribeNamespace(c),
@@ -232,10 +250,10 @@ module namespace {
 
   // --- Properties --------------------------------------------------------
 
-  // A namespace a client publishes here has its route, so clients of other
-  // relays can subscribe to it.
+  // A namespace a client was answered PUBLISH_NAMESPACE_OK for has its
+  // route, so clients of other relays can subscribe to it.
   val publishedNamespaceHasRoute: bool =
-    s.publishers != Set() implies s.publisherRoute
+    CLIENTS.exists(c => s.publish.get(c) == PPublished) implies s.publisherRoute
 
   // A prefix a client is subscribed to has its route once no first client
   // is still registering it.
@@ -249,10 +267,11 @@ module namespace {
   val noPrefixOverlapWithItself: bool =
     CLIENTS.forall(c => s.subscribe.get(c) != SRejected)
 
-  // With every session idle, no route is left behind.
+  // With every session idle, the publisher route is held exactly while a
+  // client publishes the namespace, and no subscriber route is left behind.
   val idleRelayOwnsNoRoute: bool =
     CLIENTS.forall(c => not(busy(c))) implies and {
-      s.publisherRoute implies s.publishers != Set(),
+      s.publisherRoute == (s.publishers != Set()),
       s.subscriberRoute implies s.subscribers != Set(),
     }
 
