@@ -2,6 +2,7 @@ import type { MoqNamespaceWatch, MoqSession } from '../../core/session'
 import { sdkLog } from '../../core/log'
 import { botTypeOf } from '../bots'
 import { isOwnBroadcast } from '../ownBroadcasts'
+import { callPage } from './callPage'
 import { getErrorMessage } from './status'
 
 const TARGET = 'moq-wasm::media::watch_broadcasts'
@@ -12,17 +13,6 @@ export type FollowNamespacesOptions<B> = {
   play(namespace: string[]): B
   onAdd(broadcast: B): void
   onRemove(broadcast: B): void
-}
-
-/// Calls a callback of the page. What it throws is the page's bug, reported
-/// as an event listener's would be, and the watch goes on; `undefined` then.
-function callPage<T>(callback: () => T): T | undefined {
-  try {
-    return callback()
-  } catch (error) {
-    reportError(error)
-    return undefined
-  }
 }
 
 /// Takes `play` rather than making the `RemoteBroadcast` itself, so that it
