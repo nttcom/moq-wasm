@@ -200,7 +200,9 @@ implemented by the `moqt` types and by the mocks in `test_support`, so the
 relay logic is unit-tested against recorded control messages instead of a live
 transport. Everything past the repository works with `Box<dyn …>`;
 `MoqtSessionEvent` carries the `moqt` handlers without a relay-side trait
-(GOAWAY, PUBLISH_DONE, …) as they are. The same module holds
+(GOAWAY, PUBLISH_NAMESPACE_DONE, …) as they are, and UNSUBSCRIBE and
+PUBLISH_DONE as their fields, which is all the relay reads of them. The same
+module holds
 `SessionRepository` and `SessionEvent` (`session_event.rs`), the relay-internal
 events addressed to one session's worker, so everything the relay knows about
 a session lives in one place.

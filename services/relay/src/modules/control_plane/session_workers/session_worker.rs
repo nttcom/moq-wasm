@@ -34,7 +34,7 @@ use crate::modules::{
         upstream_forward::UpstreamForward,
         upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
+    domain::session_id::SessionId,
     session::{
         Session, handler::track_status::TrackStatusHandler, moqt_session_event::MoqtSessionEvent,
         session_event::SessionEvent,
@@ -322,14 +322,14 @@ impl SessionWorker {
                     .instrument(event_span)
                     .await;
             }
-            MoqtSessionEvent::Unsubscribe(handler) => {
+            MoqtSessionEvent::Unsubscribe { request_id } => {
                 Unsubscribe {}
                     .handle(
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         deps.route_registry.as_ref(),
-                        handler.subscribe_id(),
+                        request_id,
                         None,
                     )
                     .instrument(event_span)
@@ -424,15 +424,14 @@ impl SessionWorker {
                     }
                 }
             }
-            MoqtSessionEvent::PublishDone(handler) => {
+            MoqtSessionEvent::PublishDone {
+                request_id, reason, ..
+            } => {
                 UpstreamPublishDone
                     .handle(
                         session_id,
-                        handler.request_id(),
-                        PublishDoneReason {
-                            status_code: handler.status_code(),
-                            error_reason: handler.error_reason().to_string(),
-                        },
+                        request_id,
+                        reason,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.cache_store,
                         deps.route_registry.as_ref(),

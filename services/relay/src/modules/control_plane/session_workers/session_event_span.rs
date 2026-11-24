@@ -99,13 +99,13 @@ pub(super) fn session_event_span(
             forward = handler.forward(),
             filter_type = ?handler._filter_type(),
         ),
-        MoqtSessionEvent::Unsubscribe(handler) => tracing::info_span!(
+        MoqtSessionEvent::Unsubscribe { request_id } => tracing::info_span!(
             parent: None,
             "relay.unsubscribe",
             session_id = %session_id,
             app_id,
             relay_hostname = relay_hostname(),
-            request_id = handler.subscribe_id(),
+            request_id,
         ),
         MoqtSessionEvent::Disconnected() => tracing::info_span!(
             parent: session_span,
@@ -147,16 +147,20 @@ pub(super) fn session_event_span(
             error_code = ?handler.error_code(),
             error_reason = %handler.error_reason(),
         ),
-        MoqtSessionEvent::PublishDone(handler) => tracing::info_span!(
+        MoqtSessionEvent::PublishDone {
+            request_id,
+            reason,
+            stream_count,
+        } => tracing::info_span!(
             parent: None,
             "relay.publish_done",
             session_id = %session_id,
             app_id,
             relay_hostname = relay_hostname(),
-            request_id = handler.request_id(),
-            status_code = ?handler.status_code(),
-            stream_count = handler.stream_count(),
-            error_reason = %handler.error_reason(),
+            request_id,
+            status_code = ?reason.status_code,
+            stream_count,
+            error_reason = %reason.error_reason,
         ),
         MoqtSessionEvent::SubscribeUpdate(handler) => tracing::info_span!(
             parent: None,

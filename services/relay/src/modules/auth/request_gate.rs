@@ -52,9 +52,9 @@ pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, V
         | MoqtSessionEvent::PublishNamespaceCancel(_)
         | MoqtSessionEvent::UnsubscribeNamespace(_)
         | MoqtSessionEvent::PublishBlocked(_)
-        | MoqtSessionEvent::PublishDone(_)
+        | MoqtSessionEvent::PublishDone { .. }
         | MoqtSessionEvent::SubscribeUpdate(_)
-        | MoqtSessionEvent::Unsubscribe(_)
+        | MoqtSessionEvent::Unsubscribe { .. }
         | MoqtSessionEvent::FetchCancel(_)
         | MoqtSessionEvent::Disconnected()
         | MoqtSessionEvent::ProtocolViolation() => None,
@@ -116,9 +116,9 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
         | MoqtSessionEvent::PublishNamespaceCancel(_)
         | MoqtSessionEvent::UnsubscribeNamespace(_)
         | MoqtSessionEvent::PublishBlocked(_)
-        | MoqtSessionEvent::PublishDone(_)
+        | MoqtSessionEvent::PublishDone { .. }
         | MoqtSessionEvent::SubscribeUpdate(_)
-        | MoqtSessionEvent::Unsubscribe(_)
+        | MoqtSessionEvent::Unsubscribe { .. }
         | MoqtSessionEvent::FetchCancel(_)
         | MoqtSessionEvent::Disconnected()
         | MoqtSessionEvent::ProtocolViolation() => {
