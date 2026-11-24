@@ -1,9 +1,10 @@
 //! Places calls through the SIP gateway to the local Asterisk trunk
-//! (`asterisk/extensions.conf`) and checks what a page would see: the call's
-//! states on its `call` track, the phone's audio, and the call ending when
-//! either side hangs up. Run through `run.sh`.
+//! (`asterisk/extensions.conf`), has the trunk call the app's number, and
+//! checks what a page would see: the call's states on its `call` track, the
+//! phone's audio, and the call ending when either side hangs up. It also
+//! serves the app's call webhook. Run through `run.sh`.
 
-use std::{sync::Arc, time::Duration};
+use std::{process::Command, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use broadcast::{Broadcast, BroadcastReader, BroadcastWriter, RelayConnection, SourceTracks};
@@ -11,19 +12,28 @@ use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
+use http_server::{HttpServer, bearer_token, error_response, json_response, read_json};
+use hyper::StatusCode;
 use mediapack::{AudioConfig, AudioSample, MediaEvent, Timestamp};
 use moqt::{
     CertificateVerification, ClientConfig,
     client::{self, GroupStartOptions, NamespaceWatch, Subscription},
 };
 use serde_json::{Value, json};
-use tokio::{sync::mpsc, time::timeout};
+use tokio::{
+    net::TcpListener,
+    sync::{Mutex, mpsc, oneshot},
+    time::timeout,
+};
 
 const ROOM: &str = "sip-e2e/room";
 const ECHO: &str = "+819000000001";
 const BUSY: &str = "+819000000003";
 const HANGS_UP: &str = "+819000000004";
 const NOT_ALLOWED: &str = "+12025550100";
+/// The app's number (`apps.json`) and the phone that calls it (`pjsip.conf`).
+const APP_NUMBER: &str = "+81300000001";
+const CALLER: &str = "+819011112222";
 /// Inside the telephone band, far from Asterisk's own 1 kHz tone.
 const TONE_HZ: f64 = 700.0;
 const STATE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -35,6 +45,7 @@ struct Env {
     page_token: String,
     /// The app server's token, with the `calls` claim for the room.
     call_token: String,
+    compose_file: String,
 }
 
 #[tokio::main]
@@ -51,7 +62,9 @@ async fn main() -> Result<()> {
         gateway_url: var("E2E_GATEWAY_URL")?,
         page_token: var("E2E_PAGE_TOKEN")?,
         call_token: var("E2E_CALL_TOKEN")?,
+        compose_file: var("E2E_COMPOSE_FILE")?,
     };
+    let webhook = Webhook::run(&var("E2E_WEBHOOK_ADDRESS")?, var("E2E_APP_SECRET")?).await?;
 
     a_destination_outside_the_app_s_prefixes_is_refused(&env).await?;
     println!("ok: a destination outside the app's prefixes is refused");
@@ -61,6 +74,10 @@ async fn main() -> Result<()> {
     println!("ok: a busy phone ends the call with 486");
     the_phone_hangs_up(&env).await?;
     println!("ok: the phone hangs up");
+    the_page_answers_a_call_to_the_app_s_number(&env, &webhook).await?;
+    println!("ok: the page answers a call to the app's number");
+    a_call_the_webhook_declines_never_reaches_the_room(&env, &webhook).await?;
+    println!("ok: a call the webhook declines never reaches the room");
     println!("sip-gateway e2e passed");
     Ok(())
 }
@@ -113,6 +130,129 @@ async fn the_phone_hangs_up(env: &Env) -> Result<()> {
     call.until_gone().await
 }
 
+async fn the_page_answers_a_call_to_the_app_s_number(env: &Env, webhook: &Webhook) -> Result<()> {
+    let peer = format!("{ROOM}/alice/inbound");
+    let page = connect(env).await?;
+    let peer_session = connect(env).await?;
+    let tone = ToneBroadcast::run(&peer_session, &peer).await?;
+    let phones = page.watch_namespaces(&["sip-e2e", "room", "phone"]).await?;
+    trunk_calls_the_app(env)?;
+
+    let (call, answer) = webhook.next_call().await?;
+    ensure!(
+        call["from"] == CALLER && call["to"] == APP_NUMBER,
+        "the webhook got {call}"
+    );
+    let call_id = call["call_id"].as_str().context("no call_id")?.to_string();
+    let _ = answer.send(json!({ "namespace_prefix": ROOM, "peer": peer }));
+    let call = CallObserver::watch(&page, phones, format!("{ROOM}/phone/{call_id}")).await?;
+    call.until_state("answered").await?;
+
+    let heard = phone_frequency(&page, &call.namespace).await?;
+    ensure!(
+        (heard - TONE_HZ).abs() < 60.0,
+        "the phone sent back {heard:.0} Hz instead of the page's {TONE_HZ} Hz"
+    );
+
+    drop(tone);
+    peer_session.close().await;
+    let reason = call.until_state("ended").await?;
+    ensure!(reason == "hangup", "ended with {reason}");
+    call.until_gone().await?;
+    until_trunk_idle(env).await
+}
+
+async fn a_call_the_webhook_declines_never_reaches_the_room(
+    env: &Env,
+    webhook: &Webhook,
+) -> Result<()> {
+    trunk_calls_the_app(env)?;
+    let (_, answer) = webhook.next_call().await?;
+    let _ = answer.send(json!({ "reject": "decline" }));
+    until_trunk_idle(env).await
+}
+
+/// Has the trunk call the app's number; the phone echoes what it hears.
+fn trunk_calls_the_app(env: &Env) -> Result<()> {
+    asterisk(
+        env,
+        &format!("channel originate PJSIP/{APP_NUMBER}@gateway application Echo"),
+    )?;
+    Ok(())
+}
+
+/// Resolves once the trunk has no call left.
+async fn until_trunk_idle(env: &Env) -> Result<()> {
+    timeout(STATE_TIMEOUT, async {
+        loop {
+            if asterisk(env, "core show channels count")?.contains("0 active calls") {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .context("the trunk still has a call")?
+}
+
+fn asterisk(env: &Env, command: &str) -> Result<String> {
+    let output = Command::new("docker")
+        .args(["compose", "-f", &env.compose_file, "exec", "-T", "trunk"])
+        .args(["asterisk", "-rx", command])
+        .output()?;
+    ensure!(output.status.success(), "asterisk -rx {command} failed");
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// A call the webhook received and the decision it answers with.
+type WebhookCall = (Value, oneshot::Sender<Value>);
+
+/// The app server's call webhook: checks the gateway's token and hands each
+/// call to the test, which decides the answer.
+struct Webhook {
+    calls: Mutex<mpsc::UnboundedReceiver<WebhookCall>>,
+    _server: HttpServer,
+}
+
+impl Webhook {
+    async fn run(address: &str, secret: String) -> Result<Self> {
+        let listener = TcpListener::bind(address).await?;
+        let (call_sender, calls) = mpsc::unbounded_channel();
+        let secret = Arc::new(secret);
+        let server = HttpServer::run(listener, move |request, _| {
+            let call_sender = call_sender.clone();
+            let secret = secret.clone();
+            async move {
+                let signed = bearer_token(request.headers())
+                    .is_some_and(|token| auth_token::verify_signature(token, &secret).is_ok());
+                if !signed {
+                    return error_response(StatusCode::UNAUTHORIZED, "invalid_token");
+                }
+                let Some(call) = read_json::<Value, _>(request.into_body()).await else {
+                    return error_response(StatusCode::BAD_REQUEST, "invalid_request");
+                };
+                let (answer_sender, answer) = oneshot::channel();
+                let _ = call_sender.send((call, answer_sender));
+                match answer.await {
+                    Ok(decision) => json_response(StatusCode::OK, &decision),
+                    Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "no_decision"),
+                }
+            }
+        });
+        Ok(Self {
+            calls: Mutex::new(calls),
+            _server: server,
+        })
+    }
+
+    async fn next_call(&self) -> Result<WebhookCall> {
+        timeout(STATE_TIMEOUT, self.calls.lock().await.recv())
+            .await
+            .context("the webhook was not called")?
+            .context("the webhook stopped")
+    }
+}
+
 async fn connect(env: &Env) -> Result<Arc<client::Session>> {
     Ok(Arc::new(
         client::Session::connect(
@@ -157,6 +297,15 @@ impl CallObserver {
             .as_str()
             .context("no namespace in the answer")?
             .to_string();
+        Self::watch(page, phones, namespace).await
+    }
+
+    /// Waits for the call's broadcast `namespace` and reads its states.
+    async fn watch(
+        page: &client::Session,
+        phones: NamespaceWatch,
+        namespace: String,
+    ) -> Result<Self> {
         let elements: Vec<&str> = namespace.split('/').collect();
         until_namespace(&phones, &elements, true)
             .await

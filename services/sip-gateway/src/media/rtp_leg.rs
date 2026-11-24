@@ -17,6 +17,7 @@ pub(crate) struct RtpLeg {
 }
 
 /// What the answer settled.
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Negotiated {
     pub(crate) codec: G711,
 }
@@ -25,22 +26,7 @@ impl RtpLeg {
     /// Binds the media socket and returns the SDP offer: PCMU, then PCMA,
     /// then `telephone-event`, with an SRTP key.
     pub(crate) async fn offer(media_address: Option<IpAddr>) -> Result<(Self, String)> {
-        let mut config = RtcConfiguration::sip();
-        config.keying = Keying::Sdes;
-        config.media_capabilities = Some(MediaCapabilities {
-            audio: vec![
-                AudioCapability::pcmu(),
-                AudioCapability::pcma(),
-                AudioCapability::telephone_event(),
-            ],
-            video: vec![],
-            application: None,
-            image: vec![],
-        });
-        config.external_ips = media_address.into_iter().collect();
-        // UPnP stays off: `.cargo/audit.toml` ignores igd's h2 advisory for it.
-        config.enable_upnp = false;
-        let peer_connection = PeerConnection::new(config);
+        let peer_connection = PeerConnection::new(configuration(media_address));
         peer_connection.add_transceiver(MediaKind::Audio, TransceiverDirection::SendRecv);
         let offer = peer_connection
             .create_offer()
@@ -50,6 +36,36 @@ impl RtpLeg {
             .set_local_description(offer.clone())
             .context("apply SDP offer")?;
         Ok((Self { peer_connection }, offer.to_sdp_string()))
+    }
+
+    /// Binds the media socket and answers the trunk's offer with the first
+    /// G.711 format it lists. Fails when the offer is not SRTP keyed with
+    /// SDES or lists no G.711 codec, which the caller refuses with 488.
+    pub(crate) async fn answer_offer(
+        offer: &str,
+        media_address: Option<IpAddr>,
+    ) -> Result<(Self, String, Negotiated)> {
+        let description =
+            SessionDescription::parse(SdpType::Offer, offer).context("parse SDP offer")?;
+        negotiated_codec(&description)?;
+        let peer_connection = PeerConnection::new(configuration(media_address));
+        peer_connection
+            .set_remote_description(description)
+            .await
+            .context("apply SDP offer")?;
+        let answer = peer_connection
+            .create_answer()
+            .await
+            .context("create SDP answer")?;
+        peer_connection
+            .set_local_description(answer.clone())
+            .context("apply SDP answer")?;
+        let codec = negotiated_codec(&answer)?;
+        Ok((
+            Self { peer_connection },
+            answer.to_sdp_string(),
+            Negotiated { codec },
+        ))
     }
 
     /// Applies the trunk's answer. Fails when the answer is not SRTP keyed
@@ -128,23 +144,44 @@ impl RtpSender {
     }
 }
 
-/// The first G.711 format of the answer's audio section: an answer lists
-/// the formats it accepts from the offer, preferred first (RFC 3264 §6.1).
-fn negotiated_codec(answer: &SessionDescription) -> Result<G711> {
-    let audio = answer
+/// SDES-SRTP with PCMU, PCMA and `telephone-event`, without ICE or DTLS.
+fn configuration(media_address: Option<IpAddr>) -> RtcConfiguration {
+    let mut config = RtcConfiguration::sip();
+    config.keying = Keying::Sdes;
+    config.media_capabilities = Some(MediaCapabilities {
+        audio: vec![
+            AudioCapability::pcmu(),
+            AudioCapability::pcma(),
+            AudioCapability::telephone_event(),
+        ],
+        video: vec![],
+        application: None,
+        image: vec![],
+    });
+    config.external_ips = media_address.into_iter().collect();
+    // UPnP stays off: `.cargo/audit.toml` ignores igd's h2 advisory for it.
+    config.enable_upnp = false;
+    config
+}
+
+/// The first G.711 format of the description's audio section: an answer
+/// lists the formats it accepts from the offer, preferred first (RFC 3264
+/// §6.1), and an offer the formats it can take, preferred first.
+fn negotiated_codec(description: &SessionDescription) -> Result<G711> {
+    let audio = description
         .media_sections
         .iter()
         .find(|section| section.kind == MediaKind::Audio && section.port != 0)
-        .context("the answer accepts no audio")?;
+        .context("no audio is accepted")?;
     if audio.protocol != "RTP/SAVP" || audio.get_crypto_attributes().is_empty() {
-        bail!("the answer is not SRTP keyed with SDES");
+        bail!("the audio is not SRTP keyed with SDES");
     }
     audio
         .formats
         .iter()
         .filter_map(|format| format.parse().ok())
         .find_map(G711::from_payload_type)
-        .context("the answer picks no G.711 codec")
+        .context("no G.711 codec is listed")
 }
 
 fn random_u32() -> u32 {
@@ -188,6 +225,38 @@ mod tests {
         assert!(negotiated_codec(&answer("RTP/AVP", "0", false)).is_err());
         assert!(negotiated_codec(&answer("RTP/SAVP", "0", false)).is_err());
         assert!(negotiated_codec(&answer("RTP/SAVP", "101", true)).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_trunk_s_offer_is_answered_with_sdes_srtp_and_its_first_g711_format() {
+        // Arrange
+        let offer = answer("RTP/SAVP", "8 0 101", true).to_sdp_string();
+
+        // Act
+        let (leg, answer, negotiated) =
+            RtpLeg::answer_offer(&offer, Some("192.0.2.7".parse().unwrap()))
+                .await
+                .unwrap();
+
+        // Assert
+        leg.close();
+        assert_eq!(negotiated.codec, G711::Pcma);
+        let audio = answer
+            .lines()
+            .find(|line| line.starts_with("m=audio"))
+            .unwrap();
+        assert!(audio.contains("RTP/SAVP 8"), "{answer}");
+        assert!(answer.contains("a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:"));
+        assert!(answer.contains("c=IN IP4 192.0.2.7"), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn an_offer_without_sdes_srtp_is_not_answered() {
+        // Arrange
+        let offer = answer("RTP/AVP", "0", false).to_sdp_string();
+
+        // Act / Assert
+        assert!(RtpLeg::answer_offer(&offer, None).await.is_err());
     }
 
     #[tokio::test]

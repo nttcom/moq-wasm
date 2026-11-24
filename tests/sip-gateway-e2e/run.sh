@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Places calls through the SIP gateway to a local Asterisk standing in for
-# Twilio Elastic SIP Trunking (asterisk/), with a local VTS and relay.
+# Twilio Elastic SIP Trunking (asterisk/), and has it call the app's number,
+# with a local VTS and relay.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -77,7 +78,9 @@ PIDS+=($!)
 wait_for relay "grep -q 'Relay server started' '$LOGS/relay.log'"
 
 # The trunk is published on 127.0.0.1 only, and its RTP leaves the container
-# for the address the gateway's SDP names.
+# for the address the gateway's SDP names. Its INVITEs reach the gateway from
+# the container network, whose address depends on the Docker host.
+SIGNALLING_ADDRESSES="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1"
 SIP_GATEWAY_SIP_ADDRESS=0.0.0.0:5062 \
   SIP_GATEWAY_SIP_PUBLIC_ADDRESS=127.0.0.1:5062 \
   SIP_GATEWAY_TLS_CERT_FILE="$KEYS/trunk.crt" \
@@ -86,6 +89,7 @@ SIP_GATEWAY_SIP_ADDRESS=0.0.0.0:5062 \
   SIP_GATEWAY_TRUNK_CA_FILE="$KEYS/ca.crt" \
   SIP_GATEWAY_TRUNK_USERNAME=gateway \
   SIP_GATEWAY_TRUNK_PASSWORD=gateway-secret \
+  SIP_GATEWAY_TRUNK_SIGNALLING_ADDRESSES="$SIGNALLING_ADDRESSES" \
   SIP_GATEWAY_MEDIA_ADDRESS=127.0.0.1 \
   SIP_GATEWAY_RELAY_URL=moqt://localhost:4433 \
   SIP_GATEWAY_RELAY_INSECURE_SKIP_TLS_VERIFY=true \
@@ -100,4 +104,7 @@ E2E_RELAY_URL=moqt://localhost:4433 \
   E2E_GATEWAY_URL=http://127.0.0.1:8099 \
   E2E_PAGE_TOKEN="$(mint sip-e2e --publish room --subscribe room --ttl 1h)" \
   E2E_CALL_TOKEN="$(mint sip-e2e --calls room --ttl 5m)" \
+  E2E_APP_SECRET="$(secret sip-e2e)" \
+  E2E_WEBHOOK_ADDRESS=127.0.0.1:8098 \
+  E2E_COMPOSE_FILE="$E2E_DIR/compose.yaml" \
   ./target/debug/sip-gateway-e2e

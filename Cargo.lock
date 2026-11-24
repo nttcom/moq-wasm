@@ -4121,10 +4121,13 @@ name = "sip-gateway-e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth-token",
  "broadcast",
  "bytes",
  "gstreamer",
  "gstreamer-app",
+ "http-server",
+ "hyper 1.12.0",
  "mediapack",
  "moqt",
  "reqwest",
