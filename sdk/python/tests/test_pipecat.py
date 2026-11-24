@@ -77,7 +77,7 @@ from pipecat.workers.runner import WorkerRunner
 from pipecat.tests.utils import SleepFrame, run_test
 
 from tests.cancellation import cancel_as_it_resumes
-from tests.fake_native import STAY_OPEN, FakeMediaSource, FakeRelay, FakeSubscription, open_session
+from tests.fake_native import STAY_OPEN, FakeMediaSource, FakeRelay, FakeSubscription, FakeWriter, open_session
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -3322,6 +3322,30 @@ async def test_an_input_without_video_passes_image_requests_on_and_an_output_pas
     await session.close()
 
 
+async def test_an_urgent_message_going_upstream_reaches_the_output_upstream_that_writes_it():
+    # Arrange: two transports' outputs in one pipeline, the first writing the transcript track
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    first = MoqWasmTransport(session, MoqWasmParams(room=ROOM, participant_id="a", data_out_tracks={"transcript": 60}))
+    second = MoqWasmTransport(session, MoqWasmParams(room=ROOM, participant_id="b", data_out_tracks={"status": 60}))
+    urgent = OutputTransportMessageUrgentFrame(message=MoqWasmTrackObject("transcript", b"hello"))
+
+    # Act
+    down, _ = await within(
+        run_test(
+            Pipeline([first.output(), second.output()]),
+            frames_to_send=[urgent],
+            frames_to_send_direction=FrameDirection.UPSTREAM,
+        )
+    )
+
+    # Assert: the second output passed it on upstream, not back downstream
+    assert native.writers["transcript"].objects == [(b"hello", True)]
+    assert urgent not in down
+    await session.close()
+
+
 async def test_a_data_track_reaches_the_sink_as_messages_with_their_location():
     # Arrange
     relay = FakeRelay()
@@ -3948,6 +3972,25 @@ async def test_an_input_only_worker_reports_the_room_it_fails_to_withdraw_at_an_
 
     # Assert
     assert [error.error for error in errors] == ["cannot leave the room: withdrawal refused"]
+    await session.close()
+
+
+async def test_a_message_that_cannot_be_written_is_reported_and_the_messages_after_it_are_written():
+    # Arrange: a record JSON cannot carry, then an object of a data track
+    relay = FakeRelay()
+    session = await open_session(relay)
+    params = MoqWasmParams(room=ROOM, data_out_tracks={"status": 60}, event_timelines_out={"events": 60})
+    transport = MoqWasmTransport(session, params)
+    unserializable = OutputTransportMessageFrame(message=MoqWasmEventRecord("events", {"data": object()}))
+    status = OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"ready"))
+
+    # Act
+    _, up = await within(run_test(transport.output(), frames_to_send=[unserializable, status, SleepFrame(0.1)]))
+
+    # Assert
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(errors) == 1 and "cannot write the message" in errors[0].error
+    assert relay.sessions[0].writers["status"].objects == [(b"ready", True)]
     await session.close()
 
 
@@ -6497,6 +6540,162 @@ async def test_pictures_synchronized_with_continuous_speech_do_not_lengthen_it(f
     await session.close()
 
 
+async def test_transport_messages_with_a_presentation_timestamp_are_written_as_pipecat_presents_them():
+    # Arrange: a track object and an event record, each presented 1 ns after the pipeline started
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    params = MoqWasmParams(room=ROOM, data_out_tracks={"status": 60}, event_timelines_out={"events": 60})
+    transport = MoqWasmTransport(session, params)
+    messages = [
+        OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"ready")),
+        OutputTransportMessageFrame(message=MoqWasmEventRecord("events", {"L": [1, 2], "data": "yes"})),
+    ]
+    for message in messages:
+        message.pts = 1
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=messages))
+
+    # Assert: each was written once and passed on
+    assert native.writers["status"].objects == [(b"ready", True)]
+    assert [json.loads(payload) for payload, _ in native.writers["events"].objects] == [[], [{"L": [1, 2], "data": "yes"}]]
+    assert [frame.id for frame in down] == [message.id for message in messages]
+    await session.close()
+
+
+def track_object_presented_at(seconds: float) -> OutputTransportMessageFrame:
+    """A track object on the `status` track presented `seconds` after the pipeline started."""
+    message = OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"ready"))
+    message.pts = round(seconds * 1_000_000_000)
+    return message
+
+
+async def test_a_timestamped_transport_message_is_written_before_a_stop_frame_that_comes_before_it_is_due():
+    # Arrange: a track object presented 600 ms after the pipeline started, then a StopFrame at once
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, data_out_tracks={"status": 60}))
+    output = transport.output()
+
+    # Act: the next pipeline resumes the output, which replaces its media senders
+    await within(run_test(output, frames_to_send=[track_object_presented_at(0.6), StopFrame()], send_end_frame=False))
+    await within(run_test(transport.output(), frames_to_send=[SleepFrame(0.1)]))
+
+    # Assert
+    assert native.writers["status"].objects == [(b"ready", True)]
+    await session.close()
+
+
+async def test_a_pipeline_flush_returns_once_the_output_wrote_a_timestamped_message_given_before_it():
+    # Arrange: an output in a running pipeline given a track object presented 600 ms after the
+    # pipeline started
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    output = MoqWasmTransport(session, MoqWasmParams(room=ROOM, data_out_tracks={"status": 60})).output()
+    worker = PipelineWorker(Pipeline([output]), cancel_on_idle_timeout=False)
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    running = asyncio.create_task(runner.run())
+    await worker.queue_frame(track_object_presented_at(0.6))
+
+    # Act
+    flushed = await within(worker.flush_pipeline())
+    written = list(native.writers["status"].objects)
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert
+    assert flushed
+    assert written == [(b"ready", True)]
+    await session.close()
+
+
+async def test_a_timestamped_transport_message_for_another_destination_is_passed_on_unwritten():
+    # Arrange: a track object for a destination the transport has no sender for, presented in 60 s
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    params = MoqWasmParams(room=ROOM, data_out_tracks={"status": 60})
+    transport = MoqWasmTransport(session, params)
+    message = OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"ready"))
+    message.transport_destination = "other"
+    message.pts = 60_000_000_000
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[message]))
+
+    # Assert
+    assert native.writers["status"].objects == []
+    assert [frame.id for frame in down] == [message.id]
+    await session.close()
+
+
+def presented_at(message: OutputTransportMessageFrame, seconds: float) -> OutputTransportMessageFrame:
+    message.pts = round(seconds * 1_000_000_000)
+    return message
+
+
+async def test_timed_and_untimed_transport_messages_behind_speech_are_written_once_in_frame_order():
+    # Arrange: 300 ms of speech, then an untimed event record and one presented 1 ns after the
+    # pipeline started, while pipecat's audio task still writes the speech
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    transport = MoqWasmTransport(session, speaking_params(video_out_enabled=False, event_timelines_out={"events": 60}))
+    speech = OutputAudioRawFrame(audio=tone(0.3), sample_rate=SAMPLE_RATE, num_channels=1)
+    draft = OutputTransportMessageFrame(message=MoqWasmEventRecord("events", {"data": "draft"}))
+    final = presented_at(OutputTransportMessageFrame(message=MoqWasmEventRecord("events", {"data": "final"})), 1e-9)
+
+    # Act
+    down, _ = await within(run_test(transport.output(), frames_to_send=[speech, draft, final]))
+
+    # Assert: each record was written once, in frame order, and passed on once
+    records = [json.loads(payload) for payload, _ in native.writers["events"].objects]
+    assert records == [[], [{"data": "draft"}], [{"data": "final"}]]
+    assert sorted(frame.id for frame in down if isinstance(frame, OutputTransportMessageFrame)) == sorted([draft.id, final.id])
+    await session.close()
+
+
+async def test_a_timestamped_object_continues_the_group_an_untimed_one_behind_speech_opened_through_a_relay(relay_url):
+    # Arrange: a bot speaking in a room, whose transcript track a listener subscribed to
+    room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
+    bot_session = await moq_wasm.connect(relay_url, verify_certificate=False)
+    listener = await moq_wasm.connect(relay_url, verify_certificate=False)
+    params = speaking_params(room=room, video_out_enabled=False, data_out_tracks={"transcript": 60})
+    worker, running = await run_worker(MoqWasmTransport(bot_session, params).output())
+
+    async def subscribed():
+        while True:
+            try:
+                return await listener.subscribe([*room, "bot"], "transcript")
+            except moq_wasm.RequestError:
+                await asyncio.sleep(0.05)
+
+    objects = await within(subscribed())
+    speech = OutputAudioRawFrame(audio=tone(0.3), sample_rate=SAMPLE_RATE, num_channels=1)
+    opener = OutputTransportMessageFrame(message=MoqWasmTrackObject("transcript", b"draft", new_group=True))
+    continuation = OutputTransportMessageFrame(message=MoqWasmTrackObject("transcript", b"final", new_group=False))
+
+    try:
+        # Act
+        await worker.queue_frames([speech, opener, presented_at(continuation, 1e-9)])
+        received = [await within(objects.__anext__()) for _ in range(2)]
+
+        # Assert: the continuation follows the opener in its group
+        assert [(item.payload, item.group_id) for item in received] == [
+            (b"draft", received[0].group_id),
+            (b"final", received[0].group_id),
+        ]
+    finally:
+        await worker.queue_frame(EndFrame())
+        await within(running)
+        for each in (listener, bot_session):
+            await each.close()
+
+
 async def test_frames_for_another_destination_go_on_as_they_came_and_write_nothing():
     # Arrange: an urgent track object and speech at another sample rate, both for another
     # destination, then the output's own speech
@@ -6948,6 +7147,52 @@ async def test_an_output_keeps_no_assistant_image_once_drawn_passed_on_or_droppe
     # Assert: the output, still referenced, holds no image but the still it shows
     assert len(alive_frames(ids)) == (1 if video else 0)
     assert output is not None
+    await session.close()
+
+
+async def test_a_message_sent_with_send_message_is_written_once_and_one_reaching_the_output_once():
+    # Arrange: a running output with an event timeline, given 300 ms of speech and a record behind
+    # it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_enabled=False, event_timelines_out={"events": 60})).output()
+    worker, running = await run_worker(output)
+    speech = OutputAudioRawFrame(audio=tone(0.3), sample_rate=SAMPLE_RATE, num_channels=1)
+    queued = OutputTransportMessageFrame(message=MoqWasmEventRecord("events", {"data": "queued"}))
+    await worker.queue_frames([speech, queued])
+    await until(lambda: len(relay.sessions[0].writers.get("events", FakeWriter()).objects) == 2)
+
+    # Act
+    await within(output.send_message(OutputTransportMessageFrame(message=MoqWasmEventRecord("events", {"data": "sent"}))))
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert
+    records = [json.loads(payload) for payload, _ in relay.sessions[0].writers["events"].objects]
+    assert records == [[], [{"data": "queued"}], [{"data": "sent"}]]
+    await session.close()
+
+
+@pytest.mark.parametrize("message_class", [OutputTransportMessageFrame, OutputTransportMessageUrgentFrame])
+async def test_a_message_sent_with_send_message_for_another_destination_is_not_written(message_class):
+    # Arrange: a running output with a data track, whose registration a message to it waited for
+    relay = FakeRelay()
+    session = await open_session(relay)
+    output = MoqWasmTransport(session, speaking_params(video_out_enabled=False, data_out_tracks={"status": 60})).output()
+    worker, running = await run_worker(output)
+    await worker.queue_frame(OutputTransportMessageFrame(message=MoqWasmTrackObject("status", b"ready")))
+    await until(lambda: relay.sessions[0].writers.get("status", FakeWriter()).objects != [])
+    foreign = message_class(message=MoqWasmTrackObject("status", b"elsewhere"))
+    foreign.transport_destination = "other-room"
+
+    # Act
+    await within(output.send_message(foreign))
+    await within(output.send_message(message_class(message=MoqWasmTrackObject("status", b"here"))))
+    await worker.queue_frame(EndFrame())
+    await within(running)
+
+    # Assert: the local message after it was written, the foreign one not
+    assert [payload for payload, _ in relay.sessions[0].writers["status"].objects] == [b"ready", b"here"]
     await session.close()
 
 

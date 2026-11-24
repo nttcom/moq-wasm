@@ -478,11 +478,13 @@ def _log_failure(receiving: asyncio.Task) -> None:
 class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
     """Publishes `OutputAudioRawFrame` as Opus and `OutputImageRawFrame` as `video_out_codec` in the
     transport's broadcast, with its MSF catalog, and writes the `MoqWasmTrackObject` or
-    `MoqWasmEventRecord` an `OutputTransportMessageFrame` carries. It serves one pipeline run: the
-    next pipeline takes a new output from `MoqWasmTransport.output`. Once publishing its media
-    failed, which it does for good, an output that writes no data track or event timeline can do
-    nothing more: the failure is pushed as an `ErrorFrame` treated as permanent, as a room that
-    cannot open is."""
+    `MoqWasmEventRecord` an `OutputTransportMessageFrame` carries as the frame reaches it, in frame
+    order: the write is paced neither with the audio queued before it nor with its `pts`, which
+    time only when pipecat passes the frame on, and an interruption that drops the frame before
+    then leaves it written. It serves one pipeline run: the next pipeline takes a new output from
+    `MoqWasmTransport.output`. Once publishing its media failed, which it does for good, an output
+    that writes no data track or event timeline can do nothing more: the failure is pushed as an
+    `ErrorFrame` treated as permanent, as a room that cannot open is."""
 
     def __init__(self, room: Room, params: MoqWasmParams, **kwargs):
         super().__init__(params, **kwargs)
@@ -614,6 +616,21 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
             await self._queue_end_of_speech(
                 audio_in, direction, last_chunk=isinstance(frame, (StopFrame, PipelineFlushFrame))
             )
+        # pipecat writes an urgent message with `send_message` as it comes, either way, and passes
+        # on none: one this transport does not write goes on the way it came instead, to the next
+        # processor, such as another transport's output.
+        elif isinstance(frame, OutputTransportMessageUrgentFrame):
+            await FrameProcessor.process_frame(self, frame, direction)
+            if not await self._write_message(frame.message):
+                await self.push_frame(frame, direction)
+            return
+        # pipecat passes a message on behind the audio queued, calling `send_message`, which the
+        # media sender skips (`_MediaSender._handle_frame`), or once its `pts` is due, and drops it
+        # when an interruption or a StopFrame comes first: each is written as it comes instead,
+        # timed or not, in frame order, so a group opened by one is the group the next one
+        # continues, and a flush probe or a StopFrame after it finds it written.
+        elif direction == FrameDirection.DOWNSTREAM and isinstance(frame, OutputTransportMessageFrame):
+            await self._write_message(frame.message)
         # pipecat's video sender cycles a sprite's pictures and resizes each picture before
         # `write_video_frame`, and an empty sprite or a picture it cannot resize would end its task
         # for good: each picture is queued as the encoder reads it, and a frame the encoder would
@@ -775,11 +792,21 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
         await self.push_error(message, error, force_treat_as_permanent=self._media_only and self._room.media_failed)
 
     async def send_message(self, frame: OutputTransportMessageFrame | OutputTransportMessageUrgentFrame):
-        # pipecat passes a non-urgent message on by itself; an urgent one this transport does not write
-        # goes on to the next processor, such as another transport's output.
-        written = await self._room.write_message(frame.message)
-        if not written and isinstance(frame, OutputTransportMessageUrgentFrame):
-            await self.push_frame(frame)
+        """Writes the message `frame` carries at once when it is for one of the transport's tracks,
+        as the output does for a frame that reaches it, and writes nothing for a frame for another
+        destination; a failed write is pushed upstream as a non-fatal `ErrorFrame`. pipecat calls
+        it for no frame that reaches the output."""
+        if frame.transport_destination is None:
+            await self._write_message(frame.message)
+
+    async def _write_message(self, message: object) -> bool:
+        """Writes `message` when it is for one of the transport's tracks; returns whether it was,
+        also when writing it failed, which is pushed upstream as a non-fatal `ErrorFrame`."""
+        try:
+            return await self._room.write_message(message)
+        except Exception as error:
+            await self.push_error(f"cannot write the message: {error}", error)
+            return True
 
 
 class _MediaSender(BaseOutputTransport.MediaSender):
@@ -971,6 +998,10 @@ class _MediaSender(BaseOutputTransport.MediaSender):
         # pipecat's audio task reached an assistant image, the audio queued before it written.
         if isinstance(frame, _AssistantImage):
             await self._draw_assistant_image(frame)
+            return
+        # The output wrote a message as it reached it (`MoqWasmOutputTransport.process_frame`):
+        # pipecat's `send_message` would write it again.
+        if isinstance(frame, OutputTransportMessageFrame):
             return
         await super()._handle_frame(frame)
 
