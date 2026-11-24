@@ -31,7 +31,8 @@ media events to `crates/broadcast`, which owns the track layout (see
 
 Each input is one module (`rtmp`, `srt`, `rtp`) that owns its transport and
 ends in the same `IngestPublisher`; the formats meet only at
-`mediapack::MediaEvent`.
+`mediapack::MediaEvent`. An input runs only when its flag
+(`--rtmp-addr`, `--srt-addr`, `--rtp-sdp`) is given.
 
 Nothing on the input's task may block before the first sample is pushed:
 `broadcast` takes the capture origin at that push, so a stall delays the origin

@@ -28,11 +28,14 @@ make ffmpeg-srt
 In [Live Viewer](../../examples/browser/examples/live-viewer/README.md), select the local relay,
 enter `anon/live/test` and press **Watch** to see the test pattern.
 
-| Input | Listens on | Namespace |
+Each input is on only when its flag is given, and at least one is required;
+`make ingest-gateway` turns on RTMP on `0.0.0.0:1935` and SRT on `0.0.0.0:9000`.
+
+| Input | Flag | Namespace |
 | --- | --- | --- |
-| RTMP | `0.0.0.0:1935` | Application name of the URL: `rtmp://host:1935/anon/live/test/<key>` |
-| SRT | `0.0.0.0:9000` | Stream id: `anon/live/test` or `#!::r=anon/live/test,m=publish`; `anon/srt/live` when absent |
-| RTP | The ports of the SDP file (`make ingest-gateway-rtp`) | `--rtp-namespace`, `anon/rtp/live` by default |
+| RTMP | `--rtmp-addr` | Application name of the URL: `rtmp://host:1935/anon/live/test/<key>` |
+| SRT | `--srt-addr` | Stream id: `anon/live/test` or `#!::r=anon/live/test,m=publish`; `anon/srt/live` when absent |
+| RTP | `--rtp-sdp`, listening on the ports of the SDP file (`make ingest-gateway-rtp`) | `--rtp-namespace`, `anon/rtp/live` by default |
 
 Tokenless publishers may only use `anon/**`.
 

@@ -9,6 +9,7 @@ mod stats_panel;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use clap::ArgGroup;
 
 use self::{
     ingest_publisher::IngestOptions,
@@ -17,17 +18,23 @@ use self::{
 use crate::RelayArgs;
 
 #[derive(clap::Args, Debug)]
+#[command(group(
+    ArgGroup::new("input")
+        .args(["rtmp_addr", "srt_addr", "rtp_sdp"])
+        .required(true)
+        .multiple(true)
+))]
 pub(crate) struct Args {
     #[command(flatten)]
     pub(crate) relay: RelayArgs,
 
-    /// RTMP listen address (e.g. 0.0.0.0:1935)
-    #[arg(long, default_value = "0.0.0.0:1935")]
-    rtmp_addr: String,
+    /// RTMP listen address (e.g. 0.0.0.0:1935); RTMP input is off without it
+    #[arg(long)]
+    rtmp_addr: Option<String>,
 
-    /// SRT listen address (e.g. 0.0.0.0:9000)
-    #[arg(long, default_value = "0.0.0.0:9000")]
-    srt_addr: String,
+    /// SRT listen address (e.g. 0.0.0.0:9000); SRT input is off without it
+    #[arg(long)]
+    srt_addr: Option<String>,
 
     /// SDP file describing the RTP session to receive; RTP input is off without it
     #[arg(long)]
@@ -58,9 +65,20 @@ pub(crate) async fn run(args: Args) -> Result<()> {
         stats: stats.as_ref().map(|(_, registry)| registry.clone()),
     };
     let rtp_namespace = rtp::parse_namespace(&args.rtp_namespace)?;
+    let (rtmp_options, srt_options) = (options.clone(), options.clone());
     tokio::try_join!(
-        rtmp::run_rtmp_listener(args.rtmp_addr, options.clone()),
-        srt::run_srt_listener(args.srt_addr, options.clone()),
+        async {
+            match args.rtmp_addr {
+                Some(addr) => rtmp::run_rtmp_listener(addr, rtmp_options).await,
+                None => Ok(()),
+            }
+        },
+        async {
+            match args.srt_addr {
+                Some(addr) => srt::run_srt_listener(addr, srt_options).await,
+                None => Ok(()),
+            }
+        },
         async {
             match args.rtp_sdp {
                 Some(sdp_path) => rtp::run_rtp_listener(sdp_path, rtp_namespace, options).await,
