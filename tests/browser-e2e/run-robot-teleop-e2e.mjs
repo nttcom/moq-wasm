@@ -3,7 +3,9 @@
 // Runs the simulated robot (examples/rust/moq-robot-sim) and the operator page
 // against one relay, and drives the robot from the page: in one room alone, in
 // another during an episode the policy bot (examples/rust/moq-robot-policy)
-// drives.
+// drives, and in a third the same way while the recorder records it as a MoQ
+// room recording; the spec runs the recorder and bot-dispatcher this script
+// builds.
 
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -29,7 +31,17 @@ async function main() {
   assertE2EPrerequisites();
   execFileSync(
     "cargo",
-    ["build", "-p", "moq-robot-sim", "-p", "moq-robot-policy"],
+    [
+      "build",
+      "-p",
+      "moq-robot-sim",
+      "-p",
+      "moq-robot-policy",
+      "-p",
+      "recorder",
+      "-p",
+      "bot-dispatcher",
+    ],
     {
       cwd: repoRoot,
       stdio: "inherit",
@@ -39,6 +51,7 @@ async function main() {
   const room =
     process.env.ROBOT_TELEOP_E2E_ROOM ?? `anon/robot-teleop-e2e/${Date.now()}`;
   const policyRoom = `${room}-policy`;
+  const recordedRoom = `${room}-recorded`;
   const moqtUrl = getDefaultMoqtUrl();
   const { childProcesses, cleanup, ready } =
     startRelayAndPage(robotTeleopIndexPath);
@@ -60,18 +73,23 @@ async function main() {
       await waitForOutput(child, ready, label, 60_000);
     };
     await start("robot", "moq-robot-sim", ["--room", room], /robot ready/);
-    await start(
-      "policy-robot",
-      "moq-robot-sim",
-      ["--room", policyRoom, "--policy-episode", "go to the corner"],
-      /robot ready/,
-    );
-    await start(
-      "policy",
-      "moq-robot-policy",
-      ["--room", policyRoom],
-      /policy ready/,
-    );
+    for (const [label, policyRoomName] of [
+      ["", policyRoom],
+      ["recorded-", recordedRoom],
+    ]) {
+      await start(
+        `${label}policy-robot`,
+        "moq-robot-sim",
+        ["--room", policyRoomName, "--policy-episode", "go to the corner"],
+        /robot ready/,
+      );
+      await start(
+        `${label}policy`,
+        "moq-robot-policy",
+        ["--room", policyRoomName],
+        /policy ready/,
+      );
+    }
 
     await runCommand(resolveCommandName("npm"), ["run", "e2e:robot-teleop"], {
       cwd: jsDir,
@@ -81,6 +99,9 @@ async function main() {
         ROBOT_TELEOP_E2E_MOQT_URL: moqtUrl,
         ROBOT_TELEOP_E2E_ROOM: room,
         ROBOT_TELEOP_E2E_POLICY_ROOM: policyRoom,
+        ROBOT_TELEOP_E2E_RECORDED_ROOM: recordedRoom,
+        // The recorder bot dials the relay at this URL.
+        MEDIA_E2E_MOQT_URL: moqtUrl,
       },
     });
   } finally {

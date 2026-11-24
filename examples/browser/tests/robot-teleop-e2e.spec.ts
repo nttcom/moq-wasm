@@ -1,9 +1,13 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { ROBOT_TELEOP_INDEX_PATH } from '../playwright.helpers'
+import { archivedPayloads, type MemberArchive, test } from './recorder-e2e-arrange'
 
 const moqtUrl = process.env.ROBOT_TELEOP_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const room = process.env.ROBOT_TELEOP_E2E_ROOM ?? 'anon/robot-teleop'
 const policyRoom = process.env.ROBOT_TELEOP_E2E_POLICY_ROOM ?? 'anon/robot-teleop-policy'
+const recordedRoom = process.env.ROBOT_TELEOP_E2E_RECORDED_ROOM ?? 'anon/robot-teleop-recorded'
 
 async function robotX(page: Page): Promise<number> {
   const text = (await page.getByTestId('robot-teleop-position').textContent()) ?? ''
@@ -62,4 +66,48 @@ test('an operator intervenes on the policy, which drives again once the operator
   // Assert
   await expect(driver).toHaveText('bots/policy (stale)', { timeout: 10_000 })
   await expect.poll(() => robotX(page), { timeout: 10_000 }).toBeGreaterThan(0.3)
+})
+
+/// The `data` of every record in an event timeline track's objects.
+function recordData(payloads: string[]): unknown[] {
+  return payloads.flatMap((payload) => (JSON.parse(payload) as { data: unknown }[]).map((record) => record.data))
+}
+
+test('a MoQ room recording keeps the robot, the operator and the policy bot with their tracks', async ({
+  recorderServe,
+  page
+}) => {
+  // Arrange: an operator intervenes on the policy while the room is recorded
+  const recording = await recorderServe.start(recordedRoom, 'combined', false, 'moq')
+  const operator = await connect(page, recordedRoom)
+  const driver = page.getByTestId('robot-teleop-driver')
+  await expect(driver).toHaveText(/^bots\/policy /, { timeout: 10_000 })
+  await page.keyboard.down('ArrowLeft')
+  await expect(driver).toHaveText(`${operator} (action)`, { timeout: 10_000 })
+  await page.keyboard.up('ArrowLeft')
+  await expect(driver).toHaveText('bots/policy (stale)', { timeout: 10_000 })
+
+  // Act
+  await recorderServe.stop(recording)
+
+  // Assert: the robot's archive holds its state and both control handovers; each driver's archive holds its actions
+  const room = JSON.parse(await readFile(join(recorderServe.recordingDir(recording), 'manifest.json'), 'utf8'))
+  const archiveOf = async (member: string): Promise<MemberArchive> => {
+    const entry = room.members.find(
+      (candidate: { namespace: string }) => candidate.namespace === `${recordedRoom}/${member}`
+    )
+    expect(entry?.camera.length, member).toBeGreaterThan(0)
+    return JSON.parse(await readFile(join('/', entry.camera[0]), 'utf8'))
+  }
+  const robot = await archiveOf('robot')
+  expect(recordData(await archivedPayloads(robot, 'state')).length).toBeGreaterThan(0)
+  expect(recordData(await archivedPayloads(robot, 'control'))).toEqual(
+    expect.arrayContaining([
+      { driver: operator, reason: 'action' },
+      { driver: 'bots/policy', reason: 'stale' }
+    ])
+  )
+  for (const member of [operator, 'bots/policy']) {
+    expect(recordData(await archivedPayloads(await archiveOf(member), 'action')).length, member).toBeGreaterThan(0)
+  }
 })
