@@ -29,6 +29,8 @@ pub(crate) enum StartError {
     UnknownType,
     /// The prefix is not `<app>/<room>...` with non-empty elements.
     InvalidRoom,
+    /// The options are not ones the type's options table allows.
+    InvalidOptions,
     /// The room runs a bot of that type.
     Conflict,
     /// The type runs `max_running` bots.
@@ -121,6 +123,9 @@ impl Bots {
         let elements: Vec<&str> = namespace_prefix.split('/').collect();
         if elements.len() < 2 || elements.iter().any(|e| e.is_empty()) {
             return Err(StartError::InvalidRoom);
+        }
+        if !kind.accepts(options) {
+            return Err(StartError::InvalidOptions);
         }
         let holder = self
             .store
@@ -764,6 +769,46 @@ mod tests {
         assert_eq!(ids(&ended), ids(&both));
         assert_eq!(ended[1].state, BotState::Finished);
         assert_eq!(ids(&replaced), [agent.id, replacement.id]);
+    }
+
+    #[tokio::test]
+    async fn a_launch_with_options_its_type_refuses_takes_no_room() {
+        // Arrange
+        let test = test_bots();
+        let refused_options = json!({ "layout": "grid" });
+        let allowed_options = json!({ "layout": "per-track" });
+
+        // Act
+        let refused = test
+            .bots
+            .start("app", "recorder", "app/a", Some(&refused_options), NOW)
+            .await;
+        let holders = test.store.room_holders("recorder").await.unwrap();
+        let allowed = test
+            .bots
+            .start("app", "recorder", "app/a", Some(&allowed_options), NOW)
+            .await;
+
+        // Assert: the refusal left no room holder and so no record; the room is still free
+        assert!(matches!(refused, Err(StartError::InvalidOptions)));
+        assert!(holders.is_empty());
+        assert!(allowed.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_type_without_an_options_table_forwards_any_options() {
+        // Arrange
+        let test = test_bots();
+        let options = json!({ "anything": [1, 2] });
+
+        // Act
+        let started = test
+            .bots
+            .start("app", "agent", "app/a", Some(&options), NOW)
+            .await;
+
+        // Assert
+        assert!(started.is_ok());
     }
 
     #[test]
