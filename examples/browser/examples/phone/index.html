@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phone · MoQT Playground</title>
+    <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
+    <link rel="stylesheet" href="./phone.css" />
+  </head>
+  <body data-title="Phone">
+    <main class="page">
+      <section class="card connection">
+        <div class="connection-relay">
+          <div id="urlPresets"></div>
+          <input type="url" id="url" aria-label="Relay URL" />
+        </div>
+        <div class="connection-room">
+          <div class="room-row">
+            <span class="status-label">ルーム</span>
+            <code id="room"></code>
+          </div>
+          <div class="button-row">
+            <button type="button" id="joinBtn" data-testid="phone-join-button">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-in" /></svg>接続
+            </button>
+          </div>
+          <p class="hint" id="status" data-testid="phone-status">未接続</p>
+        </div>
+      </section>
+
+      <section class="card call-card">
+        <form class="dial" id="dialForm">
+          <label class="field"
+            >電話番号（E.164）<input
+              type="tel"
+              id="number"
+              placeholder="+819012345678"
+              data-testid="phone-number"
+              required
+          /></label>
+          <button type="submit" id="callBtn" data-testid="phone-call-button" disabled>
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-send" /></svg>発信
+          </button>
+        </form>
+
+        <div class="incoming" id="incoming" data-testid="phone-incoming" hidden>
+          <span>着信: <strong id="incomingFrom"></strong></span>
+          <button type="button" id="answerBtn" data-testid="phone-answer-button">応答</button>
+          <button type="button" id="declineBtn" class="danger" data-testid="phone-decline-button">拒否</button>
+        </div>
+
+        <div class="call-row">
+          <span class="status-label">通話</span>
+          <strong id="state" data-testid="phone-state" data-state="idle">なし</strong>
+          <span class="hint" id="audio" data-testid="phone-audio" data-kbps="0"></span>
+          <button type="button" id="hangUpBtn" class="danger" data-testid="phone-hangup-button" disabled>
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-x" /></svg>切る
+          </button>
+        </div>
+        <p class="hint">
+          電話は SIP gateway（services/sip-gateway）が中継し、通話の発信と着信の受け付けはアプリのサーバーが行います。
+          このページはローカルの開発用サーバー（tests/sip-gateway-e2e/app-server.mjs）を
+          <code>?appServerUrl=</code>（既定は http://127.0.0.1:8097）で使います。
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+    <script type="module" src="../../utils/shell.ts"></script>
+  </body>
+</html>

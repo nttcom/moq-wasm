@@ -182,8 +182,12 @@ acts as the page: it publishes a 700 Hz tone as the peer, checks the call's
 states, hears the tone back from the echo, hangs up by closing its session,
 and checks `486` and a hangup from the phone. It also serves the app's call
 webhook: it has the trunk call the app's number, answers with the room,
-hears its tone back, and declines a second call. Until `PhoneCall` exists the
-client stands in for it; the browser E2E test replaces it in step 6.
+hears its tone back, and declines a second call. Then the phone example
+(`examples/browser/examples/phone`) runs in Chromium on `PhoneCall`, with
+`app-server.mjs` as its app server (it signs the page's and the call's
+tokens, places the calls and answers the webhook with the room of the page
+that takes the call): it calls the echo, hears it and hangs up, gets `486`
+from the busy number, and answers a call to the app's number.
 
 ### The `call` track
 A JSON object per state change, each a group of its own whose stream ends at
@@ -256,6 +260,10 @@ A call ends on BYE from either side, on the peer's `hangup` or
 PUBLISH_NAMESPACE_DONE (also while it rings: the gateway sends CANCEL),
 without an answer within 60 s, on RTP silence from the trunk for 30 s, at the
 maximum duration, and on SIGTERM (every call gets BYE or CANCEL first, and the process waits for them).
+
+After `ended` the broadcast stays 5 s (not on SIGTERM), so a page whose
+`PhoneCall.join` finishes after a call that ended at once (a busy phone, a
+refused INVITE) still reads why it ended through its joining FETCH.
 
 Session timers (RFC 4028), which `rsipstack` leaves to the application, are
 not implemented yet: a trunk that asks for them gets no refresh. When added,
