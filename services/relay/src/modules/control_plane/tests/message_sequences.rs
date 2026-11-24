@@ -1121,6 +1121,80 @@ fn a_publish_namespace_whose_route_is_not_registered_is_refused_and_withdrawn() 
 }
 
 #[test]
+fn a_prefix_subscribed_while_its_last_subscriber_is_cleaned_up_is_accepted() {
+    runtime().block_on(async {
+        // Arrange: the withdrawal of the route of the disconnected subscriber is in flight
+        let relay = Relay::start();
+        let leaving_subscriber = relay.connect(1).await;
+        let subscriber = relay.connect(2).await;
+        leaving_subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+        let withdrawal = relay.route_registry.hold_next_namespace_call();
+        leaving_subscriber.disconnect();
+        settle().await.unwrap();
+
+        // Act
+        subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+        withdrawal.notify_one();
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            subscriber.sent(),
+            vec![Sent::SubscribeNamespaceOk {
+                prefix: "room".to_string(),
+                interest: NamespaceInterest::Namespaces,
+            }]
+        );
+        assert_eq!(
+            relay.route_registry.routes().namespace_subscribers,
+            BTreeSet::from(["room".to_string()])
+        );
+    });
+}
+
+#[test]
+fn a_prefix_subscriber_joining_a_failed_registration_registers_the_route() {
+    runtime().block_on(async {
+        // Arrange: the first subscriber's registration of the route is in flight and fails
+        let relay = Relay::start();
+        let first_subscriber = relay.connect(1).await;
+        let second_subscriber = relay.connect(2).await;
+        let registration = relay.route_registry.hold_next_namespace_call();
+        relay.route_registry.fail_next_namespace_registration();
+        first_subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+
+        // Act
+        second_subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+        registration.notify_one();
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            first_subscriber.sent(),
+            vec![Sent::SubscribeNamespaceError {
+                prefix: "room".to_string(),
+                interest: NamespaceInterest::Namespaces,
+            }]
+        );
+        assert_eq!(
+            second_subscriber.sent(),
+            vec![Sent::SubscribeNamespaceOk {
+                prefix: "room".to_string(),
+                interest: NamespaceInterest::Namespaces,
+            }]
+        );
+        assert_eq!(
+            relay.route_registry.routes().namespace_subscribers,
+            BTreeSet::from(["room".to_string()])
+        );
+    });
+}
+
+#[test]
 fn a_namespace_announced_while_its_route_fails_to_register_is_withdrawn() {
     runtime().block_on(async {
         // Arrange: a namespace subscriber is told of the namespace while its route is registering

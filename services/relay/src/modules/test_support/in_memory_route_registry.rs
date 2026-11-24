@@ -91,6 +91,9 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
         track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError> {
         self.pass_held_call().await;
+        if self.registration_fails() {
+            return Err(anyhow::anyhow!("route registry down").into());
+        }
         if self
             .lock()
             .namespace_subscribers

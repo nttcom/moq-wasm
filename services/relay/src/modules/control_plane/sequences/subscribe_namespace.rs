@@ -1,5 +1,5 @@
 use crate::modules::{
-    cascading::route_registry::{RegisterRouteError, RelayRouteRegistry},
+    cascading::namespace_routes::NamespaceRoutes,
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
@@ -88,35 +88,29 @@ impl SubscribeNameSpace {
             }
             return;
         }
-        let is_first_client = table.register_subscribe_namespace(
+        table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),
             subscription,
         );
-        if is_first_client
-            && let Err(error) = self
-                .register_route(
-                    cascading_relay_context.route_registry,
-                    track_namespace_prefix,
-                )
-                .await
-        {
-            table.unregister_subscribe_namespace(
+        if !self
+            .register_route(
                 session_id,
                 track_namespace_prefix,
-                subscription.interest,
-            );
-            if let RegisterRouteError::Conflict = error {
-                match handler
-                    .error(
-                        RequestErrorCode::NamespacePrefixOverlap,
-                        "namespace already subscribed".to_string(),
-                    )
-                    .await
-                {
-                    Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),
-                    Err(_) => tracing::error!("failed to send `SUBSCRIBE_NAMESPACE_ERROR`"),
-                }
+                subscription,
+                table,
+                cascading_relay_context.namespace_routes,
+            )
+            .await
+        {
+            if let Err(error) = handler
+                .error(
+                    RequestErrorCode::InternalError,
+                    "failed to register the namespace route".to_string(),
+                )
+                .await
+            {
+                tracing::warn!(%error, session_id = %session_id, "failed to send SUBSCRIBE_NAMESPACE_ERROR");
             }
             return;
         }
@@ -206,31 +200,27 @@ impl SubscribeNameSpace {
                 .await;
             return;
         }
-        let is_first_client = table.register_subscribe_namespace(
+        table.register_subscribe_namespace(
             session_id,
             new_track_namespace_prefix.to_string(),
             subscription,
         );
-        if is_first_client
-            && let Err(error) = self
-                .register_route(
-                    cascading_relay_context.route_registry,
-                    new_track_namespace_prefix,
-                )
-                .await
+        if !self
+            .register_route(
+                session_id,
+                new_track_namespace_prefix,
+                subscription,
+                table,
+                cascading_relay_context.namespace_routes,
+            )
+            .await
         {
-            table.unregister_subscribe_namespace(session_id, new_track_namespace_prefix, interest);
-            let (code, reason) = match error {
-                RegisterRouteError::Conflict => (
-                    RequestErrorCode::NamespacePrefixOverlap,
-                    "namespace already subscribed",
-                ),
-                _ => (
+            handler
+                .error(
                     RequestErrorCode::InternalError,
-                    "namespace route not registered",
-                ),
-            };
-            handler.error(code, reason.to_string()).await;
+                    "namespace route not registered".to_string(),
+                )
+                .await;
             return;
         }
         // A failed update ended the subscription (§10.9.1); the
@@ -248,8 +238,7 @@ impl SubscribeNameSpace {
                 released_prefix,
                 table,
                 forwarder,
-                cascading_relay_context.route_registry,
-                cascading_relay_context.inter_relay_connection_manager,
+                cascading_relay_context,
             )
             .await;
         }
@@ -290,6 +279,8 @@ impl SubscribeNameSpace {
         .await;
     }
 
+    /// Registers the prefix's route for a client subscription; withdraws the
+    /// subscription when the route cannot be registered.
     #[tracing::instrument(
         level = "debug",
         name = "relay.sequence.subscribe_namespace.register_route",
@@ -298,22 +289,34 @@ impl SubscribeNameSpace {
     )]
     async fn register_route(
         &self,
-        route_registry: &dyn RelayRouteRegistry,
+        session_id: SessionId,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterRouteError> {
-        let registered = route_registry
-            .register_namespace_subscriber(track_namespace_prefix)
-            .await;
-        match &registered {
-            Ok(()) => {}
-            Err(RegisterRouteError::Conflict) => {
-                tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
-            }
-            Err(err) => {
-                tracing::warn!(?err, track_namespace_prefix = %track_namespace_prefix, "failed to register namespace subscription route");
-            }
+        subscription: NamespaceSubscription,
+        table: &InMemoryLocalPubSubDirectory,
+        namespace_routes: &NamespaceRoutes,
+    ) -> bool {
+        if subscription.peer != SessionPeer::Client {
+            return true;
         }
-        registered
+        let Err(error) = namespace_routes
+            .reconcile_subscriber(track_namespace_prefix, table)
+            .await
+        else {
+            return true;
+        };
+        tracing::warn!(?error, %track_namespace_prefix, "failed to register namespace subscription route");
+        table.unregister_subscribe_namespace(
+            session_id,
+            track_namespace_prefix,
+            subscription.interest,
+        );
+        if let Err(error) = namespace_routes
+            .reconcile_subscriber(track_namespace_prefix, table)
+            .await
+        {
+            tracing::warn!(?error, %track_namespace_prefix, "failed to register namespace subscription route");
+        }
+        false
     }
 
     #[tracing::instrument(
@@ -509,7 +512,8 @@ mod tests {
     use crate::modules::{
         cascading::{
             inter_relay_connection_manager::InterRelayConnectionManager,
-            namespace_routes::NamespaceRoutes, route_registry::NoopRelayRouteRegistry,
+            namespace_routes::NamespaceRoutes,
+            route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         },
         control_plane::sequences::{
             CascadingRelayContext, publish_namespace::PublishNamespace,
@@ -610,7 +614,7 @@ mod tests {
     ) {
         handle_subscribe_namespace(
             ctx,
-            &NoopRelayRouteRegistry,
+            Arc::new(NoopRelayRouteRegistry),
             &MockSubscribeNamespaceHandler {
                 sent,
                 ..MockSubscribeNamespaceHandler::new("ns")
@@ -664,7 +668,7 @@ mod tests {
         // Act
         handle_subscribe_namespace(
             &ctx,
-            &NoopRelayRouteRegistry,
+            Arc::new(NoopRelayRouteRegistry),
             &MockSubscribeNamespaceHandler {
                 sent: sent.clone(),
                 ..MockSubscribeNamespaceHandler::new("ns/alice")
@@ -687,7 +691,7 @@ mod tests {
     /// sessions of `ctx`'s repository.
     async fn handle_subscribe_namespace(
         ctx: &DownstreamPublishContext,
-        route_registry: &dyn RelayRouteRegistry,
+        route_registry: Arc<dyn RelayRouteRegistry>,
         handler: &dyn SubscribeNamespaceHandler,
     ) {
         let inter_relay_connection_manager =
@@ -703,7 +707,7 @@ mod tests {
 
     async fn handle_subscribe_namespace_with(
         ctx: &DownstreamPublishContext,
-        route_registry: &dyn RelayRouteRegistry,
+        route_registry: Arc<dyn RelayRouteRegistry>,
         inter_relay_connection_manager: &InterRelayConnectionManager,
         handler: &dyn SubscribeNamespaceHandler,
     ) {
@@ -714,8 +718,8 @@ mod tests {
                 &ctx.forwarder,
                 &ctx.downstream_publish(),
                 CascadingRelayContext {
-                    route_registry,
-                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
+                    route_registry: route_registry.as_ref(),
+                    namespace_routes: &NamespaceRoutes::new(route_registry.clone()),
                     inter_relay_connection_manager,
                 },
                 handler,
@@ -748,7 +752,7 @@ mod tests {
             async move {
                 handle_subscribe_namespace(
                     &ctx,
-                    &NoopRelayRouteRegistry,
+                    Arc::new(NoopRelayRouteRegistry),
                     &MockSubscribeNamespaceHandler::new("ns"),
                 )
                 .await;
@@ -824,7 +828,10 @@ mod tests {
         // Act
         handle_subscribe_namespace_with(
             &ctx,
-            &StubRouteRegistry::with_remote_namespaces(&["ns/alice", "ns/bob"], vec!["relay-b"]),
+            Arc::new(StubRouteRegistry::with_remote_namespaces(
+                &["ns/alice", "ns/bob"],
+                vec!["relay-b"],
+            )),
             &manager,
             &MockSubscribeNamespaceHandler::new("ns"),
         )
@@ -853,7 +860,10 @@ mod tests {
         // Act
         handle_subscribe_namespace_with(
             &ctx,
-            &StubRouteRegistry::with_remote_namespaces(&["ns/bob"], vec!["relay-b"]),
+            Arc::new(StubRouteRegistry::with_remote_namespaces(
+                &["ns/bob"],
+                vec!["relay-b"],
+            )),
             &manager,
             &MockSubscribeNamespaceHandler::new("ns"),
         )
@@ -884,7 +894,7 @@ mod tests {
         // Act
         handle_subscribe_namespace(
             &ctx,
-            &StubRouteRegistry::new(PublisherLookup::MustNotBeCalled),
+            Arc::new(StubRouteRegistry::new(PublisherLookup::MustNotBeCalled)),
             &MockSubscribeNamespaceHandler::new("ns"),
         )
         .await;
@@ -903,7 +913,7 @@ mod tests {
         let ctx = &handler.ctx;
 
         // Act
-        handle_subscribe_namespace(ctx, &NoopRelayRouteRegistry, &handler).await;
+        handle_subscribe_namespace(ctx, Arc::new(NoopRelayRouteRegistry), &handler).await;
 
         // Assert
         assert_eq!(ctx.subscriber.publish_namespaces(), vec!["ns/alice"]);
@@ -918,7 +928,7 @@ mod tests {
         ctx: &DownstreamPublishContext,
         handler: &MockSubscribeNamespaceHandler,
     ) {
-        handle_subscribe_namespace(ctx, &NoopRelayRouteRegistry, handler).await;
+        handle_subscribe_namespace(ctx, Arc::new(NoopRelayRouteRegistry), handler).await;
     }
 
     #[tokio::test(start_paused = true)]
@@ -1075,13 +1085,18 @@ mod tests {
         ctx: &DownstreamPublishContext,
         handler: &MockSubscribeNamespaceUpdateHandler,
     ) {
-        update_namespace_subscription_with(ctx, handler, &NoopRelayRouteRegistry).await;
+        update_namespace_subscription_with(
+            ctx,
+            handler,
+            &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
+        )
+        .await;
     }
 
     async fn update_namespace_subscription_with(
         ctx: &DownstreamPublishContext,
         handler: &MockSubscribeNamespaceUpdateHandler,
-        route_registry: &dyn RelayRouteRegistry,
+        namespace_routes: &NamespaceRoutes,
     ) {
         let inter_relay_connection_manager = InterRelayConnectionManager::new(
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
@@ -1094,8 +1109,8 @@ mod tests {
                 &ctx.forwarder,
                 &ctx.downstream_publish(),
                 CascadingRelayContext {
-                    route_registry,
-                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
+                    route_registry: &NoopRelayRouteRegistry,
+                    namespace_routes,
                     inter_relay_connection_manager: &inter_relay_connection_manager,
                 },
                 handler,
@@ -1105,23 +1120,26 @@ mod tests {
 
     /// Moves the session's subscription from `ns/old` to `ns/new`. `ns/old`
     /// starts with the route the session's SUBSCRIBE_NAMESPACE registered.
-    async fn routes_after_a_prefix_update(ctx: &DownstreamPublishContext) -> InMemoryRouteRegistry {
-        let route_registry = InMemoryRouteRegistry::default();
-        route_registry
-            .register_namespace_subscriber("ns/old")
-            .await
-            .unwrap();
+    async fn routes_after_a_prefix_update(
+        ctx: &DownstreamPublishContext,
+    ) -> Arc<InMemoryRouteRegistry> {
+        let route_registry = Arc::new(InMemoryRouteRegistry::default());
+        let namespace_routes = NamespaceRoutes::new(route_registry.clone());
         ctx.table.register_subscribe_namespace(
             NAMESPACE_SUBSCRIBER_SESSION,
             "ns/old".to_string(),
             client_subscription(NamespaceInterest::Namespaces),
         );
+        namespace_routes
+            .reconcile_subscriber("ns/old", &ctx.table)
+            .await
+            .unwrap();
         let handler = MockSubscribeNamespaceUpdateHandler::new(
             "ns/old",
             "ns/new",
             NamespaceInterest::Namespaces,
         );
-        update_namespace_subscription_with(ctx, &handler, &route_registry).await;
+        update_namespace_subscription_with(ctx, &handler, &namespace_routes).await;
         route_registry
     }
 

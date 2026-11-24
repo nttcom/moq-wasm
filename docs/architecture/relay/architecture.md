@@ -564,8 +564,10 @@ whose prefix is a prefix of, equal to or an extension of one the session
 already holds for an overlapping interest (draft-14 §9.28; draft-18 §10.18 /
 §10.19 compare SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS only with their own
 kind). Otherwise register the prefix under the session and interest (and,
-for the first client subscriber of the prefix, its Redis route), reply
-SUBSCRIBE_NAMESPACE_OK, and only then forward what already
+for a client subscriber, reconcile the prefix's Redis route; a failed
+registration takes the subscription out again and replies
+SUBSCRIBE_NAMESPACE_ERROR), reply SUBSCRIBE_NAMESPACE_OK, and only then
+forward what already
 matches and the subscription asks for: for namespaces, PUBLISH_NAMESPACE for
 published namespaces (reply handled by a `PublishNamespaceResponseTask`); for tracks, a `DownstreamPublish`
 with the subscription's Forward State for each published track (one per
@@ -1489,22 +1491,24 @@ holds on each hop.
   the GOAWAY a draining relay sends (see "Shutdown").
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
-  `SubscribeNamespace` registers the subscriber route when the first client
-  subscriber for a prefix appears. The publisher route is derived from the
-  directory: `NamespaceRoutes` (`cascading/namespace_routes.rs`) keeps one
-  lock per namespace, and after each change of the namespace's client
-  publishers `reconcile_publisher` reads them again under it and registers
-  or withdraws the route to match, holding the lock across the registry
-  call. A PUBLISH_NAMESPACE enters the directory first and is answered
-  PUBLISH_NAMESPACE_OK only once its reconcile has registered the route; a
-  failure takes it out of the directory again, tells the namespace
-  subscribers PUBLISH_NAMESPACE_DONE (one subscribing meanwhile was told of
-  the namespace), reconciles, and answers PUBLISH_NAMESPACE_ERROR. A
-  withdrawal that crosses a new publication therefore leaves the route the
-  directory asks for, which
+  `SubscribeNamespace` registers the subscriber route of a prefix a client
+  subscribes to. Both routes are derived from the directory:
+  `NamespaceRoutes` (`cascading/namespace_routes.rs`) keeps one lock per
+  namespace and per prefix, and after each change of the namespace's client
+  publishers or the prefix's client subscribers, `reconcile_publisher` /
+  `reconcile_subscriber` reads them again under it and registers or
+  withdraws the route to match, holding the lock across the registry call.
+  A PUBLISH_NAMESPACE or SUBSCRIBE_NAMESPACE enters the directory first and
+  is answered OK only once its reconcile succeeded, so a client joining
+  while the first one registers waits for that registration; a failure
+  takes the request out of the directory again, reconciles, and answers
+  with an error. A failed PUBLISH_NAMESPACE also tells the namespace
+  subscribers PUBLISH_NAMESPACE_DONE: one subscribing meanwhile was told of
+  the namespace. A withdrawal that crosses a new request therefore leaves
+  the route the directory asks for, which
   `docs/architecture/relay/models/namespace.qnt` checks. Remote subscriber
   relays are told PUBLISH_NAMESPACE_DONE only when a reconcile withdrew the
-  route. Any number of relays may hold the publisher
+  publisher route. Any number of relays may hold the publisher
   route of one namespace (draft-14 §8.2), and the notification reaches every
   subscriber relay. A namespace published before a relay registered its
   subscriber route is found there by prefix; that relay subscribes it at the
@@ -1675,8 +1679,8 @@ no list of relays and no session to each.
   eviction empties it with `strong_count == 1`.
 - **Client-owned routes**: Redis namespace and track routes are
   registered/withdrawn only for client-origin sessions; a namespace's
-  publisher route is held exactly while a client publishes it here, once no
-  reconcile is in flight, and watched-namespace routes only while a
+  publisher route and a prefix's subscriber route are held exactly while a
+  client publishes or subscribes to it here, once no reconcile is in flight, and watched-namespace routes only while a
   client watches the namespace; relay-learned namespaces are purged locally,
   and the namespace subscriptions at other relays released,
   when the last client subscriber for the prefix leaves.
