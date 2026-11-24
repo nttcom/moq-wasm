@@ -121,8 +121,10 @@ dataset columns by configuration.
   `state` record, or the LOC Timestamp of the newest camera frame it showed
   (converted to milliseconds), whichever is newer.
 - `actions` is a chunk: entry `i` is meant for robot time
-  `basis + (i + 1) × dt_ms`. Teleoperation sends chunks of one; a policy
-  sends its action horizon.
+  `basis + (i + 1) × dt_ms`, and the robot drops an entry whose time has
+  passed when the action arrives. A chunk therefore reaches at least
+  `max_action_age_ms` past `basis`: teleoperation repeats the held velocity,
+  a policy sends its action horizon.
 - `T` is the sender's clock and is informational only.
 
 `control`: `{"T": …, "data": {"driver": "operators/alice", "reason": "action"}}`,

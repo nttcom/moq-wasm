@@ -10,13 +10,25 @@ test('the held keys give a velocity per axis, opposite keys cancelling', () => {
   expect(velocityOf(['KeyQ'], 0.5)).toEqual([0, 0])
 })
 
-test("an action is one record of a one-entry chunk in the design's shape", () => {
+test("an action is one record of a chunk repeating the velocity, in the design's shape", () => {
   // Act
-  const payload = encodeAction({ seq: 7, basis: 1_000, dtMs: 50, velocity: [0.5, 0] }, 1_020.4)
+  const payload = encodeAction({ seq: 7, basis: 1_000, dtMs: 50, entries: 3, velocity: [0.5, 0] }, 1_020.4)
 
   // Assert
   expect(JSON.parse(new TextDecoder().decode(payload))).toEqual([
-    { T: 1_020, data: { seq: 7, basis: 1_000, dt_ms: 50, actions: [[0.5, 0]] } }
+    {
+      T: 1_020,
+      data: {
+        seq: 7,
+        basis: 1_000,
+        dt_ms: 50,
+        actions: [
+          [0.5, 0],
+          [0.5, 0],
+          [0.5, 0]
+        ]
+      }
+    }
   ])
 })
 

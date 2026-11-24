@@ -3,7 +3,8 @@
 
 export type RobotState = { t: number; x: number; y: number }
 export type Control = { driver: string | null; reason: string }
-export type ActionChunk = { seq: number; basis: number; dtMs: number; velocity: [number, number] }
+/// `entries` repeats `velocity`, entry `i` meant for robot time `basis + (i + 1) × dtMs`.
+export type ActionChunk = { seq: number; basis: number; dtMs: number; entries: number; velocity: [number, number] }
 
 /// x right, y up.
 const DIRECTIONS: Record<string, [number, number]> = {
@@ -35,11 +36,16 @@ export function velocityOf(held: Iterable<string>, speed: number): [number, numb
   return [Math.sign(vx) * speed, Math.sign(vy) * speed]
 }
 
-/// One `action` record answering the state of robot time `basis`: a chunk of one entry.
+/// One `action` record answering the state of robot time `basis`.
 export function encodeAction(chunk: ActionChunk, nowMs: number): Uint8Array {
   const record = {
     T: Math.round(nowMs),
-    data: { seq: chunk.seq, basis: chunk.basis, dt_ms: chunk.dtMs, actions: [chunk.velocity] }
+    data: {
+      seq: chunk.seq,
+      basis: chunk.basis,
+      dt_ms: chunk.dtMs,
+      actions: Array.from({ length: chunk.entries }, () => chunk.velocity)
+    }
   }
   return new TextEncoder().encode(JSON.stringify([record]))
 }

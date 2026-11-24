@@ -13,6 +13,9 @@ const ACTION_PRIORITY = 0
 const CONTROL_PRIORITY = 0
 const STATE_PRIORITY = 32
 const MAX_ACTION_AGE_MS = 300
+/// The robot drops an entry whose time has passed when the action arrives, so each chunk lasts as long as the robot
+/// accepts the action.
+const CHUNK_ENTRIES = Math.ceil(MAX_ACTION_AGE_MS / SEND_INTERVAL_MS)
 const RESUBSCRIBE_DELAY_MS = 1_000
 
 const urlInput = element<HTMLInputElement>('url')
@@ -114,7 +117,7 @@ function startSending(session: MoqSession, writer: TrackWriter): void {
     }
     seq += 1
     const payload = encodeAction(
-      { seq, basis: state.t, dtMs: SEND_INTERVAL_MS, velocity: velocityOf(held, SPEED) },
+      { seq, basis: state.t, dtMs: SEND_INTERVAL_MS, entries: CHUNK_ENTRIES, velocity: velocityOf(held, SPEED) },
       Date.now()
     )
     void writer.writeGroup(payload).catch((error) => setStatus(`送れません: ${getErrorMessage(error)}`))
