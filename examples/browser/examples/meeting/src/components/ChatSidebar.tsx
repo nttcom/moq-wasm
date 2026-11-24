@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react'
 import { Captions, MessageSquare, SendHorizontal, X } from 'lucide-react'
 import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
-import type { TranscriptRecord } from '../media/transcript'
+import type { TranscriptRecord } from 'moq-wasm/media'
 import { ChatMessage } from '../types/chat'
 import { RecordPanel } from './RecordPanel'
 

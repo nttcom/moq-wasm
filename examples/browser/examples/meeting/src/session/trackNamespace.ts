@@ -1,5 +1,5 @@
 import { access } from '../../../../utils/access'
-import { botNamespace, sameNamespace } from '../../../../utils/roomBots'
+import { botNamespace, botTypeOf } from 'moq-wasm/media'
 
 const MEETING_NAMESPACE_ROOT = access.namespaceRoot
 export const TRANSCRIBER_BOT_TYPE = 'transcriber'
@@ -31,7 +31,9 @@ export function buildTranscriberNamespace(roomName: string): string[] {
 }
 
 export function isTranscriberNamespace(trackNamespace: string[] | undefined, roomName: string): boolean {
-  return trackNamespace !== undefined && sameNamespace(trackNamespace, buildTranscriberNamespace(roomName))
+  return (
+    trackNamespace !== undefined && botTypeOf(buildNamespacePrefix(roomName), trackNamespace) === TRANSCRIBER_BOT_TYPE
+  )
 }
 
 /// Only a temporary app's page can start the transcriber: it goes through the temporary-apps service

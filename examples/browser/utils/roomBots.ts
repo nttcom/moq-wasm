@@ -23,16 +23,6 @@ export class BotsError extends Error {
   }
 }
 
-/// The namespace a bot of `botType` publishes at in `room` (docs/architecture/bot-dispatcher/architecture.md
-/// "Bots in the room").
-export function botNamespace(room: string[], botType: string): string[] {
-  return [...room, 'bots', botType]
-}
-
-export function sameNamespace(left: string[], right: string[]): boolean {
-  return left.join('/') === right.join('/')
-}
-
 /// The room's latest bot of `type`, or `undefined` if it never had one or the temporary-apps service
 /// has no `bot-dispatcher`.
 export async function latestBot(type: string, namespacePrefix: string): Promise<RoomBot | undefined> {

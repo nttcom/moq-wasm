@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { latestBot, startBot, stopBot } from '../../../../utils/roomBots'
-import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
+import type { TranscriptRecord } from 'moq-wasm/media'
+import { type TranscriberStatus, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE, TRANSCRIBER_BOT_TYPE } from '../session/trackNamespace'
 
