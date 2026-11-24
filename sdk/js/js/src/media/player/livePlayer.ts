@@ -367,8 +367,11 @@ export class LivePlayer {
     }
   }
 
+  /// Milliseconds from the start of a broadcast that is not live to the
+  /// position `captureMicros`. `undefined` while live: a live media timeline
+  /// does not say when the broadcast started.
   elapsedMsAt(captureMicros: number): number | undefined {
-    return this.timeline.media.elapsedMsAt(captureMicros)
+    return this.timeline.live ? undefined : this.timeline.media.elapsedMsAt(captureMicros)
   }
 
   /// The session stays the caller's to close.

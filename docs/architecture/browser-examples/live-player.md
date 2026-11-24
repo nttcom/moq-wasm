@@ -789,16 +789,21 @@ a few seconds and come back when it moves.
 
 ### Seek bar
 
-The slider below the video spans the whole broadcast: its left end is the start,
-placed by the MSF media timeline, and its right end is the live edge. The thin bar
-underneath marks the part of that range the relay still caches and can therefore
-replay, which is the only part a seek resolves. The relay cannot be asked which
-groups it still holds, so the bar covers the groups the media timeline lists, which
+The slider below the video spans the part of a live broadcast the relay still
+caches and can therefore replay, which is the only part a seek resolves: its left
+end is the oldest replayable group, labelled by how far it is behind the live
+edge, and its right end is the live edge. The relay cannot be asked which groups
+it still holds, so the slider covers the groups the media timeline lists, which
 the publisher keeps for the relay's default cache TTL (60 s), from the first
 timeline object on. For a track the timeline does not depend on it covers the
 groups the viewer observed within that TTL and shrinks as they age out. Home jumps
-to the oldest replayable position rather than to the start of the broadcast, and
-End returns to live.
+to the oldest replayable position, and End returns to live.
+
+A live broadcast shows no time from its start: the presentation time of its
+media timeline is the LOC capture timestamp (draft-ietf-moq-msf-02 §7.1.1), and
+the timeline lists only the groups the relay still caches, so nothing tells when
+the broadcast started. `LivePlayer.elapsedMsAt` is `undefined` while live, and
+`SeekAxis.broadcastStartSeconds` is set only for a broadcast that is not live.
 
 While review playback runs, the thumb stays on the position that was seeked to
 and a fill from it carries the movement, because the decoder emits frames in

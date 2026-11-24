@@ -10,7 +10,7 @@ export const CONTROLS_MARKUP = `
 <div class="viewer-overlay">
   <div class="viewer-readout">
     <span data-part="seek-start" data-testid="live-player-seek-start">--:--</span>
-    <span data-part="seek-elapsed" data-testid="live-player-seek-elapsed">--:-- / --:--</span>
+    <span data-part="seek-elapsed" data-testid="live-player-seek-elapsed" hidden>--:-- / --:--</span>
     <output data-part="seek-position" data-testid="live-player-seek-position">LIVE</output>
   </div>
   <div class="viewer-seek">
