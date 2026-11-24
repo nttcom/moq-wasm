@@ -1,0 +1,12 @@
+#player {
+  aspect-ratio: 16 / 9;
+}
+
+.embed-snippet {
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  font-size: 13px;
+}

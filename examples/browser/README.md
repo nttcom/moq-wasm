@@ -17,6 +17,7 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `message`                                                                               | Sending and receiving MoQT control messages by hand                                 |
 | `media`, `media-cmaf`                                                                   | Publisher and subscriber pages exchanging WebCodecs media, in LOC or CMAF packaging |
+| `embed`                                                                                 | Playing a broadcast with the `<moq-player>` element of `moq-wasm/element`           |
 | [`live-viewer`](examples/live-viewer/README.md)                                         | Player for `live-ingest`, `moqtsink` and in-browser MP4 publishing, with rewind     |
 | [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                                           |
 | [`live-translate`](examples/live-translate/README.md)                                   | Broadcast translated live by `services/live-translate`                              |

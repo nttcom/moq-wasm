@@ -28,7 +28,8 @@ export default defineConfig({
       input: {
         'core/index': 'src/core/index.ts',
         'media/index': 'src/media/index.ts',
-        'recording/index': 'src/recording/index.ts'
+        'recording/index': 'src/recording/index.ts',
+        'element/index': 'src/element/index.ts'
       },
       preserveEntrySignatures: 'strict',
       output: { entryFileNames: '[name].js' }

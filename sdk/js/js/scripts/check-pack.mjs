@@ -52,6 +52,7 @@ import { LivePlayer, createBroadcast } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
 import { openRecording } from 'moq-wasm/recording'
+import 'moq-wasm/element'
 
 const session: MoqSession = await MoqSession.connect('https://relay.example:4433')
 await createBroadcast(session, ['demo'])
@@ -59,6 +60,8 @@ console.log(LivePlayer)
 const recording = await openRecording(session, 'https://recorder.example', 'id', { token: async () => 'jwt' })
 await session.watchNamespaces(recording.prefix)
 recording.close()
+const player: HTMLElementTagNameMap['moq-player'] = document.createElement('moq-player')
+player.token = async () => 'jwt'
 `
 )
 run('npm', ['install', '--no-audit', '--no-fund'], projectDir)

@@ -35,6 +35,7 @@ const specs =
         "tests/live-viewer-mp4-e2e.spec.ts",
         "tests/recorder-serve-e2e.spec.ts",
         "tests/live-viewer-delivery-e2e.spec.ts",
+        "tests/embed-e2e.spec.ts",
       ];
 
 async function main() {

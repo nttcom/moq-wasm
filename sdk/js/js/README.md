@@ -58,6 +58,12 @@ select **relay-1**, enter that namespace and click **Watch**. Close the publishe
 - **Play a broadcast.** Call `LivePlayer.start()` from a click so the browser
   allows audio playback. See the [player methods](https://nttcom.github.io/moq-wasm/docs/js/classes/media.LivePlayer.html)
   and [player options](https://nttcom.github.io/moq-wasm/docs/js/types/media.LivePlayerOptions.html).
+- **Embed a player with a tag.** Import `moq-wasm/element` and write
+  `<moq-player src="…" namespace="anon/…" controls></moq-player>`. It connects
+  once it has `src` and `namespace`, and closes the session when removed. Set
+  `token` as an attribute, or as a property holding a function that returns a
+  fresh one. Set `src` from a click for audio playback. See the
+  [Embed example](https://github.com/nttcom/moq-wasm/tree/master/examples/browser/examples/embed).
 - **Build a meeting.** The [Meeting example](https://github.com/nttcom/moq-wasm/tree/master/examples/browser/examples/meeting)
   uses `watchBroadcasts()` to discover participants and display their sources.
 - **Send data or replay a recording.** See the [session API](https://nttcom.github.io/moq-wasm/docs/js/classes/core.MoqSession.html)
