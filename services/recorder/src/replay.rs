@@ -835,7 +835,6 @@ mod tests {
         let names: Vec<&str> = catalog
             .tracks
             .iter()
-            .flatten()
             .map(|track| track.name.as_str())
             .collect();
         assert_eq!(names, ["video", "video_timeline"]);

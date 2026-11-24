@@ -220,7 +220,7 @@ pub fn media_timelines<'a>(
     catalog: &'a Catalog,
     tracks: &[&str],
 ) -> impl Iterator<Item = &'a Track> {
-    let listed = catalog.tracks.as_deref().unwrap_or_default();
+    let listed = catalog.tracks.as_slice();
     packaged(catalog, KnownPackaging::MediaTimeline).filter(move |timeline| {
         timeline
             .dependencies(listed)
@@ -229,7 +229,7 @@ pub fn media_timelines<'a>(
 }
 
 fn packaged(catalog: &Catalog, packaging: KnownPackaging) -> impl Iterator<Item = &Track> {
-    catalog.tracks.iter().flatten().filter(
+    catalog.tracks.iter().filter(
         move |track| matches!(&track.packaging, Packaging::Known(known) if *known == packaging),
     )
 }
@@ -439,7 +439,7 @@ mod tests {
             timeline.depends = Some(depends.iter().map(|name| (*name).into()).collect());
             timeline
         };
-        catalog.tracks.as_mut().unwrap().extend([
+        catalog.tracks.extend([
             timeline(
                 "share_1080p_timeline",
                 &["share_1080p", "share_720p", "share_audio"],

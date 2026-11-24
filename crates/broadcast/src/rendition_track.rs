@@ -321,7 +321,7 @@ mod tests {
         let catalog = relay.newest_catalog().await;
 
         // Assert
-        let tracks = catalog.tracks.unwrap();
+        let tracks = catalog.tracks;
         let track = |name: &str| tracks.iter().find(|track| track.name == name);
         let low = track("video_low").expect("the rendition must be listed");
         let profile = track("video/profile_1").unwrap();

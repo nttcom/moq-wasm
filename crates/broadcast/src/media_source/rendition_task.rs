@@ -353,7 +353,7 @@ mod tests {
         // Assert
         assert_eq!(refused, PushOutcome::Queued);
         assert_eq!(keyframe, PushOutcome::Queued);
-        let tracks = catalog.tracks.unwrap();
+        let tracks = catalog.tracks;
         let low = tracks
             .iter()
             .find(|track| track.name == "video_low")

@@ -10,7 +10,7 @@ const MAX_NAMESPACE_FIELDS: usize = 32;
 /// every `depends` element resolves (§5.2.15), and every track carries the
 /// fields its packaging and role require (§5.2.4.1, §8.3).
 pub(crate) fn validate(catalog: &Catalog) -> Result<(), String> {
-    let tracks = catalog.tracks.as_deref().unwrap_or_default();
+    let tracks = &catalog.tracks;
     for track in tracks {
         if track.name.is_empty() {
             return Err("a track has an empty name".to_string());
