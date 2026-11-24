@@ -3417,6 +3417,7 @@ dependencies = [
  "auth-token",
  "aws-lc-rs",
  "base64 0.23.1",
+ "broadcast",
  "bytes",
  "clap",
  "futures-util",

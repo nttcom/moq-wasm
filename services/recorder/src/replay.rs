@@ -480,10 +480,10 @@ impl FetchObjects {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        catalog_reader::CatalogReader,
-        test_support::{connected_sessions, recorded_camera, stored_object, stored_recording},
+    use crate::test_support::{
+        connected_sessions, recorded_camera, stored_object, stored_recording,
     };
+    use broadcast::CatalogReader;
     use bytes::Bytes;
     use moqt::{
         fetch::{Fetch, FetchOption},

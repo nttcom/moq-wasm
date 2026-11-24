@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::Result;
+use broadcast::selection;
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus};
 use msf::{
@@ -14,7 +15,6 @@ use crate::{
     recorder::Content,
     recording_clock::MICROS_PER_MILLI,
     room_recording::TRANSCRIPT_TRACK_NAME,
-    track_selection,
 };
 
 const TRANSCRIPT_EVENT_TYPE: &str = "io.skyway.research.moqt.transcript.v1";
@@ -95,7 +95,7 @@ async fn namespace_tracks(
     let recorded = names.clone();
     for timeline in catalogs
         .iter()
-        .flat_map(|catalog| track_selection::media_timelines(catalog, &recorded))
+        .flat_map(|catalog| selection::media_timelines(catalog, &recorded))
     {
         if !names.contains(&timeline.name.as_str()) {
             names.push(&timeline.name);

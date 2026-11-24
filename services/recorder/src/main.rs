@@ -6,7 +6,6 @@ mod archive_reader;
 mod archive_receiver;
 mod bot_dispatcher_client;
 mod bot_job;
-mod catalog_reader;
 mod composite;
 mod composite_job;
 mod file_writer;
@@ -28,7 +27,6 @@ mod store;
 mod test_support;
 mod token_refresh_task;
 mod track_list;
-mod track_selection;
 mod upload_task;
 mod vod;
 
