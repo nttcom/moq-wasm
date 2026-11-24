@@ -27,6 +27,12 @@ REFRESH_TIMEOUT_SECONDS = 30.0
 RefreshToken = Callable[[str], Awaitable[str]]
 
 
+def unix_time() -> float:
+    """Unix seconds, the clock of a token's `exp`. Callers look it up as a module global so tests
+    can replace it with a virtual clock."""
+    return time.time()
+
+
 @dataclass(frozen=True)
 class TokenClaims:
     app_id: str
@@ -73,7 +79,7 @@ class TokenKeeper:
         `TokenExpired` once the token expired while `refresh` kept failing. Cancelled, it ends at
         once and hands nothing over; `stop()` ends the calls it leaves."""
         while self._refresh_at is not None:
-            await asyncio.sleep(max(self._refresh_at - time.time(), 0))
+            await asyncio.sleep(max(self._refresh_at - unix_time(), 0))
             await self._renew(hand_over)
 
     def runs(self, task: asyncio.Task | None) -> bool:
@@ -95,7 +101,7 @@ class TokenKeeper:
         expires_at = self._claims.expires_at
         assert expires_at is not None
         while True:
-            left = expires_at - time.time()
+            left = expires_at - unix_time()
             if left <= 0:
                 raise TokenExpired(f"app {self.app_id}: the token expired")
             # One deadline for the call and the handover, no later than the token's expiry.
@@ -111,7 +117,7 @@ class TokenKeeper:
                 self._refresh_at = self._due(claims)
                 return
             except Exception as error:
-                left = expires_at - time.time()
+                left = expires_at - unix_time()
                 if left <= 0:
                     raise TokenExpired(f"app {self.app_id}: the token expired: {error!r}") from error
                 logger.warning("app %s: cannot refresh the token yet: %r", self.app_id, error)
@@ -155,7 +161,7 @@ class TokenKeeper:
     def _due(claims: TokenClaims) -> float | None:
         if claims.expires_at is None:
             return None
-        lifetime = max(claims.expires_at - time.time(), 0)
+        lifetime = max(claims.expires_at - unix_time(), 0)
         return claims.expires_at - min(REFRESH_MARGIN_SECONDS, lifetime / 2)
 
 

@@ -135,10 +135,10 @@ async def test_a_track_s_publisher_priority_reaches_the_native_session():
     await session.close()
 
 
-async def test_a_refreshed_token_is_handed_to_the_relay():
+async def test_a_refreshed_token_is_handed_to_the_relay(virtual_clock):
     # Arrange: the first token is due for refresh halfway through its 0.2 s
-    first = unsigned_token("temp-app", time.time() + 0.2)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.2)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
     async def refresh(token: str) -> str:
         return later
@@ -152,10 +152,10 @@ async def test_a_refreshed_token_is_handed_to_the_relay():
     await session.close()
 
 
-async def test_two_sessions_awaited_from_one_connection_each_refresh_their_own_token():
+async def test_two_sessions_awaited_from_one_connection_each_refresh_their_own_token(virtual_clock):
     # Arrange: both sessions start with a token due for refresh halfway through its 0.4 s
-    first = unsigned_token("temp-app", time.time() + 0.4)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.4)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
     async def refresh(token: str) -> str:
         return later
@@ -174,17 +174,17 @@ async def test_two_sessions_awaited_from_one_connection_each_refresh_their_own_t
         await session.close()
 
 
-async def test_a_short_lived_token_is_refreshed_halfway_through_its_lifetime():
+async def test_a_short_lived_token_is_refreshed_halfway_through_its_lifetime(virtual_clock):
     # Arrange
-    first = unsigned_token("temp-app", time.time() + 0.4)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.4)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
     asked_at: list[float] = []
 
     async def refresh(token: str) -> str:
-        asked_at.append(time.time())
+        asked_at.append(virtual_clock.unix_time())
         return later
 
-    started_at = time.time()
+    started_at = virtual_clock.unix_time()
     relay = FakeRelay()
     session = await open_session(relay, first, refresh)
 
@@ -192,15 +192,15 @@ async def test_a_short_lived_token_is_refreshed_halfway_through_its_lifetime():
     await eventually(lambda: relay.sessions[0].refreshed == [later])
 
     # Assert
-    assert 0.15 <= asked_at[0] - started_at < 0.35
+    assert asked_at[0] - started_at == pytest.approx(0.2)
     await session.close()
 
 
-async def test_a_failed_refresh_is_retried_until_the_token_actually_expires(monkeypatch):
+async def test_a_failed_refresh_is_retried_until_the_token_actually_expires(monkeypatch, virtual_clock):
     # Arrange: the first refresh fails with 0.6 s left; the retry, half the time left later, succeeds
     monkeypatch.setattr(_token, "MIN_RETRY_SECONDS", 0.05)
-    first = unsigned_token("temp-app", time.time() + 0.6)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.6)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
     answers: list[str | Exception] = [RuntimeError("issuer unavailable"), later]
 
     async def refresh(token: str) -> str:
@@ -220,12 +220,12 @@ async def test_a_failed_refresh_is_retried_until_the_token_actually_expires(monk
     await session.close()
 
 
-async def test_a_refreshed_token_the_relay_refuses_is_refreshed_again_from_the_accepted_one(monkeypatch):
+async def test_a_refreshed_token_the_relay_refuses_is_refreshed_again_from_the_accepted_one(monkeypatch, virtual_clock):
     # Arrange: the relay refuses the first refreshed token
     monkeypatch.setattr(_token, "MIN_RETRY_SECONDS", 0.05)
-    first = unsigned_token("temp-app", time.time() + 0.6)
-    refused = unsigned_token("temp-app", time.time() + 3600)
-    accepted = unsigned_token("temp-app", time.time() + 3601)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.6)
+    refused = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
+    accepted = unsigned_token("temp-app", virtual_clock.unix_time() + 3601)
     answers = [refused, accepted]
     asked_with: list[str] = []
 
@@ -258,11 +258,11 @@ async def test_a_refreshed_token_the_relay_refuses_is_refreshed_again_from_the_a
 
 
 @pytest.mark.parametrize("refreshed", ["same token", "other app"])
-async def test_a_refreshed_token_that_is_not_later_or_of_another_app_is_not_handed_over(monkeypatch, refreshed):
+async def test_a_refreshed_token_that_is_not_later_or_of_another_app_is_not_handed_over(monkeypatch, refreshed, virtual_clock):
     # Arrange
     monkeypatch.setattr(_token, "MIN_RETRY_SECONDS", 0.05)
-    first = unsigned_token("temp-app", time.time() + 0.4)
-    other = first if refreshed == "same token" else unsigned_token("other-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.4)
+    other = first if refreshed == "same token" else unsigned_token("other-app", virtual_clock.unix_time() + 3600)
     calls = 0
 
     async def refresh(token: str) -> str:
@@ -282,9 +282,9 @@ async def test_a_refreshed_token_that_is_not_later_or_of_another_app_is_not_hand
     assert 1 <= calls <= 6
 
 
-async def test_close_returns_after_the_refresh_callback_it_cancelled_cleaned_up():
+async def test_close_returns_after_the_refresh_callback_it_cancelled_cleaned_up(virtual_clock):
     # Arrange: the refresh is in progress when the session is closed, well before it times out
-    first = unsigned_token("temp-app", time.time() + 0.6)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.6)
     refreshing, cleaned_up = asyncio.Event(), asyncio.Event()
 
     async def refresh(token: str) -> str:
@@ -380,10 +380,10 @@ async def test_close_returns_when_the_refresh_callback_it_cancelled_returns_a_to
     assert relay.sessions[0].refreshed == []
 
 
-async def test_a_token_the_refresh_returns_after_catching_its_timeout_is_not_handed_over():
+async def test_a_token_the_refresh_returns_after_catching_its_timeout_is_not_handed_over(virtual_clock):
     # Arrange: the refresh outlives the token by catching the timeout at its expiry
-    first = unsigned_token("temp-app", time.time() + 0.3)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
     async def refresh(token: str) -> str:
         try:
@@ -401,11 +401,11 @@ async def test_a_token_the_refresh_returns_after_catching_its_timeout_is_not_han
     assert relay.sessions[0].refreshed == []
 
 
-async def test_a_refresh_whose_shared_future_someone_else_cancelled_is_retried(monkeypatch):
+async def test_a_refresh_whose_shared_future_someone_else_cancelled_is_retried(monkeypatch, virtual_clock):
     # Arrange: the first refresh hands back a future another task shares
     monkeypatch.setattr(_token, "MIN_RETRY_SECONDS", 0.05)
-    first = unsigned_token("temp-app", time.time() + 0.6)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.6)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
     shared = asyncio.get_running_loop().create_future()
     refreshed = asyncio.get_running_loop().create_future()
     refreshed.set_result(later)
@@ -427,9 +427,9 @@ async def test_a_refresh_whose_shared_future_someone_else_cancelled_is_retried(m
     await session.close()
 
 
-async def test_the_token_expires_on_time_while_the_refresh_it_gave_up_on_still_cleans_up():
+async def test_the_token_expires_on_time_while_the_refresh_it_gave_up_on_still_cleans_up(virtual_clock):
     # Arrange: the refresh never answers, and its cleanup waits until the test lets it end
-    first = unsigned_token("temp-app", time.time() + 0.3)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
     cleaned_up = asyncio.Event()
     cleanup_may_end = asyncio.Event()
 
@@ -452,10 +452,10 @@ async def test_the_token_expires_on_time_while_the_refresh_it_gave_up_on_still_c
     assert cleaned_up.is_set()
 
 
-async def test_a_handover_the_relay_does_not_answer_before_the_token_expires_ends_the_session():
+async def test_a_handover_the_relay_does_not_answer_before_the_token_expires_ends_the_session(virtual_clock):
     # Arrange: the relay never answers the refreshed token
-    first = unsigned_token("temp-app", time.time() + 0.3)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
     async def refresh(token: str) -> str:
         return later
@@ -473,13 +473,13 @@ async def test_a_handover_the_relay_does_not_answer_before_the_token_expires_end
         await within(session.closed())
 
 
-async def test_a_refresh_that_returns_after_the_event_loop_stalled_past_the_expiry_is_not_handed_over():
+async def test_a_refresh_that_returns_after_the_event_loop_stalled_past_the_expiry_is_not_handed_over(virtual_clock):
     # Arrange: the refresh blocks the event loop until the token expired, then returns a later one
-    first = unsigned_token("temp-app", time.time() + 0.3)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
     async def refresh(token: str) -> str:
-        time.sleep(0.3)
+        virtual_clock.advance(0.3)
         return later
 
     relay = FakeRelay()
@@ -491,11 +491,11 @@ async def test_a_refresh_that_returns_after_the_event_loop_stalled_past_the_expi
     assert relay.sessions[0].refreshed == []
 
 
-async def test_a_handover_the_event_loop_stalled_past_the_expiry_before_it_started_is_not_made():
+async def test_a_handover_the_event_loop_stalled_past_the_expiry_before_it_started_is_not_made(virtual_clock):
     # Arrange: the event loop stalls past the token's expiry once the handover was scheduled, before
     # it starts
-    first = unsigned_token("temp-app", time.time() + 0.3)
-    later = unsigned_token("temp-app", time.time() + 3600)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
+    later = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
     async def refresh(token: str) -> str:
         return later
@@ -509,7 +509,7 @@ async def test_a_handover_the_event_loop_stalled_past_the_expiry_before_it_start
             super().add(call)
             self.added += 1
             if self.added == 2:
-                time.sleep(0.3)
+                virtual_clock.advance(0.3)
 
     relay = FakeRelay()
     session = await open_session(relay, first, refresh)
@@ -522,12 +522,12 @@ async def test_a_handover_the_event_loop_stalled_past_the_expiry_before_it_start
     assert relay.sessions[0].refreshed == []
 
 
-async def test_a_refresh_that_returns_no_str_is_reported_as_a_type_error_naming_what_it_returned(caplog):
+async def test_a_refresh_that_returns_no_str_is_reported_as_a_type_error_naming_what_it_returned(caplog, virtual_clock):
     # Arrange: the refresh returns the issuer's answer instead of the token in it
     class IssuedToken:
-        token = unsigned_token("temp-app", time.time() + 3600)
+        token = unsigned_token("temp-app", virtual_clock.unix_time() + 3600)
 
-    first = unsigned_token("temp-app", time.time() + 0.3)
+    first = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
 
     async def refresh(token: str) -> str:
         return IssuedToken()  # type: ignore[return-value]
@@ -544,9 +544,9 @@ async def test_a_refresh_that_returns_no_str_is_reported_as_a_type_error_naming_
     assert relay.sessions[0].refreshed == []
 
 
-async def test_run_cancels_the_work_and_raises_once_the_token_expired():
+async def test_run_cancels_the_work_and_raises_once_the_token_expired(virtual_clock):
     # Arrange: every refresh fails until the token expires
-    token = unsigned_token("temp-app", time.time() + 0.3)
+    token = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
 
     async def refresh(token: str) -> str:
         raise RuntimeError("temporary-apps service unavailable")
@@ -561,9 +561,9 @@ async def test_run_cancels_the_work_and_raises_once_the_token_expired():
     assert work.cancelled()
 
 
-async def test_run_raises_the_expiry_even_when_the_work_returned_because_of_it():
+async def test_run_raises_the_expiry_even_when_the_work_returned_because_of_it(virtual_clock):
     # Arrange: the work is a watch, which ends with the session
-    token = unsigned_token("temp-app", time.time() + 0.3)
+    token = unsigned_token("temp-app", virtual_clock.unix_time() + 0.3)
 
     async def refresh(token: str) -> str:
         raise RuntimeError("temporary-apps service unavailable")

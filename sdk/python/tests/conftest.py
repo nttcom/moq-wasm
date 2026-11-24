@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -12,7 +13,10 @@ from pathlib import Path
 
 import pytest
 
+from moq_wasm import _token
 from moq_wasm.media import _remote_broadcast
+
+from tests.virtual_time import VirtualTimeLoop
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGET = REPO_ROOT / "target" / "debug"
@@ -82,6 +86,21 @@ def signed_token(app_id: str, secret: str, ttl: str = "1h") -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def pytest_asyncio_loop_factories(config, item):
+    if "virtual_clock" in item.fixturenames:
+        return {"virtual_time": VirtualTimeLoop}
+    return {"default": asyncio.new_event_loop}
+
+
+@pytest.fixture
+async def virtual_clock(monkeypatch) -> VirtualTimeLoop:
+    """The test's event loop; the token keeper reads its clock too."""
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, VirtualTimeLoop)
+    monkeypatch.setattr(_token, "unix_time", loop.unix_time)
+    return loop
 
 
 @pytest.fixture
