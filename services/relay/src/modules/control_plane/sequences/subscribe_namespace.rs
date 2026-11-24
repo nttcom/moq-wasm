@@ -501,7 +501,7 @@ async fn subscribe_at_publisher_relays(
 #[cfg(test)]
 mod tests {
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
-    use std::{sync::Arc, time::Duration};
+    use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
     use moqt::namespace::NamespaceInterest;
 
@@ -525,6 +525,7 @@ mod tests {
                 inter_relay_connection_manager, local_publisher_resolver, namespaces_and_tracks,
                 producer_with, table_with_upstream, track_key,
             },
+            in_memory_route_registry::InMemoryRouteRegistry,
             mock_session::{
                 MockPublishHandler, MockPublishNamespaceHandler, MockSubscribeNamespaceHandler,
                 MockSubscribeNamespaceUpdateHandler, PUBLISH_REQUEST_ID, RecordedControlMessages,
@@ -1077,6 +1078,14 @@ mod tests {
         ctx: &DownstreamPublishContext,
         handler: &MockSubscribeNamespaceUpdateHandler,
     ) {
+        update_namespace_subscription_with(ctx, handler, &NoopRelayRouteRegistry).await;
+    }
+
+    async fn update_namespace_subscription_with(
+        ctx: &DownstreamPublishContext,
+        handler: &MockSubscribeNamespaceUpdateHandler,
+        route_registry: &dyn RelayRouteRegistry,
+    ) {
         let inter_relay_connection_manager = InterRelayConnectionManager::new(
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             unused_inter_relay_client_config(),
@@ -1088,12 +1097,70 @@ mod tests {
                 &ctx.forwarder,
                 &ctx.downstream_publish(),
                 CascadingRelayContext {
-                    route_registry: &NoopRelayRouteRegistry,
+                    route_registry,
                     inter_relay_connection_manager: &inter_relay_connection_manager,
                 },
                 handler,
             )
             .await;
+    }
+
+    /// Moves the session's subscription from `ns/old` to `ns/new`. `ns/old`
+    /// starts with the route the session's SUBSCRIBE_NAMESPACE registered.
+    async fn routes_after_a_prefix_update(ctx: &DownstreamPublishContext) -> InMemoryRouteRegistry {
+        let route_registry = InMemoryRouteRegistry::default();
+        route_registry
+            .register_namespace_subscriber("ns/old")
+            .await
+            .unwrap();
+        ctx.table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER_SESSION,
+            "ns/old".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+        let handler = MockSubscribeNamespaceUpdateHandler::new(
+            "ns/old",
+            "ns/new",
+            NamespaceInterest::Namespaces,
+        );
+        update_namespace_subscription_with(ctx, &handler, &route_registry).await;
+        route_registry
+    }
+
+    #[tokio::test]
+    async fn a_namespace_prefix_update_withdraws_the_route_of_the_prefix_it_leaves() {
+        // Arrange
+        let ctx = context_with_published_track(SentMessages::default()).await;
+
+        // Act
+        let route_registry = routes_after_a_prefix_update(&ctx).await;
+
+        // Assert
+        assert_eq!(
+            route_registry.routes().namespace_subscribers,
+            BTreeSet::from(["ns/new".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_prefix_update_keeps_the_route_of_a_prefix_another_client_subscribes_to() {
+        // Arrange
+        const OTHER_SUBSCRIBER_SESSION: SessionId = 9;
+        let ctx = context_with_published_track(SentMessages::default()).await;
+        ctx.table.register_subscribe_namespace(
+            OTHER_SUBSCRIBER_SESSION,
+            "ns/old".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+
+        // Act
+        let route_registry = routes_after_a_prefix_update(&ctx).await;
+
+        // Assert
+        assert_eq!(
+            route_registry.routes().namespace_subscribers,
+            BTreeSet::from(["ns/new".to_string(), "ns/old".to_string()])
+        );
     }
 
     #[tokio::test]
