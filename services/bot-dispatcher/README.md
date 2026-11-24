@@ -51,7 +51,7 @@ def launch_token(app_id: str, secret: str, bots: str = "") -> str:
 
 ## API
 
-Pass the launch token as `Authorization: Bearer <token>` on `/bots` and `/bots/*` routes (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific):
+Pass the launch token as `Authorization: Bearer <token>` on the routes below (`namespace_prefix` is `<appId>/<room>`; `options` is optional and type-specific):
 
 | Route | Response |
 | --- | --- |
