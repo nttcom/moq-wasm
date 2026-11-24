@@ -44,6 +44,7 @@ pub enum Access {
     Publish,
     Subscribe,
     Bots,
+    Calls,
 }
 
 /// A token the VTS `POST /verify` found signed by its app's secret. The VTS
@@ -83,6 +84,7 @@ impl SignedToken {
             &self.claims.publish,
             &self.claims.subscribe,
             &self.claims.bots,
+            &self.claims.calls,
         ]
         .into_iter()
         .flatten()
@@ -102,6 +104,7 @@ impl SignedToken {
             Access::Publish => &self.claims.publish,
             Access::Subscribe => &self.claims.subscribe,
             Access::Bots => &self.claims.bots,
+            Access::Calls => &self.claims.calls,
         };
         let Some(claim) = claim else {
             return false;
@@ -139,6 +142,7 @@ mod tests {
                 publish: publish.map(str::to_string),
                 subscribe: Some("site1".to_string()),
                 bots: None,
+                calls: None,
                 iat: Some(iat),
                 exp: Some(exp),
                 relay_id: None,
@@ -289,6 +293,31 @@ mod tests {
         assert!(
             !signed(false, NOW_SECS, NOW_SECS + 60, Some("")).covers(Access::Bots, "APP/site1")
         );
+    }
+
+    #[test]
+    fn only_the_calls_claim_covers_phone_calls() {
+        // Arrange
+        let mut token = signed(false, NOW_SECS, NOW_SECS + 60, Some(""));
+        token.claims.calls = Some("site1".to_string());
+
+        // Act / Assert
+        assert!(token.covers(Access::Calls, "APP/site1/phone/c1"));
+        assert!(!token.covers(Access::Calls, "APP/site2/phone/c1"));
+        assert!(!token.covers(Access::Bots, "APP/site1"));
+        assert!(
+            !signed(false, NOW_SECS, NOW_SECS + 60, Some("")).covers(Access::Calls, "APP/site1")
+        );
+    }
+
+    #[test]
+    fn a_calls_path_with_an_empty_element_is_rejected() {
+        // Arrange
+        let mut token = signed(false, NOW_SECS, NOW_SECS + 60, None);
+        token.claims.calls = Some("/site1".to_string());
+
+        // Act / Assert
+        assert_eq!(check(&token), Err(ClaimError::EmptyElement));
     }
 
     #[test]

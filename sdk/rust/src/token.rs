@@ -145,6 +145,7 @@ mod tests {
             publish: None,
             subscribe: None,
             bots: None,
+            calls: None,
             iat: None,
             exp,
             relay_id: None,
