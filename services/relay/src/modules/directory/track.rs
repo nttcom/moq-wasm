@@ -186,7 +186,9 @@ pub(crate) struct Track {
     subscribing: HashSet<SessionId>,
     last_failure: Option<CreationFailure>,
     /// Read only while the track has no producer; every way the last
-    /// producer leaves sets it again or removes the track.
+    /// producer leaves sets it again or removes the track. While the track
+    /// is `Creating`, `Some` tells a track kept by `outlive_last_producer`
+    /// from one that never had a producer.
     last_producer_end: Option<PublishDoneReason>,
     reservations: Reservations,
     /// Sessions a forwarded PUBLISH is on its way to.
@@ -251,20 +253,22 @@ impl Track {
 
     /// Keeps the track its last producer left while an upstream SUBSCRIBE is
     /// in flight, so its consumers wait for that publisher instead of ending;
-    /// `end` ends them if no producer comes of it. Returns false, keeping
-    /// nothing, when no SUBSCRIBE is in flight.
+    /// `end` ends them if no producer comes of it. The track is `Creating`
+    /// again, so a SUBSCRIBE that finds it waits for that publisher too.
+    /// Returns false, keeping nothing, when no SUBSCRIBE is in flight.
     pub(crate) fn outlive_last_producer(&mut self, end: PublishDoneReason) -> bool {
         if self.pending_producers == 0 {
             return false;
         }
         self.last_producer_end = Some(end);
+        self.creation.send_replace(CreationState::Creating);
         true
     }
 
     /// One upstream SUBSCRIBE ended without a producer. When it was the last
     /// one and the track has no producer, the creation fails with the last
-    /// failure, or a track kept by `outlive_last_producer` ends; the caller
-    /// then removes the entry.
+    /// failure, which also ends a track kept by `outlive_last_producer`; the
+    /// caller then removes the entry.
     pub(crate) fn pending_producer_ended(
         &mut self,
         failure: Option<CreationFailure>,
@@ -276,18 +280,15 @@ impl Track {
         if self.pending_producers > 0 || !self.producers.is_empty() {
             return PendingProducersOutcome::Kept;
         }
-        if !self.is_creating() {
-            return match self.last_producer_end.take() {
-                Some(end) => PendingProducersOutcome::Ended(end),
-                None => PendingProducersOutcome::Kept,
-            };
-        }
         let failure = self.last_failure.take().unwrap_or(CreationFailure {
             code: RequestErrorCode::TrackDoesNotExist,
             reason: "Designated namespace and track name do not exist.".to_string(),
         });
         let _ = self.creation.send(CreationState::Failed(failure));
-        PendingProducersOutcome::CreationFailed
+        match self.last_producer_end.take() {
+            Some(end) => PendingProducersOutcome::Ended(end),
+            None => PendingProducersOutcome::CreationFailed,
+        }
     }
 
     pub(crate) fn reserve(&mut self, peer: SessionPeer) {
@@ -341,13 +342,16 @@ impl Track {
         }
     }
 
+    /// A track being created takes any publisher; one kept by
+    /// `outlive_last_producer` only a publisher someone still needs.
     pub(crate) fn takes(
         &self,
         publisher_session_id: SessionId,
         publisher_peer: SessionPeer,
     ) -> bool {
+        let is_first_creation = self.is_creating() && self.last_producer_end.is_none();
         !self.producers.contains_key(&publisher_session_id)
-            && (self.is_creating() || self.wants(publisher_peer))
+            && (is_first_creation || self.wants(publisher_peer))
     }
 
     /// The Forward State the upstream subscription of `producer` belongs
