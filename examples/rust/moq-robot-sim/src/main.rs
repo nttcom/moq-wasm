@@ -27,6 +27,10 @@ struct Cli {
     /// The room, `/`-separated; the robot publishes `<room>/robot`.
     #[arg(long, default_value = "anon/robot-teleop")]
     room: String,
+    /// Opens an episode with this task in which the policy
+    /// (`<room>/bots/policy`) drives whenever no operator does.
+    #[arg(long, value_name = "TASK")]
+    policy_episode: Option<String>,
 }
 
 /// The point the robot is, and the velocity it moves at, in units per
@@ -92,6 +96,10 @@ async fn main() -> anyhow::Result<()> {
         .announce()
         .await?;
     let mut robot = robotics::run_robot(&session, &broadcast, ArbiterConfig::default()).await?;
+    if let Some(task) = cli.policy_episode {
+        let episode = robot.start_episode(task, true).await?;
+        println!("episode {episode} open with the policy");
+    }
     println!("robot ready in {}", cli.room);
 
     let mut body = Body::default();
