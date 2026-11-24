@@ -62,7 +62,8 @@ select **relay-1**, enter that namespace and click **Watch**. Close the publishe
   `<moq-player src="…" namespace="anon/…" controls></moq-player>`. It connects
   once it has `src` and `namespace`, and closes the session when removed. Set
   `token` as an attribute, or as a property holding a function that returns a
-  fresh one. Set `src` from a click for audio playback. See the
+  fresh one. Set `src` from a click for audio playback. A page that opens its
+  own session sets the `session` property instead of `src`. See the
   [Embed example](https://github.com/nttcom/moq-wasm/tree/master/examples/browser/examples/embed).
 - **Build a meeting.** The [Meeting example](https://github.com/nttcom/moq-wasm/tree/master/examples/browser/examples/meeting)
   uses `watchBroadcasts()` to discover participants and display their sources.

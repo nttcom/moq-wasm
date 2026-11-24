@@ -18,11 +18,21 @@ export class MoqPlayerElement extends HTMLElement {
     //
     // (undocumented)
     get player(): LivePlayer | undefined;
+    // Warning: (ae-forgotten-export) The symbol "MoqSession" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    get session(): MoqSession | undefined;
+    set session(value: MoqSession | undefined);
     // Warning: (ae-forgotten-export) The symbol "MoqConnectOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
     get token(): MoqConnectOptions['token'];
     set token(value: MoqConnectOptions['token']);
+    // Warning: (ae-forgotten-export) The symbol "LiveTracks" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    get tracks(): LiveTracks | undefined;
+    set tracks(value: LiveTracks | undefined);
 }
 
 // (No @packageDocumentation comment for this package)
