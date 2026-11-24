@@ -5,7 +5,7 @@ Next: order the route's withdrawal against a concurrent registration, starting a
 ## Goal
 
 A namespace a client publishes on this relay always has its route in the registry.
-Reproduced with a route registry double that holds calls: client B's `register_route` (`publish_namespace.rs:47`) is in flight, client A's PUBLISH_NAMESPACE_DONE finds no client left and withdraws, B registers in the directory, A's withdrawal lands last.
+Reproduced with a route registry double that holds calls: client B's `register_route` (`publish_namespace.rs:47`) is in flight, client A's PUBLISH_NAMESPACE_DONE finds no client left and withdraws, B registers in the directory, A's withdrawal lands last; so does `docs/architecture/relay/models/namespace.qnt` (invariant `publishedNamespaceHasRoute`, 8 steps).
 The route also leaves `owned_routes`, so the heartbeat does not restore it: clients of other relays can neither subscribe to nor discover the namespace until it is published again.
 
 ## Plan
