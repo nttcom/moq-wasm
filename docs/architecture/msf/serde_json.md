@@ -18,7 +18,7 @@ Move `serde_json` from a dev-dependency to a dependency of the `msf` crate.
 
 draft-ietf-moq-msf-02 §5.1.1: "A subscriber MUST NOT attempt to parse a
 catalog version which it does not understand." Every reader (the recorder,
-live-translate, live-egress, moq-cli and the browser through
+live-translate, egress-gateway, moq-cli and the browser through
 `sdk/js`) deserialized the catalog with `serde_json` itself and never
 looked at `version`. A delta update (§5.1.6) carries no `version` (§5.3), so
 the check needs the JSON document before it becomes a `Catalog`.

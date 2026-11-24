@@ -1009,6 +1009,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "egress-gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "broadcast",
+ "clap",
+ "mediapack",
+ "moqt",
+ "telemetry-otlp",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2220,20 +2234,6 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
-
-[[package]]
-name = "live-egress"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "broadcast",
- "clap",
- "mediapack",
- "moqt",
- "telemetry-otlp",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "live-translate"

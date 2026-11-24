@@ -8,7 +8,7 @@ layout, the publishing flow or the invariants described here change.
 `crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
 unit draft-ietf-moq-msf-02 initiates and ends (§11.3, §11.4): a catalog, LOC and
 CMAF media tracks, a media timeline and a publisher-side FETCH cache. It also
-reads such a broadcast back into media events for `services/live-egress` (see
+reads such a broadcast back into media events for `services/egress-gateway` (see
 "Reading a broadcast").
 `services/ingest-gateway`, `crates/gst-plugin-moqt`, `services/ingest-gateway`, `moq-cli` and the
 Live Viewer's MP4 publisher, through `sdk/js`, build on it. The track
@@ -355,7 +355,7 @@ groups on a seek axis.
 
 ## Reading a broadcast
 `BroadcastReader` is the subscriber side of the same broadcast, used by
-`live-egress`: it subscribes to one and yields its media as `mediapack` media
+`egress-gateway`: it subscribes to one and yields its media as `mediapack` media
 events on one channel. Each track is read by a `TrackReceiveTask` spawned
 through `moqt::executor`, aborted when the reader is dropped.
 
