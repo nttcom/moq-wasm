@@ -1,24 +1,12 @@
-mod app_config;
 mod arrival_clamp;
-mod command_subscriber;
-mod onvif_client;
-mod onvif_profile_list;
-mod onvif_requests;
-mod onvif_services;
-mod onvif_stream_uri;
-mod ptz_config;
-mod ptz_worker;
+mod onvif;
 mod rtsp_source;
-mod soap_client;
-mod wsse_auth;
 
-use self::{
-    arrival_clamp::ArrivalClamp,
-    command_subscriber::{CommandSubscriber, CommandTrack},
-};
+use self::arrival_clamp::ArrivalClamp;
 use crate::RelayArgs;
 use anyhow::{Context, Result, anyhow, bail};
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
+use clap::ArgGroup;
 use mediapack::MediaEvent;
 use moqt::{CertificateVerification, ClientConfig, client::Session};
 use std::path::PathBuf;
@@ -33,33 +21,26 @@ const RTSP_RETRY_MIN_DELAY: Duration = Duration::from_secs(1);
 const RTSP_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(clap::Args, Debug)]
+#[command(group(
+    ArgGroup::new("source")
+        .args(["rtsp_url", "onvif_ip"])
+        .required(true)
+        .multiple(true)
+))]
 pub(crate) struct Args {
     #[command(flatten)]
     relay: RelayArgs,
 
-    /// IP address or hostname of the camera
-    #[arg(long)]
-    pub(crate) ip: String,
+    /// RTSP stream to publish as profile 1 in place of the ONVIF camera's profiles; put credentials in the URL
+    #[arg(long, value_name = "URL")]
+    rtsp_url: Option<String>,
 
-    /// Username for RTSP/ONVIF authentication
-    #[arg(long)]
-    pub(crate) username: String,
+    #[command(flatten)]
+    onvif: onvif::OnvifArgs,
 
-    /// Password for RTSP/ONVIF authentication
-    #[arg(long)]
-    pub(crate) password: String,
-
-    /// Timeout in milliseconds
-    #[arg(long, default_value_t = 3000)]
-    pub(crate) timeout_ms: u64,
-
-    /// Track namespace for publishing video (slash-separated)
+    /// Track namespace for publishing media (slash-separated)
     #[arg(long, default_value = "anon/onvif/client")]
     publish_namespace: String,
-
-    /// Track namespace for subscribing to commands (slash-separated)
-    #[arg(long, default_value = "anon/onvif/viewer")]
-    subscribe_namespace: String,
 
     /// Track name prefix for video streams
     #[arg(long, default_value = "video")]
@@ -68,15 +49,6 @@ pub(crate) struct Args {
     /// Track name prefix for audio streams
     #[arg(long, default_value = "audio")]
     audio_track: String,
-
-    /// Track name for ONVIF commands
-    #[arg(long, default_value = "command")]
-    command_track: String,
-
-    /// Publish this RTSP stream as profile 1 instead of the camera's ONVIF
-    /// profiles, e.g. a local test server
-    #[arg(long, value_name = "URL")]
-    rtsp_url: Option<String>,
 
     /// Dump the first keyframe AnnexB payload of profile 1 for ffprobe (default: /tmp/moqt-onvif-keyframe.h264)
     #[arg(
@@ -95,23 +67,18 @@ struct ProfileSource {
 
 pub(crate) async fn run(args: Args) -> Result<()> {
     let relay = args.relay.moqt_target().context("--moqt-url is required")?;
-    let target = app_config::Target::from_args(&args)?;
     let publish_namespace = parse_namespace(&args.publish_namespace);
     if publish_namespace.is_empty() {
         bail!("publish namespace is required");
     }
-    let subscribe_namespace = parse_namespace(&args.subscribe_namespace);
-    if subscribe_namespace.is_empty() {
-        bail!("subscribe namespace is required");
-    }
-
-    let command_sender = ptz_worker::spawn(target.clone());
-    let sources = match &args.rtsp_url {
-        Some(rtsp_url) => vec![ProfileSource {
+    let camera = args.onvif.target()?;
+    let sources = match (&args.rtsp_url, &camera) {
+        (Some(rtsp_url), _) => vec![ProfileSource {
             tracks: profile_tracks(&args, 1, "RTSP"),
             rtsp_url: rtsp_url.clone(),
         }],
-        None => fetch_profile_sources(&target, &args).await?,
+        (None, Some(camera)) => camera_sources(&args, camera).await?,
+        (None, None) => unreachable!("clap requires --rtsp-url or --onvif-ip"),
     };
 
     let client_config = ClientConfig {
@@ -124,24 +91,26 @@ pub(crate) async fn run(args: Args) -> Result<()> {
     let session = Session::connect(&relay.url, &client_config)
         .await
         .context("connect to relay")?;
-    let mut commands = CommandSubscriber::run(
-        &session,
-        CommandTrack {
-            namespace: subscribe_namespace.clone(),
-            track: args.command_track.clone(),
-        },
-        command_sender,
-    )
-    .await?;
+    let mut commands = match camera {
+        Some(camera) => Some(onvif::follow_commands(&session, &args.onvif, camera).await?),
+        None => None,
+    };
     let connection = RelayConnection::with_client_session(&session);
     let broadcast = Broadcast::new(connection.clone(), publish_namespace);
 
     let result = tokio::select! {
         result = publish_profiles(broadcast, sources, args.dump_keyframe) => result,
-        result = commands.finished() => result,
+        result = commands_finished(&mut commands) => result,
     };
     connection.close().await;
     result
+}
+
+async fn commands_finished(commands: &mut Option<onvif::CommandSubscriber>) -> Result<()> {
+    match commands {
+        Some(commands) => commands.finished().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Starts every profile on the first SUBSCRIBE to the catalog or a profile
@@ -263,58 +232,27 @@ fn profile_tracks(args: &Args, profile_index: usize, label: &str) -> SourceTrack
     }
 }
 
-async fn fetch_profile_sources(
-    target: &app_config::Target,
-    args: &Args,
-) -> Result<Vec<ProfileSource>> {
-    let client = soap_client::build(target)?;
-    let onvif = onvif_client::OnvifClient::initialize_media(client, target.clone()).await?;
-    let profiles = onvif_profile_list::fetch(&onvif).await?;
-    let mut sources = Vec::new();
-    for (index, profile) in profiles.into_iter().enumerate() {
-        let uri = match onvif_stream_uri::fetch(&onvif, &profile.token).await {
-            Ok(uri) => uri,
-            Err(err) => {
-                tracing::warn!(
-                    "GetStreamUri failed for profile_token={}: {err}",
-                    profile.token
-                );
-                continue;
+async fn camera_sources(args: &Args, camera: &onvif::Target) -> Result<Vec<ProfileSource>> {
+    let profiles = onvif::fetch_profiles(camera).await?;
+    Ok(profiles
+        .into_iter()
+        .enumerate()
+        .map(|(index, profile)| {
+            let tracks = profile_tracks(args, index + 1, &profile.label);
+            tracing::info!(
+                "MoQ media tracks mapped: video_track={} audio_track={} profile_token={} name={} rtsp={}",
+                tracks.video,
+                tracks.audio,
+                profile.token,
+                profile.label,
+                redact_rtsp_url(&profile.rtsp_url)
+            );
+            ProfileSource {
+                tracks,
+                rtsp_url: profile.rtsp_url,
             }
-        };
-        let rtsp_url = apply_rtsp_credentials(&uri, target);
-        let label = profile
-            .name
-            .clone()
-            .unwrap_or_else(|| profile.token.clone());
-        let tracks = profile_tracks(args, index + 1, &label);
-        tracing::info!(
-            "MoQ media tracks mapped: video_track={} audio_track={} profile_token={} name={} rtsp={}",
-            tracks.video,
-            tracks.audio,
-            profile.token,
-            label,
-            redact_rtsp_url(&rtsp_url)
-        );
-        sources.push(ProfileSource { tracks, rtsp_url });
-    }
-    if sources.is_empty() {
-        return Err(anyhow!("no usable video profiles"));
-    }
-    Ok(sources)
-}
-
-fn apply_rtsp_credentials(uri: &str, target: &app_config::Target) -> String {
-    let (username, password) = target.credentials();
-    for prefix in ["rtsp://", "rtsps://"] {
-        if let Some(rest) = uri.strip_prefix(prefix) {
-            if rest.contains('@') {
-                return uri.to_string();
-            }
-            return format!("{prefix}{username}:{password}@{rest}");
-        }
-    }
-    uri.to_string()
+        })
+        .collect())
 }
 
 fn redact_rtsp_url(uri: &str) -> String {

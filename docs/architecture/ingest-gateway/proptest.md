@@ -1,4 +1,4 @@
-# proptest for the arrival clamp property in ingest-gateway onvif
+# proptest for the arrival clamp property in ingest-gateway pull
 
 ## Status
 
@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-Add `proptest` as a dev-dependency of the `ingest-gateway onvif` crate, with default
+Add `proptest` as a dev-dependency of the `ingest-gateway` crate, with default
 features off and only `std` on. The tests use it to state one property of
 `ArrivalClamp`: for a video and an audio track interleaved in presentation
 order, with packet durations from 1 to 40 ms, arrival jitter up to 30 ms and a
@@ -42,7 +42,7 @@ the combinations and shrinks a failure to a short session.
 
 Use `proptest`, as `moqt` and `mediapack` do. It runs in `cargo test` on
 stable (256 cases per property by default, set by `PROPTEST_CASES`), and as a
-dev-dependency it does not reach the `ingest-gateway onvif` binary.
+dev-dependency it does not reach the `ingest-gateway` binary.
 
 A failing case is written to `services/ingest-gateway/proptest-regressions/`
 and replayed first on the next run; commit that file with the fix of the

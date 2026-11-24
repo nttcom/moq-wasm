@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Replace `ffmpeg-next` with the `gstreamer` and `gstreamer-app` crates in
-`ingest-gateway onvif`. A pipeline of `rtspsrc`, the RTP depayloaders, `h264parse` and
+`ingest-gateway pull`. A pipeline of `rtspsrc`, the RTP depayloaders, `h264parse` and
 `appsink` receives the camera's RTSP stream and hands H.264 access units and
 audio frames to the bridge.
 
@@ -53,7 +53,7 @@ RTSP over TCP, authentication and the RTP jitter buffer. The bridge still runs
 
 ## Consequences
 
-- `ingest-gateway onvif` needs GStreamer at run time with the good (`rtspsrc`, RTP
+- `ingest-gateway pull` needs GStreamer at run time with the good (`rtspsrc`, RTP
   depayloaders) and bad (`h264parse`) plugins, instead of the FFmpeg libraries.
 - `ffmpeg-next` is no longer used anywhere in the workspace, so CI installs
   neither the FFmpeg development packages nor libclang.

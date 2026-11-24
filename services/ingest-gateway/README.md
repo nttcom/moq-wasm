@@ -7,7 +7,7 @@ subcommand:
 | Subcommand | Source |
 | --- | --- |
 | `listen` | Listens for RTMP, SRT and RTP pushes, one broadcast per stream |
-| `onvif` | Pulls an ONVIF camera's RTSP profiles and applies the PTZ commands it subscribes to |
+| `pull` | Pulls an RTSP stream or an ONVIF camera's profiles; an ONVIF camera's PTZ follows the commands it subscribes to |
 
 `--moqt-url`, `--auth-token` (or `MOQT_AUTH_TOKEN`) and
 `--insecure-skip-tls-verify` select the relay for both.
@@ -73,7 +73,13 @@ first use. Big Buck Bunny is (c) 2008 Blender Foundation | www.bigbuckbunny.org,
 
 For all CLI options, run `cargo run -p ingest-gateway -- listen --help`.
 
-## onvif
+## pull
+
+Pulls RTSP and publishes it: either one stream given by `--rtsp-url`, or the
+media profiles of an ONVIF camera given by `--onvif-ip`, whose PTZ then
+follows the commands it subscribes to. At least one of the two is required;
+with both, the stream replaces the camera's profiles and PTZ stays on. The
+camera has to be reachable from the process, so run it on the camera's network.
 
 ### Setup
 
@@ -86,7 +92,7 @@ cp .env.example .env    # set ONVIF_IP, ONVIF_USERNAME, ONVIF_PASSWORD and MOQT_
 make onvif
 ```
 
-Every camera profile starts its RTSP stream when the first viewer subscribes
+Every profile starts its RTSP stream when the first viewer subscribes
 to the catalog or to one of its tracks. `ONVIF_MOQT_URL` overrides the relay
 URL `make onvif` resolves.
 
@@ -103,24 +109,32 @@ The tracks form one MSF broadcast built by
 | PTZ command (subscribed) | `anon/onvif/viewer` | `command`, one JSON object per subgroup stream |
 
 Profile indices start at 1 and follow the ONVIF media profiles the camera
-returns. `--publish-namespace`, `--subscribe-namespace`, `--video-track`,
-`--audio-track` and `--command-track` change the names.
+returns; an `--rtsp-url` stream is profile 1. The PTZ command track exists
+only with `--onvif-ip`. `--publish-namespace`, `--command-namespace`,
+`--video-track`, `--audio-track` and `--command-track` change the names.
 
 ### Run without make
 
 ```shell
-cargo run -p ingest-gateway -- onvif \
-  --ip 192.168.11.45 \
-  --username admin \
-  --password secret \
+# An RTSP stream, without camera control
+cargo run -p ingest-gateway -- pull \
+  --rtsp-url rtsp://user:secret@192.168.11.45:554/stream1 \
+  --moqt-url https://127.0.0.1:4433 \
+  --insecure-skip-tls-verify
+
+# An ONVIF camera: its media profiles and PTZ
+cargo run -p ingest-gateway -- pull \
+  --onvif-ip 192.168.11.45 \
+  --onvif-username admin \
+  --onvif-password secret \
   --moqt-url https://127.0.0.1:4433 \
   --insecure-skip-tls-verify
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `--ip`, `--username`, `--password` | Camera address and ONVIF credentials |
+| `--rtsp-url` | Publish this RTSP stream as profile 1, in place of the camera's ONVIF profiles |
+| `--onvif-ip`, `--onvif-username`, `--onvif-password` | ONVIF camera address and credentials; turns on PTZ |
 | `--moqt-url` | MoQT relay URL |
-| `--rtsp-url` | Publish this RTSP stream as profile 1 instead of the camera's ONVIF profiles |
 | `--insecure-skip-tls-verify` | Skip TLS certificate verification, for local development only |
 | `--dump-keyframe[=PATH]` | Dump the first keyframe payload of profile 1 for ffprobe |

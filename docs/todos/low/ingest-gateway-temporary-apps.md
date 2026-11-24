@@ -1,4 +1,4 @@
-# [M] Let ingest-gateway (listen and onvif) publish into a temporary app
+# [M] Let ingest-gateway (listen and pull) publish into a temporary app
 
 Next: read how ingest-gateway maps a stream key to a namespace in `services/ingest-gateway/src/listen/namespace.rs`.
 

@@ -5,21 +5,23 @@ Living document. Update this file in the same change whenever the ingest flow
 or the loss handling described here changes.
 
 ## Scope
-`services/ingest-gateway` bridges media from outside MoQT into a relay. Each
-source kind is a subcommand with a module of its own, and both hand
+`services/ingest-gateway` bridges media from outside MoQT into a relay. The
+subcommands split by which side opens the connection, not by protocol: the
+protocols one side serves share their options and their deployment. Each
+subcommand has a module of its own, and both hand
 `mediapack::MediaEvent`s to `crates/broadcast`, which owns the track layout (see
 [its architecture document](../broadcast/architecture.md)):
 
 | Subcommand | Module | Shape |
 | --- | --- | --- |
 | `listen` | `listen` | A server: waits for RTMP, SRT and RTP pushes and opens one broadcast per stream |
-| `onvif` | `onvif` | A client of one camera: pulls its RTSP profiles into one broadcast and applies the PTZ commands it subscribes to |
+| `pull` | `pull` | A client of one source: pulls an RTSP stream or an ONVIF camera's profiles into one broadcast |
 
 `main` parses the command line, starts telemetry under the one service name
 `ingest-gateway`, and runs the subcommand. The relay flags (`--moqt-url`,
 `--auth-token`, `--insecure-skip-tls-verify`) are one `RelayArgs` both
 subcommands flatten. The two modules share nothing else: a camera has to be
-reachable from the process, so `onvif` runs next to the camera, while `listen`
+reachable from the process, so `pull` runs next to the camera, while `listen`
 runs where publishers can reach its ports.
 
 ## listen
@@ -83,10 +85,14 @@ application name of the URL. RTP carries no name, so its namespace is the
 `--rtp-namespace` argument, `anon/rtp/live` by default. Relays only admit
 tokenless publishers into `anon/**`, so every default stays inside it.
 
-## onvif
-One process serves one camera. It reads the camera's media profiles over ONVIF
-(`GetProfiles`, `GetStreamUri`), or takes `--rtsp-url` as the only profile, and
-declares a video and an audio track per profile in one `Broadcast`. Nothing is
+## pull
+One process serves one source: an RTSP stream (`--rtsp-url`), an ONVIF camera
+(`--onvif-ip`), or both, when the stream replaces the camera's profiles and the
+camera is only controlled. The `onvif` submodule holds everything ONVIF: it
+reads the camera's media profiles (`GetProfiles`, `GetStreamUri`) and runs its
+PTZ; the rest of `pull` only knows RTSP URLs.
+
+`pull` declares a video and an audio track per profile in one `Broadcast`. Nothing is
 pulled until the first SUBSCRIBE to the catalog or a profile track; then every
 profile starts its RTSP session on GStreamer ([why GStreamer](gstreamer.md)),
 and a session that ends is reconnected with a backoff of 1 to 30 seconds. Each
@@ -97,7 +103,7 @@ RTSP timestamps start when the camera starts sending, not when a sample
 arrives, so `ArrivalClamp` shifts them until no capture time lies after its
 sample's arrival ([proptest for its properties](proptest.md)).
 
-`CommandSubscriber` follows the command track under `--subscribe-namespace` on
-the same session and forwards each command to the PTZ worker, a thread that
-sends the ONVIF PTZ requests in order. The process ends when the relay has
-ended every profile or the command subscription ends.
+With an ONVIF camera, `CommandSubscriber` follows the command track under
+`--command-namespace` on the same session and forwards each command to the PTZ
+worker, a thread that sends the ONVIF PTZ requests in order. The process ends
+when the relay has ended every profile or the command subscription ends.

@@ -1497,7 +1497,7 @@ class MoqWasmTransport(BaseTransport):
 
     async def release_participant_video(self, participant_id: str, video_source: str = CAMERA_SOURCE):
         """Stops receiving a video source of a participant, for a publisher that serves one profile to
-        all its subscribers, such as ingest-gateway onvif; the image requests waiting on it get an error.
+        all its subscribers, such as ingest-gateway pull; the image requests waiting on it get an error.
         Returns once the source's track is unsubscribed, also when called again after a cancelled
         release. Not part of pipecat's API."""
         await self._room.release(participant_id, video_source)

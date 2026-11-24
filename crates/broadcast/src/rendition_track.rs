@@ -280,7 +280,7 @@ mod tests {
     }
     #[tokio::test]
     async fn a_rendition_is_listed_with_its_config_in_its_source_s_switching_set() {
-        // Arrange: the source is a camera profile, as `ingest-gateway onvif` names it
+        // Arrange: the source is a camera profile, as `ingest-gateway pull` names it
         let mut relay = FakeRelay::spawn("rendition-catalog");
         let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
         let source = SourceTracks {

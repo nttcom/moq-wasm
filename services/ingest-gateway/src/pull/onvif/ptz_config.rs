@@ -1,4 +1,4 @@
-use crate::onvif::onvif_requests::{PtzMoveSpaces, PtzVelocitySpaces};
+use crate::pull::onvif::onvif_requests::{PtzMoveSpaces, PtzVelocitySpaces};
 use roxmltree::{Document, Node};
 
 #[derive(Clone, Copy, Debug)]

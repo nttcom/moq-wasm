@@ -22,7 +22,7 @@ from moq_ptz_tracking.vision import SystemOneVisionClient
 STATUS_TRACK = "status"
 # What the bot publishes is kept for FETCH as long as the bot service lets a room's bot run.
 RETENTION_SECONDS = 60 * 60
-# The page publishes the viewer as `<room>/page/viewer` (VIEWER); ingest-gateway onvif publishes the camera
+# The page publishes the viewer as `<room>/page/viewer` (VIEWER); ingest-gateway pull publishes the camera
 # as `<room>/onvif/client` (CAMERA) and follows the commands the tracker publishes at
 # `<room>/bots/ptz-tracking/command`. The two rooms are siblings: one session cannot follow a
 # namespace prefix inside another it follows.
@@ -76,7 +76,7 @@ async def track_in_session(
 ) -> None:
     """Returns once no one has published in the page's room for the grace period."""
     # The tracker takes part in two rooms: the page's, where it reads the viewer's prompt and writes
-    # its event timeline and status, and ingest-gateway onvif's, where it watches the camera and writes the
+    # its event timeline and status, and ingest-gateway pull's, where it watches the camera and writes the
     # camera's commands.
     page = MoqWasmTransport(
         session,
