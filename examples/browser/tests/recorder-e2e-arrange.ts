@@ -1,6 +1,7 @@
 import { expect, test as base } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -86,6 +87,32 @@ export const test = base.extend<{ recorderServe: RecorderServe }>({
     }
   }
 })
+
+/// A member's archive (`<member>/camera/…json` in a MoQ room recording). Chunk paths are relative to the filesystem
+/// root.
+export interface MemberArchive {
+  tracks: { name: string; chunks: { data: string; index: string }[] }[]
+}
+
+/// The payload of every Normal object an archive holds of `track`, in the order they were recorded; the End of Group
+/// markers are left out. Throws when the archive has no such track.
+export async function archivedPayloads(archive: MemberArchive, track: string): Promise<string[]> {
+  const archived = archive.tracks.find((candidate) => candidate.name === track)
+  if (!archived) {
+    throw new Error(`the archive has no ${track} track: ${archive.tracks.map((candidate) => candidate.name)}`)
+  }
+  const payloads = []
+  for (const chunk of archived.chunks) {
+    const data = await readFile(join('/', chunk.data))
+    const entries = JSON.parse(await readFile(join('/', chunk.index), 'utf8'))
+    for (const entry of entries) {
+      if (entry.type === 'object' && entry.status === 0) {
+        payloads.push(data.subarray(Number(entry.offset), Number(entry.offset) + Number(entry.length)).toString())
+      }
+    }
+  }
+  return payloads
+}
 
 export function recordingPlayerPath(recorderUrl: string, id: string): string {
   const params = new URLSearchParams({ recorder: recorderUrl, relayUrl: liveViewerE2EConfig.moqtUrl, id })

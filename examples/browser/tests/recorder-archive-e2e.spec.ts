@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { recordingPlayerPath, test } from './recorder-e2e-arrange'
+import { archivedPayloads, recordingPlayerPath, test } from './recorder-e2e-arrange'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 import { arrangeMeetingClient, enableMedia, joinRoom, sendChatMessage, startScreenShare } from './meeting-e2e-arrange'
 
@@ -187,18 +187,7 @@ test('records participants, screen share, chat and transcript and replays them i
     expect(aliceMember?.screen_share.length).toBeGreaterThan(0)
     expect(bobMember?.camera.length).toBeGreaterThan(0)
     const archive = JSON.parse(await readFile(join('/', aliceMember.camera[0]), 'utf8'))
-    const chat = archive.tracks.find((track: { name: string }) => track.name === 'chat')
-    expect(chat).toBeTruthy()
-    const payloads = []
-    for (const chunk of chat.chunks) {
-      const data = await readFile(join('/', chunk.data))
-      const entries = JSON.parse(await readFile(join('/', chunk.index), 'utf8'))
-      for (const entry of entries) {
-        if (entry.type === 'object') {
-          payloads.push(data.subarray(Number(entry.offset), Number(entry.offset) + Number(entry.length)).toString())
-        }
-      }
-    }
+    const payloads = await archivedPayloads(archive, 'chat')
     expect(payloads.some((payload) => payload.includes('archive chat message'))).toBe(true)
     const aliceTracks: Track[] = aliceCatalog.tracks
     expect(aliceTracks.map((track) => track.name)).toContain('video_timeline')
