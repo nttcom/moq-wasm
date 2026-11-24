@@ -6,7 +6,7 @@ use std::sync::{
 use async_trait::async_trait;
 
 use crate::modules::{
-    cascading::route_registry::{RegisterRouteError, RelayInfo, RelayRouteRegistry},
+    cascading::route_registry::{RelayInfo, RelayRouteRegistry},
     domain::track_key::TrackKey,
 };
 
@@ -197,7 +197,7 @@ impl RelayRouteRegistry for StubRouteRegistry {
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterRouteError> {
+    ) -> anyhow::Result<()> {
         assert!(
             self.namespace_routes.is_some(),
             "not used with the stub route registry"

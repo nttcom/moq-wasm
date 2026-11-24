@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use super::{RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use super::{RelayInfo, RelayRouteRegistry};
 use crate::modules::domain::track_key::TrackKey;
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
     async fn register_namespace_subscriber(
         &self,
         _track_namespace_prefix: &str,
-    ) -> Result<(), RegisterRouteError> {
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 

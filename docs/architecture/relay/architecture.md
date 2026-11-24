@@ -1506,9 +1506,10 @@ holds on each hop.
   subscribers PUBLISH_NAMESPACE_DONE: one subscribing meanwhile was told of
   the namespace. A withdrawal that crosses a new request therefore leaves
   the route the directory asks for, which
-  `docs/architecture/relay/models/namespace.qnt` checks. Remote subscriber
-  relays are told PUBLISH_NAMESPACE_DONE only when a reconcile withdrew the
-  publisher route. Any number of relays may hold the publisher
+  `docs/architecture/relay/models/namespace.qnt` checks. Registering a route
+  this relay already holds succeeds (`upsert_route.lua`), and remote
+  subscriber relays are told PUBLISH_NAMESPACE_DONE only when a reconcile
+  withdrew the publisher route. Any number of relays may hold the publisher
   route of one namespace (draft-14 §8.2), and the notification reaches every
   subscriber relay. A namespace published before a relay registered its
   subscriber route is found there by prefix; that relay subscribes it at the

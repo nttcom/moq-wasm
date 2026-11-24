@@ -53,9 +53,11 @@ impl Route<'_> {
                     .register_namespace_publisher(track_namespace)
                     .await
             }
-            Self::Subscriber(track_namespace_prefix) => Ok(route_registry
-                .register_namespace_subscriber(track_namespace_prefix)
-                .await?),
+            Self::Subscriber(track_namespace_prefix) => {
+                route_registry
+                    .register_namespace_subscriber(track_namespace_prefix)
+                    .await
+            }
         }
     }
 

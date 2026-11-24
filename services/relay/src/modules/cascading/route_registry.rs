@@ -15,14 +15,6 @@ pub(crate) struct RelayInfo {
     pub(crate) port: u16,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum RegisterRouteError {
-    #[error("namespace route is already registered")]
-    Conflict,
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-}
-
 #[async_trait]
 pub(crate) trait RelayRouteRegistry: Send + Sync {
     /// Marks this relay as draining (draft-14 §3.5): other relays stop routing
@@ -35,7 +27,7 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterRouteError>;
+    ) -> anyhow::Result<()>;
     async fn find_active_namespace_publishers(
         &self,
         track_namespace: &str,
