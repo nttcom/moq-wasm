@@ -1,4 +1,5 @@
 mod peer_audio;
+mod peer_control;
 mod phone_audio;
 mod state_track;
 
@@ -14,7 +15,7 @@ use rsipstack::{
     sip::StatusCode,
 };
 use tokio::{
-    sync::{mpsc, oneshot, watch},
+    sync::{mpsc, watch},
     time::{Instant, sleep_until},
 };
 use tokio_util::sync::CancellationToken;
@@ -26,6 +27,7 @@ use crate::{
     sip_trunk::{InboundInvite, Progress, SipTrunk, progress, sdp_content_type},
 };
 use peer_audio::{PeerAudio, PeerWatchTask, PlayoutTask};
+use peer_control::Command;
 use phone_audio::PhoneAudioTask;
 use state_track::StateTrack;
 pub(crate) use state_track::{CallState, EndReason};
@@ -135,7 +137,7 @@ struct Call {
     setup: Setup,
     peer_watch: PeerWatchTask,
     peer_audio: Option<mpsc::Receiver<PeerAudio>>,
-    peer_left: oneshot::Receiver<()>,
+    peer_commands: mpsc::Receiver<Command>,
 }
 
 /// What is left of the INVITE once it is sent or answered.
@@ -168,7 +170,7 @@ impl Call {
         session.add_handler(Arc::new(connection.clone()));
         let broadcast = Broadcast::new(connection, plan.namespace.clone());
         let state_track = StateTrack::open(broadcast.clone()).await?;
-        let (peer_watch, peer_audio, peer_left) =
+        let (peer_watch, peer_audio, peer_commands) =
             PeerWatchTask::run(session.clone(), plan.peer.clone());
         let call_id = plan.slot.call_id.clone();
         let (leg, dialog, states, setup) = match plan.direction {
@@ -219,7 +221,7 @@ impl Call {
             setup,
             peer_watch,
             peer_audio: Some(peer_audio),
-            peer_left,
+            peer_commands,
         })
     }
 
@@ -263,7 +265,8 @@ impl Call {
                     hang_up_dialog(&self.dialog).await;
                     return Err(EndReason::Gateway);
                 }
-                Ok(()) = &mut self.peer_left => {
+                Some(Command::Hangup) = self.peer_commands.recv() => {
+                    tracing::info!(call_id = %self.call_id, "the peer hung up");
                     hang_up_dialog(&self.dialog).await;
                     return Err(EndReason::Hangup);
                 }
@@ -345,7 +348,8 @@ impl Call {
                     hang_up_dialog(&self.dialog).await;
                     return EndReason::Gateway;
                 }
-                Ok(()) = &mut self.peer_left => {
+                Some(Command::Hangup) = self.peer_commands.recv() => {
+                    tracing::info!(call_id = %self.call_id, "the peer hung up");
                     hang_up_dialog(&self.dialog).await;
                     return EndReason::Hangup;
                 }
