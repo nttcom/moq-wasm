@@ -267,6 +267,10 @@ browser SDK's `createBroadcast` with `eventTimelines`) and the policy's
 `action`. The recorder records `<room>/bots/policy` as it records a
 participant, without counting it as one that keeps the room alive. A robot
 room is recorded by starting the recorder bot in it, as for a meeting.
+The recording keeps only the records written after it starts, as it does a
+meeting's chat, so it is started before the episodes it should hold: of an
+episode already open, it has neither the start nor the task, and of the
+driver, only the changes that follow.
 
 The exporter writes a LeRobot dataset (one episode per `episode` group:
 the observations at the dataset's fps, aligned by their timestamps, the action applied at each
@@ -354,7 +358,8 @@ Each step is its own pull request, stacked:
    test through the relay. Cameras come with a robot that has one.
 6. `recorder`: archive every broadcast's event timelines in a room, the
    policy bot's included; the operator page lists its `action` in its
-   catalog.
+   catalog. The E2E records a room the policy drives and an operator
+   intervenes in, and reads each member's tracks back from the archive.
 7. `robotics::Driver` and an example policy bot, with the E2E driving the
    robot by the policy and an operator's intervention. The `bot-dispatcher`
    type `policy` follows with a Rust client of the bot protocol.

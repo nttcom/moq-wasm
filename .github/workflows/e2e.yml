@@ -234,7 +234,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-robot-teleop-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/robot-teleop/*|examples/browser/tests/robot-teleop-e2e*|examples/rust/moq-robot-sim/*|examples/rust/moq-robot-policy/*|sdk/rust/*|crates/robotics/*|sdk/js/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-robot-teleop-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/robot-teleop/*|examples/browser/tests/robot-teleop-e2e*|examples/browser/tests/recorder-e2e-arrange.ts|services/recorder/*|services/bot-dispatcher/*|crates/job-launcher/*|crates/google-cloud/*|examples/rust/moq-robot-sim/*|examples/rust/moq-robot-policy/*|sdk/rust/*|crates/robotics/*|sdk/js/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   robot_teleop=true
                   ;;
               esac
@@ -730,6 +730,10 @@ jobs:
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
+
+      # The recorder, which records a robot room, links GStreamer.
+      - name: Install media build dependencies
+        uses: ./.github/actions/install-ffmpeg-deps
 
       - name: Prepare browser E2E environment
         run: node tests/browser-e2e/setup-media-e2e.mjs
