@@ -94,14 +94,6 @@ impl AvcDecoderConfigurationRecord {
             .ok_or_else(|| anyhow::anyhow!("no SPS in AVC configuration record"))?;
         SequenceParameterSet::parse(sps)
     }
-
-    pub fn with_parameter_sets(&self, annexb: Bytes) -> Bytes {
-        NalDecoderConfig::with_parameter_sets(self, annexb)
-    }
-
-    pub fn parameter_sets_annexb(&self) -> Bytes {
-        NalDecoderConfig::parameter_sets_annexb(self)
-    }
 }
 
 impl NalDecoderConfig for AvcDecoderConfigurationRecord {

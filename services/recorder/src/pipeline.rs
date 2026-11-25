@@ -296,7 +296,7 @@ fn new_muxer(
 
 #[cfg(test)]
 mod tests {
-    use mediapack::h264::AvcDecoderConfigurationRecord;
+    use mediapack::{h264::AvcDecoderConfigurationRecord, parameter_sets::NalDecoderConfig};
 
     use super::*;
     use crate::test_support::{
