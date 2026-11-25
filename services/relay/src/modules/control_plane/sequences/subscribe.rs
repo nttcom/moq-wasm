@@ -35,6 +35,9 @@ pub(crate) const UPSTREAM_ATTEMPTS: usize = 3;
 
 enum Acceptance {
     Answered,
+    /// Answered SUBSCRIBE_ERROR, or the answer failed, and no consumer of
+    /// the subscriber is left.
+    Refused,
     UpstreamGone,
 }
 
@@ -199,8 +202,22 @@ impl Subscribe {
                     handler.as_ref(),
                 )
                 .await;
-            if let Acceptance::Answered = acceptance {
-                return;
+            match acceptance {
+                Acceptance::Answered => return,
+                Acceptance::Refused => {
+                    if let Some(removed) = access.reservation.release() {
+                        super::release_upstream_subscriptions(
+                            table,
+                            forwarder,
+                            route_registry,
+                            &removed.track_key,
+                            &removed.released_upstream_subscriptions,
+                        )
+                        .await;
+                    }
+                    return;
+                }
+                Acceptance::UpstreamGone => {}
             }
             tracing::info!(
                 request_id = handler.subscribe_id(),
@@ -405,7 +422,7 @@ impl Subscribe {
         // in flight.
         if is_latched_malformed(cache_store, &track_key) {
             self.response_malformed(session_id, handler).await;
-            return Acceptance::Answered;
+            return Acceptance::Refused;
         }
         let track_properties = upstream_track.track_properties();
         if !handler.understands(&track_properties) {
@@ -417,7 +434,7 @@ impl Subscribe {
                     "mandatory track property not understood".to_string(),
                 )
                 .await;
-            return Acceptance::Answered;
+            return Acceptance::Refused;
         }
 
         let subscriber_track_alias = handler.allocate_track_alias();
@@ -476,7 +493,7 @@ impl Subscribe {
         )
         .await
         {
-            return Acceptance::Answered;
+            return Acceptance::Refused;
         }
         match ready_receiver.await {
             Ok(Ok(())) => {}
@@ -520,7 +537,7 @@ impl Subscribe {
                 handler.subscribe_id(),
             )
             .await;
-            return Acceptance::Answered;
+            return Acceptance::Refused;
         }
         let _ = subscribe_ok_sender.send(());
         tracing::info!(
@@ -1209,7 +1226,7 @@ mod tests {
         let acceptance = accept_downstream_with_cache(&table, &handler, &cache_store).await;
 
         // Assert: draft-18 §2.4.2, the track is malformed, not missing
-        assert!(matches!(acceptance, Acceptance::Answered));
+        assert!(matches!(acceptance, Acceptance::Refused));
         assert_eq!(
             *handler.subscribe_errors.lock().unwrap(),
             vec![RequestErrorCode::MalformedTrack]
@@ -1235,7 +1252,7 @@ mod tests {
         let acceptance = accept_downstream(&table, &handler).await;
 
         // Assert
-        assert!(matches!(acceptance, Acceptance::Answered));
+        assert!(matches!(acceptance, Acceptance::Refused));
         assert_eq!(
             *handler.subscribe_errors.lock().unwrap(),
             vec![RequestErrorCode::InternalError]
@@ -1367,7 +1384,7 @@ mod tests {
         let acceptance = accept_downstream(&table, &handler).await;
 
         // Assert: draft-18 §2.5.1; nothing is registered for it
-        assert!(matches!(acceptance, Acceptance::Answered));
+        assert!(matches!(acceptance, Acceptance::Refused));
         assert_eq!(
             *handler.subscribe_errors.lock().unwrap(),
             vec![RequestErrorCode::UnsupportedExtension]

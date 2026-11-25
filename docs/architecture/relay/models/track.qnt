@@ -384,17 +384,15 @@ module track {
   // A SUBSCRIBE that found the track fed is answered SUBSCRIBE_ERROR before
   // registering (`handler.understands` refuses the track properties), or,
   // registered, its egress cannot start or its SUBSCRIBE_OK cannot be sent
-  // and `remove_downstream_subscription` removes its consumer while its
-  // reservation is still held; the reservation drops after either.
+  // and `remove_downstream_subscription` removes its consumer. Then
+  // `TrackReservation::release` releases the upstream subscriptions the
+  // track no longer wants, as `end_downstream_subscription` does.
   action refuse(x: str): bool = all {
     val sub = st.subs.get(x)
     all {
       Set(Registering, Accepting).contains(sub.phase),
-      val removed =
-        if (sub.phase == Accepting and isLive(st.track, sub.gen) and st.track.consumers.contains(x))
-          removeConsumer(st, x)
-        else st
-      val released = releaseReservation(removed, sub.gen, x)
+      val unreserved = releaseReservation(st, sub.gen, x)
+      val released = if (isLive(unreserved.track, sub.gen)) removeConsumer(unreserved, x) else unreserved
       st' = { ...released, subs: released.subs.set(x, idleSub) },
     },
   }
