@@ -49,7 +49,9 @@
 //   or `Delivered` runs `end_outgoing`: takes the entry and resets the
 //   stream, notifying `reader_stop`. With
 //   CLEAN_ABANDONED_ALIAS it also does what draft-14's `handle_late_response`
-//   does: `cancel_unclaimed_track_alias` and `cancel_subscription`.
+//   does: `cancel_unclaimed_track_alias` and `cancel_subscription`
+//   (`abandon_track_alias`, for a SUBSCRIBE_OK `Delivered` or left in the
+//   oneshot when `PendingResponse` is dropped).
 // - `callerInstall` / `callerAccept`: `register_data_receiver`
 //   (`install_receiver`, then the `receiver_map` lock), then `accept`
 //   (`CallerState::Ended`).
@@ -60,7 +62,7 @@
 // removes it under another (`removerEnd`).
 //
 // `draft18_outgoing_request_current` is the implementation (CONSUME_LOCAL
-// on); it violates `abandonedAliasCancelled`, `noSessionClosedWhileLive` and
+// and CLEAN_ABANDONED_ALIAS on); it violates `noSessionClosedWhileLive` and
 // `malformedResponseClosesSession`. `draft18_outgoing_request_fixed` turns on
 // CONSUME_LOCAL, CLEAN_ABANDONED_ALIAS and FIX_FIRST_MESSAGE and passes.
 // `draft18_outgoing_request_take_split` turns TAKE_ATOMIC off and fails
@@ -385,7 +387,7 @@ module draft18_outgoing_request_current {
   import draft18_outgoing_request(
     NAMESPACES = Set("a", "b"),
     CONSUME_LOCAL = true,
-    CLEAN_ABANDONED_ALIAS = false,
+    CLEAN_ABANDONED_ALIAS = true,
     FIX_FIRST_MESSAGE = false,
     TAKE_ATOMIC = true,
   ).*

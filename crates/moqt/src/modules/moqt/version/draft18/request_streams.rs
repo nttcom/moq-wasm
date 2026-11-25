@@ -1008,14 +1008,11 @@ pub(crate) struct OutgoingRequestTask {
 }
 
 impl OutgoingRequestTask {
-    /// Drops the objects buffered under the alias of a SUBSCRIBE_OK whose
-    /// caller stopped waiting; the stream reset already withdrew the request
-    /// (§3.3.2).
+    /// Withdraws the alias of a SUBSCRIBE_OK whose caller stopped waiting;
+    /// the stream reset already withdrew the request (§3.3.2).
     pub(super) async fn abandoned(scope: &Scope, response: ResponseMessage) {
         if let ResponseMessage::SubscribeOk(subscribe_ok) = response {
-            scope
-                .session
-                .cancel_unclaimed_track_alias(&scope.connection, subscribe_ok.track_alias)
+            super::abandon_track_alias(scope, subscribe_ok.request_id, subscribe_ok.track_alias)
                 .await;
         }
     }

@@ -1262,17 +1262,41 @@ struct SentRequest {
 }
 
 impl SentRequest {
-    fn cancel(self) {
+    /// Withdraws the request; `track_alias`, of a SUBSCRIBE_OK the caller
+    /// got, goes with it.
+    fn cancel(self, track_alias: Option<u64>) {
         end_outgoing(&self.connection, self.request_id, false);
+        if let Some(track_alias) = track_alias
+            && let Some(scope) = Scope::of(&self.connection)
+        {
+            executor::try_spawn("abandon draft-18 track alias", async move {
+                abandon_track_alias(&scope, self.request_id, track_alias).await;
+            });
+        }
     }
+}
+
+/// Withdraws the Track Alias of a SUBSCRIBE_OK the caller dropped before
+/// `accept`, as draft-14's `handle_late_response` does: later objects on it
+/// are discarded, and a receiver the caller registered is removed.
+async fn abandon_track_alias(scope: &Scope, request_id: RequestId, track_alias: u64) {
+    scope
+        .session
+        .cancel_unclaimed_track_alias(&scope.connection, track_alias)
+        .await;
+    scope
+        .session
+        .cancel_subscription(&scope.connection, request_id)
+        .await;
 }
 
 /// Where the caller of a request this side sent is.
 enum CallerState {
     /// `PendingResponse` waits for the response.
     AwaitingResponse(SentRequest),
-    /// `ReceivedResponse` holds a success response not yet accepted.
-    Delivered(SentRequest),
+    /// `ReceivedResponse` holds a success response not yet accepted, with
+    /// the Track Alias of a SUBSCRIBE_OK.
+    Delivered(SentRequest, Option<u64>),
     /// Answered without asking the peer, rejected, or accepted.
     Ended,
 }
@@ -1288,13 +1312,17 @@ impl RequestCancel {
 
     /// The caller took a response: a success one is `Delivered` until
     /// `accept`, an error one cancels the request.
-    fn deliver(&mut self, success: bool) -> Self {
+    fn deliver(&mut self, response: &ResponseMessage) -> Self {
         match self.take() {
-            CallerState::AwaitingResponse(request) if success => {
-                Self(CallerState::Delivered(request))
+            CallerState::AwaitingResponse(request) if is_success(response) => {
+                let track_alias = match response {
+                    ResponseMessage::SubscribeOk(ok) => Some(ok.track_alias),
+                    _ => None,
+                };
+                Self(CallerState::Delivered(request, track_alias))
             }
             CallerState::AwaitingResponse(request) => {
-                request.cancel();
+                request.cancel(None);
                 Self(CallerState::Ended)
             }
             state => Self(state),
@@ -1309,10 +1337,18 @@ impl RequestCancel {
 impl Drop for RequestCancel {
     fn drop(&mut self) {
         match self.take() {
-            CallerState::AwaitingResponse(request) | CallerState::Delivered(request) => {
-                request.cancel();
-            }
+            CallerState::AwaitingResponse(request) => request.cancel(None),
+            CallerState::Delivered(request, track_alias) => request.cancel(track_alias),
             CallerState::Ended => {}
+        }
+    }
+}
+
+/// A response the caller never took is withdrawn as one it took and dropped.
+impl Drop for PendingResponse {
+    fn drop(&mut self) {
+        if let Ok(Some(response)) = self.receiver.try_recv() {
+            drop(self.cancel.deliver(&response));
         }
     }
 }
@@ -1338,7 +1374,7 @@ impl PendingResponse {
         .await
         {
             Ok(Ok(Some(message))) => {
-                let cancel = self.cancel.deliver(is_success(&message));
+                let cancel = self.cancel.deliver(&message);
                 Ok(ReceivedResponse { message, cancel })
             }
             Ok(Ok(None)) => Err(RequestFailure::Withdrawn),
@@ -1385,8 +1421,8 @@ mod tests {
     use bytes::{Bytes, BytesMut};
 
     use super::{
-        CallerState, Connection, ControlChannel, RequestCancel, RequestStream, RequestStreamKind,
-        Scope, SentRequest, codec,
+        CallerState, Connection, ControlChannel, PendingResponse, RequestCancel, RequestStream,
+        RequestStreamKind, Scope, SentRequest, SessionContext, codec,
         message_stream::{MessageDecoder, MessageReceiver},
         messages, parameters,
         request_streams::OutgoingRequestTask,
@@ -1534,18 +1570,7 @@ mod tests {
         };
 
         // Act
-        OutgoingRequestTask::abandoned(
-            &scope,
-            ResponseMessage::SubscribeOk(SubscribeOk {
-                request_id: 0,
-                track_alias,
-                expires: 0,
-                group_order: crate::object::GroupOrder::Ascending,
-                content_exists: ContentExists::False,
-                track_properties: Default::default(),
-            }),
-        )
-        .await;
+        OutgoingRequestTask::abandoned(&scope, subscribe_ok_response(track_alias)).await;
         let notification = notify_datagram(&session, track_alias).await;
 
         // Assert
@@ -1553,6 +1578,77 @@ mod tests {
             matches!(notification, IncomingObjectNotification::Discarded),
             "{notification:?}"
         );
+    }
+
+    /// The SUBSCRIBE_OK of request 0 on `track_alias`.
+    fn subscribe_ok_response(track_alias: u64) -> ResponseMessage {
+        ResponseMessage::SubscribeOk(SubscribeOk {
+            request_id: 0,
+            track_alias,
+            expires: 0,
+            group_order: crate::object::GroupOrder::Ascending,
+            content_exists: ContentExists::False,
+            track_properties: Default::default(),
+        })
+    }
+
+    /// Waits until objects on `track_alias` are discarded, which the
+    /// cleanup spawned on dropping a request does.
+    async fn discarded_soon(session: &SessionContext, track_alias: u64) -> bool {
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while !matches!(
+                notify_datagram(session, track_alias).await,
+                IncomingObjectNotification::Discarded
+            ) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_left_in_a_dropped_pending_response_drops_the_objects_of_its_alias() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-unread-subscribe-ok", "moqt").await;
+        let session = client.subscriber().session;
+        let track_alias = 5;
+        notify_datagram(&session, track_alias).await;
+        let (_connection, cancel) = awaiting_response(&client).await;
+        let (response_sender, receiver) = tokio::sync::oneshot::channel();
+        response_sender
+            .send(Some(subscribe_ok_response(track_alias)))
+            .unwrap();
+        let pending = PendingResponse { receiver, cancel };
+
+        // Act
+        drop(pending);
+
+        // Assert
+        assert!(discarded_soon(&session, track_alias).await);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_dropped_after_its_receiver_was_registered_drops_its_objects() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-registered-subscribe-ok", "moqt").await;
+        let session = client.subscriber().session;
+        let track_alias = 5;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+        let delivered = cancel.deliver(&subscribe_ok_response(track_alias));
+        drop(cancel);
+        session
+            .register_data_receiver(&connection, 0, track_alias)
+            .await
+            .unwrap();
+
+        // Act
+        drop(delivered);
+
+        // Assert
+        assert!(discarded_soon(&session, track_alias).await);
     }
 
     /// A `RequestCancel` awaiting the response of a SUBSCRIBE registered as
@@ -1604,7 +1700,11 @@ mod tests {
         let (connection, mut cancel) = awaiting_response(&client).await;
 
         // Act
-        let delivered = cancel.deliver(false);
+        let delivered = cancel.deliver(&ResponseMessage::SubscribeError(
+            0,
+            RequestErrorCode::InternalError,
+            String::new(),
+        ));
 
         // Assert
         assert!(!is_open(&connection));
@@ -1619,7 +1719,7 @@ mod tests {
         let (connection, mut cancel) = awaiting_response(&client).await;
 
         // Act
-        let mut delivered = cancel.deliver(true);
+        let mut delivered = cancel.deliver(&subscribe_ok_response(5));
         drop(cancel);
         delivered.accept();
         drop(delivered);
@@ -1634,7 +1734,7 @@ mod tests {
         let (client, _server) =
             spawn_connected_draft18_sessions("draft18-success-dropped", "moqt").await;
         let (connection, mut cancel) = awaiting_response(&client).await;
-        let delivered = cancel.deliver(true);
+        let delivered = cancel.deliver(&subscribe_ok_response(5));
         drop(cancel);
         let open_while_delivered = is_open(&connection);
 
