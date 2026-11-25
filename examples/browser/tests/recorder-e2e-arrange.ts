@@ -151,7 +151,8 @@ async function startRecorderServe() {
       ],
       grace_seconds: 300,
       max_seconds: 7200,
-      max_running: 8
+      max_running: 8,
+      options: { layout: ['combined', 'per-track'], composite: [true, false], format: ['mp4', 'moq'] }
     }
   })
   // The jobs inherit the environment; GStreamer's ERROR lines name the element behind a failed composite.

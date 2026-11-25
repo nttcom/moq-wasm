@@ -190,7 +190,7 @@ composite) in its store for `recorder serve`'s read API.
 
 | Route | Caller | Answer |
 | --- | --- | --- |
-| `POST /bots/{type}` `{namespace_prefix, options}` | app server | `201` the bot; `409` if the room runs that type; `503` at a limit |
+| `POST /bots/{type}` `{namespace_prefix, options}` | app server | `201` the bot; `400 invalid_options` if the type's options table refuses `options`; `409` if the room runs that type; `503` at a limit |
 | `GET /bots?namespace_prefix=` | app server | `{"bots": […]}` the room's latest bot of each configured type that had one, in type-name order |
 | `GET /bots/{type}?namespace_prefix=` | app server | the room's latest bot of that type |
 | `GET /bots/{type}/{id}` | app server | the bot |
@@ -240,12 +240,24 @@ from type name to entry:
     "args": ["bot"],
     "grace_seconds": 300,
     "max_seconds": 7200,
-    "max_running": 5
+    "max_running": 5,
+    "options": {
+      "layout": ["combined", "per-track"],
+      "composite": [true, false],
+      "format": ["mp4", "moq"]
+    }
   }
 }
 ```
 
 `launcher` is `{"kind": "local", "program": <path>}` for development.
+`options` is an optional table from option name to a non-empty array of allowed
+JSON scalars (string, boolean, number); a malformed table fails startup. For a
+type with a table, `POST /bots/{type}` answers `400 invalid_options` before
+taking the room when `options` is not an object, names an unlisted key, or gives
+an option another value (absent/`null` or a subset passes; cross-option
+constraints such as `composite: true` with `format: "moq"` are still judged by
+the bot). A type without a table forwards `options` unchecked.
 Every bot gets the same token claims (above), so they are not configured.
 There are no limits per app and no opening hours: a bot runs only while its
 room has a member, for its type's longest run at most, a type runs at most
@@ -278,7 +290,7 @@ on each token signature.
 
 | Module | Responsibility |
 | --- | --- |
-| `bot_types.rs` | `BotTypes`: the types file, each type's `JobLauncher`, arguments, grace period, longest run and `max_running`. |
+| `bot_types.rs` | `BotTypes`: the types file, each type's `JobLauncher`, arguments, grace period, longest run, `max_running` and optional `options` table. |
 | `launch_auth.rs` | `LaunchAuth`: verifies the bearer token through `auth_token::VtsClient` and requires a launch token of at most 5 minutes, not a relay's, whose `bots` claim covers the room. |
 | `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
 | `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |

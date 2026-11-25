@@ -125,6 +125,7 @@ async fn start(
         }
         Err(StartError::UnknownType) => (StatusCode::NOT_FOUND, "not_found"),
         Err(StartError::InvalidRoom) => (StatusCode::BAD_REQUEST, "invalid_room"),
+        Err(StartError::InvalidOptions) => (StatusCode::BAD_REQUEST, "invalid_options"),
         Err(StartError::Conflict) => (StatusCode::CONFLICT, "conflict"),
         Err(StartError::Full) => (StatusCode::SERVICE_UNAVAILABLE, "full"),
         Err(StartError::Internal(error)) => {
@@ -493,5 +494,30 @@ mod tests {
         assert_eq!(without_prefix, StatusCode::BAD_REQUEST);
         assert_eq!(other_app, StatusCode::FORBIDDEN);
         assert_eq!(unauthenticated, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_launch_with_options_its_type_refuses_is_a_bad_request() {
+        // Arrange
+        let (base, _server, _vts) = start_server().await;
+        let client = reqwest::Client::new();
+        let launch = |options: Value| {
+            client
+                .post(format!("{base}/bots/recorder"))
+                .bearer_auth("launch-token")
+                .json(&json!({ "namespace_prefix": "app/room", "options": options }))
+                .send()
+        };
+
+        // Act
+        let refused = launch(json!({ "format": "webm" })).await.unwrap();
+        let refused_status = refused.status();
+        let refused_body: Value = refused.json().await.unwrap();
+        let null_options = launch(Value::Null).await.unwrap().status();
+
+        // Assert
+        assert_eq!(refused_status, StatusCode::BAD_REQUEST);
+        assert_eq!(refused_body, json!({ "error": "invalid_options" }));
+        assert_eq!(null_options, StatusCode::CREATED);
     }
 }

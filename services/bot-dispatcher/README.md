@@ -85,6 +85,7 @@ While a bot's latest heartbeat reports a type-specific JSON object as `output`, 
 | --- | --- | --- |
 | `400` | `invalid_request` | Invalid JSON body or missing `namespace_prefix` |
 | `400` | `invalid_room` | `namespace_prefix` has fewer than 2 segments or an empty segment |
+| `400` | `invalid_options` | `options` is not an object, names an unlisted key, or uses a disallowed value for a type with an `options` table (creates no bot) |
 | `401` | `a bearer token is required` | Missing `Authorization: Bearer` header |
 | `401` | `invalid_token` | Signature verification failed |
 | `401` | `invalid_token_lifetime` | Expired, lifetime > 5 min, missing `iat`/`exp`, or empty segment in `bots` |
@@ -121,7 +122,7 @@ Deployed types come from `BOT_DISPATCHER_TYPES`. Built-in bots:
 | `ptz-tracking` | PTZ camera auto-tracking ([`moq-ptz-tracking`](../../examples/python/moq-ptz-tracking/README.md)) | — |
 | `voice-agent` | Conversational voice agent ([`moq-ai-voice-agent`](../../examples/python/moq-ai-voice-agent/README.md)) | — |
 
-`options` are forwarded unchecked; invalid options (such as `composite: true` with `format: moq`) cause the bot to enter `failed` with the reason in `error`.
+If a type defines an `options` table in `BOT_DISPATCHER_TYPES`, `POST /bots/{type}` rejects non-object `options`, unknown keys, or disallowed values with `400 invalid_options` without creating a bot (omitted/`null` `options` or a subset of keys pass). Types without a table forward `options` unchecked. Cross-option constraints cannot be expressed in the table, so invalid combinations (such as `composite: true` with `format: "moq"`) still launch and put the bot in `failed` with the reason in `error`.
 
 Note: a recorder bot's `id` differs from its recording ID. Once the recording exists, the bot reports `"output": {"recording_id": "<id>"}` (absent if it fails before creating the recording); pass `output.recording_id` to `GET /recordings/{id}` on `recorder serve` (or list via `GET /recordings?namespace_prefix=`).
 
@@ -155,12 +156,18 @@ Bots join with a 1-hour token that subscribes to `<room>` and publishes only und
     "args": ["bot", "--relay", "https://relay.example.com:4433", "--store", "gs://<bucket>/recordings"],
     "grace_seconds": 300,
     "max_seconds": 7200,
-    "max_running": 4
+    "max_running": 4,
+    "options": {
+      "layout": ["combined", "per-track"],
+      "composite": [true, false],
+      "format": ["mp4", "moq"]
+    }
   }
 }
 ```
 
 - `launcher`: `{"kind": "cloud-run", "job": ...}` (requires `run.jobs.runWithOverrides`) or `{"kind": "local", "program": <path>}`.
+- `options` (optional): map from option name to a non-empty array of allowed JSON scalars (string, boolean, number). Malformed tables fail startup.
 - `bot-dispatcher` appends `--bot-type`, `--bot-id`, `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds`, and (if present) `--options <JSON>` to `args`. Local bots receive their auth key in `BOT_DISPATCHER_BOT_KEY`.
 
 ## Running locally
