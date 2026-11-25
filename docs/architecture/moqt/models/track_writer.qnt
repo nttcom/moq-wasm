@@ -11,12 +11,12 @@
 // loses no interleaving that matters to the writer; the Forward State only
 // matters at the moment `queue_sends` reads it.
 // - Forward State 1: `send_placed` (outlet_send_task.rs :171-206) →
-//   `start_group_at` (:94) = `skip_to_group` (:124-136) +
-//   `finish_current_group` + `open_group` (:266-294); or `rejoin_group_at`
-//   (:71-81); or `join_group_at` (:102-112); then
-//   `write_with_extension_headers` (:155-168), which takes the pending gap.
-//   `Payload::Group` → `write_group_at` (:114-121) → `write_group` (:170-176).
-// - Forward State 0: `LeaveGroup` → `abandon_group` (:58-62).
+//   `start_group_at` (:86) = `GroupNumbering::skip_to` (:320-335) +
+//   `finish_current_group` + `open_group` (:216-243); or `rejoin_group_at`
+//   (:63-73); or `join_group_at` (:94-104); then
+//   `write_with_extension_headers` (:130-144), which takes the pending gap.
+//   `Payload::Group` → `write_group_at` (:106-113) → `write_group` (:146-152).
+// - Forward State 0: `LeaveGroup` → `abandon_group` (:52-54).
 // - `open_group` may fail (no stream, or setting priority / the header
 //   fails); a write may fail (STOP_SENDING, reset). The outlet's writer is
 //   created with first group id 0 (origin.rs `outlet_send_task` :208-221).
@@ -30,10 +30,10 @@
 // - FORWARD_TOGGLES: the subscriber changes the Forward State.
 // - OPEN_CAN_FAIL / WRITE_CAN_FAIL: transport failures.
 // - ADVANCE_ON_OPEN_FAILURE (partial fix): when opening a group's stream
-//   fails, `open_group` still moves `next_group_id` past the group and drops
+//   fails, `open_group` still moves `next` past the group and drops
 //   the pending gap, which no longer ends right before the next group.
 // - GAP_FROM_NUMBERING (fix): the writer stops deriving the gap from its own
-//   `next_group_id`; the outlet puts on a group's first object the gap the
+//   `next`; the outlet puts on a group's first object the gap the
 //   numbering made (`GroupBoundary::At` past the next id), the only groups
 //   the origin knows never exist.
 //
@@ -52,12 +52,13 @@ module track_writer {
   const ADVANCE_ON_OPEN_FAILURE: bool
   const GAP_FROM_NUMBERING: bool
 
-  // `Option<GroupSender>`, by its group id.
+  // `GroupSlot` (`NoGroup` / `Open` / `Abandoned`), by its group id.
+  // `group` and `abandoned` below are its two non-empty variants.
   type Slot = NoGroup | Group(int)
 
-  // `TrackWriter` fields that number groups. `pendingGap` 0 is `None`
-  // (`skip_to_group` never stores `Some(0)`). `next_group_id` never reaches
-  // u64::MAX here.
+  // `TrackWriter`'s `GroupNumbering` (`first`, `next`, `pending_gap`) and
+  // `GroupSlot`. `pendingGap` 0 is `None` (`skip_to` never stores
+  // `Some(0)`). `next` never reaches u64::MAX here.
   type Writer = {
     first: int,
     next: int,
@@ -93,7 +94,7 @@ module track_writer {
 
   pure def groups(w: Writer): int = w.next - w.first
 
-  // `skip_to_group`; the caller never passes a group before `next`.
+  // `GroupNumbering::skip_to`; the caller never passes a group before `next`.
   pure def skipTo(w: Writer, g: int): Writer =
     if (groups(w) == 0) { ...w, first: g, next: g }
     else {
