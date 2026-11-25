@@ -98,6 +98,7 @@ impl Publish {
                     session_id,
                     upstream_subscription.request_id(),
                     table,
+                    cache_store,
                     cascading_relay_context.namespace_routes,
                     &track_key,
                     handler.as_ref(),
@@ -130,20 +131,22 @@ impl Publish {
         );
     }
 
+    /// Runs after the PUBLISH joins the directory, so a concurrent withdrawal
+    /// sees this client and keeps the route. Returns `false` after rejecting
+    /// the PUBLISH with PUBLISH_ERROR.
     #[tracing::instrument(
         level = "debug",
         name = "relay.sequence.publish.register_route",
         skip_all,
         fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
     )]
-    /// Registers the route of a client's PUBLISH already in the directory, so
-    /// a withdrawal crossing it sees the client. On failure the PUBLISH leaves
-    /// the directory again and is answered PUBLISH_ERROR.
+    #[allow(clippy::too_many_arguments)]
     async fn register_route(
         &self,
         session_id: SessionId,
         request_id: u64,
         table: &InMemoryLocalPubSubDirectory,
+        cache_store: &TrackCacheStore,
         namespace_routes: &NamespaceRoutes,
         track_key: &TrackKey,
         handler: &dyn PublishHandler,
@@ -162,6 +165,9 @@ impl Publish {
             request_id,
             PublishDoneReason::publisher_session_closed(),
         );
+        if !table.has_track_publisher(track_key) {
+            cache_store.publisher_left(track_key);
+        }
         namespace_routes.withdraw_track(track_key, table).await;
         if handler
             .error(
