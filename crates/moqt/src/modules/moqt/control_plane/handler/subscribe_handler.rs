@@ -1,6 +1,9 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crate::{
     SubscriberInitiatedSubscription, Subscription, TrackProperties,
@@ -44,6 +47,35 @@ pub struct SubscribeHandler {
     pub track_properties: TrackProperties,
     trace_context: Option<TraceContext>,
     guard: ResponseGuard,
+    /// Set on a session that follows GOAWAY.
+    served: Option<Arc<ServedSubscribe>>,
+}
+
+/// Counts a SUBSCRIBE as served on the connection it arrived on from its
+/// receipt, ordered before its UNSUBSCRIBE, until the application refuses
+/// it or drops it unanswered; a migration does not close that connection
+/// while it is served.
+#[derive(Debug)]
+struct ServedSubscribe {
+    session_context: Arc<SessionContext>,
+    connection: Arc<Connection>,
+    request_id: u64,
+    accepted: AtomicBool,
+}
+
+impl ServedSubscribe {
+    fn refused(&self) {
+        if !self.accepted.load(Ordering::SeqCst) {
+            self.connection.stop_serving(self.request_id);
+            self.session_context.note_served_changed();
+        }
+    }
+}
+
+impl Drop for ServedSubscribe {
+    fn drop(&mut self) {
+        self.refused();
+    }
 }
 
 impl SubscribeHandler {
@@ -52,6 +84,7 @@ impl SubscribeHandler {
         self.trace_context.as_ref()
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) fn new(
         session_context: Arc<SessionContext>,
         connection: Arc<Connection>,
@@ -69,7 +102,17 @@ impl SubscribeHandler {
         let request_id = guard
             .connection()
             .logical_request_id(subscribe_message.request_id);
+        let served = session_context.follows_go_away().then(|| {
+            guard.connection().serve(request_id);
+            Arc::new(ServedSubscribe {
+                session_context: session_context.clone(),
+                connection: guard.connection().clone(),
+                request_id,
+                accepted: AtomicBool::new(false),
+            })
+        });
         Self {
+            served,
             session_context,
             guard,
             request_id,
@@ -107,6 +150,22 @@ impl SubscribeHandler {
         expires: u64,
         content_exists: ContentExists,
     ) -> anyhow::Result<()> {
+        let answered = self.send_ok(track_alias, expires, content_exists).await;
+        if let Some(served) = &self.served {
+            match answered {
+                Ok(()) => served.accepted.store(true, Ordering::SeqCst),
+                Err(_) => served.refused(),
+            }
+        }
+        answered
+    }
+
+    async fn send_ok(
+        &self,
+        track_alias: u64,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> anyhow::Result<()> {
         self.guard
             .refuse_unless_understood(&self.track_properties)
             .await?;
@@ -121,9 +180,6 @@ impl SubscribeHandler {
         self.guard
             .accept(OutgoingResponse::SubscribeOk(subscribe_ok))
             .await?;
-        if self.session_context.follows_go_away() {
-            self.guard.connection().serve(self.request_id);
-        }
         Ok(())
     }
 
@@ -150,7 +206,11 @@ impl SubscribeHandler {
         code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.reject(code, reason_phrase).await
+        let rejected = self.guard.reject(code, reason_phrase).await;
+        if let Some(served) = &self.served {
+            served.refused();
+        }
+        rejected
     }
 
     pub fn request_id(&self) -> u64 {
@@ -185,12 +245,19 @@ pub(crate) fn delivered_group_order(
 
 #[cfg(test)]
 mod tests {
+    use super::SubscribeHandler;
     use crate::subscribe::SubscribeOption;
     use crate::{
-        RequestErrorCode, RequestFailure, SessionEvent,
-        modules::test_support::{
-            DRAFTS, connected_sessions, mandatory_track_properties, next_event,
-            spawn_connected_native_sessions,
+        RequestErrorCode, RequestFailure, Session, SessionEvent, Version,
+        modules::{
+            moqt::{
+                control_plane::control_messages::messages::unsubscribe::Unsubscribe,
+                version::Notification,
+            },
+            test_support::{
+                DRAFTS, connected_sessions, connected_sessions_following_go_away,
+                mandatory_track_properties, next_event, spawn_connected_native_sessions,
+            },
         },
         object::{ContentExists, GroupOrder},
     };
@@ -387,5 +454,87 @@ mod tests {
             assert_eq!(handler.track_namespace, "a/b/c");
             request.abort();
         }
+    }
+
+    /// The client of a session following GOAWAY received the server's
+    /// SUBSCRIBE; returns (client, server, the client's handler).
+    async fn subscribe_received_following_go_away(
+        name: &str,
+    ) -> (Session, Session, SubscribeHandler) {
+        let (client, server) = connected_sessions_following_go_away(name, Version::Draft14).await;
+        let mut subscriber = server.subscriber();
+        tokio::spawn(async move {
+            subscriber
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = next_event(&client).await else {
+            panic!("expected SUBSCRIBE from the server");
+        };
+        (client, server, handler)
+    }
+
+    fn serves(client: &Session) -> bool {
+        client.context().serves_on(&client.context().connection())
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_unsubscribed_before_it_is_accepted_is_not_served() {
+        // Arrange
+        let (client, server, handler) =
+            subscribe_received_following_go_away("subscribe-handler-unsubscribed-first").await;
+        server
+            .context()
+            .connection()
+            .control
+            .notify(Notification::Unsubscribe(Unsubscribe {
+                request_id: handler.request_id(),
+            }))
+            .await
+            .unwrap();
+        let SessionEvent::Unsubscribe(_) = next_event(&client).await else {
+            panic!("expected UNSUBSCRIBE from the server");
+        };
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+
+        // Assert: a migration need not wait for an UNSUBSCRIBE that already came
+        assert!(!serves(&client));
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_is_served_from_its_receipt_until_it_is_refused() {
+        // Arrange
+        let (client, _server, handler) =
+            subscribe_received_following_go_away("subscribe-handler-refused").await;
+        let served_on_receipt = serves(&client);
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, String::new())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(served_on_receipt);
+        assert!(!serves(&client));
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_dropped_unanswered_is_no_longer_served() {
+        // Arrange
+        let (client, _server, handler) =
+            subscribe_received_following_go_away("subscribe-handler-dropped").await;
+
+        // Act
+        drop(handler);
+
+        // Assert
+        assert!(!serves(&client));
     }
 }

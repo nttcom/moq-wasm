@@ -450,22 +450,21 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use crate::{
-        CertificateVerification, ClientConfig, RequestErrorCode, RequestFailure, Session,
-        SessionEvent, Subscription, Version,
+        RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription, Version,
         modules::{
             moqt::{
                 domains::session_context::SessionContext,
                 runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             },
             test_support::{
-                DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, capture_telemetry, client_with_config,
-                connect_sessions_from, connected_sessions, data_receiver, first_subgroup_stream,
+                DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, capture_telemetry, connected_sessions,
+                connected_sessions_following_go_away, data_receiver, first_subgroup_stream,
                 mandatory_track_properties, next_event, next_subgroup, object_with_extensions,
                 read_subgroup_objects, send_subgroup_object, send_without_waiting,
                 spawn_connected_draft18_sessions,
                 spawn_connected_draft18_sessions_following_go_away,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
-                spawn_server, wait_for_control_delivery, within,
+                wait_for_control_delivery, within,
             },
         },
         object::{ContentExists, Location, Object},
@@ -1252,22 +1251,6 @@ mod tests {
         assert_eq!(spans[0].field("outcome"), Some("ok"));
     }
 
-    /// A draft-14 client following GOAWAY and its server, as (client, server).
-    async fn draft14_sessions_following_go_away(name: &str) -> (Session, Session) {
-        let (port, accept) = spawn_server(name, Version::Draft14);
-        let endpoint = client_with_config(
-            ClientConfig {
-                certificate_verification: CertificateVerification::Disabled,
-                follow_go_away: true,
-                ..ClientConfig::default()
-            },
-            Version::Draft14,
-        );
-        connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap()
-    }
-
     /// Starts `publish_done` for `subscription` while the client's control
     /// stream is held; returns whether the connection was still served
     /// before PUBLISH_DONE could be written.
@@ -1294,7 +1277,8 @@ mod tests {
     #[tokio::test]
     async fn a_served_subscribe_holds_its_connection_until_publish_done_is_written() {
         // Arrange
-        let (client, server) = draft14_sessions_following_go_away("publish-done-served").await;
+        let (client, server) =
+            connected_sessions_following_go_away("publish-done-served", Version::Draft14).await;
         let mut subscriber = server.subscriber();
         let (_, served) = tokio::join!(
             subscriber.subscribe(
@@ -1322,7 +1306,8 @@ mod tests {
     #[tokio::test]
     async fn a_publication_holds_its_connection_until_publish_done_is_written() {
         // Arrange
-        let (client, server) = draft14_sessions_following_go_away("publish-done-published").await;
+        let (client, server) =
+            connected_sessions_following_go_away("publish-done-published", Version::Draft14).await;
         let (published, _) = within(active_publish(&client, &server, "track")).await;
 
         // Act
