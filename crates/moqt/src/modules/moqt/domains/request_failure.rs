@@ -19,6 +19,11 @@ pub enum RequestFailure {
     Timeout,
     #[error("the session closed before the response arrived")]
     SessionClosed,
+    /// This side withdrew the request before its response arrived (e.g.
+    /// PUBLISH_NAMESPACE_DONE on a pending PUBLISH_NAMESPACE, draft-18 §3.3.2).
+    /// The session stays open.
+    #[error("the request was withdrawn before its response arrived")]
+    Withdrawn,
     #[error("failed to send the request: {0}")]
     Send(#[from] TransportSendError),
     #[error("protocol violation: {0}")]

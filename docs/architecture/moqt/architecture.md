@@ -198,6 +198,7 @@ Each outbound request runs in an `INFO` span (`moqt.subscriber.{subscribe,subscr
 **Session & cutover safety**
 - **Duplicate alias & unknown IDs**: Duplicate live `SUBSCRIBE_OK` alias closes with `DuplicateTrackAlias` (§9.8); unknown response ID or future `SUBSCRIBE_UPDATE` ID closes with `ProtocolViolation`; future `PUBLISH_DONE` ID closes with `InvalidRequestId`.
 - **Control timeout**: 10 s per request (`RequestFailure::Timeout`, keeping session open); > 100 abandoned draft-14 entries close with `CONTROL_MESSAGE_TIMEOUT`.
+- **Withdrawn request**: A draft-18 request this side withdraws before its response (e.g. `PUBLISH_NAMESPACE_DONE` on a pending `PUBLISH_NAMESPACE`) fails with `RequestFailure::Withdrawn`, not `SessionClosed`, so it never waits for a migration (draft-18 §3.3.2).
 - **Group cutover**: Carried subscriptions cut over cleanly at a group boundary via `GroupCutover` (zero duplicates when previous connection closes).
 
 ### Buffering, Backpressure & Lifecycle Invariants

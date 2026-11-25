@@ -1233,8 +1233,9 @@ impl PendingResponse {
     }
 
     /// Fails with `RequestFailure::Timeout` after 10 s (the session stays
-    /// open), or with `RequestFailure::SessionClosed` when the control stream
-    /// closes first.
+    /// open), with `RequestFailure::Withdrawn` when this side withdrew the
+    /// request first (draft-18), or with `RequestFailure::SessionClosed` when
+    /// the control stream closes first.
     pub(crate) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
         let result = match self.draft {
             DraftPendingResponse::Draft14(pending) => {

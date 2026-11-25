@@ -973,7 +973,8 @@ pub(crate) struct OutgoingRequestTask {
     pub(super) request_id: RequestId,
     pub(super) stream: RequestStream,
     pub(super) receiver: MessageReceiver,
-    pub(super) response: tokio::sync::oneshot::Sender<ResponseMessage>,
+    /// `None` once this side withdrew the request unanswered.
+    pub(super) response: tokio::sync::oneshot::Sender<Option<ResponseMessage>>,
     pub(super) group_order: GroupOrder,
 }
 
@@ -1013,6 +1014,7 @@ impl OutgoingRequestTask {
         let no_wait = std::future::ready(());
         let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop, no_wait).await
         else {
+            let _ = response.send(None);
             return;
         };
         let Some(context) = Scope::of(&connection) else {
@@ -1052,7 +1054,7 @@ impl OutgoingRequestTask {
             )),
             _ => None,
         };
-        if let Err(abandoned) = response.send(first_response) {
+        if let Err(Some(abandoned)) = response.send(Some(first_response)) {
             Self::abandoned(&context, abandoned).await;
             return;
         }
