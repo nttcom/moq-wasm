@@ -404,8 +404,13 @@ async def within(awaitable):
 
 
 async def until(condition) -> None:
-    while not condition():
-        await asyncio.sleep(0.01)
+    """Waits until `condition()` holds, for at most `TIMEOUT_SECONDS`."""
+
+    async def poll() -> None:
+        while not condition():
+            await asyncio.sleep(0.01)
+
+    await within(poll())
 
 
 async def open_session(relay: FakeRelay, token: str | None = None, refresh: RefreshToken | None = None) -> Session:

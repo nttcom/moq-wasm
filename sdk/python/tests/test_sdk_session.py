@@ -2,7 +2,6 @@ import asyncio
 import gc
 import time
 import traceback
-from collections.abc import Callable
 
 import pytest
 
@@ -12,19 +11,9 @@ from moq_wasm import _token
 from moq_wasm._token import TokenKeeper
 
 from tests.cancellation import cancel_as_it_resumes
-from tests.fake_native import TIMEOUT_SECONDS, FakeRelay, native_future, open_session, unsigned_token, within
+from tests.fake_native import TIMEOUT_SECONDS, FakeRelay, native_future, open_session, unsigned_token, until, within
 
 NAMESPACE = ["anon", "room", "bot"]
-
-
-async def eventually(condition: Callable[[], bool]) -> None:
-    """Waits until `condition()` holds, for at most `TIMEOUT_SECONDS` in all."""
-
-    async def poll() -> None:
-        while not condition():
-            await asyncio.sleep(0.01)
-
-    await within(poll())
 
 
 async def test_run_raises_connection_lost_once_the_native_session_ends():
@@ -159,7 +148,7 @@ async def test_two_sessions_awaited_from_one_connection_each_refresh_their_own_t
 
     # Act
     sessions = [await connecting, await connecting]
-    await eventually(lambda: [native.refreshed for native in relay.sessions] == [[later], [later]])
+    await until(lambda: [native.refreshed for native in relay.sessions] == [[later], [later]])
     await asyncio.sleep(0.4)
 
     # Assert: neither took the token the other refreshed as its own, so neither expired
@@ -183,7 +172,7 @@ async def test_a_short_lived_token_is_refreshed_halfway_through_its_lifetime(vir
     session = await open_session(relay, first, refresh)
 
     # Act
-    await eventually(lambda: relay.sessions[0].refreshed == [later])
+    await until(lambda: relay.sessions[0].refreshed == [later])
 
     # Assert
     assert asked_at[0] - started_at == pytest.approx(0.2)
@@ -207,7 +196,7 @@ async def test_a_failed_refresh_is_retried_until_the_token_actually_expires(monk
     session = await open_session(relay, first, refresh)
 
     # Act
-    await eventually(lambda: relay.sessions[0].refreshed == [later])
+    await until(lambda: relay.sessions[0].refreshed == [later])
 
     # Assert
     assert not session._done.done()
@@ -242,7 +231,7 @@ async def test_a_refreshed_token_the_relay_refuses_is_refreshed_again_from_the_a
     native.refresh_token = refuse_once
 
     # Act
-    await eventually(lambda: keeper.token == accepted)
+    await until(lambda: keeper.token == accepted)
 
     # Assert: asked again with the token the relay accepted, before it expired
     assert native.refreshed == [refused, accepted]
@@ -410,11 +399,11 @@ async def test_a_refresh_whose_shared_future_someone_else_cancelled_is_retried(m
 
     relay = FakeRelay()
     session = await open_session(relay, first, refresh)
-    await eventually(lambda: len(answers) == 1)
+    await until(lambda: len(answers) == 1)
 
     # Act: its other holder cancels it
     shared.cancel()
-    await eventually(lambda: relay.sessions[0].refreshed == [later])
+    await until(lambda: relay.sessions[0].refreshed == [later])
 
     # Assert: the cancellation failed that refresh only, so the keeper retried it
     assert not session._done.done()
@@ -753,7 +742,7 @@ async def test_a_subscription_dropped_after_a_timed_out_read_cancels_the_read_it
     gc.collect()
 
     # Assert
-    await eventually(left.done)
+    await until(left.done)
     assert left.cancelled()
     await session.close()
 
@@ -1013,7 +1002,7 @@ async def test_writes_queued_behind_a_stalled_send_raise_once_the_writer_ended(e
     native = relay.sessions[0].writers["status"]
     native.send_gate = asyncio.Event()
     stalled = asyncio.create_task(writer.write(b"stalled"))
-    await eventually(lambda: native.objects != [])
+    await until(lambda: native.objects != [])
     queued = [asyncio.create_task(writer.write(payload)) for payload in (b"queued", b"queued group")]
     await asyncio.sleep(0)
 
@@ -1078,7 +1067,7 @@ async def test_a_subscriber_that_came_as_its_waiter_was_cancelled_goes_to_the_ne
     writer = await session.publish_track(NAMESPACE, "status")
     native_writer = relay.sessions[0].writers["status"]
     waiting = asyncio.create_task(writer.next_subscriber())
-    await eventually(lambda: native_writer.subscriber_waits > 0)
+    await until(lambda: native_writer.subscriber_waits > 0)
     cancelled = cancel_as_it_resumes(waiting)
 
     # Act
