@@ -91,7 +91,7 @@ export function NamespacePanel({ spanMs, toMs, live, onPick, onClose }: Props) {
             </button>
           )
         })}
-        {result && rows.length === 0 && <div className="note">この期間に Publish された Namespace はありません</div>}
+        {result && rows.length === 0 && <div className="note">該当する Namespace なし</div>}
       </div>
     </section>
   )

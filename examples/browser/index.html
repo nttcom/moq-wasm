@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoQT Playground</title>
-    <meta name="description" content="Media over QUIC Transport (MoQT) をブラウザで試せる Example 集" />
+    <meta name="description" content="MoQT をブラウザで試す Example 集" />
     <link rel="stylesheet" href="./utils/theme.css" />
     <link rel="stylesheet" href="./index.css" />
   </head>
@@ -144,7 +144,7 @@
             </div>
             <div class="example-body">
               <div class="example-title"><h3>Meeting</h3></div>
-              <p>多人数の映像・音声会議。画面共有やチャットにも対応する</p>
+              <p>多人数ビデオ会議。画面共有・チャット対応</p>
               <div class="example-foot">
                 <span class="tag">映像・音声</span><span class="tag">画面共有</span><span class="tag">チャット</span
                 ><span class="example-open"
@@ -163,8 +163,8 @@
               </div>
               <div class="example-row-text">
                 <h3>Recording Player</h3>
-                <p>Meeting の録画を、Recorder が FETCH で再配信して再生する</p>
-                <span class="badge warning requires-token-note">一時トークンで利用できます</span>
+                <p>Meeting の録画を FETCH で再生</p>
+                <span class="badge warning requires-token-note">一時トークンのみ</span>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -200,7 +200,7 @@
               </div>
               <div class="example-row-text">
                 <h3>Whiteboard</h3>
-                <p>多人数で描くホワイトボード。途中から参加しても再現する</p>
+                <p>共有ホワイトボード。途中参加でも描画を復元</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -215,7 +215,7 @@
               </div>
               <div class="example-row-text">
                 <h3>Phone</h3>
-                <p>SIP gateway を通して電話をかけ、電話を受ける（ローカルの開発環境のみ）</p>
+                <p>SIP gateway 経由の発着信（ローカル限定）</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -292,7 +292,7 @@
             </div>
             <div class="example-body">
               <div class="example-title"><h3>Remote Monitoring</h3></div>
-              <p>USB カメラの映像を Rust CLI から配信し、ブラウザで遠隔監視する</p>
+              <p>USB カメラ映像をブラウザで遠隔監視</p>
               <div class="example-foot">
                 <span class="tag">USB カメラ</span><span class="tag">Rust CLI</span
                 ><span class="example-open"
@@ -324,7 +324,7 @@
               </div>
               <div class="example-row-text">
                 <h3>ONVIF</h3>
-                <p>PTZ カメラを MoQ Gateway 経由で遠隔操作・遠隔監視する</p>
+                <p>PTZ カメラを遠隔操作・監視</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -383,7 +383,7 @@
             </div>
             <div class="example-body">
               <div class="example-title"><h3>Live Viewer</h3></div>
-              <p>OBS や ffmpeg の RTMP / SRT 配信を MoQ に変換し、ライブで視聴する</p>
+              <p>RTMP / SRT や MP4 のライブ配信を視聴</p>
               <div class="example-foot">
                 <span class="tag">RTMP / SRT</span><span class="tag">gstreamer</span
                 ><span class="example-open"
@@ -410,7 +410,7 @@
               </div>
               <div class="example-row-text">
                 <h3>Live Translate</h3>
-                <p>配信の音声を Gemini Live Translate で視聴者の言語に翻訳して届ける</p>
+                <p>配信音声を視聴者の言語へリアルタイム翻訳</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -439,7 +439,7 @@
             </div>
             <div class="example-body">
               <div class="example-title"><h3>Camera Detection</h3></div>
-              <p>カメラ映像についての質問に、AI が映像を見て答える</p>
+              <p>カメラ映像を見て AI が質問に回答</p>
               <div class="example-foot">
                 <span class="tag">pipecat</span><span class="tag">映像</span
                 ><span class="example-open"
@@ -461,7 +461,7 @@
               </div>
               <div class="example-row-text">
                 <h3>Chat Moderation</h3>
-                <p>チャットの発言を AI が読み、暴言を取り除く</p>
+                <p>AI がチャットを判定し暴言を削除</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -475,7 +475,7 @@
               </div>
               <div class="example-row-text">
                 <h3>PTZ Tracking</h3>
-                <p>指定した対象を AI が見つけ、PTZ カメラで画面に収め続ける</p>
+                <p>AI が対象を検出し PTZ カメラで自動追従</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -492,7 +492,7 @@
               </div>
               <div class="example-row-text">
                 <h3>AI Voice Agent</h3>
-                <p>話しかけると、AI が聞き取って声で答える</p>
+                <p>AI と音声でリアルタイム会話</p>
               </div>
               <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
             </a>
@@ -511,7 +511,7 @@
                 ><svg><use href="/icons.svg#icon-message-square-code" /></svg
               ></span>
               <div class="example-title"><h3>Message</h3></div>
-              <p>SUBSCRIBE や FETCH などの MoQT 制御メッセージを 1 つずつ送り、Relay の応答を確かめる</p>
+              <p>MoQT 制御メッセージを手動送信して応答を確認</p>
               <div class="example-foot">
                 <span class="tag">制御メッセージ</span
                 ><span class="example-open"
@@ -526,7 +526,7 @@
                 ><svg><use href="/icons.svg#icon-zap" /></svg
               ></span>
               <div class="example-title"><h3>Datagram vs Stream</h3></div>
-              <p>カーソルと時刻を subgroup ストリームと datagram の両方で流し、届き方を並べて比べる</p>
+              <p>Subgroup ストリームと Datagram の遅延・欠落を比較</p>
               <div class="example-foot">
                 <span class="tag">Datagram</span><span class="tag">Subgroup</span
                 ><span class="example-open"
@@ -541,7 +541,7 @@
                 ><svg><use href="/icons.svg#icon-crosshair" /></svg
               ></span>
               <div class="example-title"><h3>Robot Teleop</h3></div>
-              <p>キーボードでシミュレーションのロボットを動かし、行動が途絶えると止まることを確かめる</p>
+              <p>ロボットを遠隔操縦し、操作途絶時の停止を確認</p>
               <div class="example-foot">
                 <span class="tag">Event timeline</span><span class="tag">Priority</span
                 ><span class="example-open"
@@ -556,7 +556,7 @@
                 ><svg><use href="/icons.svg#icon-video" /></svg
               ></span>
               <div class="example-title"><h3>Media</h3></div>
-              <p>カメラを MSF ブロードキャストとして Publish し、Subscriber で受信して再生する</p>
+              <p>カメラ映像を MSF / LOC で送受信・再生</p>
               <div class="example-foot">
                 <span class="tag">MSF</span><span class="tag">LOC</span
                 ><span class="example-open"
@@ -571,7 +571,7 @@
                 ><svg><use href="/icons.svg#icon-film" /></svg
               ></span>
               <div class="example-title"><h3>Media CMAF</h3></div>
-              <p>CMAF パッケージのトラックで映像と音声を Publish / Subscribe する</p>
+              <p>映像・音声を CMAF 形式で送受信・再生</p>
               <div class="example-foot">
                 <span class="tag">MSF</span><span class="tag">CMAF</span
                 ><span class="example-open"
@@ -586,7 +586,7 @@
                 ><svg><use href="/icons.svg#icon-play" /></svg
               ></span>
               <div class="example-title"><h3>Embed</h3></div>
-              <p>&lt;moq-player&gt; タグを 1 つ置くだけで、ブロードキャストをページに埋め込んで再生する</p>
+              <p>&lt;moq-player&gt; タグだけで配信を埋め込み再生</p>
               <div class="example-foot">
                 <span class="tag">Web Component</span
                 ><span class="example-open"
@@ -714,7 +714,7 @@
             </div>
             <div class="example-body">
               <div class="example-title"><h3>Observability</h3></div>
-              <p>自分の app の通信状況と Pub/Sub を、Relay ごとのトポロジーで表示する</p>
+              <p>Relay と Pub/Sub の通信状況をトポロジー表示</p>
               <div class="example-foot">
                 <span class="tag">トポロジー</span><span class="tag">Pub/Sub</span
                 ><span class="example-open"

@@ -15,7 +15,7 @@
         <summary>
           <h2>使い方</h2>
         </summary>
-        <p class="hint">停止後の最初の判定は時間がかかります</p>
+        <p class="hint">初回判定は起動のため時間がかかります</p>
         <div class="setup-routes">
           <details class="setup-panel setup-toggle">
             <summary>
@@ -43,7 +43,7 @@
             </summary>
             <ol class="setup-steps">
               <li>
-                <h4>Cloud relay-1 のまま Join し、「bot を参加させる」を押す</h4>
+                <h4>Join →「bot を参加させる」</h4>
               </li>
             </ol>
           </details>
@@ -89,18 +89,18 @@
               </li>
               <li>
                 <h4>
-                  モデレーターを起動
+                  モデレーターを登録
                   <span
                     class="tip"
                     tabindex="0"
                     role="img"
-                    aria-label="gcloud のアカウントに roles/run.invoker が必要です"
-                    data-tip="gcloud のアカウントに roles/run.invoker が必要です"
+                    aria-label="gcloud に roles/run.invoker が必要"
+                    data-tip="gcloud に roles/run.invoker が必要"
                     ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                   ></span>
                 </h4>
                 <p class="hint">
-                  bot サービス（<code>services/bot-dispatcher</code>）の <code>BOT_DISPATCHER_TYPES</code> に登録します（<a
+                  <code>services/bot-dispatcher</code> の <code>BOT_DISPATCHER_TYPES</code> に登録（<a
                     href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/moq-chat-moderation/README.md"
                     target="_blank"
                     rel="noopener"
@@ -109,7 +109,7 @@
                 </p>
               </li>
               <li>
-                <h4>Local relay-a で Join し、「bot を参加させる」を押す</h4>
+                <h4>Local relay-a で Join →「bot を参加させる」</h4>
                 <pre><code>make chrome</code></pre>
               </li>
             </ol>
@@ -126,8 +126,8 @@
                   class="tip"
                   tabindex="0"
                   role="img"
-                  aria-label="メッセージを押すと判定の内訳を表示します"
-                  data-tip="メッセージを押すと判定の内訳を表示します"
+                  aria-label="クリックで判定内訳を表示"
+                  data-tip="クリックで判定内訳を表示"
                   ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                 ></span>
               </h2>
@@ -202,8 +202,8 @@
                 class="tip"
                 tabindex="0"
                 role="img"
-                aria-label="70% 以上のラベルを付けます。「暴言」が付いた発言は削除します"
-                data-tip="70% 以上のラベルを付けます。「暴言」が付いた発言は削除します"
+                aria-label="70% 以上でラベル付与（「暴言」は削除）"
+                data-tip="70% 以上でラベル付与（「暴言」は削除）"
                 ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
               ></span>
             </h2>

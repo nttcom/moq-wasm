@@ -260,7 +260,7 @@ function ReplaySection({ recording, onChoose }: { recording: RoomRecordingContro
           Open latest recording
         </MenuItem>
       ) : (
-        <MenuNote>完了した録画はまだありません</MenuNote>
+        <MenuNote>録画はまだありません</MenuNote>
       )}
     </>
   )
@@ -313,7 +313,7 @@ function TranscriptionSection({ captions, onChoose }: { captions: CaptionsContro
           id: 'stop',
           label: '文字起こしを停止',
           onClick: () => {
-            if (window.confirm('Stopping transcription stops it for everyone in the room.')) {
+            if (window.confirm('全員の文字起こしを停止しますか？')) {
               captions.stop()
             }
           }

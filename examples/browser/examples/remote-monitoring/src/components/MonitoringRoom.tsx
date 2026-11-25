@@ -32,8 +32,7 @@ function stepsForwardWithinReview({ mode, seek }: LivePlayerState): boolean {
 }
 const MICROS_PER_SECOND = 1_000_000
 
-const KEYBOARD_NOTE =
-  '← → メインのカメラを切替\n↓ またはメインをクリックで REVIEW（← → でコマ送り、↑ で LIVE）\n右のカメラをクリックでメインに表示'
+const KEYBOARD_NOTE = '←→ カメラ切替 / 右の一覧クリックで選択\n↓・メインクリック: REVIEW（←→ コマ送り / ↑ LIVE）'
 
 export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl)

@@ -61,18 +61,18 @@ setInterval(logStats, STATS_LOG_INTERVAL_MS)
 async function watch(): Promise<void> {
   const broadcastId = broadcastIdInput.value.trim()
   if (!broadcastId) {
-    setStatusText('viewer-status', '配信 ID を入れてください（下の「接続」）')
+    setStatusText('viewer-status', '下の「接続」で配信 ID を入力してください')
     connection.open = true
     return
   }
   try {
     await stop()
-    setStatusText('viewer-status', '接続しています')
+    setStatusText('viewer-status', '接続中…')
     session = await MoqSession.connect(urlInput.value.trim(), connectOptions())
     await player.start(session, translatedNamespace(broadcastNamespace(broadcastId)))
     renderOverlay()
   } catch (error) {
-    setStatusText('viewer-status', `接続できませんでした: ${getErrorMessage(error)}`)
+    setStatusText('viewer-status', `接続失敗: ${getErrorMessage(error)}`)
   }
 }
 
@@ -95,7 +95,7 @@ function renderOverlay(): void {
   watchOverlay.hidden = !waiting
   watchButton.hidden = waiting
   languageBar.hidden = waiting
-  setStatusText('viewer-status', waiting ? '配信が始まるのを待っています' : '')
+  setStatusText('viewer-status', waiting ? '配信開始を待機中…' : '')
 }
 
 function renderCaption(text: string): void {
@@ -147,13 +147,13 @@ function renderStats(): void {
     value === undefined ? '--' : `${value >= 0 ? '+' : '-'}${Math.abs(Math.round(value))} ms`
   const entries: [string, string][] = [
     ['遅延', stats.viewerDelayMs === undefined ? '--' : `${(stats.viewerDelayMs / 1_000).toFixed(2)} s`],
-    ['うち届くまで', stats.arrivalDelayMs === undefined ? '--' : `${(stats.arrivalDelayMs / 1_000).toFixed(2)} s`],
-    ['うちバッファ', stats.bufferMs === undefined ? '--' : `${(stats.bufferMs / 1_000).toFixed(2)} s`],
-    ['映像と音声のずれ', ms(stats.syncOffsetMs)],
-    ['訳と原音声のずれ', ms(stats.translationOffsetMs)],
-    ['直近の切り替え', stats.lastSwitchSeconds === undefined ? '--' : `${stats.lastSwitchSeconds.toFixed(1)} s`],
-    ['遅れて捨てた音声', String(stats.droppedLateAudio)],
-    ['遅れて捨てた映像', String(stats.droppedLateVideo)],
+    ['到着遅延', stats.arrivalDelayMs === undefined ? '--' : `${(stats.arrivalDelayMs / 1_000).toFixed(2)} s`],
+    ['バッファ', stats.bufferMs === undefined ? '--' : `${(stats.bufferMs / 1_000).toFixed(2)} s`],
+    ['A/V ずれ', ms(stats.syncOffsetMs)],
+    ['訳・原音ずれ', ms(stats.translationOffsetMs)],
+    ['言語切替', stats.lastSwitchSeconds === undefined ? '--' : `${stats.lastSwitchSeconds.toFixed(1)} s`],
+    ['破棄音声', String(stats.droppedLateAudio)],
+    ['破棄映像', String(stats.droppedLateVideo)],
     [
       '映像',
       `${stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : '--'} ${Math.round(stats.receivedVideoKbps)} kbps`

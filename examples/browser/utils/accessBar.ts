@@ -18,14 +18,11 @@ function content(access: Access): HTMLElement[] {
       return [
         dot(),
         label('Public'),
-        detail('送信したメディアは誰でも視聴できます'),
-        info(
-          '誰でも視聴できる anon namespace に Publish します。機密情報やプライバシーに関わる情報は入力しないでください。一覧ページで一時トークンに切り替えられます',
-          'warning'
-        )
+        detail('誰でも視聴できます'),
+        info('anon に公開されます。機密・個人情報は入力不可（一覧で一時トークンに切替可）', 'warning')
       ]
     case 'given':
-      return [dot(), label('トークン'), detail(`URL のトークン（app ${access.namespaceRoot}）で接続します`)]
+      return [dot(), label('トークン'), detail(`URL トークン（${access.namespaceRoot}）で接続`)]
     case 'unavailable':
       return [dot(), label('一時トークン'), detail(access.reason), info(access.reason, 'danger')]
     case 'temporary': {
@@ -36,7 +33,7 @@ function content(access: Access): HTMLElement[] {
         label('一時トークン'),
         app,
         remaining,
-        info(`URL 及びトークンを共有すると参加・視聴が可能になります。${CAUTION}`),
+        info(`共有リンクを知る人だけが参加・視聴できます。${CAUTION}`),
         copy
       ]
     }

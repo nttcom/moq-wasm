@@ -15,7 +15,7 @@
         <summary>
           <h2>使い方</h2>
         </summary>
-        <p class="hint">停止後の最初の判定は時間がかかります</p>
+        <p class="hint">初回判定は起動のため時間がかかります</p>
         <div class="setup-routes">
           <details class="setup-panel setup-toggle">
             <summary>
@@ -45,8 +45,8 @@
             </summary>
             <ol class="setup-steps">
               <li>
-                <h4>カメラを配信する</h4>
-                <p class="hint">Cloud relay-1 のまま Join し、「bot を参加させる」を押す</p>
+                <h4>カメラを配信</h4>
+                <p class="hint">Join →「bot を参加させる」</p>
               </li>
             </ol>
           </details>
@@ -93,9 +93,9 @@
                 <pre><code>make relay</code></pre>
               </li>
               <li>
-                <h4>pipecat bot を起動する</h4>
+                <h4>pipecat bot を登録</h4>
                 <p class="hint">
-                  bot サービス（<code>services/bot-dispatcher</code>）の <code>BOT_DISPATCHER_TYPES</code> に登録します（<a
+                  <code>services/bot-dispatcher</code> の <code>BOT_DISPATCHER_TYPES</code> に登録（<a
                     href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/moq-camera-detection/README.md"
                     target="_blank"
                     rel="noopener"
@@ -104,8 +104,8 @@
                 </p>
               </li>
               <li>
-                <h4>カメラを配信する</h4>
-                <p class="hint">Local relay-a で Join し、「bot を参加させる」を押す</p>
+                <h4>カメラを配信</h4>
+                <p class="hint">Local relay-a で Join →「bot を参加させる」</p>
                 <pre><code>make chrome</code></pre>
               </li>
             </ol>
@@ -119,7 +119,7 @@
               <h2>カメラ</h2>
             </div>
             <ul id="verdicts" class="camera-verdicts"></ul>
-            <div class="camera-stage" data-placeholder="Join すると映像が映ります">
+            <div class="camera-stage" data-placeholder="Join で表示">
               <video id="preview" class="camera-preview" autoplay muted playsinline></video>
               <div id="boxes" class="box-overlay"></div>
             </div>
@@ -132,8 +132,8 @@
                   class="tip"
                   tabindex="0"
                   role="img"
-                  aria-label="「適用」を押すと bot が新しい質問で答え直します"
-                  data-tip="「適用」を押すと bot が新しい質問で答え直します"
+                  aria-label="「適用」で質問を更新"
+                  data-tip="「適用」で質問を更新"
                   ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                 ></span>
               </h2>

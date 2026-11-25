@@ -39,7 +39,7 @@
 
       #send-status:empty::before {
         color: var(--text-subtle);
-        content: 'まだ送信していません';
+        content: '未送信';
       }
 
       @media (max-width: 720px) {
@@ -68,8 +68,8 @@
                         class="tip"
                         tabindex="0"
                         role="img"
-                        aria-label="PUBLISH_NAMESPACE を送り、Withdraw で PUBLISH_NAMESPACE_DONE を送ります"
-                        data-tip="PUBLISH_NAMESPACE を送り、Withdraw で PUBLISH_NAMESPACE_DONE を送ります"
+                        aria-label="Announce: PUBLISH_NAMESPACE / Withdraw: PUBLISH_NAMESPACE_DONE"
+                        data-tip="Announce: PUBLISH_NAMESPACE / Withdraw: PUBLISH_NAMESPACE_DONE"
                         ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                       ></span>
                     </h3>
@@ -95,8 +95,8 @@
                         class="tip"
                         tabindex="0"
                         role="img"
-                        aria-label="SUBSCRIBE_NAMESPACE を送り、Stop で UNSUBSCRIBE_NAMESPACE を送ります"
-                        data-tip="SUBSCRIBE_NAMESPACE を送り、Stop で UNSUBSCRIBE_NAMESPACE を送ります"
+                        aria-label="Watch: SUBSCRIBE_NAMESPACE / Stop: UNSUBSCRIBE_NAMESPACE"
+                        data-tip="Watch: SUBSCRIBE_NAMESPACE / Stop: UNSUBSCRIBE_NAMESPACE"
                         ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                       ></span>
                     </h3>
@@ -128,8 +128,8 @@
                       class="tip"
                       tabindex="0"
                       role="img"
-                      aria-label="トラックへの SUBSCRIBE / FETCH / TRACK_STATUS に応答します。チェックすると PUBLISH も送ります"
-                      data-tip="トラックへの SUBSCRIBE / FETCH / TRACK_STATUS に応答します。チェックすると PUBLISH も送ります"
+                      aria-label="SUBSCRIBE / FETCH / TRACK_STATUS に応答（チェックで PUBLISH も送信）"
+                      data-tip="SUBSCRIBE / FETCH / TRACK_STATUS に応答（チェックで PUBLISH も送信）"
                       ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                     ></span>
                   </h3>
@@ -174,8 +174,8 @@
                         class="tip"
                         tabindex="0"
                         role="img"
-                        aria-label="Set forward は SUBSCRIBE_UPDATE、Unsubscribe は UNSUBSCRIBE を送ります"
-                        data-tip="Set forward は SUBSCRIBE_UPDATE、Unsubscribe は UNSUBSCRIBE を送ります"
+                        aria-label="Set forward: SUBSCRIBE_UPDATE / Unsubscribe: UNSUBSCRIBE"
+                        data-tip="Set forward: SUBSCRIBE_UPDATE / Unsubscribe: UNSUBSCRIBE"
                         ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                       ></span>
                     </h3>
@@ -216,8 +216,8 @@
                         class="tip"
                         tabindex="0"
                         role="img"
-                        aria-label="End Object 0 は End Group 全体を指します"
-                        data-tip="End Object 0 は End Group 全体を指します"
+                        aria-label="End Object 0 = End Group 全体"
+                        data-tip="End Object 0 = End Group 全体"
                         ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                       ></span>
                     </h3>
@@ -279,7 +279,7 @@
 
             <section class="card stack">
               <h2>受信したオブジェクト</h2>
-              <div id="received-text" class="feed" data-empty="受信したオブジェクトがここに並びます"></div>
+              <div id="received-text" class="feed" data-empty="受信オブジェクトなし"></div>
             </section>
 
             <section class="card stack">

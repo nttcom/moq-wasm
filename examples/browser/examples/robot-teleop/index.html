@@ -13,9 +13,9 @@
       <details class="card setup-toggle">
         <summary><h2>使い方</h2></summary>
         <ol class="usage">
-          <li><code>cargo run -p moq-robot-sim -- --insecure</code> でシミュレーションのロボットを起動する</li>
-          <li>同じルームを入れて「接続」する</li>
-          <li>矢印キーか WASD で動かす。キーを離すとロボットは止まる</li>
+          <li><code>cargo run -p moq-robot-sim -- --insecure</code> でロボットを起動</li>
+          <li>同じルーム名で「接続」</li>
+          <li>矢印キー / WASD で操縦（離すと停止）</li>
         </ol>
       </details>
 
@@ -26,7 +26,9 @@
             <div id="urlPresets"></div>
             <input type="url" id="url" aria-label="Relay URL" />
           </div>
-          <label>ルーム <input type="text" id="room" value="anon/robot-teleop" data-testid="robot-teleop-room" /></label>
+          <label
+            >ルーム <input type="text" id="room" value="anon/robot-teleop" data-testid="robot-teleop-room"
+          /></label>
           <div class="button-row">
             <button type="button" id="connectBtn" data-testid="robot-teleop-connect">接続</button>
           </div>

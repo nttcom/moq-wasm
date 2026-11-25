@@ -38,7 +38,7 @@ export const TOKEN_FRAGMENT = 'jwt'
 /// it keep the mode their reader chose.
 export const ACCESS_MODE_PARAM = 'access'
 
-export const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
+export const CAUTION = '検証用です。機密情報や個人情報は入力しないでください'
 /// A token is refreshed this long before it expires, so a reconnect never presents an expired one.
 const REFRESH_MARGIN_SECONDS = 5 * 60
 
@@ -148,7 +148,7 @@ async function resolveAccess(): Promise<Access> {
   if (fragment && fragment.appId !== sessionStorage.getItem(TAB_APP_KEY)) {
     // A link someone shared: it joins its app, and so do the examples opened after it.
     if (fragment.expiresAt <= nowSeconds()) {
-      return unavailable('この共有リンクは期限が切れています。共有した人に新しいリンクをもらってください')
+      return unavailable('共有リンクの期限切れです。新しいリンクをもらってください')
     }
     writeAccessMode('temporary')
     localStorage.setItem(TOKEN_KEY, JSON.stringify(newer(fragment, storedToken())))
@@ -160,7 +160,7 @@ async function resolveAccess(): Promise<Access> {
   try {
     if (!token || token.expiresAt <= nowSeconds()) {
       if (fragment) {
-        return unavailable('このリンクは期限が切れています。一覧ページでトークンを作り直してください')
+        return unavailable('リンクの期限切れです。一覧でトークンを作り直してください')
       }
       token = await startNewTemporaryApp()
     } else if (token.expiresAt - nowSeconds() < REFRESH_MARGIN_SECONDS) {
@@ -172,7 +172,7 @@ async function resolveAccess(): Promise<Access> {
     }
   } catch (error) {
     console.warn('[access] temporary token unavailable', error)
-    return unavailable('一時トークンを取得できませんでした。再読み込みするか、一覧ページで Public に切り替えてください')
+    return unavailable('一時トークンを取得できません。再読み込みか Public に切替えてください')
   }
   return joinTemporaryApp(token)
 }

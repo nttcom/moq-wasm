@@ -31,10 +31,10 @@ export function SeekBar({ replayableStartSeconds, liveEdgeSeconds, playheadSecon
       <div>
         <div className="flex justify-between items-baseline mb-1.5">
           <span className="text-faint">
-            遡れる範囲：{formatBehindLive(totalSeconds)} 〜 LIVE
+            履歴：{formatBehindLive(totalSeconds)} 〜 LIVE
             {onJump && (
               <span className="text-faint ml-2" style={{ fontSize: '10px' }}>
-                クリック＝ジャンプ
+                クリックで移動
               </span>
             )}
           </span>

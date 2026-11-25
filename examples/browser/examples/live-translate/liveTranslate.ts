@@ -11,8 +11,8 @@ const TRANSLATOR_URLS: ServiceUrls = {
 }
 
 const REFUSALS: Record<string, string> = {
-  full: '翻訳は満席です。しばらくしてから配信し直してください',
-  relay_refused: '翻訳サービスが relay に接続できませんでした'
+  full: '翻訳枠が満席です。時間をおいて再試行してください',
+  relay_refused: '翻訳サービスが Relay に接続できません'
 }
 
 export function broadcastNamespace(broadcastId: string): string[] {
@@ -38,11 +38,11 @@ export async function requestTranslation(relayUrl: string): Promise<TranslationR
   if (access.kind !== 'temporary') {
     // Only a translator on this machine watches the public root.
     const local = URL.canParse(relayUrl) && LOCAL_HOSTS.has(new URL(relayUrl).hostname)
-    return { notice: local ? undefined : '翻訳は一時トークンのモードでのみ使えます', release: () => {} }
+    return { notice: local ? undefined : '翻訳は一時トークンでのみ利用できます', release: () => {} }
   }
   const translatorUrl = resolveServiceUrl(window.location.search, relayUrl, TRANSLATOR_URLS)
   const refused = (reason: unknown): TranslationRequest => ({
-    notice: REFUSALS[String(reason)] ?? `翻訳を始められませんでした（${reason}）`,
+    notice: REFUSALS[String(reason)] ?? `翻訳を開始できません（${reason}）`,
     release: () => {}
   })
   try {

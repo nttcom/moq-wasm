@@ -68,9 +68,8 @@
           ><button type="button" data-digit="#">#</button>
         </div>
         <p class="hint">
-          電話は SIP gateway（services/sip-gateway）が中継し、通話の発信と着信の受け付けはアプリのサーバーが行います。
-          このページはローカルの開発用サーバー（tests/sip-gateway-e2e/app-server.mjs）を
-          <code>?appServerUrl=</code>（既定は http://127.0.0.1:8097）で使います。
+          SIP gateway（<code>services/sip-gateway</code>）とローカルアプリサーバー（既定
+          <code>http://127.0.0.1:8097</code>、<code>?appServerUrl=</code> で変更可）で発着信します。
         </p>
       </section>
     </main>

@@ -19,8 +19,8 @@
               class="tip"
               tabindex="0"
               role="img"
-              aria-label="各コマンドは別々のターミナルで実行します。映像は H.264、音声は AAC"
-              data-tip="各コマンドは別々のターミナルで実行します。映像は H.264、音声は AAC"
+              aria-label="各コマンドは別ターミナルで実行（H.264 / AAC）"
+              data-tip="各コマンドは別ターミナルで実行（H.264 / AAC）"
               ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
             ></span>
           </summary>
@@ -43,12 +43,12 @@
               </summary>
               <ol class="setup-steps">
                 <li>
-                  <h4>MP4 を配信する</h4>
-                  <p class="hint">MP4 Publish で MP4 を選び、Publish</p>
+                  <h4>MP4 を配信</h4>
+                  <p class="hint">右の MP4 Publish でファイルを選択し Publish</p>
                 </li>
                 <li>
-                  <h4>Live Viewer で視聴する</h4>
-                  <p class="hint">同じ Relay と namespace で Watch</p>
+                  <h4>視聴</h4>
+                  <p class="hint">同じ Relay・namespace で Watch</p>
                 </li>
               </ol>
             </details>
@@ -76,13 +76,13 @@
               </summary>
               <ol class="setup-steps">
                 <li>
-                  <h4>配信を始める（ffmpeg か OBS）</h4>
+                  <h4>配信開始（ffmpeg / OBS）</h4>
                   <div class="setup-choice">
                     <h5>A. ffmpeg</h5>
                     <pre><code>make ffmpeg-srt-bbb-remote</code></pre>
                   </div>
                   <div class="setup-choice">
-                    <h5>B. OBS（SRT のサーバー URL）</h5>
+                    <h5>B. OBS（SRT URL）</h5>
                     <pre><code>srt://relay-1.moqt.research.skyway.io:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
                     <p class="hint">
                       RTMP: <code>rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test</code> · キー
@@ -91,7 +91,7 @@
                   </div>
                 </li>
                 <li>
-                  <h4>Live Viewer で視聴する</h4>
+                  <h4>視聴</h4>
                   <p class="hint">
                     Relay <code>https://relay-1.moqt.research.skyway.io:443</code> · namespace
                     <code>anon/live/test</code>
@@ -123,23 +123,23 @@
               </summary>
               <ol class="setup-steps">
                 <li>
-                  <h4>ローカル Ingestion を起動する</h4>
+                  <h4>ローカル Ingestion 起動</h4>
                   <pre><code>make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443</code></pre>
                 </li>
                 <li>
-                  <h4>配信を始める（ffmpeg か OBS）</h4>
+                  <h4>配信開始（ffmpeg / OBS）</h4>
                   <div class="setup-choice">
                     <h5>A. ffmpeg</h5>
                     <pre><code>make ffmpeg-srt-bbb-local</code></pre>
                     <p class="hint">テストパターン: <code>make ffmpeg-srt</code></p>
                   </div>
                   <div class="setup-choice">
-                    <h5>B. OBS（SRT のサーバー URL）</h5>
+                    <h5>B. OBS（SRT URL）</h5>
                     <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
                   </div>
                 </li>
                 <li>
-                  <h4>Live Viewer で視聴する</h4>
+                  <h4>視聴</h4>
                   <p class="hint">
                     Relay <code>https://relay-1.moqt.research.skyway.io:443</code> · namespace
                     <code>anon/live/test</code>
@@ -171,27 +171,27 @@
               </summary>
               <ol class="setup-steps">
                 <li>
-                  <h4>ローカル Relay を起動する</h4>
+                  <h4>ローカル Relay 起動</h4>
                   <pre><code>make relay</code></pre>
                 </li>
                 <li>
-                  <h4>ローカル Ingestion を起動する</h4>
+                  <h4>ローカル Ingestion 起動</h4>
                   <pre><code>make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433</code></pre>
                 </li>
                 <li>
-                  <h4>配信を始める（ffmpeg か OBS）</h4>
+                  <h4>配信開始（ffmpeg / OBS）</h4>
                   <div class="setup-choice">
                     <h5>A. ffmpeg</h5>
                     <pre><code>make ffmpeg-srt-bbb-local</code></pre>
                     <p class="hint">テストパターン: <code>make ffmpeg-srt</code></p>
                   </div>
                   <div class="setup-choice">
-                    <h5>B. OBS（SRT のサーバー URL）</h5>
+                    <h5>B. OBS（SRT URL）</h5>
                     <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
                   </div>
                 </li>
                 <li>
-                  <h4>Live Viewer で視聴する</h4>
+                  <h4>視聴</h4>
                   <pre><code>make browser
 
 make chrome</code></pre>
@@ -211,8 +211,8 @@ make chrome</code></pre>
                   id="seek-hint"
                   tabindex="0"
                   role="img"
-                  aria-label="映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（← → で 1 秒、↓ ↑ で 5 秒）。下線は relay のキャッシュに残る再生可能な区間です。--transcode で起動した ingest-gateway なら画質が自動で切り替わり、歯車で固定できます"
-                  data-tip="映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（← → で 1 秒、↓ ↑ で 5 秒）。下線は relay のキャッシュに残る再生可能な区間です。--transcode で起動した ingest-gateway なら画質が自動で切り替わり、歯車で固定できます"
+                  aria-label="ホバーでシークバー表示（←→ ±1秒 / ↓↑ ±5秒）。下線は再生可能区間。--transcode 時は自動画質切替（歯車で固定可）"
+                  data-tip="ホバーでシークバー表示（←→ ±1秒 / ↓↑ ±5秒）。下線は再生可能区間。--transcode 時は自動画質切替（歯車で固定可）"
                   ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                 ></span>
               </div>
@@ -233,7 +233,7 @@ make chrome</code></pre>
               </div>
               <div class="media-grid">
                 <div class="playback-panel">
-                  <div id="stage" class="viewer-stage player-stage" data-idle="Watch を押すと再生が始まります">
+                  <div id="stage" class="viewer-stage player-stage" data-idle="Watch で再生開始">
                     <div id="delivery-overlay" class="viewer-delivery" data-testid="live-viewer-delivery-overlay">
                       <svg
                         id="delivery-grid"
@@ -271,8 +271,8 @@ make chrome</code></pre>
                           class="tip"
                           tabindex="0"
                           role="img"
-                          aria-label="track ごとに直近 N 個の group（subgroup stream）を横棒で示します。右端が開いている棒は受信中です"
-                          data-tip="track ごとに直近 N 個の group（subgroup stream）を横棒で示します。右端が開いている棒は受信中です"
+                          aria-label="各トラックの直近 group を横棒表示（右端が開いた棒は受信中）"
+                          data-tip="各トラックの直近 group を横棒表示（右端が開いた棒は受信中）"
                           ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                         ></span>
                       </h3>
@@ -346,8 +346,8 @@ make chrome</code></pre>
                   class="tip"
                   tabindex="0"
                   role="img"
-                  aria-label="RTMP は app/stream、SRT は stream ID がそのまま namespace になります"
-                  data-tip="RTMP は app/stream、SRT は stream ID がそのまま namespace になります"
+                  aria-label="RTMP は app/stream、SRT は streamid が namespace"
+                  data-tip="RTMP は app/stream、SRT は streamid が namespace"
                   ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                 ></span>
                 <input type="text" id="namespace" value="anon/live/test" data-testid="live-viewer-namespace-input" />
@@ -376,8 +376,8 @@ make chrome</code></pre>
                   class="tip end"
                   tabindex="0"
                   role="img"
-                  aria-label="H.264 と AAC / MP3 の MP4 を、Stream の Relay と namespace へ配信します"
-                  data-tip="H.264 と AAC / MP3 の MP4 を、Stream の Relay と namespace へ配信します"
+                  aria-label="H.264 + AAC/MP3 の MP4 を上の Relay・namespace へ配信"
+                  data-tip="H.264 + AAC/MP3 の MP4 を上の Relay・namespace へ配信"
                   ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                 ></span>
               </div>

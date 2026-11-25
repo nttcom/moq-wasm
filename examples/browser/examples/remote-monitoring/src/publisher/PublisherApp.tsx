@@ -185,7 +185,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                   className="font-mono text-xs"
                   placeholder="/moq-wasm/videos/cam01.mp4"
                 />
-                <Tip note="public/videos/ 以下に置いたファイルを指定します" end />
+                <Tip note="public/videos/ 以下のパスを指定" end />
               </div>
             )}
           </div>

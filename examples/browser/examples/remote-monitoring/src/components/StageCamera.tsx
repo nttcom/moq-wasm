@@ -42,7 +42,7 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
         {!cameraId && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="text-sm text-neutral-400">
-              {connState === 'connected' ? 'カメラを待っています' : '接続するとカメラが現れます'}
+              {connState === 'connected' ? 'カメラ待機中…' : '接続してカメラを表示'}
             </span>
           </div>
         )}
@@ -56,7 +56,7 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
       )}
       {lost && !isUnhealthy && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 text-white backdrop-blur-[2px]">
-          <span className="text-base font-medium">カメラが切断しました。他のカメラを選んでください</span>
+          <span className="text-base font-medium">カメラ切断。別のカメラを選択してください</span>
         </div>
       )}
 
@@ -81,7 +81,7 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
       {!isReview && cameraId && !lost && (
         <div
           className="absolute bottom-11 right-3 z-10 flex items-center gap-1 rounded bg-black/55 px-2 py-0.5 text-xs text-white/80 backdrop-blur-sm"
-          title="クリックか ↓ で過去を見る"
+          title="クリック / ↓ で REVIEW"
         >
           <History className="h-3.5 w-3.5" />↓
         </div>

@@ -15,7 +15,7 @@
         <summary>
           <h2>使い方</h2>
         </summary>
-        <p class="hint">停止後の最初の判定は時間がかかります</p>
+        <p class="hint">初回判定は起動のため時間がかかります</p>
         <div class="setup-routes">
           <details class="setup-panel setup-toggle">
             <summary>
@@ -51,7 +51,7 @@
             </summary>
             <ol class="setup-steps">
               <li>
-                <h4>PTZ カメラを Cloud relay-1 に配信する</h4>
+                <h4>PTZ カメラを配信</h4>
                 <p class="hint"><code>.env</code>: ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD</p>
                 <pre><code>make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
   ONVIF_AUTH_TOKEN=&lt;共有リンクのトークン&gt; \
@@ -59,8 +59,8 @@
   ONVIF_SUBSCRIBE_NAMESPACE=&lt;appId&gt;/moq-ptz-tracking/bots/ptz-tracking/command</code></pre>
               </li>
               <li>
-                <h4>追従する対象を指定する</h4>
-                <p class="hint">Cloud relay-1 のまま Join し、「bot を参加させる」を押す</p>
+                <h4>追従対象を指定</h4>
+                <p class="hint">Join →「bot を参加させる」</p>
               </li>
             </ol>
           </details>
@@ -113,7 +113,7 @@
                 <pre><code>make relay</code></pre>
               </li>
               <li>
-                <h4>PTZ カメラを配信する</h4>
+                <h4>PTZ カメラを配信</h4>
                 <p class="hint"><code>.env</code>: ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD</p>
                 <pre><code>make onvif \
   ONVIF_AUTH_TOKEN=&lt;共有リンクのトークン&gt; \
@@ -121,9 +121,9 @@
   ONVIF_SUBSCRIBE_NAMESPACE=&lt;appId&gt;/moq-ptz-tracking/bots/ptz-tracking/command</code></pre>
               </li>
               <li>
-                <h4>pipecat bot を起動する</h4>
+                <h4>pipecat bot を登録</h4>
                 <p class="hint">
-                  bot サービス（<code>services/bot-dispatcher</code>）の <code>BOT_DISPATCHER_TYPES</code> に登録します（<a
+                  <code>services/bot-dispatcher</code> の <code>BOT_DISPATCHER_TYPES</code> に登録（<a
                     href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/moq-ptz-tracking/README.md"
                     target="_blank"
                     rel="noopener"
@@ -132,8 +132,8 @@
                 </p>
               </li>
               <li>
-                <h4>追従する対象を指定する</h4>
-                <p class="hint">Local relay-a で Join し、「bot を参加させる」を押す</p>
+                <h4>追従対象を指定</h4>
+                <p class="hint">Local relay-a で Join →「bot を参加させる」</p>
                 <pre><code>make chrome</code></pre>
               </li>
             </ol>
@@ -153,7 +153,7 @@
               >
               <span id="move" class="hint" data-testid="ptz-tracking-move"></span>
             </div>
-            <div id="stage" class="tracking-stage" data-placeholder="Join すると映像が映ります">
+            <div id="stage" class="tracking-stage" data-placeholder="Join で表示">
               <div id="boxes" class="box-overlay"></div>
             </div>
           </section>

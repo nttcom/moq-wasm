@@ -85,7 +85,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
           disabled={!roomName.trim() || !userName.trim() || connecting}
         >
           {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-          {connecting ? '接続しています…' : 'ルームに参加'}
+          {connecting ? '接続中…' : 'ルームに参加'}
         </Button>
       </form>
     </main>

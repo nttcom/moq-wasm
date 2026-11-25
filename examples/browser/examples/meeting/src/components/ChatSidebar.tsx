@@ -74,12 +74,12 @@ export function ChatSidebar({
 
 function TranscriptionNotice({ captions }: { captions: CaptionsControls | null }) {
   if (!captions) {
-    return <p className="mt-4 text-sm text-muted">このルームでは文字起こしを利用できません</p>
+    return <p className="mt-4 text-sm text-muted">文字起こしは利用できません</p>
   }
   return (
     <div className="mt-4 space-y-3">
       <p className="rounded-lg border border-line bg-subtle px-4 py-3 text-sm text-muted">
-        {captions.active ? 'Starting transcription…' : 'Transcription has not started yet'}
+        {captions.active ? '文字起こしを開始中…' : '文字起こしは未開始です'}
       </p>
       {!captions.active && (
         <>
@@ -121,7 +121,7 @@ function ChatPanel({
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-faint">
             <MessageSquare className="h-6 w-6" />
-            <p>メッセージはまだありません</p>
+            <p>メッセージなし</p>
           </div>
         ) : (
           messages.map((message, index) => (
@@ -198,7 +198,7 @@ function TranscriptPanel({ records }: { records: TranscriptRecord[] }) {
   return (
     <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
       {records.length === 0 ? (
-        <p className="text-sm text-faint">まだ文字起こしはありません</p>
+        <p className="text-sm text-faint">文字起こしなし</p>
       ) : (
         records.map((record) => (
           <div

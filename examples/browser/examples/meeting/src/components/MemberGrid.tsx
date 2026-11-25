@@ -258,7 +258,7 @@ export function MemberGrid({
             <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-fg">
                 ハードウェアエンコード
-                <Tip note="映像エンコーダーのハードウェアアクセラレーション" />
+                <Tip note="ハードウェアアクセラレーション設定" />
               </div>
               <OptionSelect
                 label="カメラ"
