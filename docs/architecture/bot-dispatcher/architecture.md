@@ -191,6 +191,7 @@ composite) in its store for `recorder serve`'s read API.
 | Route | Caller | Answer |
 | --- | --- | --- |
 | `POST /bots/{type}` `{namespace_prefix, options}` | app server | `201` the bot; `409` if the room runs that type; `503` at a limit |
+| `GET /bots?namespace_prefix=` | app server | `{"bots": […]}` the room's latest bot of each configured type that had one, in type-name order |
 | `GET /bots/{type}?namespace_prefix=` | app server | the room's latest bot of that type |
 | `GET /bots/{type}/{id}` | app server | the bot |
 | `DELETE /bots/{type}/{id}` | app server | `202`; the bot stops at its next heartbeat |
@@ -281,7 +282,7 @@ on each token signature.
 | `launch_auth.rs` | `LaunchAuth`: verifies the bearer token through `auth_token::VtsClient` and requires a launch token of at most 5 minutes, not a relay's, whose `bots` claim covers the room. |
 | `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
 | `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |
-| `bots.rs` | `Bots`: start (room holder, `max_running`, launch), the room's latest bot of a type, stop, and the bot's own token and heartbeat calls, authenticated by its key or its Google ID token (`google_cloud::IdTokenVerifier`). |
+| `bots.rs` | `Bots`: start (room holder, `max_running`, launch), the room's latest bots (all types or one type), stop, and the bot's own token and heartbeat calls, authenticated by its key or its Google ID token (`google_cloud::IdTokenVerifier`). |
 | `server.rs` | `BotDispatcherServer`: the HTTP routes on `http_server::HttpServer`, each in a `bot_dispatcher.request` span that continues the caller's trace. |
 
 ## Consequences

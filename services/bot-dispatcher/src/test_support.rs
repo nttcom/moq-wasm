@@ -22,8 +22,9 @@ pub(crate) fn temporary_store() -> BotStore {
     BotStore::open(&Url::from_directory_path(dir).unwrap()).unwrap()
 }
 
-/// `Bots` with one type, `recorder`, launched as `/usr/bin/true`, at most
-/// two at once, running 60 s at most, for the app `app` of the registry.
+/// `Bots` with two types launched as `/usr/bin/true`, `recorder`, at most two
+/// at once, running 60 s at most, and `agent`, for the app `app` of the
+/// registry.
 pub(crate) struct TestBots {
     pub(crate) bots: Bots,
     pub(crate) store: BotStore,
@@ -33,7 +34,9 @@ pub(crate) struct TestBots {
 pub(crate) fn test_bots() -> TestBots {
     let types = BotTypes::parse(
         r#"{"recorder": {"launcher": {"kind": "local", "program": "/usr/bin/true"},
-                         "args": ["record"], "grace_seconds": 30, "max_seconds": 60, "max_running": 2}}"#,
+                         "args": ["record"], "grace_seconds": 30, "max_seconds": 60, "max_running": 2},
+            "agent": {"launcher": {"kind": "local", "program": "/usr/bin/true"},
+                      "grace_seconds": 30, "max_seconds": 60, "max_running": 2}}"#,
         &Arc::new(MetadataToken::new(reqwest::Client::new())),
     )
     .unwrap();
