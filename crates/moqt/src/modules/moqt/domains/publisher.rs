@@ -421,6 +421,7 @@ mod tests {
                 data_receiver, first_subgroup_stream, mandatory_track_properties, next_event,
                 next_subgroup, object_with_extensions, read_subgroup_objects, send_subgroup_object,
                 send_without_waiting, spawn_connected_draft18_sessions,
+                spawn_connected_draft18_sessions_following_go_away,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 wait_for_control_delivery, within,
             },
@@ -730,6 +731,34 @@ mod tests {
         assert!(spans[0].field("request_id").is_some());
         assert_eq!(spans[0].field("request_id"), logged[0].field("request_id"));
         assert_eq!(logged[0].field("track_namespace"), Some("a/b"));
+    }
+
+    #[tokio::test]
+    async fn a_publish_namespace_withdrawn_before_its_answer_fails_as_withdrawn() {
+        // Arrange: a draft-18 session that waits for a migration after a lost connection
+        let (client, server) =
+            spawn_connected_draft18_sessions_following_go_away("publisher-withdrawn-unanswered")
+                .await;
+        let publisher = client.publisher();
+        let request =
+            tokio::spawn(async move { publisher.publish_namespace("live/room".into()).await });
+        let SessionEvent::PublishNamespace(_unanswered) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+
+        // Act
+        client
+            .publisher()
+            .publish_namespace_done("live/room".into())
+            .await
+            .unwrap();
+        let announced = within(request).await.unwrap();
+
+        // Assert
+        assert!(
+            matches!(announced, Err(RequestFailure::Withdrawn)),
+            "{announced:?}"
+        );
     }
 
     #[tokio::test]

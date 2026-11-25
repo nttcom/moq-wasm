@@ -1192,7 +1192,7 @@ fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: 
 }
 
 pub(crate) struct PendingResponse {
-    receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
+    receiver: tokio::sync::oneshot::Receiver<Option<ResponseMessage>>,
     cancel: RequestCancel,
 }
 
@@ -1212,7 +1212,7 @@ impl PendingResponse {
     /// A response known without asking the peer.
     fn resolved(response: ResponseMessage) -> Self {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = sender.send(response);
+        let _ = sender.send(Some(response));
         Self {
             receiver,
             cancel: RequestCancel(None),
@@ -1228,7 +1228,7 @@ impl PendingResponse {
         )
         .await
         {
-            Ok(Ok(message)) => {
+            Ok(Ok(Some(message))) => {
                 let cancel = if is_success(&message) {
                     RequestCancel(self.cancel.0.take())
                 } else {
@@ -1236,6 +1236,7 @@ impl PendingResponse {
                 };
                 Ok(ReceivedResponse { message, cancel })
             }
+            Ok(Ok(None)) => Err(RequestFailure::Withdrawn),
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
             Err(_) => Err(RequestFailure::Timeout),
         }

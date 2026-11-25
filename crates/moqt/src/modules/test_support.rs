@@ -821,6 +821,25 @@ pub(crate) async fn spawn_connected_native_sessions_following_go_away(
         .unwrap()
 }
 
+/// Like `spawn_connected_draft18_sessions` over QUIC, but the client follows
+/// GOAWAY, so a request failing as after a lost connection waits for the
+/// session to move.
+pub(crate) async fn spawn_connected_draft18_sessions_following_go_away(
+    name: &str,
+) -> (Session, Session) {
+    let (port, accept) = spawn_server(name, Version::Draft18);
+    let client = client_with_config(
+        ClientConfig {
+            follow_go_away: true,
+            ..insecure_client_config()
+        },
+        Version::Draft18,
+    );
+    connect_sessions_from(&client, &format!("moqt://127.0.0.1:{port}"), accept)
+        .await
+        .unwrap()
+}
+
 pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Session, prefix: &str) {
     let subscriber = client.subscriber();
     let (subscribed, ()) = tokio::join!(
