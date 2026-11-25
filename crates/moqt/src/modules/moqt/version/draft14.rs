@@ -575,6 +575,14 @@ impl ControlChannel {
         }
     }
 
+    #[cfg(test)]
+    pub(super) async fn hold_send_stream(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, crate::modules::transport::transport_connection::BoxedSendStream>
+    {
+        self.send_stream.hold().await
+    }
+
     /// Whether the response of `request_id` has not been handed to its caller.
     #[cfg(test)]
     pub(super) fn awaits_response(&self, request_id: RequestId) -> bool {

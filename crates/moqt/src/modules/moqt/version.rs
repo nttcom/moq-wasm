@@ -961,6 +961,19 @@ impl ControlChannel {
         }
     }
 
+    /// Holds this side's draft-14 control stream: no control message is
+    /// written until the guard drops.
+    #[cfg(test)]
+    pub(crate) async fn hold_draft14_send_stream(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, crate::modules::transport::transport_connection::BoxedSendStream>
+    {
+        match self {
+            Self::Draft14(channel) => channel.hold_send_stream().await,
+            Self::Draft18(_) => panic!("only a draft-14 test asks"),
+        }
+    }
+
     /// Uses the next Request ID for a request a test writes itself.
     #[cfg(test)]
     pub(crate) async fn take_request_id(&self) -> RequestId {

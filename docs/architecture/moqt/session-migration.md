@@ -65,7 +65,7 @@ Each connection allocates its own wire IDs (draft-14 §9.1), mapped to stable lo
 - **In-flight & Joining `FETCH`**: In-flight `FETCH` keeps reading on the previous connection and resumes on the new connection from after the last received location through `FETCH_OK`'s End Location if cut off (descending `FETCH`es are not retried). `fetch_relative_joining` uses a Joining `FETCH` only on the subscription's original connection (draft-14 §9.16.2 requires `LargestObject`); after migration, it sends a Standalone `FETCH` for the same range.
 
 ### Publishing Side
-`PUBLISH_NAMESPACE` and `PUBLISH` re-send on the new connection. `StreamDataSenderFactory` and `DatagramSender` fan out streams/datagrams to every connection whose peer still takes the track—the new one from the next group, and the previous one until `UNSUBSCRIBE` (draft-22 §7.6.1). Covers both `PUBLISH`- and `SUBSCRIBE`-initiated tracks, transparently below `Origin`.
+`PUBLISH_NAMESPACE` and `PUBLISH` re-send on the new connection. `StreamDataSenderFactory` and `DatagramSender` fan out streams/datagrams to every connection whose peer still takes the track—the new one from the next group, and the previous one until `UNSUBSCRIBE` (draft-22 §7.6.1). Covers both `PUBLISH`- and `SUBSCRIBE`-initiated tracks, transparently below `Origin`. A track ending with `publish_done` keeps its connections from closing until its `PUBLISH_DONE` is written there.
 
 ### Events
 - `receive_event` delivers events from all connections translated to logical IDs.
