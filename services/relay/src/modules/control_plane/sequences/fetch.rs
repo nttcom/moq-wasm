@@ -1048,14 +1048,8 @@ mod tests {
     fn fetch_source_is_upstream_when_track_entry_missing() {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
-        let start = moqt::object::Location {
-            group_id: 0,
-            object_id: 0,
-        };
-        let end = moqt::object::Location {
-            group_id: 0,
-            object_id: 1,
-        };
+        let start = location(0, 0);
+        let end = location(0, 1);
 
         // Act
         let (target, source) = FETCH
@@ -1084,14 +1078,8 @@ mod tests {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         cache_store.get_or_create(&TrackKey::new("ns", "track"));
-        let start = moqt::object::Location {
-            group_id: 0,
-            object_id: 0,
-        };
-        let end = moqt::object::Location {
-            group_id: 0,
-            object_id: 1,
-        };
+        let start = location(0, 0);
+        let end = location(0, 1);
 
         // Act
         let (_, source) = FETCH
@@ -1114,14 +1102,8 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0, 2]);
-        let start = moqt::object::Location {
-            group_id: 0,
-            object_id: 0,
-        };
-        let end = moqt::object::Location {
-            group_id: 0,
-            object_id: 3,
-        };
+        let start = location(0, 0);
+        let end = location(0, 3);
 
         // Act
         let (_, source) = FETCH
@@ -1144,14 +1126,8 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
-        let start = moqt::object::Location {
-            group_id: 0,
-            object_id: 0,
-        };
-        let end = moqt::object::Location {
-            group_id: 1,
-            object_id: 2,
-        };
+        let start = location(0, 0);
+        let end = location(1, 2);
 
         // Act
         let (target, source) = FETCH
@@ -1182,14 +1158,8 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0, 1, 2]);
-        let start = moqt::object::Location {
-            group_id: 0,
-            object_id: 0,
-        };
-        let requested_end = moqt::object::Location {
-            group_id: 2,
-            object_id: 0,
-        };
+        let start = location(0, 0);
+        let requested_end = location(2, 0);
 
         // Act
         let (_, source) = FETCH
@@ -1204,13 +1174,7 @@ mod tests {
         // Assert
         match source {
             FetchSource::Cache(resolved) => {
-                assert_eq!(
-                    resolved.end_location,
-                    moqt::object::Location {
-                        group_id: 0,
-                        object_id: 3
-                    }
-                );
+                assert_eq!(resolved.end_location, location(0, 3));
             }
             FetchSource::Upstream => {
                 panic!("covered fetch range should be served locally with clamped end")
@@ -1230,16 +1194,7 @@ mod tests {
         // Act
         let result = FETCH.resolve_target_and_source(
             2,
-            &MockFetchHandler::fetching(standalone_fetch_params(
-                moqt::object::Location {
-                    group_id: 0,
-                    object_id: 1,
-                },
-                moqt::object::Location {
-                    group_id: 0,
-                    object_id: 2,
-                },
-            )),
+            &MockFetchHandler::fetching(standalone_fetch_params(location(0, 1), location(0, 2))),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         );
@@ -1293,16 +1248,7 @@ mod tests {
         // Act
         let result = FETCH.resolve_target_and_source(
             2,
-            &MockFetchHandler::fetching(standalone_fetch_params(
-                moqt::object::Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
-                moqt::object::Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
-            )),
+            &MockFetchHandler::fetching(standalone_fetch_params(location(1, 0), location(1, 0))),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         );
@@ -1318,14 +1264,8 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g1 = open_group(&cache, 1, &[2, 3]);
-        let start = moqt::object::Location {
-            group_id: 1,
-            object_id: 2,
-        };
-        let end = moqt::object::Location {
-            group_id: 1,
-            object_id: 4,
-        };
+        let start = location(1, 2);
+        let end = location(1, 4);
 
         // Act
         let (_, source) = FETCH
@@ -1647,10 +1587,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_joining_target_ends_after_stored_largest() {
         // Arrange
-        let largest = moqt::object::Location {
-            group_id: 10,
-            object_id: 5,
-        };
+        let largest = location(10, 5);
         let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
         register_downstream(
             &table,
@@ -1674,13 +1611,7 @@ mod tests {
         assert_eq!(target.track_key, TrackKey::new("ns", "track"));
         assert_eq!(target.track_namespace, "ns");
         assert_eq!(target.track_name, "track");
-        assert_eq!(
-            target.end_location,
-            moqt::object::Location {
-                group_id: 10,
-                object_id: 6
-            }
-        );
+        assert_eq!(target.end_location, location(10, 6));
     }
 
     #[tokio::test]
@@ -1695,13 +1626,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            downstream_subscription(
-                upstream_key,
-                Some(moqt::object::Location {
-                    group_id: 1,
-                    object_id: 1,
-                }),
-            ),
+            downstream_subscription(upstream_key, Some(location(1, 1))),
             delivery_control(true),
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
@@ -1724,20 +1649,8 @@ mod tests {
             FetchSource::Upstream => {
                 assert_eq!(target.track_namespace, "ns");
                 assert_eq!(target.track_name, "track");
-                assert_eq!(
-                    target.start_location,
-                    moqt::object::Location {
-                        group_id: 0,
-                        object_id: 0
-                    }
-                );
-                assert_eq!(
-                    target.end_location,
-                    moqt::object::Location {
-                        group_id: 1,
-                        object_id: 2
-                    }
-                );
+                assert_eq!(target.start_location, location(0, 0));
+                assert_eq!(target.end_location, location(1, 2));
             }
             FetchSource::Cache(_) => {
                 panic!("joining fetch with missing local coverage must be forwarded upstream")
@@ -1755,13 +1668,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            downstream_subscription(
-                upstream_key,
-                Some(moqt::object::Location {
-                    group_id: 2,
-                    object_id: 3,
-                }),
-            ),
+            downstream_subscription(upstream_key, Some(location(2, 3))),
             delivery_control(true),
         );
 
@@ -1781,20 +1688,8 @@ mod tests {
         // Assert: start = {joining_start, 0}, end = largest + 1 (Standalone encoding, §9.16.2.1)
         match source {
             FetchSource::Upstream => {
-                assert_eq!(
-                    target.start_location,
-                    moqt::object::Location {
-                        group_id: 1,
-                        object_id: 0
-                    }
-                );
-                assert_eq!(
-                    target.end_location,
-                    moqt::object::Location {
-                        group_id: 2,
-                        object_id: 4
-                    }
-                );
+                assert_eq!(target.start_location, location(1, 0));
+                assert_eq!(target.end_location, location(2, 4));
             }
             FetchSource::Cache(_) => panic!("cold cache must forward upstream"),
         }
@@ -1810,13 +1705,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            downstream_subscription(
-                upstream_key,
-                Some(moqt::object::Location {
-                    group_id: 1,
-                    object_id: 1,
-                }),
-            ),
+            downstream_subscription(upstream_key, Some(location(1, 1))),
             delivery_control(true),
         );
 
@@ -1836,20 +1725,8 @@ mod tests {
         // Assert
         match source {
             FetchSource::Upstream => {
-                assert_eq!(
-                    target.start_location,
-                    moqt::object::Location {
-                        group_id: 0,
-                        object_id: 0
-                    }
-                );
-                assert_eq!(
-                    target.end_location,
-                    moqt::object::Location {
-                        group_id: 1,
-                        object_id: 2
-                    }
-                );
+                assert_eq!(target.start_location, location(0, 0));
+                assert_eq!(target.end_location, location(1, 2));
             }
             FetchSource::Cache(_) => panic!("cold cache must forward upstream"),
         }
@@ -1865,13 +1742,7 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            downstream_subscription(
-                upstream_key,
-                Some(moqt::object::Location {
-                    group_id: 1,
-                    object_id: 1,
-                }),
-            ),
+            downstream_subscription(upstream_key, Some(location(1, 1))),
             delivery_control(true),
         );
 
