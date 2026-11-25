@@ -861,6 +861,8 @@ impl InMemoryLocalPubSubDirectory {
     /// Finds the track for a SUBSCRIBE from a `requester` peer, or starts its
     /// creation: the entry is inserted `Creating` so that the SUBSCRIBEs
     /// that follow wait for this one instead of subscribing upstream again.
+    /// A `Started` creator counts as one pending producer until it calls
+    /// `pending_producer_ended` once it sent its upstream SUBSCRIBEs.
     pub(crate) fn track_or_begin_creation(
         self: &Arc<Self>,
         track_key: &TrackKey,
@@ -884,6 +886,7 @@ impl InMemoryLocalPubSubDirectory {
             Entry::Vacant(entry) => {
                 let mut track = self.new_track(CreationState::Creating);
                 track.reserve(requester);
+                track.add_pending_producers(1);
                 let creation = track.creation();
                 let reservation = reservation(&track);
                 entry.insert(track);
@@ -2945,6 +2948,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_creator_finding_no_publisher_waits_for_a_subscribe_sent_meanwhile() {
+        // Arrange: a PUBLISH_NAMESPACE subscribes its publisher while the creator resolves
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(creation, reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        table.add_pending_producers(reservation.entry(), 1);
+
+        // Act
+        table.pending_producer_ended(reservation.entry(), Some(creation_failure("none")));
+
+        // Assert
+        assert_eq!(*creation.borrow(), CreationState::Creating);
+        assert!(table.upstream_tracks.contains_key(&track_key()));
+    }
+
+    #[tokio::test]
     async fn a_creation_whose_subscribes_all_fail_ends_with_the_last_failure() {
         // Arrange
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
@@ -2954,6 +2976,7 @@ mod tests {
             panic!("the first SUBSCRIBE starts the creation");
         };
         table.add_pending_producers(reservation.entry(), 2);
+        table.pending_producer_ended(reservation.entry(), None);
 
         // Act
         table.pending_producer_ended(reservation.entry(), Some(creation_failure("first")));

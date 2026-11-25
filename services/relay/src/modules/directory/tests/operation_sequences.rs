@@ -719,12 +719,10 @@ impl Harness {
                 if peer == SessionPeer::Client {
                     publishers.extend(self.publisher_relays(namespace));
                 }
-                if publishers.is_empty() {
-                    self.directory
-                        .pending_producer_ended(reservation.entry(), Some(creation_failure()));
-                } else {
-                    self.subscribe_publishers(reservation.entry(), publishers);
-                }
+                let failure = publishers.is_empty().then(creation_failure);
+                self.subscribe_publishers(reservation.entry(), publishers);
+                self.directory
+                    .pending_producer_ended(reservation.entry(), failure);
                 SubscribeStage::Waiting(creation, reservation)
             }
             SubscribeStage::Waiting(creation, reservation) => {

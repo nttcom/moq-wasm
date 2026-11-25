@@ -600,7 +600,6 @@ mod tests {
             panic!("a SUBSCRIBE after the removal starts a new creation");
         };
         let new_entry = new_reservation.entry().clone();
-        table.add_pending_producers(&new_entry, 1);
         assert!(table.begin_upstream_subscribe(&new_entry, LATE_PUBLISHER_SESSION));
 
         // Act
@@ -613,7 +612,7 @@ mod tests {
         // Assert: the new entry keeps its claim on the publisher
         assert_eq!(*new_creation.borrow(), CreationState::Creating);
         assert!(!table.begin_upstream_subscribe(&new_entry, LATE_PUBLISHER_SESSION));
-        // Assert: its own SUBSCRIBE is its only pending producer, so ending it fails the creation
+        // Assert: its creator is its only pending producer, so ending it fails the creation
         table.pending_producer_ended(&new_entry, None);
         assert!(matches!(*new_creation.borrow(), CreationState::Failed(_)));
     }

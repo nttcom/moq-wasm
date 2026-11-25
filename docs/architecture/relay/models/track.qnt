@@ -227,7 +227,8 @@ module track {
     val t = state.track
     if (isLive(t, g)) { ...state, track: reserve(t, x, -1) } else state
 
-  // `track_or_begin_creation` for subscriber `x`.
+  // `track_or_begin_creation` for subscriber `x`; a creator counts as one
+  // pending producer until it dispatched.
   pure def lookup(state: State, x: str, attempts: int): State =
     val t = state.track
     if (t.live)
@@ -241,7 +242,7 @@ module track {
       val g = state.nextGen
       {
         ...state,
-        track: reserve({ ...noTrack, live: true, gen: g }, x, 1),
+        track: reserve({ ...noTrack, live: true, gen: g, pending: 1 }, x, 1),
         creations: state.creations.put(g, Creating),
         nextGen: g + 1,
         subs: state.subs.set(x, { phase: Resolving, gen: g, found: Set(), attempts: attempts }),
@@ -319,9 +320,8 @@ module track {
     all {
       sub.phase == Dispatching,
       val waiting = { ...st, subs: st.subs.set(x, { ...sub, phase: Waiting, found: Set() }) }
-      st' =
-        if (sub.found == Set()) pendingProducerEnded(waiting, sub.gen)
-        else spawnTasks(waiting, sub.gen, sub.found),
+      val spawned = if (sub.found == Set()) waiting else spawnTasks(waiting, sub.gen, sub.found)
+      st' = pendingProducerEnded(spawned, sub.gen),
     },
   }
 
