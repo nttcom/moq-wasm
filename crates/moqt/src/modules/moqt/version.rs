@@ -514,6 +514,10 @@ pub(crate) enum OutgoingRequest {
     Fetch(Fetch),
     Publish(Publish),
     PublishNamespace(PublishNamespace),
+    /// A PUBLISH_NAMESPACE meant for the peer's namespace subscriptions:
+    /// draft-18 sends it only as NAMESPACE on a SUBSCRIBE_NAMESPACE covering
+    /// it, else fails with `NoNamespaceSubscription`.
+    SubscribedNamespace(PublishNamespace),
     SubscribeNamespace(SubscribeNamespace),
     /// draft-18's SUBSCRIBE_TRACKS; draft-14 sends it as SUBSCRIBE_NAMESPACE,
     /// which also asks for the tracks.
@@ -566,7 +570,8 @@ impl RequestSummary {
                 Some(&publish.track_namespace_tuple),
                 Some(&publish.track_name),
             ),
-            OutgoingRequest::PublishNamespace(publish_namespace) => Self::new(
+            OutgoingRequest::PublishNamespace(publish_namespace)
+            | OutgoingRequest::SubscribedNamespace(publish_namespace) => Self::new(
                 RequestKind::PublishNamespace,
                 publish_namespace.request_id,
                 Some(&publish_namespace.track_namespace),

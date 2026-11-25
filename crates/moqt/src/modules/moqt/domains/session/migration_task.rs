@@ -24,7 +24,7 @@ use crate::{
                 subscriber::{send_subscribe, send_subscribe_namespace},
             },
             runtime::tasks::connection_tasks::ConnectionTasks,
-            version::{ControlReceiver, Notification},
+            version::{ControlReceiver, Notification, OutgoingRequest},
         },
         transport::transport_connection::TransportClose,
     },
@@ -481,10 +481,14 @@ async fn migrate(
     }
     for namespace in carried.published_namespaces.values() {
         retry_until(deadline, || async {
-            send_publish_namespace(&connection, namespace.clone())
-                .await?
-                .accepted()
-                .await
+            send_publish_namespace(
+                &connection,
+                namespace.clone(),
+                OutgoingRequest::PublishNamespace,
+            )
+            .await?
+            .accepted()
+            .await
         })
         .await
         .with_context(|| format!("PUBLISH_NAMESPACE {namespace} on the new connection failed"))?;

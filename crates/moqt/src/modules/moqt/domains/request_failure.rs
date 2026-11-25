@@ -36,6 +36,10 @@ pub enum RequestFailure {
     /// so.
     #[error("no stream for the PUBLISH; PUBLISH_BLOCKED was sent")]
     PublishBlocked,
+    /// `Publisher::begin_publish_subscribed_namespace` sent nothing (draft-18
+    /// §10.18); draft-14 never returns it.
+    #[error("no namespace subscription of the peer covers the namespace")]
+    NoNamespaceSubscription,
 }
 
 pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {

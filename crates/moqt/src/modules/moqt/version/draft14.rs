@@ -296,7 +296,8 @@ impl ControlChannel {
                 publish.encode(),
                 LateResponseAction::PublishDone,
             ),
-            OutgoingRequest::PublishNamespace(publish_namespace) => (
+            OutgoingRequest::PublishNamespace(publish_namespace)
+            | OutgoingRequest::SubscribedNamespace(publish_namespace) => (
                 publish_namespace.request_id,
                 ControlMessageType::PublishNamespace,
                 publish_namespace.encode(),
@@ -834,12 +835,13 @@ mod tests {
                     connection::{Connection, IncomingObjectNotification},
                     session_events::MAX_UNREAD_EVENTS,
                 },
+                version::Version,
             },
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, next_event, notify_datagram,
-                register_and_take_data_receiver, spawn_connected_native_sessions,
-                spawn_connected_native_sessions_following_go_away, unread_events_at_the_limit,
-                use_up_bidi_streams, within,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, connected_sessions,
+                next_event, notify_datagram, register_and_take_data_receiver,
+                spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
+                unread_events_at_the_limit, use_up_bidi_streams, within,
             },
         },
         namespace::NamespaceInterest,
@@ -1283,6 +1285,27 @@ mod tests {
         assert!(send.is_none(), "wrote past the held control stream");
         let next = channel.reserve_request_id().await.unwrap();
         assert_eq!(next.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_subscribed_namespace_goes_as_publish_namespace() {
+        // Arrange
+        let (client, server) =
+            connected_sessions("draft14-subscribed-namespace", Version::Draft14).await;
+
+        // Act
+        let sent = server
+            .publisher()
+            .begin_publish_subscribed_namespace("live/room".into())
+            .await;
+        let announced = next_event(&client).await;
+
+        // Assert: draft-14 has no NAMESPACE on a subscription
+        assert!(sent.is_ok());
+        let SessionEvent::PublishNamespace(announced) = announced else {
+            panic!("expected PUBLISH_NAMESPACE, got {announced:?}");
+        };
+        assert_eq!(announced.track_namespace, "live/room");
     }
 
     #[tokio::test]

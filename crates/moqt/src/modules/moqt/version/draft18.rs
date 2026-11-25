@@ -753,6 +753,7 @@ impl ControlChannel {
             )),
             _ => None,
         };
+        let subscribed_only = matches!(request, OutgoingRequest::SubscribedNamespace(_));
         let (request_id, kind, message, group_order) = match request {
             OutgoingRequest::Subscribe(subscribe) => (
                 subscribe.request_id,
@@ -778,7 +779,8 @@ impl ControlChannel {
                 messages::encode_publish(&publish).map_err(encoding_failed)?,
                 None,
             ),
-            OutgoingRequest::PublishNamespace(publish_namespace) => (
+            OutgoingRequest::PublishNamespace(publish_namespace)
+            | OutgoingRequest::SubscribedNamespace(publish_namespace) => (
                 publish_namespace.request_id,
                 RequestStreamKind::PublishNamespace(publish_namespace.track_namespace.clone()),
                 messages::encode_publish_namespace(&publish_namespace).map_err(encoding_failed)?,
@@ -807,12 +809,15 @@ impl ControlChannel {
                 None,
             ),
         };
-        if let RequestStreamKind::PublishNamespace(track_namespace) = &kind
-            && let Some(accepted) = self
+        if let RequestStreamKind::PublishNamespace(track_namespace) = &kind {
+            match self
                 .advertise_namespace(request_id, track_namespace)
                 .await?
-        {
-            return Ok(accepted);
+            {
+                Some(accepted) => return Ok(accepted),
+                None if subscribed_only => return Err(RequestFailure::NoNamespaceSubscription),
+                None => {}
+            }
         }
         let (send_stream, receive_stream) = match published_track {
             Some((track_namespace, track_name)) => {
@@ -2528,6 +2533,69 @@ mod tests {
 
         // Assert: §10.2.5
         assert_eq!(handler.fill_timeout(), Some(std::time::Duration::ZERO));
+    }
+
+    #[tokio::test]
+    async fn a_subscribed_namespace_goes_on_the_subscription_covering_it() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscribed-namespace", "moqt").await;
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("live".into(), NamespaceInterest::Namespaces)
+                .await
+        });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+
+        // Act
+        let sent = server
+            .publisher()
+            .begin_publish_subscribed_namespace("live/room".into())
+            .await;
+        let announced = next_event(&client).await;
+
+        // Assert
+        assert!(sent.is_ok());
+        let SessionEvent::PublishNamespace(announced) = announced else {
+            panic!("expected PUBLISH_NAMESPACE, got {announced:?}");
+        };
+        assert_eq!(announced.track_namespace, "live/room");
+    }
+
+    #[tokio::test]
+    async fn a_subscribed_namespace_no_subscription_covers_is_not_sent() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscribed-namespace-uncovered", "moqt")
+                .await;
+
+        // Act
+        let sent = server
+            .publisher()
+            .begin_publish_subscribed_namespace("live/room".into())
+            .await;
+        let _marker = server
+            .publisher()
+            .begin_publish_namespace("marker".into())
+            .await
+            .unwrap();
+        let next = next_event(&client).await;
+
+        // Assert: §10.18; the marker is the first namespace the client hears, so `live/room` was never sent
+        assert!(
+            matches!(sent, Err(RequestFailure::NoNamespaceSubscription)),
+            "{:?}",
+            sent.err()
+        );
+        let SessionEvent::PublishNamespace(next) = next else {
+            panic!("expected PUBLISH_NAMESPACE, got {next:?}");
+        };
+        assert_eq!(next.track_namespace, "marker");
     }
 
     #[tokio::test]
