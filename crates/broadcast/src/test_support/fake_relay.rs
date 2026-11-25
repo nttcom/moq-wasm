@@ -286,12 +286,13 @@ impl FakeRelay {
                 let found = request == expected;
                 seen.push(request);
                 if found {
-                    return;
+                    return true;
                 }
             }
+            false
         })
         .await;
-        assert!(arrived.is_ok(), "{expected} must arrive, saw {seen:?}");
+        assert_eq!(arrived, Ok(true), "{expected} must arrive, saw {seen:?}");
     }
 
     /// Waits for PUBLISH_DONE of each of `tracks` in `namespace`, in any

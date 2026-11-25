@@ -1,5 +1,6 @@
 mod catalog_refresh_task;
 mod catalog_track;
+mod token_refresh_task;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -27,6 +28,7 @@ use crate::{
 };
 use catalog_refresh_task::CatalogRefreshTask;
 use catalog_track::CatalogTrack;
+pub use token_refresh_task::TokenRefreshTask;
 
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for a range it never cached can still be answered here.

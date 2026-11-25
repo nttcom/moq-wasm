@@ -22,7 +22,7 @@ pub use media_source::{
 };
 pub use publish_queue::PushOutcome;
 pub use reader::BroadcastReader;
-pub use relay_connection::{MoqtTarget, RelayConnection};
+pub use relay_connection::{MoqtTarget, RelayConnection, TokenRefreshTask};
 pub use rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack};
 pub use stream_ledger::StreamRecord;
 pub use writer::BroadcastWriter;

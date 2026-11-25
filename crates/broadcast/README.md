@@ -46,7 +46,7 @@ let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
 // let outcome = writer.push(event)?;
 ```
 
-To let `RelayConnection` dial its own session lazily instead of sharing an existing `Session`, pass `RelayConnection::new(Some(MoqtTarget { url, auth_token, verify_certificate }))` (set `verify_certificate: false` only for local self-signed relays). The relay closes a session when its token expires, so a publisher that outlives its token passes each new one to `RelayConnection::refresh_auth_token(app_id, token)` before then.
+To let `RelayConnection` dial its own session lazily instead of sharing an existing `Session`, pass `RelayConnection::new(Some(MoqtTarget { url, auth_token, verify_certificate }))` (set `verify_certificate: false` only for local self-signed relays). The relay closes a session when its token expires, so a publisher that outlives its token keeps a `TokenRefreshTask::run(connection.clone(), app_id, renew)`: every 10 s it calls `renew` with the token in force and sends the relay any other token it returns (`RelayConnection::refresh_auth_token` sends one directly).
 
 ## Quickstart: Read a broadcast
 
@@ -67,6 +67,7 @@ while let Some(event) = reader.next_event().await {
 | Type / Module | Role |
 | --- | --- |
 | `RelayConnection`, `MoqtTarget` | Owns or borrows a `moqt` session and manages the shared `Origin` and catalog refresh |
+| `TokenRefreshTask` | Polls the caller's `renew` and refreshes a `RelayConnection::new` connection's token before it expires |
 | `Broadcast` | Namespace-scoped handle to announce, declare tracks, offer event timelines (`offer_chat`, `offer_event_timeline`), and send objects |
 | `BroadcastWriter`, `RenditionTrack` | Non-blocking `push(MediaEvent)` publisher for LOC/CMAF tracks, media timelines, and catalog updates; `RenditionTrack` adds ABR renditions |
 | `MediaSource`, `MediaRendition` | Pre-encoded frame publisher with `on_demand` media publishing and keyframe request notifications (used by the SDKs) |
