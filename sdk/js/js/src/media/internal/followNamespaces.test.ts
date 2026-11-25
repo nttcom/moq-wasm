@@ -4,6 +4,7 @@ import type { LogRecord } from '../../core/init'
 import { setSdkLogSink } from '../../core/log'
 import { noteOwnBroadcast } from '../ownBroadcasts'
 import { FakeTextTrackSession } from '../player/testing/fakeTextTrackSession'
+import { settle } from '../../testing/settle'
 
 const ROOM = ['app', 'room']
 const TRANSCRIBER = ['app', 'room', 'bots', 'transcriber']
@@ -40,9 +41,6 @@ test.afterEach(() => {
 })
 
 /// Lets the reader of the watch take what was announced.
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
 
 type Following = {
   /// Every callback in the order it was called, as `add app/room/alice`.

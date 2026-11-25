@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { BroadcastCatalog, type BroadcastCatalogListener } from './broadcastCatalog'
 import type { PublishDone } from '../../core/session'
 import { FakeTextTrackSession } from './testing/fakeTextTrackSession'
+import { settle } from '../../testing/settle'
 
 type Heard = { catalogs: string[]; absences: (PublishDone | undefined)[] }
 
@@ -17,9 +18,6 @@ function recordingListener(): { listener: BroadcastCatalogListener; heard: Heard
 }
 
 /// Lets the reader of a subscription take what was delivered.
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
 
 test('every listener reads the catalog of one SUBSCRIBE, a late one at once', async () => {
   // Arrange

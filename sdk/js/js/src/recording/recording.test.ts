@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { CloseInfo } from '../core/session'
 import { RecorderError, Recording, type RecordingEnvironment } from './recording'
+import { settle } from '../testing/settle'
 
 const PUBLISH_URL = 'https://recorder.example/recordings/rec-1/publish'
 const RENEW_AFTER_SECONDS = 2_700
@@ -115,9 +116,6 @@ class FakeRecorder {
 }
 
 /// Lets the promise chains of fetch and the answer's reads run.
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
 
 async function isOpen(recording: Recording): Promise<boolean> {
   return (await Promise.race([recording.closed.then(() => 'closed'), settle().then(() => 'open')])) === 'open'

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { createBroadcast, type LocalSource } from './localBroadcast'
 import { FakeCaptureEnvironment, FakeTrack } from './testing/fakeCaptureEnvironment'
+import { settle } from '../testing/settle'
 
 let environment: FakeCaptureEnvironment
 
@@ -17,10 +18,6 @@ async function cameraSource(camera: FakeTrack): Promise<LocalSource> {
   return broadcast.addSource('camera', { video: camera as unknown as MediaStreamTrack })
 }
 
-function settled(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve))
-}
-
 function holdRemoval(): () => void {
   const removal = Promise.withResolvers<void>()
   environment.broadcast.sources[0].removal = removal.promise
@@ -33,13 +30,13 @@ test('setVideoEncoding during a video removal starts no encoder for the removed 
   const source = await cameraSource(camera)
   const finishRemoval = holdRemoval()
   const removing = source.setVideo(false)
-  await settled()
+  await settle()
 
   // Act
   source.setVideoEncoding({ main: { bitrate: 500_000 } })
   finishRemoval()
   await removing
-  await settled()
+  await settle()
 
   // Assert
   expect(environment.encoders(camera)).toHaveLength(0)
@@ -52,7 +49,7 @@ test('a video set during a video removal is published and previewed after it', a
   const source = await cameraSource(camera)
   const finishRemoval = holdRemoval()
   const removing = source.setVideo(false)
-  await settled()
+  await settle()
 
   // Act
   const replacing = source.setVideo(next as unknown as MediaStreamTrack)
