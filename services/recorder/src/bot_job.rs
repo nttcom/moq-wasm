@@ -100,6 +100,7 @@ async fn prepare(args: BotArgs, dispatcher: &Arc<BotDispatcherClient>) -> Result
         updated_at_ms: now_ms(),
     };
     store.write_state(&record_state).await?;
+    dispatcher.set_recording_id(&record_state.id);
     store
         .add_to_room(&record_state.namespace_prefix, &record_state.id)
         .await?;

@@ -179,7 +179,8 @@ is no longer active, and never deleted, so one room runs at most one bot of
 each type and any number of
 instances answer alike. The object is written by `bot-dispatcher` alone, from the
 launch request and from the bot's heartbeats (`starting`, `running`,
-`stopping`, `finished`, `failed`). A bot that has not sent a heartbeat for
+`stopping`, `finished`, `failed`, and an optional type-specific JSON object
+`output` held until the next heartbeat). A bot that has not sent a heartbeat for
 90 s, or 5 min before its first one, is reported `failed` and the next start
 may replace it as the room's holder: the first execution of a job after its image changed imports the
 image before the bot starts, which took almost 2 min for the AI bots' image. The recorder keeps its own recording state (members, files,
@@ -194,7 +195,7 @@ composite) in its store for `recorder serve`'s read API.
 | `GET /bots/{type}/{id}` | app server | the bot |
 | `DELETE /bots/{type}/{id}` | app server | `202`; the bot stops at its next heartbeat |
 | `POST /bots/{type}/{id}/token` | bot | a bot token |
-| `POST /bots/{type}/{id}/heartbeat` `{state, …}` | bot | `{stop}` |
+| `POST /bots/{type}/{id}/heartbeat` `{state, error?, output?}` | bot | `{stop}` |
 
 The type is in the path because each type takes options of its own; a type
 not in the types file, or an id of another type, is `404`. The app comes
@@ -203,7 +204,11 @@ require a launch token whose `bots` claim covers the prefix, judged with
 `SignedToken::covers`. `options` are the type's own
 (the recorder's `layout`, `composite`, `format`); the relay URL, the store and
 the type's limits are server settings, so a request cannot point a bot at
-another relay or bucket. Nothing is called from a browser, so the service
+another relay or bucket. Likewise, a bot may report a type-specific JSON object
+as `output` in its heartbeat (omitted or `null` clears the stored value, so a
+bot that wants it shown sends it with every heartbeat; a non-object is
+`400 invalid_request`), which `GET` returns while present — the recorder sends
+`{"recording_id": "<id>"}` once its recording exists. Nothing is called from a browser, so the service
 answers no CORS.
 
 ### Temporary apps

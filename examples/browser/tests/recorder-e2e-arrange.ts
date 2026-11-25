@@ -119,6 +119,13 @@ export function recordingPlayerPath(recorderUrl: string, id: string): string {
   return `/moq-wasm/examples/recording-player/?${params}`
 }
 
+/// The fields of `bot-dispatcher`'s `GET /bots/recorder/{id}` that the fixture reads.
+interface BotView {
+  state: string
+  error?: string
+  output?: { recording_id?: string }
+}
+
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
 
 /// `recorder serve` over a directory store, and `bot-dispatcher` without authorization, which the fixture calls as an app
@@ -217,7 +224,6 @@ async function startRecorderServe() {
       composite = false,
       format: RecordingFormat = 'mp4'
     ): Promise<RoomRecording> {
-      const before = new Set((await listRecordings(api, namespacePrefix)).map((recording) => recording.id))
       const bot = await jsonRequest<{ id: string }>(`${dispatcherUrl}/bots/recorder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -225,9 +231,19 @@ async function startRecorderServe() {
       })
       const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
       for (;;) {
-        const recording = (await listRecordings(api, namespacePrefix)).find(
-          (candidate) => !before.has(candidate.id) && candidate.state !== 'starting'
-        )
+        const reported = await jsonRequest<BotView>(`${dispatcherUrl}/bots/recorder/${bot.id}`, {})
+        if (reported.state === 'failed' || reported.state === 'finished') {
+          throw new Error(
+            `the recorder bot ${bot.id} ${reported.state} before recording: ${reported.error ?? 'no error'}`
+          )
+        }
+        const id = reported.output?.recording_id
+        const recording =
+          id === undefined
+            ? undefined
+            : (await listRecordings(api, namespacePrefix)).find(
+                (candidate) => candidate.id === id && candidate.state === 'recording'
+              )
         if (recording) {
           botIds.set(recording.id, bot.id)
           return recording

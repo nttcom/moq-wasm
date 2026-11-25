@@ -641,9 +641,11 @@ timeout), `--max-seconds` and `--options` (`layout`, `composite` and
   token subscribes to the room and publishes only `<room>/bots/<type>`, which
   the recording announces so the room sees it.
 - `StateSyncTask` also reports the state to
-  `POST /bots/{type}/{id}/heartbeat` every 5 s and stops the recording when
-  the answer asks it to. The final state is reported once the recording ends;
-  a job that fails before recording reports `failed` with the error.
+  `POST /bots/{type}/{id}/heartbeat` every 5 s, including
+  `output: {"recording_id": "<id>"}` once `bot_job::run` has written the
+  initial recording state, and stops the recording when the answer asks it to.
+  The final state is reported once the recording ends; a job that fails before
+  creating the recording reports `failed` with the error and no `output`.
 - `bot_job::run` prepares the recording and records it.
 
 ## Token refresh
