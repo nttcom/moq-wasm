@@ -100,6 +100,7 @@ All three SDKs interoperate, follow `GOAWAY`, reconnect automatically, and suppo
 | [`services/sip-gateway`](docs/architecture/sip-gateway/architecture.md) | Inbound/outbound SIP + SDES-SRTP room bridge |
 | [`services/recorder`](services/recorder/README.md) | Multi-participant fMP4 recording and replayable MoQ archives |
 | [`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) | GStreamer `moqtsink` plugin (H.264/AAC) |
+| [`crates/obs-moqt`](crates/obs-moqt/README.md) | OBS Studio plugin that streams to a relay (H.264/AAC) |
 
 ## Try it locally
 
