@@ -139,6 +139,9 @@ pub(crate) struct ConnectedRelay {
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
+    /// Held from checking `announced_namespaces` until the answer, so
+    /// concurrent announces share one PUBLISH_NAMESPACE.
+    announcing: Mutex<()>,
     catalog: Arc<CatalogTrack>,
     _catalog_refresh: CatalogRefreshTask,
     ledger: StreamLedger,
@@ -339,6 +342,7 @@ impl ConnectedRelay {
             session,
             origin,
             state,
+            announcing: Mutex::new(()),
             _catalog_refresh: CatalogRefreshTask::run(catalog.clone()),
             catalog,
             ledger,
@@ -409,6 +413,7 @@ impl ConnectedRelay {
 
     pub(crate) async fn announce(&self, namespace: &[String]) -> Result<()> {
         let namespace_path = namespace.join("/");
+        let _announcing = self.announcing.lock().await;
         let announce_needed = {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
@@ -955,6 +960,40 @@ mod tests {
                 .any(|track| track.name == VIDEO_TRACK_NAME),
             "{catalog:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn announces_made_at_once_send_one_publish_namespace() {
+        // Arrange: the relay holds its PUBLISH_NAMESPACE_OK, so the second
+        // announce starts while the first awaits its answer
+        let (accept_namespace, namespace_gate) = oneshot::channel();
+        let mut relay = FakeRelay::spawn_gated("announce-once", Some(namespace_gate), None);
+        let broadcast = live_cam(relay.connection());
+        let first = tokio::spawn({
+            let broadcast = broadcast.clone();
+            async move { broadcast.announce().await }
+        });
+        relay.wait_for_request("PUBLISH_NAMESPACE live/cam").await;
+        let second = tokio::spawn(async move { broadcast.announce().await });
+
+        // Act
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = accept_namespace.send(());
+        for announce in [first, second] {
+            tokio::time::timeout(TEST_TIMEOUT, announce)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+
+        // Assert: no PUBLISH_NAMESPACE followed the first one, taken above
+        let again = relay
+            .received_requests()
+            .into_iter()
+            .filter(|request| request == "PUBLISH_NAMESPACE live/cam")
+            .count();
+        assert_eq!(again, 0);
     }
 
     #[tokio::test]
