@@ -5,6 +5,7 @@ import { type ChartLine, LineChart } from './LineChart'
 import { type Selection, type Visibility } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
 import { type Topology } from './topology'
+import { moveBetweenTabs } from '../../../utils/tabs'
 
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
@@ -45,12 +46,13 @@ const requestKey = (relayId: string, target: object) => `${relayId}|${JSON.strin
 
 function Tabs({ groups, active, onPick }: { groups: ChartGroup[]; active: string; onPick: (name: string) => void }) {
   return (
-    <div className="tabs" role="tablist">
+    <div className="tabs" role="tablist" onKeyDown={moveBetweenTabs}>
       {groups.map((group) => (
         <button
           key={group.name}
           role="tab"
           aria-selected={group.name === active}
+          tabIndex={group.name === active ? 0 : -1}
           className={group.name === active ? 'on' : ''}
           onClick={() => onPick(group.name)}
         >

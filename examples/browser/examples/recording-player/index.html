@@ -61,14 +61,16 @@
           class="player-sidebar flex h-full w-80 shrink-0 flex-col max-[860px]:h-2/5 max-[860px]:w-full"
         >
           <div class="player-sidebar-head flex items-center px-3 py-2.5">
-            <div class="segmented">
-              <button type="button" data-tab="chat" class="sidebar-tab" aria-selected="true">チャット</button>
-              <button type="button" data-tab="transcript" class="sidebar-tab" aria-selected="false">文字起こし</button>
+            <div id="sidebar-tabs" class="segmented" role="tablist">
+              <button type="button" role="tab" data-tab="chat" class="sidebar-tab" aria-selected="true">チャット</button>
+              <button type="button" role="tab" data-tab="transcript" class="sidebar-tab" aria-selected="false">
+                文字起こし
+              </button>
             </div>
           </div>
           <div class="flex min-h-0 flex-1 flex-col px-3 pb-3">
-            <ol id="chat" class="event-list"></ol>
-            <ol id="transcript" class="event-list hidden"></ol>
+            <ol id="chat" class="event-list" role="tabpanel"></ol>
+            <ol id="transcript" class="event-list hidden" role="tabpanel"></ol>
           </div>
         </aside>
       </div>

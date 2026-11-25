@@ -268,8 +268,8 @@ pub struct SourceTracks {
     /// group (draft-18 §10.2.13), which the next keyframe starts.
     pub keyframe_requests: Option<Arc<Notify>>,
     /// Set by a source that stops encoding a track nobody takes: the video,
-    /// its renditions and the audio are published on demand
-    /// (`Broadcast::publish_on_demand`) and report their demand here.
+    /// its renditions, the audio and their CMAF siblings are published on
+    /// demand (`Broadcast::publish_on_demand`) and report their demand here.
     pub demand_sender: Option<mpsc::UnboundedSender<TrackDemand>>,
 }
 
