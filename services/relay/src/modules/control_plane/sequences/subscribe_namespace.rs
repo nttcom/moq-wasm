@@ -414,7 +414,7 @@ impl SubscribeNameSpace {
         {
             return;
         }
-        let track_namespaces = match cascading_relay_context
+        let mut track_namespaces = match cascading_relay_context
             .route_registry
             .find_namespace_publishers_by_prefix(offer.prefix)
             .await
@@ -431,6 +431,10 @@ impl SubscribeNameSpace {
             }
         };
 
+        // Sorted, a namespace comes before those under it, so it is subscribed
+        // first and covers them; subscribed after them, it would be refused as
+        // overlapping (draft-18 §10.18).
+        track_namespaces.sort_unstable();
         // The route registry lists this relay's own namespaces too, which
         // `local_namespaces` holds.
         for track_namespace in track_namespaces {
@@ -848,6 +852,34 @@ mod tests {
 
         // Assert: relay-b's NAMESPACE for ns/bob reaches the client later, as from any publisher
         assert_eq!(ctx.subscriber.publish_namespaces(), vec!["ns/alice"]);
+        assert_eq!(
+            publisher_relay.namespace_subscriptions(),
+            vec!["subscribe ns/bob"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_is_subscribed_at_its_relay_before_the_namespaces_under_it() {
+        // Arrange
+        let ctx =
+            downstream_publish_context(Arc::new(InMemoryLocalPubSubDirectory::new()), || Ok(true))
+                .await;
+        let manager = inter_relay_connection_manager(ctx.forwarder.repository.clone());
+        let publisher_relay = dial_publisher_relay(&ctx, &manager).await;
+
+        // Act: the registry lists the narrower namespace first
+        handle_subscribe_namespace_with(
+            &ctx,
+            Arc::new(StubRouteRegistry::with_remote_namespaces(
+                &["ns/bob/transcript", "ns/bob"],
+                vec!["relay-b"],
+            )),
+            &manager,
+            &MockSubscribeNamespaceHandler::new("ns"),
+        )
+        .await;
+
+        // Assert: only ns/bob is subscribed; it covers ns/bob/transcript
         assert_eq!(
             publisher_relay.namespace_subscriptions(),
             vec!["subscribe ns/bob"]
