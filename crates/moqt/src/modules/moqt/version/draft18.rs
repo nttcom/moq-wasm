@@ -3497,6 +3497,84 @@ mod tests {
         assert!(subscribed.unwrap().unwrap().is_err());
     }
 
+    /// Ends a SUBSCRIBE from the client with `end`, run by the server on the
+    /// request stream before any response, and returns the SUBSCRIBE's
+    /// result and both sessions.
+    async fn subscribe_ended_unanswered(
+        name: &str,
+        end: impl AsyncFnOnce(&StreamSender),
+    ) -> (
+        Result<crate::Subscription, RequestFailure>,
+        (crate::Session, crate::Session),
+    ) {
+        let (client, server) = spawn_connected_draft18_sessions(name, "moqt").await;
+        let (request, handler) =
+            subscribe_requested(&client, &server, SubscribeOption::default()).await;
+        let stream = incoming_stream(&server, handler.request_id());
+        end(&stream.sender).await;
+        (within(request).await.unwrap(), (client, server))
+    }
+
+    async fn close_code(server: &crate::Session, wait: std::time::Duration) -> Option<Option<u32>> {
+        tokio::time::timeout(wait, server.closed())
+            .await
+            .ok()
+            .map(|closed| closed.code)
+    }
+
+    #[tokio::test]
+    async fn a_request_stream_finished_before_its_response_closes_the_session() {
+        // Act: §5.1 requires a response before the stream ends
+        let (subscribed, (_client, server)) =
+            subscribe_ended_unanswered("draft18-first-fin", async |sender| {
+                sender.close().await.unwrap();
+            })
+            .await;
+
+        // Assert
+        assert!(subscribed.is_err());
+        assert_eq!(
+            close_code(&server, DISCONNECT_TIMEOUT).await,
+            Some(Some(0x3))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_first_response_that_does_not_decode_closes_the_session() {
+        // Act
+        let (subscribed, (_client, server)) =
+            subscribe_ended_unanswered("draft18-first-garbage", async |sender| {
+                let empty_subscribe_ok = messages::frame(messages::SUBSCRIBE_OK, &[]).unwrap();
+                sender.send(&empty_subscribe_ok).await.unwrap();
+            })
+            .await;
+
+        // Assert
+        assert!(subscribed.is_err());
+        assert_eq!(
+            close_code(&server, DISCONNECT_TIMEOUT).await,
+            Some(Some(0x3))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_stream_reset_before_its_response_rejects_the_request() {
+        // Act: §3.3.2, the receiver cancels a request it will not answer
+        let (subscribed, (_client, server)) =
+            subscribe_ended_unanswered("draft18-first-reset", async |sender| {
+                sender.reset(super::cancelled()).await.unwrap();
+            })
+            .await;
+
+        // Assert
+        assert!(
+            matches!(subscribed, Err(RequestFailure::Rejected { .. })),
+            "{subscribed:?}"
+        );
+        let brief = std::time::Duration::from_millis(100);
+        assert_eq!(close_code(&server, brief).await, None);
+    }
+
     #[tokio::test]
     async fn a_goaway_on_a_subscription_ends_it_with_going_away() {
         // Arrange
