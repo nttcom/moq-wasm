@@ -56,7 +56,9 @@ impl Publisher {
     }
 
     async fn publish_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
-        let (connection, pending) = self.announce(namespace).await?;
+        let (connection, pending) = self
+            .announce(namespace, OutgoingRequest::PublishNamespace)
+            .await?;
         tracing::Span::current().record("request_id", pending.request_id);
         match pending.accepted().await {
             // The namespace is carried from the moment it was sent, and a
@@ -70,18 +72,36 @@ impl Publisher {
         &self,
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
-        let (_, pending) = self.announce(namespace).await?;
+        let (_, pending) = self
+            .announce(namespace, OutgoingRequest::PublishNamespace)
+            .await?;
+        Ok(pending)
+    }
+
+    /// `begin_publish_namespace` for a namespace the peer subscribed to: on
+    /// draft-18 it goes as NAMESPACE on the peer's SUBSCRIBE_NAMESPACE
+    /// covering it, held until that is answered (§10.18), and fails with
+    /// `RequestFailure::NoNamespaceSubscription`, sending nothing, when none
+    /// covers it. draft-14 sends PUBLISH_NAMESPACE.
+    pub async fn begin_publish_subscribed_namespace(
+        &self,
+        namespace: String,
+    ) -> Result<PendingPublishNamespace, RequestFailure> {
+        let (_, pending) = self
+            .announce(namespace, OutgoingRequest::SubscribedNamespace)
+            .await?;
         Ok(pending)
     }
 
     async fn announce(
         &self,
         namespace: String,
+        request: fn(PublishNamespace) -> OutgoingRequest,
     ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
         let (carried, connection, mut pending) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
-            match send_publish_namespace(&connection, namespace.clone()).await {
+            match send_publish_namespace(&connection, namespace.clone(), request).await {
                 Ok(pending) => break (carried, connection, pending),
                 Err(error) => {
                     self.session
@@ -312,6 +332,7 @@ impl Publisher {
 pub(crate) async fn send_publish_namespace(
     connection: &Arc<Connection>,
     namespace: String,
+    request: fn(PublishNamespace) -> OutgoingRequest,
 ) -> Result<PendingPublishNamespace, RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
     let reservation = connection.control.reserve_request_id().await?;
@@ -319,7 +340,7 @@ pub(crate) async fn send_publish_namespace(
     let pending = connection
         .send_request(
             reservation,
-            OutgoingRequest::PublishNamespace(PublishNamespace {
+            request(PublishNamespace {
                 trace_context: current_trace_context(&connection.control),
                 ..PublishNamespace::new(request_id, vec_namespace, vec![])
             }),
