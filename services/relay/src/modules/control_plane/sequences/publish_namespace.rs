@@ -194,7 +194,9 @@ impl PublishNamespace {
                 continue;
             }
             forwarder
-                .publish_namespace(session_id, track_namespace.to_string())
+                .publish_namespace(session_id, track_namespace.to_string(), || {
+                    table.announces_namespace_to(subscription.peer, track_namespace)
+                })
                 .await;
         }
     }
@@ -287,7 +289,7 @@ impl PublishNamespace {
             };
 
             forwarder
-                .publish_namespace(session_id, track_namespace.to_string())
+                .publish_namespace_to_relay(session_id, track_namespace.to_string())
                 .await;
         }
     }

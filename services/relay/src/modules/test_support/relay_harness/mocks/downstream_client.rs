@@ -276,6 +276,13 @@ impl Publisher for MockPublisher {
         unreachable!("not used by the egress path under test")
     }
 
+    async fn send_subscribed_namespace(
+        &self,
+        _namespace: String,
+    ) -> anyhow::Result<Option<PublishNamespaceResponse>> {
+        unreachable!("not used by the egress path under test")
+    }
+
     async fn send_publish_namespace_done(&self, _namespace: String) -> anyhow::Result<()> {
         unreachable!("not used by the egress path under test")
     }

@@ -1334,3 +1334,38 @@ fn a_track_published_while_its_last_publisher_withdraws_the_route_keeps_its_rout
         );
     });
 }
+
+#[test]
+fn a_namespace_subscriber_refused_and_subscribing_again_is_told_of_the_namespace() {
+    runtime().block_on(async {
+        // Arrange: a namespace is announced while the subscription's route registers, then fails
+        let relay = Relay::start();
+        let publisher = relay.connect(1).await;
+        let subscriber = relay.connect(2).await;
+        let registration = relay.route_registry.hold_next_route_call();
+        subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+        publisher.publish_namespace("room");
+        settle().await.unwrap();
+        relay.route_registry.fail_next_namespace_registration();
+        registration.notify_one();
+        settle().await.unwrap();
+        let refused = subscriber.sent().len();
+
+        // Act
+        subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            subscriber.sent()[refused..],
+            [
+                Sent::SubscribeNamespaceOk {
+                    prefix: "room".to_string(),
+                    interest: NamespaceInterest::Namespaces,
+                },
+                Sent::PublishNamespace("room".to_string()),
+            ]
+        );
+    });
+}

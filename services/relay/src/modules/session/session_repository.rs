@@ -41,6 +41,10 @@ struct SessionEntry {
     /// Namespaces this relay sent PUBLISH_NAMESPACE for on the session and
     /// has not withdrawn yet.
     announced_namespaces: HashSet<String>,
+    /// Held across the decision, the record and the send of each
+    /// PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE on the session, so the
+    /// session gets them in the order they were recorded.
+    announcement_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 pub(crate) struct SessionState {
@@ -119,6 +123,7 @@ impl SessionRepository {
                 _remote_address_watch_task: remote_address_watch_task,
                 mailbox_sender,
                 announced_namespaces: HashSet::new(),
+                announcement_lock: Arc::default(),
             },
         );
         self.update_client_session_count();
@@ -218,6 +223,17 @@ impl SessionRepository {
         self.sessions
             .get(&session_id)
             .map(|entry| entry.session.as_publisher())
+    }
+
+    /// See `SessionEntry::announcement_lock`; `None` once the session is
+    /// gone.
+    pub(crate) fn announcement_lock(
+        &self,
+        session_id: SessionId,
+    ) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        self.sessions
+            .get(&session_id)
+            .map(|entry| entry.announcement_lock.clone())
     }
 
     /// Returns false when the session is gone or the namespace is already

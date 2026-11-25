@@ -22,8 +22,10 @@ use tokio::sync::{mpsc, oneshot};
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     domain::{
-        publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
-        track_key::TrackKey,
+        publish_done_reason::PublishDoneReason,
+        session_id::SessionId,
+        session_peer::SessionPeer,
+        track_key::{TrackKey, namespace_has_prefix},
     },
     session::{
         Session,
@@ -116,6 +118,10 @@ struct PeerState {
     /// The relay's requests take the odd Request IDs and the peer's the even
     /// ones, as a server's and a client's do.
     next_relay_request_id: AtomicU64,
+    /// The prefixes of the peer's namespace subscriptions, which a draft-18
+    /// session holds from sending SUBSCRIBE_NAMESPACE until its
+    /// UNSUBSCRIBE_NAMESPACE or the relay's refusal.
+    namespace_subscriptions: Mutex<Vec<String>>,
 }
 
 impl PeerState {
@@ -125,6 +131,13 @@ impl PeerState {
 
     fn relay_request_id(&self) -> u64 {
         self.next_relay_request_id.fetch_add(2, Ordering::Relaxed)
+    }
+
+    fn forget_namespace_subscription(&self, prefix: &str) {
+        let mut subscriptions = self.namespace_subscriptions.lock().unwrap();
+        if let Some(index) = subscriptions.iter().position(|held| held == prefix) {
+            subscriptions.remove(index);
+        }
     }
 }
 
@@ -153,6 +166,7 @@ impl ScriptedPeer {
             pending_subscribes: Mutex::default(),
             pending_publishes: Mutex::default(),
             next_relay_request_id: AtomicU64::new(1),
+            namespace_subscriptions: Mutex::default(),
         });
         let new_session = NewSession {
             session_id,
@@ -237,6 +251,13 @@ impl ScriptedPeer {
     }
 
     pub(crate) fn subscribe_namespace(&self, prefix: &str, interest: NamespaceInterest) {
+        if interest.includes_namespaces() {
+            self.state
+                .namespace_subscriptions
+                .lock()
+                .unwrap()
+                .push(prefix.to_string());
+        }
         self.send(MoqtSessionEvent::SubscribeNamespace(Box::new(
             ScriptedSubscribeNamespace {
                 state: self.state.clone(),
@@ -248,6 +269,9 @@ impl ScriptedPeer {
     }
 
     pub(crate) fn unsubscribe_namespace(&self, prefix: &str, interest: NamespaceInterest) {
+        if interest.includes_namespaces() {
+            self.state.forget_namespace_subscription(prefix);
+        }
         self.send(MoqtSessionEvent::UnsubscribeNamespace(
             UnsubscribeNamespaceHandler {
                 track_namespace_prefix: prefix.to_string(),
@@ -359,6 +383,22 @@ impl Publisher for Arc<PeerState> {
     ) -> anyhow::Result<PublishNamespaceResponse> {
         self.log(Sent::PublishNamespace(namespaces));
         Ok(Box::pin(std::future::pending()))
+    }
+
+    async fn send_subscribed_namespace(
+        &self,
+        namespace: String,
+    ) -> anyhow::Result<Option<PublishNamespaceResponse>> {
+        let covered = self
+            .namespace_subscriptions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prefix| namespace_has_prefix(&namespace, prefix));
+        if !covered {
+            return Ok(None);
+        }
+        self.send_publish_namespace(namespace).await.map(Some)
     }
 
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
@@ -652,6 +692,9 @@ impl SubscribeNamespaceHandler for ScriptedSubscribeNamespace {
         _code: RequestErrorCode,
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
+        if self.interest.includes_namespaces() {
+            self.state.forget_namespace_subscription(&self.prefix);
+        }
         self.state.log(Sent::SubscribeNamespaceError {
             prefix: self.prefix.clone(),
             interest: self.interest,

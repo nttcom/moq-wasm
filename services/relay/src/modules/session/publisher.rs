@@ -20,6 +20,13 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         namespaces: String,
     ) -> anyhow::Result<PublishNamespaceResponse>;
+    /// `send_publish_namespace` restricted to the peer's namespace
+    /// subscriptions: returns `None`, sending nothing, when none covers the
+    /// namespace (draft-18 §10.18).
+    async fn send_subscribed_namespace(
+        &self,
+        namespace: String,
+    ) -> anyhow::Result<Option<PublishNamespaceResponse>>;
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()>;
     async fn send_publish(
         &self,
@@ -59,6 +66,17 @@ impl Publisher for moqt::Publisher {
     ) -> anyhow::Result<PublishNamespaceResponse> {
         let pending = self.begin_publish_namespace(namespaces).await?;
         Ok(Box::pin(async move { Ok(pending.accepted().await?) }))
+    }
+
+    async fn send_subscribed_namespace(
+        &self,
+        namespace: String,
+    ) -> anyhow::Result<Option<PublishNamespaceResponse>> {
+        match self.begin_publish_subscribed_namespace(namespace).await {
+            Ok(pending) => Ok(Some(Box::pin(async move { Ok(pending.accepted().await?) }))),
+            Err(moqt::RequestFailure::NoNamespaceSubscription) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {

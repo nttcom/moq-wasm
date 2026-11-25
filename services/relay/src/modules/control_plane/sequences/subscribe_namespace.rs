@@ -112,6 +112,13 @@ impl SubscribeNameSpace {
             {
                 tracing::warn!(%error, session_id = %session_id, "failed to send SUBSCRIBE_NAMESPACE_ERROR");
             }
+            forget_refused_announcements(
+                forwarder,
+                session_id,
+                track_namespace_prefix,
+                subscription,
+            )
+            .await;
             return;
         }
         if let Err(e) = handler.ok().await {
@@ -221,6 +228,13 @@ impl SubscribeNameSpace {
                     "namespace route not registered".to_string(),
                 )
                 .await;
+            forget_refused_announcements(
+                forwarder,
+                session_id,
+                new_track_namespace_prefix,
+                subscription,
+            )
+            .await;
             return;
         }
         // A failed update ended the subscription (§10.9.1); the
@@ -360,30 +374,17 @@ impl SubscribeNameSpace {
                     );
                 }
                 MatchingPublication::Namespace(track_namespace)
-                    if subscription.interest.includes_namespaces()
-                        && is_announced_to(
-                            &downstream_publish.table,
-                            subscription.peer,
-                            &track_namespace,
-                        ) =>
+                    if subscription.interest.includes_namespaces() =>
                 {
+                    let table = &downstream_publish.table;
+                    let announced =
+                        || table.announces_namespace_to(subscription.peer, &track_namespace);
                     forwarder
-                        .publish_namespace(session_id, track_namespace.clone())
+                        .publish_namespace(session_id, track_namespace.clone(), announced)
                         .await;
-                    // A withdrawal that ran while `publications` was being
-                    // sent found the namespace not yet announced here and
-                    // sent no PUBLISH_NAMESPACE_DONE.
-                    if !is_announced_to(
-                        &downstream_publish.table,
-                        subscription.peer,
-                        &track_namespace,
-                    ) {
-                        forwarder
-                            .publish_namespace_done(session_id, track_namespace)
-                            .await;
-                        continue;
+                    if announced() {
+                        namespaces.insert(track_namespace);
                     }
-                    namespaces.insert(track_namespace);
                 }
                 MatchingPublication::Track(_) | MatchingPublication::Namespace(_) => {}
             }
@@ -442,17 +443,19 @@ impl SubscribeNameSpace {
     }
 }
 
-/// A client subscriber is told of a namespace while anyone publishes it, a
-/// relay subscriber while a client does (split horizon): the condition under
-/// which `PublishNamespaceDone::notify_local_subscribers` withdraws it.
-fn is_announced_to(
-    table: &InMemoryLocalPubSubDirectory,
-    subscriber_peer: SessionPeer,
-    track_namespace: &str,
-) -> bool {
-    match subscriber_peer {
-        SessionPeer::Client => table.has_namespace_publishers(track_namespace),
-        SessionPeer::Relay => table.has_client_namespace_publisher(track_namespace),
+/// Forgets the namespaces recorded as announced on a refused subscription,
+/// since moqt drops them with the request. Call it after sending the error:
+/// until then moqt still holds them.
+async fn forget_refused_announcements(
+    forwarder: &ControlMessageForwarder,
+    session_id: SessionId,
+    track_namespace_prefix: &str,
+    subscription: NamespaceSubscription,
+) {
+    if subscription.interest.includes_namespaces() {
+        forwarder
+            .forget_announced_namespaces(session_id, track_namespace_prefix, None)
+            .await;
     }
 }
 
@@ -771,16 +774,22 @@ mod tests {
         // Act: the other namespace is withdrawn while the first PUBLISH_NAMESPACE is held
         ctx.table
             .unregister_publish_namespace(withdrawn_session, None, withdrawn);
-        PublishNamespaceDone::notify_local_subscribers(
-            withdrawn_session,
-            true,
-            withdrawn,
-            &ctx.table,
-            &ctx.forwarder,
-        )
-        .await;
+        let withdrawal = tokio::spawn({
+            let ctx = ctx.clone();
+            async move {
+                PublishNamespaceDone::notify_local_subscribers(
+                    withdrawn_session,
+                    true,
+                    withdrawn,
+                    &ctx.table,
+                    &ctx.forwarder,
+                )
+                .await;
+            }
+        });
         gate.add_permits(2);
         subscribe_namespace.await.unwrap();
+        withdrawal.await.unwrap();
 
         // Assert: every PUBLISH_NAMESPACE of the withdrawn namespace is matched by a PUBLISH_NAMESPACE_DONE
         let announced = ctx

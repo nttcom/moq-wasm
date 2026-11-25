@@ -257,6 +257,9 @@ pub(crate) struct MockUpstreamSession {
     answer_publish: Option<PublishAnswer>,
     /// Each PUBLISH_NAMESPACE, once recorded, takes a permit before it is sent.
     publish_namespace_gate: Option<Arc<tokio::sync::Semaphore>>,
+    /// Each PUBLISH_NAMESPACE takes a permit before it is recorded, unlike
+    /// `publish_namespace_gate`.
+    publish_namespace_delay: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl MockUpstreamSession {
@@ -268,6 +271,7 @@ impl MockUpstreamSession {
             transport_stats: moqt::TransportStats::default(),
             answer_publish: None,
             publish_namespace_gate: None,
+            publish_namespace_delay: None,
         }
     }
 }
@@ -341,6 +345,7 @@ pub(crate) fn recorded_session_answering_subscribe(
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
         publish_namespace_gate: None,
+        publish_namespace_delay: None,
     });
     (session, recorded)
 }
@@ -384,6 +389,7 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
         publish_namespace_gate: None,
+        publish_namespace_delay: None,
     })
 }
 
@@ -406,6 +412,7 @@ pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
         publish_namespace_gate: None,
+        publish_namespace_delay: None,
     })
 }
 
@@ -429,6 +436,17 @@ pub(crate) fn recorded_session_holding_publish_namespace(
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
         publish_namespace_gate: Some(gate),
+        ..MockUpstreamSession::new(recorded.clone())
+    });
+    (session, recorded)
+}
+
+pub(crate) fn recorded_session_delaying_publish_namespace(
+    delay: Arc<tokio::sync::Semaphore>,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        publish_namespace_delay: Some(delay),
         ..MockUpstreamSession::new(recorded.clone())
     });
     (session, recorded)
@@ -613,6 +631,7 @@ impl Session for MockUpstreamSession {
             recorded: self.recorded.clone(),
             answer_publish: self.answer_publish.clone(),
             publish_namespace_gate: self.publish_namespace_gate.clone(),
+            publish_namespace_delay: self.publish_namespace_delay.clone(),
         })
     }
 
@@ -664,6 +683,7 @@ struct MockUpstreamPublisher {
     recorded: RecordedControlMessages,
     answer_publish: Option<PublishAnswer>,
     publish_namespace_gate: Option<Arc<tokio::sync::Semaphore>>,
+    publish_namespace_delay: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 #[async_trait::async_trait]
@@ -672,6 +692,9 @@ impl Publisher for MockUpstreamPublisher {
         &self,
         namespaces: String,
     ) -> anyhow::Result<PublishNamespaceResponse> {
+        if let Some(delay) = &self.publish_namespace_delay {
+            delay.acquire().await?.forget();
+        }
         self.recorded
             .namespace_announcements
             .lock()
@@ -686,6 +709,13 @@ impl Publisher for MockUpstreamPublisher {
             gate.acquire().await?.forget();
         }
         Ok(Box::pin(std::future::pending()))
+    }
+
+    async fn send_subscribed_namespace(
+        &self,
+        namespace: String,
+    ) -> anyhow::Result<Option<PublishNamespaceResponse>> {
+        self.send_publish_namespace(namespace).await.map(Some)
     }
 
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {

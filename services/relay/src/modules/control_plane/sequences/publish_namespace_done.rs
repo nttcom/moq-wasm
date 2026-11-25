@@ -56,12 +56,12 @@ impl PublishNamespaceDone {
         // The end of an earlier request read after the session's later
         // PUBLISH_NAMESPACE of the namespace: the subscribers see the
         // withdrawal and the publication in the order the session sent them.
-        if table.session_publishes_namespace(track_namespace, session_id) {
-            for subscriber_session_id in withdrawn_from {
-                forwarder
-                    .publish_namespace(subscriber_session_id, track_namespace.to_string())
-                    .await;
-            }
+        for subscriber_session_id in withdrawn_from {
+            forwarder
+                .publish_namespace(subscriber_session_id, track_namespace.to_string(), || {
+                    table.session_publishes_namespace(track_namespace, session_id)
+                })
+                .await;
         }
 
         if !is_origin_client {
@@ -95,7 +95,9 @@ impl PublishNamespaceDone {
     /// if none of the session's publications of it remained; returns the
     /// subscribers told. The publisher session is one of them when it
     /// subscribes to the namespace, since its own namespace was announced to
-    /// it (draft-14 §9.28, draft-18 §10.18).
+    /// it (draft-14 §9.28, draft-18 §10.18). Each subscriber's withdrawal is
+    /// decided when it is sent: if another session publishes the namespace
+    /// meanwhile, the subscriber keeps it announced.
     pub(crate) async fn notify_local_subscribers(
         publisher_session_id: SessionId,
         publisher_is_client: bool,
@@ -103,31 +105,32 @@ impl PublishNamespaceDone {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
     ) -> Vec<SessionId> {
-        let other_publisher =
-            table.other_namespace_publisher(track_namespace, publisher_session_id);
-        if other_publisher == Some(SessionPeer::Client) {
-            tracing::debug!(
-                track_namespace = %track_namespace,
-                "namespace still published by a client; PUBLISH_NAMESPACE_DONE not forwarded"
-            );
-            return Vec::new();
-        }
-        // A remaining relay publisher keeps the namespace for client
-        // subscribers (draft-14 §9.28); a relay subscriber was told of client
-        // publishers only (split horizon).
-        let published_by_relay = other_publisher.is_some();
         let mut withdrawn_from = Vec::new();
         for (subscriber_session_id, subscription) in
             table.get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces)
         {
-            let withdraw = match subscription.peer {
-                SessionPeer::Client => !published_by_relay,
-                SessionPeer::Relay => publisher_is_client,
+            // A remaining client publisher keeps the namespace for everyone,
+            // a remaining relay publisher for client subscribers (draft-14
+            // §9.28); a relay subscriber was told of client publishers only
+            // (split horizon).
+            let withdraw = || {
+                let other_publisher =
+                    table.other_namespace_publisher(track_namespace, publisher_session_id);
+                match subscription.peer {
+                    SessionPeer::Client => other_publisher.is_none(),
+                    SessionPeer::Relay => {
+                        publisher_is_client && other_publisher != Some(SessionPeer::Client)
+                    }
+                }
             };
-            if withdraw {
-                forwarder
-                    .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
-                    .await;
+            if forwarder
+                .publish_namespace_done(
+                    subscriber_session_id,
+                    track_namespace.to_string(),
+                    withdraw,
+                )
+                .await
+            {
                 withdrawn_from.push(subscriber_session_id);
             }
         }
@@ -218,7 +221,7 @@ impl PublishNamespaceDone {
             };
 
             forwarder
-                .publish_namespace_done(session_id, track_namespace.to_string())
+                .publish_namespace_done(session_id, track_namespace.to_string(), || true)
                 .await;
         }
     }
@@ -292,7 +295,7 @@ mod tests {
         );
         let forwarder = ControlMessageForwarder { repository };
         forwarder
-            .publish_namespace(NAMESPACE_SUBSCRIBER, NAMESPACE.to_string())
+            .publish_namespace(NAMESPACE_SUBSCRIBER, NAMESPACE.to_string(), || true)
             .await;
         PublishNamespaceDone
             .handle(
