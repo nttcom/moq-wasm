@@ -22,7 +22,6 @@ class HaasTranscriber:
         return await asyncio.get_running_loop().run_in_executor(self._executor, self._transcribe, audio)
 
     def _transcribe(self, audio: np.ndarray) -> str:
-        # The bot joins the segments that arrive while this is busy, so audio can pass the 30 s the model
-        # was trained on; transcribe_longform splits it.
+        # One utterance can last past the 30 s the model was trained on; transcribe_longform splits it.
         with torch.inference_mode():
             return haas_asr.transcribe_longform(self._model, audio).strip()
