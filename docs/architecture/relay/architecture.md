@@ -100,7 +100,7 @@ flowchart LR
 
 ### Directory & `Track` Model (`modules/directory`)
 - **`InMemoryLocalPubSubDirectory`**: Tracks `/`-joined namespaces (field-wise `namespace_has_prefix`, safe because `authorize` rejects `/` inside elements), per-(session, request_id) namespace publications (client vs. relay for split horizon), `NamespaceSubscription`s keyed by `(session, NamespaceInterest)`, and `Track`s.
-- **`Track` & `TrackEntry`**: Holds `Producer`s (each owning `moqt::Subscription` + `IngestTask`), `Consumer`s (each owning stop `oneshot<PublishDoneReason>`, `DeliveryControl` watch, `DeliveryStats`), `CreationState` (`Creating` / `Created` / `Failed`), subscriber `TrackReservation`s, and pending forwarded `PUBLISH`es. Dropping a `Producer`/`Consumer` stops its task. Every `Track` instance carries a generation (`TrackEntry`) so late callbacks from a removed track never attach to a recreated one.
+- **`Track` & `TrackEntry`**: Holds `Producer`s (each owning `moqt::Subscription` + `IngestTask`), `Consumer`s (each owning stop `oneshot<PublishDoneReason>`, `DeliveryControl` watch, `DeliveryStats`), `CreationState` (`Creating` / `Created` / `Failed`), subscriber `TrackReservation`s, and pending forwarded `PUBLISH`es. Dropping a `Producer`/`Consumer` stops its task. Every `Track` instance carries a generation (`TrackEntry`) so late callbacks from a removed track never attach to a recreated one. The Quint model `docs/architecture/relay/models/track.qnt` checks the lifecycle of a track's entry across SUBSCRIBE, PUBLISH, PUBLISH_NAMESPACE, UNSUBSCRIBE, PUBLISH_DONE and session cleanup of client and relay peers.
 
 ## Message Sequences
 

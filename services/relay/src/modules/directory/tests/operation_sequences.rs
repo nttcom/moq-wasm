@@ -20,7 +20,7 @@ use tokio::sync::{
 use crate::modules::{
     control_plane::sequences::subscribe::UPSTREAM_ATTEMPTS,
     directory::{
-        InMemoryLocalPubSubDirectory, TrackEntry, TrackLookup, TrackReservation,
+        InMemoryLocalPubSubDirectory, ProducerJoin, TrackEntry, TrackLookup, TrackReservation,
         track::{
             CreationFailure, CreationState, NamespaceSubscription, ProducerOrigin, ProducerState,
             RemovedDownstreamSubscription,
@@ -719,12 +719,10 @@ impl Harness {
                 if peer == SessionPeer::Client {
                     publishers.extend(self.publisher_relays(namespace));
                 }
-                if publishers.is_empty() {
-                    self.directory
-                        .pending_producer_ended(reservation.entry(), Some(creation_failure()));
-                } else {
-                    self.subscribe_publishers(reservation.entry(), publishers);
-                }
+                let failure = publishers.is_empty().then(creation_failure);
+                self.subscribe_publishers(reservation.entry(), publishers);
+                self.directory
+                    .pending_producer_ended(reservation.entry(), failure);
                 SubscribeStage::Waiting(creation, reservation)
             }
             SubscribeStage::Waiting(creation, reservation) => {
@@ -818,7 +816,8 @@ impl Harness {
                     &upstream.entry,
                     publisher_session_id,
                     producer,
-                ) {
+                ) == ProducerJoin::Added
+                {
                     self.producers.insert(
                         (upstream.track, publisher_session_id),
                         (request_id, ProducerOrigin::Subscribe),

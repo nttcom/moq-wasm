@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use dashmap::{DashMap, Entry, mapref::one::RefMut};
+use dashmap::{DashMap, Entry, OccupiedEntry, mapref::one::RefMut};
 use moqt::{namespace::NamespaceInterest, object::Location};
 
 use crate::modules::{
@@ -55,6 +55,18 @@ pub(crate) enum TrackLookup {
     Started(watch::Receiver<CreationState>, TrackReservation),
 }
 
+/// What `add_upstream_subscription_to_track` did with a producer.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ProducerJoin {
+    Added,
+    /// The entry is gone, the publisher already feeds it, or the track does
+    /// not want it.
+    NotTaken,
+    /// The publisher ended the subscription with PUBLISH_DONE before it
+    /// joined.
+    Ended,
+}
+
 /// A forwarded PUBLISH between its send and its answer; dropping it lets the
 /// track forward another PUBLISH to the session.
 pub(crate) struct ForwardedPublish {
@@ -78,21 +90,40 @@ impl Drop for ForwardedPublish {
 }
 
 /// Keeps a track wanting its producers for a subscriber that found it and is
-/// about to register its consumer. Released on drop.
+/// about to register its consumer. Released on drop, or by `release` for a
+/// subscriber that registered no consumer.
 pub(crate) struct TrackReservation {
     directory: Arc<InMemoryLocalPubSubDirectory>,
     entry: TrackEntry,
     peer: SessionPeer,
+    released: bool,
 }
 
 impl TrackReservation {
     pub(crate) fn entry(&self) -> &TrackEntry {
         &self.entry
     }
+
+    /// For a subscriber that keeps no consumer of the track: releases its
+    /// reservation and the upstream subscriptions the track no longer wants,
+    /// like `end_downstream_subscription`. The caller sends their
+    /// UNSUBSCRIBEs. `None` when the entry is gone.
+    pub(crate) fn release(mut self) -> Option<RemovedDownstreamSubscription> {
+        self.released = true;
+        let mut track = self.directory.occupied_track(&self.entry)?;
+        track.get_mut().release_reservation(self.peer);
+        Some(RemovedDownstreamSubscription {
+            track_key: self.entry.track_key.clone(),
+            released_upstream_subscriptions: self.directory.release_unwanted_producers(track),
+        })
+    }
 }
 
 impl Drop for TrackReservation {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         if let Some(mut track) = self.directory.track_mut(&self.entry) {
             track.release_reservation(self.peer);
         }
@@ -260,6 +291,14 @@ impl InMemoryLocalPubSubDirectory {
         self.upstream_tracks
             .get_mut(&entry.track_key)
             .filter(|track| track.generation == entry.generation)
+    }
+
+    /// `track_mut` for a caller that may remove the entry.
+    fn occupied_track(&self, entry: &TrackEntry) -> Option<OccupiedEntry<'_, TrackKey, Track>> {
+        match self.upstream_tracks.entry(entry.track_key.clone()) {
+            Entry::Occupied(track) if track.get().generation == entry.generation => Some(track),
+            _ => None,
+        }
     }
 
     /// draft-22 §6.6.1: a draining relay unsubscribes from its publishers once
@@ -849,6 +888,8 @@ impl InMemoryLocalPubSubDirectory {
     /// Finds the track for a SUBSCRIBE from a `requester` peer, or starts its
     /// creation: the entry is inserted `Creating` so that the SUBSCRIBEs
     /// that follow wait for this one instead of subscribing upstream again.
+    /// A `Started` creator counts as one pending producer and must call
+    /// `pending_producer_ended` after sending its upstream SUBSCRIBEs.
     pub(crate) fn track_or_begin_creation(
         self: &Arc<Self>,
         track_key: &TrackKey,
@@ -858,6 +899,7 @@ impl InMemoryLocalPubSubDirectory {
             directory: self.clone(),
             entry: Self::entry_of(track_key, track),
             peer: requester,
+            released: false,
         };
         match self.upstream_tracks.entry(track_key.clone()) {
             Entry::Occupied(mut entry) => {
@@ -872,6 +914,7 @@ impl InMemoryLocalPubSubDirectory {
             Entry::Vacant(entry) => {
                 let mut track = self.new_track(CreationState::Creating);
                 track.reserve(requester);
+                track.add_pending_producers(1);
                 let creation = track.creation();
                 let reservation = reservation(&track);
                 entry.insert(track);
@@ -915,12 +958,9 @@ impl InMemoryLocalPubSubDirectory {
         entry: &TrackEntry,
         failure: Option<CreationFailure>,
     ) -> bool {
-        let Entry::Occupied(mut track) = self.upstream_tracks.entry(entry.track_key.clone()) else {
+        let Some(mut track) = self.occupied_track(entry) else {
             return false;
         };
-        if track.get().generation != entry.generation {
-            return false;
-        }
         match track.get_mut().pending_producer_ended(failure) {
             PendingProducersOutcome::Kept => false,
             PendingProducersOutcome::CreationFailed => {
@@ -1105,24 +1145,29 @@ impl InMemoryLocalPubSubDirectory {
             .is_some_and(|track| track.takes(publisher_session_id, publisher_peer))
     }
 
-    /// Returns false, adding nothing, when the entry is gone, the publisher
-    /// already feeds it, or the track does not want it. The first producer
-    /// of a track being created completes the creation.
+    /// The first producer of a track being created completes the creation.
+    /// A producer not added is dropped, which stops its ingest.
     pub(crate) fn add_upstream_subscription_to_track(
         &self,
         entry: &TrackEntry,
         publisher_session_id: SessionId,
         producer: Producer,
-    ) -> bool {
+    ) -> ProducerJoin {
         let Some(mut track) = self.track_mut(entry) else {
-            return false;
+            return ProducerJoin::NotTaken;
         };
+        if track.upstream_subscription_has_ended(
+            publisher_session_id,
+            producer.state.subscription.request_id(),
+        ) {
+            return ProducerJoin::Ended;
+        }
         if !track.takes(publisher_session_id, producer.state.peer) {
-            return false;
+            return ProducerJoin::NotTaken;
         }
         track.producers.insert(publisher_session_id, producer);
         track.mark_created();
-        true
+        ProducerJoin::Added
     }
 
     #[cfg(test)]
@@ -1169,7 +1214,16 @@ impl InMemoryLocalPubSubDirectory {
                         producer.state.subscription.request_id() == upstream_request_id
                     })
             })
-            .map(|entry| entry.key().clone())?;
+            .map(|entry| entry.key().clone());
+        let Some(track_key) = track_key else {
+            // No producer has it yet: its SUBSCRIBE_OK may still be on its way
+            // to `add_upstream_subscription_to_track`, so every track
+            // subscribing to the publisher records the end.
+            for mut track in self.upstream_tracks.iter_mut() {
+                track.upstream_subscription_ended(publisher_session_id, upstream_request_id);
+            }
+            return None;
+        };
         self.end_publisher_subscription(&track_key, publisher_session_id, end)?;
         Some(track_key)
     }
@@ -1289,9 +1343,27 @@ impl InMemoryLocalPubSubDirectory {
         if let Some(end) = end {
             removed_consumer.end(end);
         }
+        let released_upstream_subscriptions = self.release_unwanted_producers(entry);
+        Some(RemovedDownstreamSubscription {
+            track_key,
+            released_upstream_subscriptions,
+        })
+    }
+
+    /// Removes the producers the track no longer wants after a subscriber
+    /// left and returns their upstream subscriptions to UNSUBSCRIBE. Ends and
+    /// removes the track when no producer is left, unless its remaining
+    /// subscribers wait for an upstream SUBSCRIBE in flight.
+    fn release_unwanted_producers(
+        &self,
+        mut entry: OccupiedEntry<'_, TrackKey, Track>,
+    ) -> Vec<ReleasedUpstreamSubscription> {
+        let track_key = entry.key().clone();
+        let track = entry.get_mut();
         let downstream_remains = track.downstream_remains();
         let client_remains = track.client_remains();
         let draining = self.draining_since_ms.get().is_some();
+        let had_producers = !track.producers.is_empty();
         let mut released_upstream_subscriptions = Vec::new();
         if !client_remains {
             track.producers.retain(|publisher_session_id, producer| {
@@ -1312,20 +1384,23 @@ impl InMemoryLocalPubSubDirectory {
                 !released
             });
         }
-        if track.producers.is_empty() {
+        // With subscribers left, a track that had no producer already waits
+        // (kept by `outlive_last_producer`); one that just lost its last
+        // producer waits only while an upstream SUBSCRIBE is in flight.
+        if !track.producers.is_empty() {
+            track.report_upstream_forward(&track_key);
+        } else if !(downstream_remains
+            && (!had_producers
+                || track.outlive_last_producer(PublishDoneReason::publisher_session_closed())))
+        {
             self.end_downstream_subscriptions(
                 track,
                 &track_key,
                 PublishDoneReason::publisher_session_closed(),
             );
             entry.remove();
-        } else {
-            track.report_upstream_forward(&track_key);
         }
-        Some(RemovedDownstreamSubscription {
-            track_key,
-            released_upstream_subscriptions,
-        })
+        released_upstream_subscriptions
     }
 
     /// Ends every consumer of `track`, whose last producer ended, with the
@@ -2511,7 +2586,7 @@ mod tests {
         let ended = table.pending_producer_ended(&entry, None);
 
         // Assert: the subscriber goes on with the publisher that answered
-        assert!(taken);
+        assert_eq!(taken, ProducerJoin::Added);
         assert!(!ended);
         assert_eq!(runner_stop_receiver.try_recv(), Err(TryRecvError::Empty));
     }
@@ -2904,12 +2979,62 @@ mod tests {
         );
 
         // Assert
-        assert!(taken);
+        assert_eq!(taken, ProducerJoin::Added);
         assert_eq!(*creation.borrow(), CreationState::Created);
         assert!(matches!(
             table.track_or_begin_creation(&track_key(), SessionPeer::Client),
             TrackLookup::Ready(..)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_reservation_released_without_a_consumer_releases_the_upstream_subscriptions_nobody_wants()
+     {
+        // Arrange: the track's only subscriber holds a reservation and no consumer
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+        let TrackLookup::Ready(_, reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("a fed track is ready");
+        };
+
+        // Act
+        let removed = reservation.release().unwrap();
+
+        // Assert
+        assert_eq!(
+            removed
+                .released_upstream_subscriptions
+                .iter()
+                .map(|released| released.publisher_session_id)
+                .collect::<Vec<_>>(),
+            vec![PUBLISHER_SESSION]
+        );
+        assert!(table.upstream_tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_creator_finding_no_publisher_waits_for_a_subscribe_sent_meanwhile() {
+        // Arrange: a PUBLISH_NAMESPACE subscribes its publisher while the creator resolves
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(creation, reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        table.add_pending_producers(reservation.entry(), 1);
+
+        // Act
+        table.pending_producer_ended(reservation.entry(), Some(creation_failure("none")));
+
+        // Assert
+        assert_eq!(*creation.borrow(), CreationState::Creating);
+        assert!(table.upstream_tracks.contains_key(&track_key()));
     }
 
     #[tokio::test]
@@ -2922,6 +3047,7 @@ mod tests {
             panic!("the first SUBSCRIBE starts the creation");
         };
         table.add_pending_producers(reservation.entry(), 2);
+        table.pending_producer_ended(reservation.entry(), None);
 
         // Act
         table.pending_producer_ended(reservation.entry(), Some(creation_failure("first")));
@@ -3065,7 +3191,7 @@ mod tests {
         );
 
         // Assert
-        assert!(!taken);
+        assert_eq!(taken, ProducerJoin::NotTaken);
         assert!(table.entry_state(recreating.entry()).is_none());
     }
 

@@ -182,8 +182,10 @@ pub(crate) struct Track {
     /// Upstream SUBSCRIBEs sent for the track and not yet answered.
     pending_producers: usize,
     /// Publisher sessions an upstream SUBSCRIBE is on its way to, until its
-    /// answer adds or drops the producer.
-    subscribing: HashSet<SessionId>,
+    /// answer adds or drops the producer. Each maps to the Request IDs the
+    /// publisher ended with PUBLISH_DONE meanwhile, before any producer had
+    /// them.
+    subscribing: HashMap<SessionId, HashSet<u64>>,
     last_failure: Option<CreationFailure>,
     /// Read only while the track has no producer; every way the last
     /// producer leaves sets it again or removes the track. While the track
@@ -205,7 +207,7 @@ impl Track {
             consumers: HashMap::new(),
             creation: watch::channel(state).0,
             pending_producers: 0,
-            subscribing: HashSet::new(),
+            subscribing: HashMap::new(),
             last_failure: None,
             last_producer_end: None,
             reservations: Reservations::default(),
@@ -243,8 +245,37 @@ impl Track {
     /// objects the first one carries and could replace it. Pair with
     /// `end_upstream_subscribe` once the answer is handled.
     pub(crate) fn begin_upstream_subscribe(&mut self, publisher_session_id: SessionId) -> bool {
-        !self.producers.contains_key(&publisher_session_id)
-            && self.subscribing.insert(publisher_session_id)
+        if self.producers.contains_key(&publisher_session_id)
+            || self.subscribing.contains_key(&publisher_session_id)
+        {
+            return false;
+        }
+        self.subscribing
+            .insert(publisher_session_id, HashSet::new());
+        true
+    }
+
+    /// Records a PUBLISH_DONE that found no producer, in case it ends the
+    /// upstream SUBSCRIBE in flight to that publisher before its SUBSCRIBE_OK
+    /// is handled.
+    pub(crate) fn upstream_subscription_ended(
+        &mut self,
+        publisher_session_id: SessionId,
+        upstream_request_id: u64,
+    ) {
+        if let Some(ended) = self.subscribing.get_mut(&publisher_session_id) {
+            ended.insert(upstream_request_id);
+        }
+    }
+
+    pub(crate) fn upstream_subscription_has_ended(
+        &self,
+        publisher_session_id: SessionId,
+        upstream_request_id: u64,
+    ) -> bool {
+        self.subscribing
+            .get(&publisher_session_id)
+            .is_some_and(|ended| ended.contains(&upstream_request_id))
     }
 
     pub(crate) fn end_upstream_subscribe(&mut self, publisher_session_id: SessionId) {
