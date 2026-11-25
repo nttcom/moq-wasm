@@ -482,10 +482,13 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 - 同じ session が `createBroadcast` した namespace は除く。別の session（別のタブ）が同じ
   namespace で配信していれば除かない。
 - `filter` で、文字起こしボットのような参加者以外の配信を除く。深さではなく関数にするのは、
-  参加者と同じ深さにいる配信も除けるようにするため。
-- namespace が withdraw されたら、SDK が view と catalog を片付けてから `onRemove` を呼ぶ。
-  公開中の namespace がもう一度公開されたら（入り直し）、古いものを `onRemove`、新しいものを
-  `onAdd` で知らせる。
+  参加者と同じ深さにいる配信も除けるようにするため。`filter` は公開のときだけ聞き、withdraw
+  では聞かない（再生中のものは `filter` の答えによらず片付ける）。
+- namespace が withdraw されたら、SDK が view と catalog を片付けてから（片付けに失敗しても）
+  `onRemove` を呼ぶ。公開中の namespace がもう一度公開されたら（入り直し）、再生していたものを
+  片付けて `onRemove` で知らせ、新しい公開を `filter` が受け入れたときだけ再生して `onAdd` で知らせる。
+- ページのハンドラが投げた例外は、イベントリスナーの例外と同じく `reportError` で報告し、監視は
+  続ける。1つのハンドラの不具合で、room の以降の参加・退出が届かなくならないようにするため。
 
 `RemoteBroadcast` は1つの `BroadcastCatalog` を持ち、source ごとに view を作る。1人を
 見るだけのページは `new RemoteBroadcast(session, namespace)` を直接使う。
