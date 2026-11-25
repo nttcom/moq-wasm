@@ -4,11 +4,10 @@ from dataclasses import dataclass, field
 
 import pytest
 from moq_wasm import Location
-from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage
+from moq_wasm.pipecat import MoqWasmTrackMessage
 from pipecat.frames.frames import (
     EndFrame,
     InputTransportMessageFrame,
-    OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
     UserImageRawFrame,
     UserImageRequestFrame,
@@ -19,6 +18,7 @@ from moq_ptz_tracking.pan_planner import PanPlanner
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.tracker import PtzTracker
 from moq_ptz_tracking.vision import Answer, Box, Sighting, TargetBox
+from moq_system_one_bot.testing import records
 from tests.helpers import MUG_TARGET, StubVision, published_commands, sighting
 
 CALIBRATION = PtzCalibration(pan_per_second=10.0, tilt_per_second=10.0, margin=0.1, dead_zone=0.05)
@@ -45,14 +45,6 @@ def picture(location: tuple[int, int], video: str = MUG_TARGET.video_track) -> U
     )
     frame.metadata["location"] = Location(*location)
     return frame
-
-
-def records(frames) -> list[dict]:
-    return [
-        frame.message.record
-        for frame in frames
-        if isinstance(frame, OutputTransportMessageFrame) and isinstance(frame.message, MoqWasmEventRecord)
-    ]
 
 
 def requests(frames) -> list[UserImageRequestFrame]:

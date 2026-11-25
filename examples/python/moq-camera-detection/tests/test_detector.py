@@ -3,16 +3,16 @@ import json
 from dataclasses import dataclass, field
 
 from moq_wasm import Location
-from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage
+from moq_wasm.pipecat import MoqWasmTrackMessage
 from pipecat.frames.frames import (
     InputTransportMessageFrame,
-    OutputTransportMessageFrame,
     UserImageRawFrame,
     UserImageRequestFrame,
 )
 from pipecat.tests.utils import SleepFrame, run_test
 
 from moq_camera_detection.detector import EVENT_TIMELINE_TRACK, CameraDetector
+from moq_system_one_bot.testing import records
 from moq_system_one_bot.video import rgb_to_jpeg
 from moq_camera_detection.prompt import Prompt
 from tests.helpers import StubVision
@@ -35,14 +35,6 @@ def camera_picture(location: tuple[int, int], value: int = 0) -> UserImageRawFra
     )
     frame.metadata["location"] = Location(*location)
     return frame
-
-
-def records(frames) -> list[dict]:
-    return [
-        frame.message.record
-        for frame in frames
-        if isinstance(frame, OutputTransportMessageFrame) and isinstance(frame.message, MoqWasmEventRecord)
-    ]
 
 
 @dataclass
