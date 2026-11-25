@@ -79,7 +79,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | --- | --- | --- | --- |
 | Migration router | `Router::route` locals `previous: Option<Previous>` and `migration: Migration` (`None` / `Following{migrated, current: CurrentRead (Reading / ClosedSeen)}` / `Reconnecting(migrated)`) in `moqt/domains/session/migration_task.rs` | `Steady`, `Draining`, `Migrating`, `MigratingCurrentLost`, `Reconnecting`, `Ended` | [`migration.qnt`](models/migration.qnt) |
 | Connection | `go_away_received`, `closed_locally`, `served`, membership in `connections` | `Live`, `GoAwayReceived`, `ClosedLocally`, `ClosedByPeer`, `Retired` | [`migration.qnt`](models/migration.qnt) |
-| Group cutover | `GroupCutover{current_start, state: Cutover}` (`Waiting{previous: PreviousSide (Live{newest} / Ended), _cut_over}` / `At(c)`; dropping `_cut_over` signals the cutover) in `moqt/domains/group_cutover.rs` | `Waiting(newest)`, `PreviousEnded`, `At(c)` × `Signalled` | [`group_cutover.qnt`](models/group_cutover.qnt) |
+| Group cutover | `GroupCutover{current_start, state: Cutover}` (`Waiting{newest, _cut_over}` / `At(c)`; dropping `_cut_over` signals the cutover) in `moqt/domains/group_cutover.rs` | `Waiting(newest)`, `At(c)` × `Signalled` | [`group_cutover.qnt`](models/group_cutover.qnt) |
 | Session close | `UnacknowledgedStreams`, no session flag | `Open`, `Closing`, `Closed` | — |
 | Client event loop (`Routes`) | `EventLoopTask` handle, route tables | `Running`, `Ended`, `Closed` | — |
 | `TrackFollower` | `Follow::run` local `follower: Follower` (`Idle` / `Following(Subscription)` / `FollowingWithHandover(Subscription)`) in `client/track_follower.rs` | `Idle`, `Following`, `FollowingWithHandover` | [`track_follower.qnt`](models/track_follower.qnt) |
@@ -97,14 +97,13 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, `object_sinks_current`, `publish_namespace_current`, `track_writer_current`, and `new_group_requests_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
+Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, `object_sinks_current`, `publish_namespace_current`, `track_writer_current`, `new_group_requests_current`, `group_cutover_subgroups_current`, and `group_cutover_datagrams_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
 
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
 | `origin_sessions` | A session that is both a subscriber and a PUBLISH peer of one track gets two serving outlets (SUBSCRIBE registered while `publish` awaits PUBLISH_OK); every object is sent twice | `RECHECK_ON_REGISTER` + `SUBSCRIBE_ENDS_PUBLISH` |
 | `subscription` | Client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves | `DONE_BEFORE_SUBSCRIBE` |
 | `migration` | A GOAWAY migration in flight when the current connection closes keeps the dead connection as `previous` forever, and revives a locally closed session; `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry; a session ending with a `previous` leaves it open | `FIX_CLOSED_DURING_MIGRATION`, `FIX_FINISH_CLOSES_PREVIOUS`, `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
-| `group_cutover` | A lagging relay's groups are delivered twice after `previous_ended` | `KEEP_NEWEST` (trade-off in file) |
 | `track_follower` | A withdrawal (`active=false`) keeps the handover flag, so the follower resubscribes to a gone publisher; `TrackWatch::next` never returns `None` after the session ends | `CLEAR_ON_WITHDRAWAL`, `END_DROPS_HANDLERS` |
 
 Refuted by the models: Origin outlets surviving a disconnect (one `Origin` per client session; `retire` releases them), Forward State demand drift, `group` and `abandoned` both set in `TrackWriter`, `ended` before a failing `close()` leaking a FETCH entry (quinn's `finish` does not fail there), and PUBLISH_NAMESPACE_DONE racing an in-flight PUBLISH_NAMESPACE (the peer sees them in order).
