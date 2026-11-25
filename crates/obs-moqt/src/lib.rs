@@ -28,6 +28,12 @@ mod module {
 
     static MODULE: AtomicPtr<ObsModule> = AtomicPtr::new(ptr::null_mut());
 
+    #[cfg(dock)]
+    unsafe extern "C" {
+        /// `dock.cpp`: adds the MoQT dock to OBS's main window.
+        fn obs_moqt_add_dock();
+    }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn obs_module_set_pointer(module: *mut ObsModule) {
         MODULE.store(module, Ordering::Relaxed);
@@ -53,6 +59,12 @@ mod module {
             .try_init();
         output::register();
         service::register();
+        // SAFETY: OBS loads modules on its UI thread, after the main window
+        // the dock is added to exists.
+        #[cfg(dock)]
+        unsafe {
+            obs_moqt_add_dock()
+        };
         true
     }
 }

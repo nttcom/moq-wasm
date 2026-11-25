@@ -2722,6 +2722,7 @@ dependencies = [
  "anyhow",
  "broadcast",
  "bytes",
+ "cc",
  "mediapack",
  "proptest",
  "tokio",

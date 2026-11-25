@@ -36,6 +36,8 @@ EGRESS_GATEWAY_AUDIO_PORT ?= 5016
 EGRESS_GATEWAY_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 OBS_PLUGIN_DIR ?= $(HOME)/Library/Application Support/obs-studio/plugins/obs-moqt.plugin/Contents/MacOS
+# Compiler flags that find the Qt 6 headers; empty builds the OBS plugin without its dock.
+OBS_MOQT_QT_CFLAGS ?= $(shell pkg-config --cflags Qt6Widgets 2>/dev/null)
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
 .PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp egress-gateway gst-plugin gst-srt-publish obs-plugin obs-plugin-install onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
@@ -109,7 +111,7 @@ gst-srt-publish: gst-plugin
 
 # OBS Studio plugin (crates/obs-moqt): `moqt_output` publishes OBS's H.264/AAC stream into MoQT.
 obs-plugin:
-	cargo build -p obs-moqt --release
+	OBS_MOQT_QT_CFLAGS="$(OBS_MOQT_QT_CFLAGS)" cargo build -p obs-moqt --release
 
 # Copies the plugin into the user plugin directory of OBS on macOS.
 obs-plugin-install: obs-plugin

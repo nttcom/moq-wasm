@@ -25,6 +25,7 @@ flowchart LR
 | `output` | Registers `moqt_output`: stream lifecycle, relay session, statistics |
 | `media_input` | Encoder packets → `mediapack::MediaEvent` (parameter sets, one clock) |
 | `publish_settings` | Service settings → `broadcast::MoqtTarget` and namespace |
+| `dock.cpp` | The **MoQT** dock (Qt): edits the service settings and makes `moqt_service` the stream destination |
 
 `media_input` and `publish_settings` hold no libobs calls and are the only modules built for unit tests, because libobs symbols exist only inside OBS.
 
@@ -36,7 +37,14 @@ flowchart LR
 ## Service Selection
 The frontend picks the output by protocol: `moqt_service` returns `MoQT`, and `moqt_output` is the only output registered for it. The output reads `server`, `namespace`, `bearer_token`, `bearer_token_file`, and `insecure_skip_tls_verify` from the service's settings at each start, so the service holds no state. The URL, the namespace, and exactly one of the token and the token file are required: the plugin has no tokenless (`anon/**`) mode. A relay admits a token only into the namespaces of its app, so the output puts the token's `appId` claim in front of the namespace unless the namespace starts with it already.
 
-OBS's **Settings → Stream** page lists only its built-in services, so the service is set through the profile's `service.json` or obs-websocket's `SetStreamServiceSettings` (see the crate README). A settings dock or the frontend's own service list would replace that step without changing the output.
+OBS's **Settings → Stream** page lists only its built-in services, so the plugin's dock sets the service: **Use for streaming** creates a `moqt_service` from the dock's fields, hands it to the frontend (`obs_frontend_set_streaming_service`), and saves it in the profile. The profile's `service.json` or obs-websocket's `SetStreamServiceSettings` does the same without the dock.
+
+## Dock
+- **One C++ file**: A dock is a `QWidget`, so `dock.cpp` is the plugin's only C++. It declares the libobs and obs-frontend-api functions it calls by hand, as `libobs.rs` does, and has no signals or slots of its own, so the build needs Qt's headers but neither OBS sources nor `moc`.
+- **Optional at build time**: `build.rs` compiles it with `cc` ([cc.md](cc.md)) only when `OBS_MOQT_QT_CFLAGS` gives the flags that find Qt 6, and then sets `cfg(dock)` so that `obs_module_load` adds the dock. A plain `cargo build` (CI included) builds the plugin without it.
+- **Qt version**: Qt's symbols are resolved against the Qt that OBS has loaded, so the headers must not be newer than that Qt (6.8 in OBS 32.0).
+- **Lifecycle**: The dock reads the profile's service when the frontend finishes loading and when the profile changes. It refuses to change the destination while a stream runs, because OBS keeps the service of a running stream.
+- **Setting names**: `dock.cpp` and `output.rs` name the same five settings; a setting added to one is added to the other.
 
 ## Stream Lifecycle
 One tokio runtime per output instance runs the relay session.
