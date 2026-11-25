@@ -12,7 +12,7 @@ import { playableVideoTracks } from './playableVideoTracks'
 import { AdaptiveBitrate, type LatencyTolerance, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
 import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
-import type { CatchUp, LateSamples } from './livePlayout'
+import type { AudioVideoSync, CatchUp, LateSamples } from './livePlayout'
 import type { LivePictureKind } from './livePictureSink'
 import { BroadcastCatalog } from './broadcastCatalog'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
@@ -715,6 +715,11 @@ export class LivePlayer {
 
   setLateSamples(lateSamples: LateSamples): void {
     this.locLive.playout.setLateSamples(lateSamples)
+  }
+
+  /// For live LOC playback; `'synced'` by default.
+  setAudioVideoSync(audioVideoSync: AudioVideoSync): void {
+    this.locLive.playout.setAudioVideoSync(audioVideoSync)
   }
 
   /// Skips from the position on screen: the review playhead, the live frame
