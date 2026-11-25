@@ -103,19 +103,15 @@ impl OnvifClient {
     }
 
     pub(crate) async fn send_device(&self, command: &OnvifRequest) -> Result<String> {
-        self.send_to(&self.device_endpoint, command).await
+        soap_client::send(&self.client, &self.target, &self.device_endpoint, command).await
     }
 
     pub(crate) async fn send_media(&self, command: &OnvifRequest) -> Result<String> {
-        self.send_to(&self.media_endpoint, command).await
+        soap_client::send(&self.client, &self.target, &self.media_endpoint, command).await
     }
 
     pub(crate) async fn send_ptz(&self, command: &OnvifRequest) -> Result<String> {
-        self.send_to(&self.ptz_endpoint, command).await
-    }
-
-    async fn send_to(&self, endpoint: &str, command: &OnvifRequest) -> Result<String> {
-        soap_client::send(&self.client, &self.target, endpoint, command).await
+        soap_client::send(&self.client, &self.target, &self.ptz_endpoint, command).await
     }
 }
 
