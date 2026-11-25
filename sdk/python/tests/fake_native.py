@@ -396,6 +396,13 @@ async def called(native: FakeNativeSession, call: tuple) -> None:
         await asyncio.sleep(0.01)
 
 
+TIMEOUT_SECONDS = 5
+
+
+async def within(awaitable):
+    return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
+
+
 async def until(condition) -> None:
     while not condition():
         await asyncio.sleep(0.01)

@@ -78,18 +78,22 @@ from pipecat.workers.runner import WorkerRunner
 from pipecat.tests.utils import SleepFrame, run_test
 
 from tests.cancellation import cancel_as_it_resumes
-from tests.fake_native import STAY_OPEN, FakeMediaSource, FakeRelay, FakeSubscription, FakeWriter, open_session
+from tests.fake_native import (
+    STAY_OPEN,
+    TIMEOUT_SECONDS,
+    FakeMediaSource,
+    FakeRelay,
+    FakeSubscription,
+    FakeWriter,
+    open_session,
+    within,
+)
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
-TIMEOUT_SECONDS = 5
 ROOM = ["anon", "room"]
 SAMPLE_RATE = 16_000
 SIZE = (64, 48)
-
-
-async def within(awaitable):
-    return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
 
 
 async def until(condition) -> None:
