@@ -213,7 +213,8 @@ mod tests {
     use std::time::Duration;
 
     use auth_token::{sign_token, verify_signature};
-    use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION};
+    use http_server::{bearer_token, testing::StubServer};
+    use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
 
     use super::*;
 
@@ -370,30 +371,9 @@ mod tests {
         );
     }
 
-    type Calls = Arc<std::sync::Mutex<Vec<(String, String, String)>>>;
-
-    /// A `bot-dispatcher` that answers every call `201 {"id": "b1"}` and keeps the
-    /// method, the path and the bearer token of each.
-    async fn fake_bots() -> (String, Calls, HttpServer) {
-        let calls: Calls = Arc::default();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::clone(&calls);
-        let server = HttpServer::run(listener, move |request, _| {
-            let bearer = request
-                .headers()
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.strip_prefix("Bearer "))
-                .unwrap_or_default()
-                .to_string();
-            let path = request.uri().path_and_query().unwrap().to_string();
-            seen.lock()
-                .unwrap()
-                .push((request.method().to_string(), path, bearer));
-            async { json_response(StatusCode::CREATED, &json!({ "id": "b1" })) }
-        });
-        (url, calls, server)
+    /// A `bot-dispatcher` that answers every call `201 {"id": "b1"}`.
+    async fn fake_bots() -> StubServer {
+        StubServer::run(StatusCode::CREATED, r#"{"id":"b1"}"#).await
     }
 
     /// Lets temporary apps start `recorder` bots on `bot_dispatcher_url`.
@@ -413,8 +393,8 @@ mod tests {
     #[tokio::test]
     async fn a_page_starts_a_bot_through_a_launch_token_for_its_app() {
         // Arrange
-        let (bot_dispatcher_url, calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 10)).await;
+        let bots = fake_bots().await;
+        let server = start_server(10, recorder_proxy(bots.url(), 10)).await;
         let (token, app_id) = page_token();
 
         // Act
@@ -432,9 +412,12 @@ mod tests {
             response.json::<Value>().await.unwrap(),
             json!({ "id": "b1" })
         );
-        let calls = calls.lock().unwrap();
-        let (method, path, launch_token) = &calls[0];
-        assert_eq!((method.as_str(), path.as_str()), ("POST", "/bots/recorder"));
+        let calls = bots.requests();
+        assert_eq!(
+            (calls[0].method.as_str(), calls[0].uri.as_str()),
+            ("POST", "/bots/recorder")
+        );
+        let launch_token = bearer_token(&calls[0].headers).unwrap();
         verify_signature(launch_token, SECRET).unwrap();
         let claims = auth_token::decode_unverified_payload(launch_token).unwrap();
         assert_eq!(
@@ -446,8 +429,8 @@ mod tests {
     #[tokio::test]
     async fn only_a_valid_page_token_reaches_the_app_server_routes_of_an_allowed_type() {
         // Arrange
-        let (bot_dispatcher_url, calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 10)).await;
+        let bots = fake_bots().await;
+        let server = start_server(10, recorder_proxy(bots.url(), 10)).await;
         let (token, _) = page_token();
         let client = reqwest::Client::new();
         let status = |request: reqwest::RequestBuilder| async move {
@@ -493,10 +476,10 @@ mod tests {
         assert_eq!(other_type, StatusCode::NOT_FOUND);
         assert_eq!(bot_route, StatusCode::NOT_FOUND);
         assert_eq!(stop, StatusCode::CREATED);
-        let calls = calls.lock().unwrap();
+        let calls = bots.requests();
         assert_eq!(calls.len(), 1);
         assert_eq!(
-            (calls[0].0.as_str(), calls[0].1.as_str()),
+            (calls[0].method.as_str(), calls[0].uri.as_str()),
             ("DELETE", "/bots/recorder/b1")
         );
     }
@@ -504,8 +487,8 @@ mod tests {
     #[tokio::test]
     async fn a_client_starts_bots_within_its_launch_limit() {
         // Arrange
-        let (bot_dispatcher_url, _calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 1)).await;
+        let bots = fake_bots().await;
+        let server = start_server(10, recorder_proxy(bots.url(), 1)).await;
         let (token, app_id) = page_token();
         let start = || {
             reqwest::Client::new()
@@ -529,8 +512,8 @@ mod tests {
     #[tokio::test]
     async fn a_page_cannot_keep_a_bot_in_an_empty_room() {
         // Arrange
-        let (bot_dispatcher_url, calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 10)).await;
+        let bots = fake_bots().await;
+        let server = start_server(10, recorder_proxy(bots.url(), 10)).await;
         let (token, app_id) = page_token();
         let start = |stay_when_empty: bool| {
             reqwest::Client::new()
@@ -547,7 +530,7 @@ mod tests {
         let staying = start(true).await.unwrap();
         let staying_status = staying.status();
         let staying_body: Value = staying.json().await.unwrap();
-        let calls_after_staying = calls.lock().unwrap().len();
+        let calls_after_staying = bots.requests().len();
         let leaving = start(false).await.unwrap().status();
 
         // Assert: refused without calling bot-dispatcher; false is forwarded

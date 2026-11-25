@@ -35,10 +35,7 @@ pub(crate) fn snapshot(timestamp_ms: u64) -> RelaySnapshot {
 /// The VTS `/verify` answer for a token of `app_id` issued a minute ago that
 /// lives another hour.
 pub(crate) fn vts_answer(app_id: &str, subscribe: Option<&str>) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let now = auth_token::unix_now();
     serde_json::json!({
         "appId": app_id,
         "isRelay": false,

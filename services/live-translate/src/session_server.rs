@@ -107,8 +107,6 @@ fn error_response(status: StatusCode, error: &str) -> ServerResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use auth_token::{Claims, sign_token};
     use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
     use tokio::sync::Semaphore;
@@ -174,10 +172,7 @@ mod tests {
     }
 
     fn token_of(app_id: &str) -> String {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = auth_token::unix_now();
         let claims = Claims::issued(
             app_id.to_string(),
             Some(String::new()),
