@@ -298,12 +298,22 @@ impl Router {
                                 live: std::mem::replace(&mut current, migrated.live),
                                 released: migrated.released,
                             };
-                            if let Migration::Reconnecting(_) = ended {
-                                // A lost connection delivers nothing more.
+                            if moved_from.live.connection.closed_locally() {
+                                // `Session::close` closed the session while it moved.
+                                current.connection.close(TerminationErrorCode::NoError, "");
                                 self.retire(moved_from);
+                                self.finish(&current).await;
+                                return;
+                            }
+                            if ended.reads_current() {
+                                previous = Some(moved_from);
+                            } else {
+                                // A closed connection delivers nothing more.
+                                self.retire(moved_from);
+                            }
+                            if let Migration::Reconnecting(_) = ended {
                                 tracing::info!("reconnected");
                             } else {
-                                previous = Some(moved_from);
                                 tracing::info!("moved to the new connection");
                             }
                         }
@@ -2012,6 +2022,78 @@ mod tests {
             };
             assert_eq!(handler.subscribe_id(), published.request_id());
             assert!(!client.context().has_publication(published.request_id()));
+        }
+    }
+
+    /// Moves `client` from A towards B and holds the move at B's SUBSCRIBE,
+    /// which the returned handler answers.
+    async fn hold_go_away_at_the_resubscribe(
+        client: &Session,
+        server_a: &Session,
+        server_b: NextServer,
+    ) -> (Session, SubscribeHandler) {
+        subscribe(client, server_a).await;
+        let server_b = server_b.named_by(server_a).await;
+        let SessionEvent::Subscribe(handler) = next_event(&server_b).await else {
+            panic!("expected the SUBSCRIBE sent again");
+        };
+        (server_b, handler)
+    }
+
+    #[tokio::test]
+    async fn a_session_closed_while_it_moves_closes_the_new_connection_too() {
+        for version in DRAFTS {
+            // Arrange
+            let Migration {
+                client,
+                server_a,
+                server_b,
+            } = Migration::connect("migration-closed-while-moving", Hop::within(version)).await;
+            let (server_b, resubscribe) =
+                hold_go_away_at_the_resubscribe(&client, &server_a, server_b).await;
+
+            // Act
+            client.close_with_error(TerminationErrorCode::NoError, "");
+            within(server_a.closed()).await;
+            resubscribe.ok(0, ContentExists::False).await.unwrap();
+            let new_closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_b.closed()).await;
+            let session_closed = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed()).await;
+
+            // Assert
+            assert!(new_closed.is_ok(), "the new connection must close");
+            assert!(session_closed.is_ok(), "the session must end");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscription_served_on_a_server_that_closes_while_the_session_moves_ends() {
+        for version in DRAFTS {
+            // Arrange
+            let Migration {
+                client,
+                server_a,
+                server_b,
+            } = Migration::connect("migration-served-closed-while-moving", Hop::within(version))
+                .await;
+            let mut subscriber_a = server_a.subscriber();
+            let (_, (_, _, served)) = tokio::join!(
+                subscriber_a.subscribe("ns".into(), "served".into(), SubscribeOption::default()),
+                serve_subscribe(&client)
+            );
+            let (_server_b, resubscribe) =
+                hold_go_away_at_the_resubscribe(&client, &server_a, server_b).await;
+
+            // Act
+            server_a.close_with_error(TerminationErrorCode::NoError, "");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            resubscribe.ok(0, ContentExists::False).await.unwrap();
+            let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event()).await;
+
+            // Assert
+            let Ok(Ok(SessionEvent::Unsubscribe(handler))) = event else {
+                panic!("expected UNSUBSCRIBE, got {event:?}");
+            };
+            assert_eq!(handler.subscribe_id(), served.request_id());
         }
     }
 

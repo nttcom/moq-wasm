@@ -501,7 +501,7 @@ module migration {
 module migration_current {
   import migration(
     CONNECTIONS = 0.to(2),
-    FIX_CLOSED_DURING_MIGRATION = false,
+    FIX_CLOSED_DURING_MIGRATION = true,
     FIX_FINISH_CLOSES_PREVIOUS = false,
     FIX_REPORT_STAYING_END = false,
     FIX_DONE_BEFORE_STOP = false,
