@@ -29,10 +29,9 @@
 //   with `watch` = `Countdown::Counting`),
 //   `expiryForgets` the first poll of the pushed future
 //   (`forget_ended_subscription`), `expiryFires` the timeout or the
-//   `wait_for` ending and `SessionContext::cancel_subscription`
-//   (session_context.rs:539-544). Time is not modeled: the 10 s grace may
-//   end at any point, so `expiryFires` is enabled whenever the wait could
-//   end; `graceOnlyWhenNeeded` states when it must not be the only way out.
+//   `wait_for` ending and `SessionContext::end_subscription`. Time is not
+//   modeled: the 10 s grace may end at any point, so `expiryFires` is
+//   enabled whenever the wait could end; `graceOnlyWhenNeeded` states when it must not be the only way out.
 // - The client event loop (`eventLoopRoutes`, client/routes.rs:154): a
 //   PUBLISH_DONE event resolves the `done` waiter registered for the
 //   request, or is dropped. `sessionEnds` is `Routes::end` (routes.rs:130).
@@ -47,7 +46,7 @@
 //   once the caller accepted (or dropped) the SUBSCRIBE_OK it handed over.
 // - DONE_BEFORE_SUBSCRIBE: the `done` waiter is registered before SUBSCRIBE is
 //   sent, so it exists before any PUBLISH_DONE or `Routes::end`.
-// - KEEP_UNCLAIMED_RECEIVER: `cancel_subscription` from the expiry leaves an
+// - KEEP_UNCLAIMED_RECEIVER: the expiry's `end_subscription` leaves an
 //   unclaimed `receiver_map` entry; dropping the sink's sender ends it once
 //   the application has read what it holds.
 // - END_TRACKED: the subscriber records a request as ended on PUBLISH_DONE or
@@ -274,9 +273,9 @@ module subscription {
     s' = { ...s, expiry: EWaiting(wait), carriedRecord: false, forgotten: true },
   }
 
-  // `SessionContext::cancel_subscription`: a no-op unless a receiver is
-  // installed; otherwise the sink is cancelled and `receiver_map` loses the
-  // subscription's entry.
+  // `SessionContext::cancel_subscription` (`end_subscription` from the
+  // expiry): a no-op unless a receiver is installed; otherwise the sink is
+  // cancelled and `receiver_map` loses the subscription's entry.
   def cancelled(st: State, byExpiry: bool): State = match st.sink {
     | SReceiver(_) => {
       ...st,
@@ -413,7 +412,7 @@ module subscription_current {
     MAX_STREAMS = 2,
     ACCEPT_BEFORE_NEXT = true,
     DONE_BEFORE_SUBSCRIBE = false,
-    KEEP_UNCLAIMED_RECEIVER = false,
+    KEEP_UNCLAIMED_RECEIVER = true,
     END_TRACKED = false,
   ).*
 }

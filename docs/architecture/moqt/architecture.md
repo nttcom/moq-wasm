@@ -206,7 +206,7 @@ Each outbound request runs in an `INFO` span (`moqt.subscriber.{subscribe,subscr
 **Queues & expiry**
 - **Buffer-before-subscribe**: `object_sinks` buffers up to 256 objects/alias (`MAX_PENDING_OBJECTS_PER_TRACK_ALIAS`) and 1,024 total across unknown aliases (`MAX_PENDING_OBJECTS`), expiring after 10 s (`UNKNOWN_TRACK_ALIAS_PERIOD`, also checked on install), drained atomically on `register_data_receiver`.
 - **Bounded queues**: Unread datagrams cap at 1,024/subscription (`MAX_QUEUED_DATAGRAMS`, drop-newest); unread `SessionEvent`s cap at 1,024 (`MAX_UNREAD_EVENTS`, backpressuring transport).
-- **Cancelled & `PUBLISH_DONE` subscriptions**: Unsubscribe/rejected `PUBLISH` installs a 10 s `Cancelled` sink marker discarding late objects. `PublishDoneExpiryTask` cancels subscriptions once `Stream Count` streams arrive or after 10 s (always 10 s for `Stream Count == 0` / datagrams).
+- **Cancelled & `PUBLISH_DONE` subscriptions**: Unsubscribe/rejected `PUBLISH` installs a 10 s `Cancelled` sink marker discarding late objects. `PublishDoneExpiryTask` cancels the sinks of subscriptions once `Stream Count` streams arrive or after 10 s (always 10 s for `Stream Count == 0` / datagrams); an unclaimed `receiver_map` entry stays, readable to its end, until claimed or the session is dropped.
 
 **Scheduling, teardown & runtime**
 - **Priority before data**: Stream transport priority is set before writing the header.

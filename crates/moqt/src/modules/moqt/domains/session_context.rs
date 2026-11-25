@@ -578,6 +578,19 @@ impl SessionContext {
         }
     }
 
+    /// Ends the subscription `request_id` its PUBLISH_DONE ended: its sink is
+    /// cancelled, which drops the sender of its `receiver_map` entry. An entry
+    /// the application has not claimed stays, so it still reads the objects
+    /// queued there and then the end; it is removed when the application
+    /// claims it, or dropped with the session.
+    pub(crate) async fn end_subscription(&self, connection: &Connection, request_id: RequestId) {
+        connection
+            .object_sinks
+            .lock()
+            .await
+            .cancel_subscription(request_id, executor::now());
+    }
+
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
         if let Some(logical_alias) = sinks.cancel_subscription(request_id, executor::now()) {

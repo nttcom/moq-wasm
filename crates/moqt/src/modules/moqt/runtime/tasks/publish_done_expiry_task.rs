@@ -22,9 +22,9 @@ use crate::modules::{
 /// Count is 0, the subscription ends this period after PUBLISH_DONE.
 pub(crate) const PUBLISH_DONE_GRACE_PERIOD: Duration = Duration::from_secs(10);
 
-/// Cancels a subscription once the streams its PUBLISH_DONE counts have
-/// arrived, or `PUBLISH_DONE_GRACE_PERIOD` after it, like an unsubscribe but
-/// without sending UNSUBSCRIBE. Its `TrackReader` then returns `Ok(None)` once
+/// Ends a subscription once the streams its PUBLISH_DONE counts have
+/// arrived, or `PUBLISH_DONE_GRACE_PERIOD` after it, without sending
+/// UNSUBSCRIBE. Its `TrackReader` then returns `Ok(None)` once
 /// the streams it already accepted are drained. A PUBLISH_DONE for a
 /// subscription already waiting is ignored.
 pub(crate) struct PublishDoneExpiryTask;
@@ -73,7 +73,7 @@ impl PublishDoneExpiryTask {
                                 break;
                             };
                             tracing::debug!(request_id, "ending the subscription PUBLISH_DONE terminated");
-                            session.cancel_subscription(&connection, request_id).await;
+                            session.end_subscription(&connection, request_id).await;
                         }
                         else => break,
                     }
@@ -159,15 +159,34 @@ mod tests {
         subscribe::SubscribeOption,
     };
 
-    /// A subscription the server made to the client's `ns/track`.
-    struct ServedSubscription {
+    /// A subscription the server made to the client's `ns/track`, with
+    /// `receiver` the server's object receiver, or its unclaimed subscription.
+    struct ServedSubscription<R = IncomingObjectReceiver> {
         client: Session,
         server: Session,
         served: Subscription,
-        object_receiver: IncomingObjectReceiver,
+        object_receiver: R,
     }
 
     async fn served_subscription(name: &str, version: Version) -> ServedSubscription {
+        let unclaimed = unclaimed_served_subscription(name, version).await;
+        let object_receiver = take_data_receiver(
+            &unclaimed.server.subscriber().session,
+            unclaimed.object_receiver.track_alias(),
+        )
+        .await;
+        ServedSubscription {
+            client: unclaimed.client,
+            server: unclaimed.server,
+            served: unclaimed.served,
+            object_receiver,
+        }
+    }
+
+    async fn unclaimed_served_subscription(
+        name: &str,
+        version: Version,
+    ) -> ServedSubscription<Subscription> {
         let (client, server) = connected_sessions(name, version).await;
         let mut subscriber = server.subscriber();
         let (subscribed, served) = within(async {
@@ -183,18 +202,16 @@ mod tests {
             )
         })
         .await;
-        let object_receiver =
-            take_data_receiver(&subscriber.session, subscribed.unwrap().track_alias()).await;
         ServedSubscription {
             client,
             server,
             served,
-            object_receiver,
+            object_receiver: subscribed.unwrap(),
         }
     }
 
     /// Returns once the server has received the PUBLISH_DONE.
-    async fn end_with_publish_done(subscription: &ServedSubscription, stream_count: u64) {
+    async fn end_with_publish_done<R>(subscription: &ServedSubscription<R>, stream_count: u64) {
         subscription
             .client
             .publisher()
@@ -280,6 +297,53 @@ mod tests {
                 "{version:?}"
             );
             assert!(matches!(ended, Ok(None)), "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn objects_of_a_subscription_publish_done_ended_stay_readable_until_it_is_claimed() {
+        for version in DRAFTS {
+            // Arrange
+            let subscription =
+                unclaimed_served_subscription("publish-done-unclaimed", version).await;
+            let mut group = open_subgroup(
+                &subscription
+                    .client
+                    .publisher()
+                    .create_stream(&subscription.served),
+                0,
+            )
+            .await;
+            send_payload(&mut group, b"object").await;
+            end_with_publish_done(&subscription, 1).await;
+            let connection = subscription.server.subscriber().session.connection();
+            let request_id = connection
+                .wire_request_id(subscription.object_receiver.request_id())
+                .unwrap();
+            within(async {
+                while connection.arrived_streams(request_id).await.is_some() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await;
+
+            // Act
+            let mut object_receiver = take_data_receiver(
+                &subscription.server.subscriber().session,
+                subscription.object_receiver.track_alias(),
+            )
+            .await;
+
+            // Assert
+            let arrived = within(object_receiver.recv()).await;
+            assert!(
+                matches!(arrived, Some(IncomingObject::Subgroup(_))),
+                "{version:?}"
+            );
+            assert!(
+                within(object_receiver.recv()).await.is_none(),
+                "{version:?}"
+            );
         }
     }
 
