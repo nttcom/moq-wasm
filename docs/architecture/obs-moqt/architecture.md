@@ -44,7 +44,8 @@ OBS's **Settings → Stream** page lists only its built-in services, so the plug
 - **Optional at build time**: `build.rs` compiles it with `cc` ([cc.md](cc.md)) only when `OBS_MOQT_QT_CFLAGS` gives the flags that find Qt 6, and then sets `cfg(dock)` so that `obs_module_load` adds the dock. A plain `cargo build` (CI included) builds the plugin without it.
 - **Qt version**: Qt's symbols are resolved against the Qt that OBS has loaded, so the headers must not be newer than that Qt (6.8 in OBS 32.0).
 - **Lifecycle**: The dock reads the profile's service when the frontend finishes loading and when the profile changes. It refuses to change the destination while a stream runs, because OBS keeps the service of a running stream.
-- **Setting names**: `dock.cpp` and `output.rs` name the same five settings; a setting added to one is added to the other.
+- **Input**: The dock removes whitespace from the URL, the namespace, and the token (pasted values carry line breaks) and refuses the input `PublishSettings::new` would refuse, naming the field, so the mistake shows where it is made instead of at **Start Streaming**.
+- **Setting names and rules**: `dock.cpp` names the same five settings as `output.rs` and repeats the required-field rules of `publish_settings.rs`; a change to one is made to the other.
 
 ## Stream Lifecycle
 One tokio runtime per output instance runs the relay session.

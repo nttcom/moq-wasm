@@ -111,6 +111,13 @@ private:
 		obs_data_release(settings);
 	}
 
+	// A pasted value often carries line breaks, and none of these values holds
+	// whitespace.
+	static QByteArray without_whitespace(const QLineEdit *field)
+	{
+		return field->text().simplified().remove(' ').toUtf8();
+	}
+
 	// OBS keeps the service of a running stream, so the destination changes
 	// only between streams.
 	void use_for_streaming()
@@ -119,11 +126,25 @@ private:
 			status->setText("Stop streaming to change the destination");
 			return;
 		}
+		const QByteArray server_value = without_whitespace(server);
+		const QByteArray namespace_value = without_whitespace(name_space);
+		const QByteArray token_value = without_whitespace(token);
+		const QByteArray token_file_value = token_file->text().trimmed().toUtf8();
+		// What `moqt_output` would refuse at Start Streaming.
+		const char *missing = server_value.isEmpty() ? "Enter the relay URL"
+				      : namespace_value.isEmpty() ? "Enter the namespace"
+				      : token_value.isEmpty() == token_file_value.isEmpty()
+						? "Enter either a token or a token file"
+						: nullptr;
+		if (missing) {
+			status->setText(missing);
+			return;
+		}
 		obs_data *settings = obs_data_create();
-		obs_data_set_string(settings, "server", server->text().trimmed().toUtf8().constData());
-		obs_data_set_string(settings, "namespace", name_space->text().trimmed().toUtf8().constData());
-		obs_data_set_string(settings, "bearer_token", token->text().trimmed().toUtf8().constData());
-		obs_data_set_string(settings, "bearer_token_file", token_file->text().trimmed().toUtf8().constData());
+		obs_data_set_string(settings, "server", server_value.constData());
+		obs_data_set_string(settings, "namespace", namespace_value.constData());
+		obs_data_set_string(settings, "bearer_token", token_value.constData());
+		obs_data_set_string(settings, "bearer_token_file", token_file_value.constData());
 		obs_data_set_bool(settings, "insecure_skip_tls_verify", skip_tls_verify->isChecked());
 		obs_service *service = obs_service_create(SERVICE_ID, "default_service", settings, nullptr);
 		obs_data_release(settings);

@@ -28,7 +28,7 @@ Without those flags, and in a plain `cargo build`, the plugin builds without the
 OBS does not yet list services that plugins register under **Settings → Stream**, so the plugin adds its own dock:
 
 1. Open **Docks → MoQT**.
-2. Fill in the [service settings](#service-settings) and press **Use for streaming**. The dock saves them in the profile as its stream destination.
+2. Fill in the [service settings](#service-settings) and press **Use for streaming**. The dock saves them in the profile as its stream destination, or says which field is missing.
 3. Press **Start Streaming** and watch the namespace in **Live Viewer**.
 
 The destination cannot be changed while a stream runs. The **Settings → Stream** page does not show the service, and saving a change there replaces it with the one chosen on the page.
