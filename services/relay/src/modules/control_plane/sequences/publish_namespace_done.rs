@@ -3,10 +3,7 @@ use std::collections::HashSet;
 use moqt::namespace::NamespaceInterest;
 
 use crate::modules::{
-    cascading::{
-        inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry,
-    },
+    cascading::inter_relay_connection_manager::InterRelayConnectionManager,
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
@@ -80,9 +77,9 @@ impl PublishNamespaceDone {
         if is_origin_client && removal == PeerRemoval::NoClientsRemain {
             Self::withdraw_namespace_publication(
                 track_namespace,
+                table,
                 forwarder,
-                cascading_relay_context.route_registry,
-                cascading_relay_context.inter_relay_connection_manager,
+                cascading_relay_context,
             )
             .await;
         }
@@ -157,8 +154,9 @@ impl PublishNamespaceDone {
         }
     }
 
-    /// Unregisters the Redis publisher route and tells remote subscriber relays
-    /// that the namespace has been withdrawn, so they can drop their local copy.
+    /// Withdraws the publisher route unless a client published the namespace
+    /// again meanwhile; only once it is withdrawn, tells remote subscriber
+    /// relays the namespace is gone, so they can drop their local copy.
     #[tracing::instrument(
         level = "debug",
         name = "relay.sequence.publish_namespace_done.withdraw_namespace_publication",
@@ -167,22 +165,29 @@ impl PublishNamespaceDone {
     )]
     pub(crate) async fn withdraw_namespace_publication(
         track_namespace: &str,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        route_registry: &dyn RelayRouteRegistry,
-        inter_relay_connection_manager: &InterRelayConnectionManager,
+        cascading_relay_context: CascadingRelayContext<'_>,
     ) {
-        if let Err(err) = route_registry
-            .unregister_namespace_publisher(track_namespace)
+        match cascading_relay_context
+            .namespace_routes
+            .reconcile_publisher(track_namespace, table)
             .await
         {
-            tracing::warn!(
-                error = ?err,
-                track_namespace = %track_namespace,
-                "failed to unregister namespace publisher route"
-            );
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::warn!(
+                    error = ?err,
+                    track_namespace = %track_namespace,
+                    "failed to register namespace route"
+                );
+                return;
+            }
         }
 
-        let relays = match route_registry
+        let relays = match cascading_relay_context
+            .route_registry
             .find_namespace_subscribers(track_namespace)
             .await
         {
@@ -203,8 +208,11 @@ impl PublishNamespaceDone {
                 continue;
             }
 
-            let Some(session_id) =
-                super::connect_relay(inter_relay_connection_manager, &relay).await
+            let Some(session_id) = super::connect_relay(
+                cascading_relay_context.inter_relay_connection_manager,
+                &relay,
+            )
+            .await
             else {
                 continue;
             };
@@ -229,7 +237,7 @@ mod tests {
             test_support::{app_token, connect_client, spawn_relay_offering},
             verified_token::VerifiedToken,
         },
-        cascading::route_registry::NoopRelayRouteRegistry,
+        cascading::{namespace_routes::NamespaceRoutes, route_registry::NoopRelayRouteRegistry},
         directory::track::NamespaceSubscription,
         session::session_repository::NewSession,
         test_support::{
@@ -293,6 +301,7 @@ mod tests {
                 &forwarder,
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
+                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
                     inter_relay_connection_manager: &inter_relay_connection_manager,
                 },
                 &PublishNamespaceDoneHandler {
@@ -504,6 +513,7 @@ mod tests {
                 &ControlMessageForwarder { repository },
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
+                    namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
                     inter_relay_connection_manager: &inter_relay_connection_manager,
                 },
                 &PublishNamespaceDoneHandler {

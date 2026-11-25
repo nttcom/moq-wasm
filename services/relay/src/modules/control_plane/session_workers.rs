@@ -11,10 +11,10 @@ use crate::modules::{
     auth::token_verifier::TokenVerifier,
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry,
+        namespace_routes::NamespaceRoutes, route_registry::RelayRouteRegistry,
     },
     control_plane::{
-        control_message_forwarder::ControlMessageForwarder,
+        control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::cache::store::TrackCacheStore,
@@ -35,11 +35,22 @@ pub(crate) struct WorkerDeps {
     pub(crate) control_message_forwarder: ControlMessageForwarder,
     pub(crate) local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
+    pub(crate) namespace_routes: Arc<NamespaceRoutes>,
     pub(crate) inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
     pub(crate) upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
     pub(crate) cache_store: Arc<TrackCacheStore>,
     pub(crate) token_verifier: Arc<dyn TokenVerifier>,
     pub(crate) fetch_fill_timeout: Duration,
+}
+
+impl WorkerDeps {
+    pub(super) fn cascading_relay_context(&self) -> CascadingRelayContext<'_> {
+        CascadingRelayContext {
+            route_registry: self.route_registry.as_ref(),
+            namespace_routes: self.namespace_routes.as_ref(),
+            inter_relay_connection_manager: self.inter_relay_connection_manager.as_ref(),
+        }
+    }
 }
 
 impl SessionWorkers {

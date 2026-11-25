@@ -15,7 +15,6 @@ use crate::modules::{
         verified_token::VerifiedToken,
     },
     control_plane::sequences::{
-        CascadingRelayContext,
         downstream_publish::DownstreamPublish,
         drain_release::ReleaseUnwatchedPublishes,
         fetch::Fetch,
@@ -108,13 +107,6 @@ impl SessionWorker {
         }
 
         session_id
-    }
-
-    fn cascading_relay_context(&self) -> CascadingRelayContext<'_> {
-        CascadingRelayContext {
-            route_registry: self.deps.route_registry.as_ref(),
-            inter_relay_connection_manager: self.deps.inter_relay_connection_manager.as_ref(),
-        }
     }
 
     fn downstream_publish(&self) -> DownstreamPublish {
@@ -234,7 +226,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         &deps.cache_store,
                         &deps.upstream_publisher_resolver,
-                        self.cascading_relay_context(),
+                        self.deps.cascading_relay_context(),
                         handler.as_ref(),
                     )
                     .instrument(event_span)
@@ -246,7 +238,7 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
-                        self.cascading_relay_context(),
+                        self.deps.cascading_relay_context(),
                         &handler,
                     )
                     .instrument(event_span)
@@ -259,7 +251,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &self.downstream_publish(),
-                        self.cascading_relay_context(),
+                        self.deps.cascading_relay_context(),
                         handler.as_ref(),
                     )
                     .instrument(event_span)
@@ -272,7 +264,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &self.downstream_publish(),
-                        self.cascading_relay_context(),
+                        self.deps.cascading_relay_context(),
                         handler.as_ref(),
                     )
                     .instrument(event_span)
@@ -284,7 +276,7 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
-                        self.cascading_relay_context(),
+                        self.deps.cascading_relay_context(),
                         scope_anonymous_root_prefix(
                             verified_token,
                             handler.track_namespace_prefix(),
@@ -302,7 +294,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         &deps.cache_store,
                         &self.downstream_publish(),
-                        self.cascading_relay_context(),
+                        self.deps.cascading_relay_context(),
                         handler,
                     )
                     .instrument(event_span)

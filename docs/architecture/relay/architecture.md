@@ -23,7 +23,7 @@ optionally cascades across relays via a Redis-backed route registry.
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
 | `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, the `PendingProducerTask` behind every upstream SUBSCRIBE |
 | `data_plane/` | Objects in flight: `ingress/` (`IngestTask`), `cache/`, `egress/` (`EgressTask`, `FetchDeliveryTask`), and the data-plane integration tests |
-| `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
+| `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op), the routes this relay holds in it (`NamespaceRoutes`, `WatchedNamespaceRoutes`) and `InterRelayConnectionManager` |
 | `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsExportTask`, which sends it once per second as an OTLP log record, and its process values as gauges |
 | `test_support/` | `cfg(test)` mocks, the data-plane `RelayHarness` and directory fixtures shared across modules |
 
@@ -327,7 +327,7 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   TRACK_ENDED the downstream subscriptions of every track whose last upstream
   subscription was the session's, see "Egress"), stop the session's ingress,
   forward upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions
-  the last downstream subscriber released, and withdraw namespace routes for
+  the last downstream subscriber released, and reconcile the namespace routes of
   client sessions. When an inter-relay session closes, the relay notifies local
   namespace subscribers if that session was the namespace's last publisher.
   Leaving the repository first closes the race with a
@@ -1490,7 +1490,21 @@ holds on each hop.
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
   `SubscribeNamespace` registers the subscriber route when the first client
-  subscriber for a prefix appears. Any number of relays may hold the publisher
+  subscriber for a prefix appears. The publisher route is derived from the
+  directory: `NamespaceRoutes` (`cascading/namespace_routes.rs`) keeps one
+  lock per namespace, and after each change of the namespace's client
+  publishers `reconcile_publisher` reads them again under it and registers
+  or withdraws the route to match, holding the lock across the registry
+  call. A PUBLISH_NAMESPACE enters the directory first and is answered
+  PUBLISH_NAMESPACE_OK only once its reconcile has registered the route; a
+  failure takes it out of the directory again, tells the namespace
+  subscribers PUBLISH_NAMESPACE_DONE (one subscribing meanwhile was told of
+  the namespace), reconciles, and answers PUBLISH_NAMESPACE_ERROR. A
+  withdrawal that crosses a new publication therefore leaves the route the
+  directory asks for, which
+  `docs/architecture/relay/models/namespace.qnt` checks. Remote subscriber
+  relays are told PUBLISH_NAMESPACE_DONE only when a reconcile withdrew the
+  route. Any number of relays may hold the publisher
   route of one namespace (draft-14 §8.2), and the notification reaches every
   subscriber relay. A namespace published before a relay registered its
   subscriber route is found there by prefix; that relay subscribes it at the
@@ -1660,7 +1674,9 @@ no list of relays and no session to each.
 - **Cache lifetime**: a track cache lives while referenced or until TTL
   eviction empties it with `strong_count == 1`.
 - **Client-owned routes**: Redis namespace and track routes are
-  registered/withdrawn only for client-origin sessions, and watched-namespace routes only while a
+  registered/withdrawn only for client-origin sessions; a namespace's
+  publisher route is held exactly while a client publishes it here, once no
+  reconcile is in flight, and watched-namespace routes only while a
   client watches the namespace; relay-learned namespaces are purged locally,
   and the namespace subscriptions at other relays released,
   when the last client subscriber for the prefix leaves.

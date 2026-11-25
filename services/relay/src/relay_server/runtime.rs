@@ -8,6 +8,7 @@ use crate::{
         auth::token_verifier::TokenVerifier,
         cascading::{
             inter_relay_connection_manager::{InterRelayClientConfig, InterRelayConnectionManager},
+            namespace_routes::NamespaceRoutes,
             route_registry::RelayRouteRegistry,
             watched_namespace_job::WatchedNamespaceJob,
         },
@@ -81,6 +82,7 @@ impl RelayRuntime {
                 },
                 repo: repo.clone(),
                 local_pub_sub_directory: local_pub_sub_directory.clone(),
+                namespace_routes: Arc::new(NamespaceRoutes::new(route_registry.clone())),
                 route_registry,
                 inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                 upstream_publisher_resolver,

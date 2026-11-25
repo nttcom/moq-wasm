@@ -1,9 +1,13 @@
 use std::{
     collections::{BTreeSet, HashSet},
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use async_trait::async_trait;
+use tokio::sync::Notify;
 
 use crate::modules::{
     cascading::route_registry::{RegisterRouteError, RelayInfo, RelayRouteRegistry},
@@ -22,11 +26,36 @@ pub(crate) struct Routes {
 #[derive(Default)]
 pub(crate) struct InMemoryRouteRegistry {
     routes: Mutex<Routes>,
+    held_call: Mutex<Option<Arc<Notify>>>,
+    fail_next_registration: AtomicBool,
 }
 
 impl InMemoryRouteRegistry {
     pub(crate) fn routes(&self) -> Routes {
         self.lock().clone()
+    }
+
+    /// The next call that registers or unregisters a namespace route waits
+    /// for `notify_one` on the returned `Notify` before it takes effect.
+    pub(crate) fn hold_next_namespace_call(&self) -> Arc<Notify> {
+        let released = Arc::new(Notify::new());
+        *self.held_call.lock().unwrap() = Some(released.clone());
+        released
+    }
+
+    pub(crate) fn fail_next_namespace_registration(&self) {
+        self.fail_next_registration.store(true, Ordering::SeqCst);
+    }
+
+    fn registration_fails(&self) -> bool {
+        self.fail_next_registration.swap(false, Ordering::SeqCst)
+    }
+
+    async fn pass_held_call(&self) {
+        let held = self.held_call.lock().unwrap().take();
+        if let Some(released) = held {
+            released.notified().await;
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Routes> {
@@ -45,6 +74,10 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
     }
 
     async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
+        self.pass_held_call().await;
+        if self.registration_fails() {
+            anyhow::bail!("route registry down");
+        }
         self.lock()
             .namespace_publishers
             .insert(track_namespace.to_string());
@@ -57,6 +90,7 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
         &self,
         track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError> {
+        self.pass_held_call().await;
         if self
             .lock()
             .namespace_subscribers
@@ -108,6 +142,7 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
     }
 
     async fn unregister_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
+        self.pass_held_call().await;
         self.lock().namespace_publishers.remove(track_namespace);
         Ok(())
     }
@@ -116,6 +151,7 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
         &self,
         track_namespace_prefix: &str,
     ) -> anyhow::Result<()> {
+        self.pass_held_call().await;
         self.lock()
             .namespace_subscribers
             .remove(track_namespace_prefix);
