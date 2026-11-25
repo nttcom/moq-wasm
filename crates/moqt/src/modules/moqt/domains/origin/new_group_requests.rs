@@ -43,6 +43,12 @@ impl NewGroupRequests {
         }
     }
 
+    /// Has later requests notify `requested`; a request held back notifies
+    /// the one it was accepted with.
+    pub(super) fn notify_on(&mut self, requested: Arc<Notify>) {
+        self.requested = requested;
+    }
+
     /// Call at `now` (`executor::now`) for a request the open group does not
     /// answer. A request that follows another for the same group adds nothing.
     pub(super) fn request(&mut self, now: Duration) {

@@ -282,7 +282,7 @@ module new_group_requests_current {
   import new_group_requests(
     MIN_DURATION = 2, MIN_OBJECTS = 2, MAX_TIME = 4,
     ENABLE_AFTER_WRITES = true, REENABLE = true, THROTTLE = true,
-    KEEP_ON_REENABLE = false, SEED_OPEN_GROUP = false,
+    KEEP_ON_REENABLE = true, SEED_OPEN_GROUP = false,
   ).*
 }
 

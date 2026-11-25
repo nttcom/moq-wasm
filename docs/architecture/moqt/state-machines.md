@@ -102,7 +102,7 @@ Every `*_current` instance except `origin_current`, `response_guard_current`, `d
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
 | `origin_sessions` | A session that is both a subscriber and a PUBLISH peer of one track gets two serving outlets (SUBSCRIBE registered while `publish` awaits PUBLISH_OK); every object is sent twice | `RECHECK_ON_REGISTER` + `SUBSCRIBE_ENDS_PUBLISH` |
-| `new_group_requests` | Enabling dynamic groups after writes passes the first NEW_GROUP_REQUEST through unthrottled; re-enabling drops a delayed request | `KEEP_ON_REENABLE`, `SEED_OPEN_GROUP` |
+| `new_group_requests` | Enabling dynamic groups after writes passes the first NEW_GROUP_REQUEST through unthrottled | `SEED_OPEN_GROUP` |
 | `subscription` | Client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves | `DONE_BEFORE_SUBSCRIBE` |
 | `migration` | A GOAWAY migration in flight when the current connection closes keeps the dead connection as `previous` forever, and revives a locally closed session; `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry; a session ending with a `previous` leaves it open | `FIX_CLOSED_DURING_MIGRATION`, `FIX_FINISH_CLOSES_PREVIOUS`, `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
 | `group_cutover` | A group the current connection delivered whole is dropped when its streams arrive out of order; a lagging relay's groups are delivered twice after `previous_ended` | `CUT_FROM_START`, `KEEP_NEWEST` (trade-off in file) |
