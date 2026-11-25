@@ -20,7 +20,7 @@ use tokio::sync::{
 use crate::modules::{
     control_plane::sequences::subscribe::UPSTREAM_ATTEMPTS,
     directory::{
-        InMemoryLocalPubSubDirectory, TrackEntry, TrackLookup, TrackReservation,
+        InMemoryLocalPubSubDirectory, ProducerJoin, TrackEntry, TrackLookup, TrackReservation,
         track::{
             CreationFailure, CreationState, NamespaceSubscription, ProducerOrigin, ProducerState,
             RemovedDownstreamSubscription,
@@ -818,7 +818,8 @@ impl Harness {
                     &upstream.entry,
                     publisher_session_id,
                     producer,
-                ) {
+                ) == ProducerJoin::Added
+                {
                     self.producers.insert(
                         (upstream.track, publisher_session_id),
                         (request_id, ProducerOrigin::Subscribe),

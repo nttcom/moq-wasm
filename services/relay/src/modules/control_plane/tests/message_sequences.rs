@@ -22,7 +22,7 @@ use std::{
     sync::Arc,
 };
 
-use moqt::namespace::NamespaceInterest;
+use moqt::{RequestErrorCode, namespace::NamespaceInterest};
 use proptest::{collection::vec, prelude::*, sample::Index};
 
 use crate::modules::{
@@ -1223,6 +1223,35 @@ fn a_namespace_announced_while_its_route_fails_to_register_is_withdrawn() {
                 Sent::PublishNamespace("room".to_string()),
                 Sent::PublishNamespaceDone("room".to_string()),
             ]
+        );
+    });
+}
+
+#[test]
+fn a_subscribe_whose_publisher_ends_the_upstream_subscription_as_it_accepts_is_refused() {
+    runtime().block_on(async {
+        // Arrange
+        let relay = Relay::start();
+        let publisher = relay.connect(1).await;
+        let subscriber = relay.connect(2).await;
+        publisher.publish_namespace("room");
+        settle().await.unwrap();
+        let request_id = subscriber.subscribe(&TrackKey::new("room", "video"));
+        settle().await.unwrap();
+        let upstream_subscribe = publisher.pending_subscribes()[0];
+
+        // Act: the relay handles the PUBLISH_DONE before the SUBSCRIBE_OK
+        publisher.publish_done(upstream_subscribe);
+        publisher.answer_subscribe(upstream_subscribe, SubscribeAnswer::Accept);
+        settle().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            subscriber.sent(),
+            vec![Sent::SubscribeError {
+                request_id,
+                code: RequestErrorCode::TrackDoesNotExist,
+            }]
         );
     });
 }

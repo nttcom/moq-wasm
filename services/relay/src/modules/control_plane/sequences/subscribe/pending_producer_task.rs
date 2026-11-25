@@ -17,7 +17,7 @@ use crate::modules::{
     },
     data_plane::cache::store::TrackCacheStore,
     directory::{
-        InMemoryLocalPubSubDirectory, TrackEntry,
+        InMemoryLocalPubSubDirectory, ProducerJoin, TrackEntry,
         track::{CreationFailure, Producer, ProducerOrigin, ProducerState},
     },
     domain::{
@@ -238,10 +238,11 @@ impl PendingProducerTask {
             return None;
         }
         let upstream_request_id = subscription.request_id();
-        let joined = deps
+        let join = if deps
             .table
             .track_takes_publisher(entry, publisher_session_id, publisher_peer)
-            && match start_ingest(
+        {
+            let Some(ingest) = start_ingest(
                 &deps.forwarder,
                 &deps.cache_store,
                 IngestRequest {
@@ -252,23 +253,37 @@ impl PendingProducerTask {
                 },
             )
             .await
-            {
-                Some(ingest) => deps.table.add_upstream_subscription_to_track(
-                    entry,
-                    publisher_session_id,
-                    Producer::new(subscribe_initiated(&subscription, publisher_peer), ingest),
-                ),
-                None => return Some(UpstreamSubscriptionError::PublisherNotFound.failure()),
+            else {
+                return Some(UpstreamSubscriptionError::PublisherNotFound.failure());
             };
-        if !joined {
-            unsubscribe(
-                &deps.forwarder,
+            deps.table.add_upstream_subscription_to_track(
+                entry,
                 publisher_session_id,
-                &subscription,
-                "a publisher the track does not take",
+                Producer::new(subscribe_initiated(&subscription, publisher_peer), ingest),
             )
-            .await;
-            return None;
+        } else {
+            ProducerJoin::NotTaken
+        };
+        match join {
+            ProducerJoin::Added => {}
+            ProducerJoin::NotTaken => {
+                unsubscribe(
+                    &deps.forwarder,
+                    publisher_session_id,
+                    &subscription,
+                    "a publisher the track does not take",
+                )
+                .await;
+                return None;
+            }
+            ProducerJoin::Ended => {
+                tracing::debug!(
+                    publisher_session_id = %publisher_session_id,
+                    request_id = upstream_request_id,
+                    "publisher ended the upstream subscription before it joined the track"
+                );
+                return Some(UpstreamSubscriptionError::PublisherNotFound.failure());
+            }
         }
         if end_if_publisher_gone(
             &deps.table,

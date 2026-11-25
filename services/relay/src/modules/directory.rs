@@ -55,6 +55,18 @@ pub(crate) enum TrackLookup {
     Started(watch::Receiver<CreationState>, TrackReservation),
 }
 
+/// What `add_upstream_subscription_to_track` did with a producer.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ProducerJoin {
+    Added,
+    /// The entry is gone, the publisher already feeds it, or the track does
+    /// not want it.
+    NotTaken,
+    /// The publisher ended the subscription with PUBLISH_DONE before it
+    /// joined.
+    Ended,
+}
+
 /// A forwarded PUBLISH between its send and its answer; dropping it lets the
 /// track forward another PUBLISH to the session.
 pub(crate) struct ForwardedPublish {
@@ -1105,24 +1117,29 @@ impl InMemoryLocalPubSubDirectory {
             .is_some_and(|track| track.takes(publisher_session_id, publisher_peer))
     }
 
-    /// Returns false, adding nothing, when the entry is gone, the publisher
-    /// already feeds it, or the track does not want it. The first producer
-    /// of a track being created completes the creation.
+    /// The first producer of a track being created completes the creation.
+    /// A producer not added is dropped, which stops its ingest.
     pub(crate) fn add_upstream_subscription_to_track(
         &self,
         entry: &TrackEntry,
         publisher_session_id: SessionId,
         producer: Producer,
-    ) -> bool {
+    ) -> ProducerJoin {
         let Some(mut track) = self.track_mut(entry) else {
-            return false;
+            return ProducerJoin::NotTaken;
         };
+        if track.upstream_subscription_has_ended(
+            publisher_session_id,
+            producer.state.subscription.request_id(),
+        ) {
+            return ProducerJoin::Ended;
+        }
         if !track.takes(publisher_session_id, producer.state.peer) {
-            return false;
+            return ProducerJoin::NotTaken;
         }
         track.producers.insert(publisher_session_id, producer);
         track.mark_created();
-        true
+        ProducerJoin::Added
     }
 
     #[cfg(test)]
@@ -1169,7 +1186,15 @@ impl InMemoryLocalPubSubDirectory {
                         producer.state.subscription.request_id() == upstream_request_id
                     })
             })
-            .map(|entry| entry.key().clone())?;
+            .map(|entry| entry.key().clone());
+        let Some(track_key) = track_key else {
+            // The subscription may be one whose SUBSCRIBE_OK is still on its
+            // way to `add_upstream_subscription_to_track`.
+            for mut track in self.upstream_tracks.iter_mut() {
+                track.upstream_subscription_ended(publisher_session_id, upstream_request_id);
+            }
+            return None;
+        };
         self.end_publisher_subscription(&track_key, publisher_session_id, end)?;
         Some(track_key)
     }
@@ -2511,7 +2536,7 @@ mod tests {
         let ended = table.pending_producer_ended(&entry, None);
 
         // Assert: the subscriber goes on with the publisher that answered
-        assert!(taken);
+        assert_eq!(taken, ProducerJoin::Added);
         assert!(!ended);
         assert_eq!(runner_stop_receiver.try_recv(), Err(TryRecvError::Empty));
     }
@@ -2904,7 +2929,7 @@ mod tests {
         );
 
         // Assert
-        assert!(taken);
+        assert_eq!(taken, ProducerJoin::Added);
         assert_eq!(*creation.borrow(), CreationState::Created);
         assert!(matches!(
             table.track_or_begin_creation(&track_key(), SessionPeer::Client),
@@ -3065,7 +3090,7 @@ mod tests {
         );
 
         // Assert
-        assert!(!taken);
+        assert_eq!(taken, ProducerJoin::NotTaken);
         assert!(table.entry_state(recreating.entry()).is_none());
     }
 

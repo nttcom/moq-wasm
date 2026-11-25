@@ -442,11 +442,14 @@ module track {
       else withTask(st, t, Ingesting),
   }
 
-  // `start_ingest`, then `add_upstream_subscription_to_track`.
+  // `start_ingest`, then `add_upstream_subscription_to_track`, which drops
+  // the producer of a subscription a PUBLISH_DONE ended meanwhile
+  // (`Track::upstream_subscription_ended`).
   action taskIngest(t: Task): bool = all {
     t.phase == Ingesting,
     st' =
       if (not(st.connected.contains(t.pub))) finish(st, t, true)
+      else if (not(st.alive.contains({ pub: t.pub, request: t.id }))) finish(st, t, true)
       else if (isLive(st.track, t.gen) and takes(st, t.pub))
         val added = {
           ...st,
