@@ -710,6 +710,13 @@ impl Publisher for MockUpstreamPublisher {
         Ok(Box::pin(std::future::pending()))
     }
 
+    async fn send_subscribed_namespace(
+        &self,
+        namespace: String,
+    ) -> anyhow::Result<Option<PublishNamespaceResponse>> {
+        self.send_publish_namespace(namespace).await.map(Some)
+    }
+
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
         self.recorded
             .namespace_announcements

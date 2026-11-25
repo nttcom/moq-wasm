@@ -20,6 +20,13 @@ use crate::modules::{
     },
 };
 
+/// Whom `announce_namespace` tells of a namespace.
+#[derive(Clone, Copy)]
+enum NamespaceAudience {
+    Subscriber,
+    Relay,
+}
+
 #[derive(Clone)]
 pub(crate) struct ControlMessageForwarder {
     pub(crate) repository: Arc<tokio::sync::Mutex<SessionRepository>>,
@@ -36,10 +43,11 @@ impl ControlMessageForwarder {
         subscriber.ok_or_else(|| anyhow::anyhow!("No subscriber"))
     }
 
-    /// Records and sends PUBLISH_NAMESPACE on the session while `wanted`
-    /// holds, checked under the session's announcement lock just before the
-    /// record, so the decision and the send are not overtaken by another
-    /// announcement or withdrawal of the namespace on the session.
+    /// Tells a namespace subscriber of the namespace while `wanted` holds,
+    /// checked under the session's announcement lock just before the record,
+    /// so the decision and the send are not overtaken by another announcement
+    /// or withdrawal of the namespace on the session. Records it only when a
+    /// namespace subscription of the session still covers it.
     #[tracing::instrument(
         level = "info",
         name = "relay.control_message_forwarder.publish_namespace",
@@ -51,6 +59,45 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
         wanted: impl FnOnce() -> bool,
+    ) {
+        self.announce_namespace(
+            session_id,
+            track_namespace,
+            wanted,
+            NamespaceAudience::Subscriber,
+        )
+        .await;
+    }
+
+    /// `publish_namespace` for a relay the route registry lists as a
+    /// namespace subscriber, which needs no subscription on this session: it
+    /// gets PUBLISH_NAMESPACE.
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.control_message_forwarder.publish_namespace_to_relay",
+        skip_all,
+        fields(subscriber_session_id = %session_id, track_namespace = %track_namespace)
+    )]
+    pub(crate) async fn publish_namespace_to_relay(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+    ) {
+        self.announce_namespace(
+            session_id,
+            track_namespace,
+            || true,
+            NamespaceAudience::Relay,
+        )
+        .await;
+    }
+
+    async fn announce_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+        wanted: impl FnOnce() -> bool,
+        audience: NamespaceAudience,
     ) {
         let Some(announcement_lock) = self.repository.lock().await.announcement_lock(session_id)
         else {
@@ -74,10 +121,28 @@ impl ControlMessageForwarder {
             }
             publisher
         };
-        match publisher.send_publish_namespace(track_namespace).await {
-            Ok(response) => {
+        let sent = match audience {
+            NamespaceAudience::Subscriber => {
+                publisher
+                    .send_subscribed_namespace(track_namespace.clone())
+                    .await
+            }
+            NamespaceAudience::Relay => publisher
+                .send_publish_namespace(track_namespace.clone())
+                .await
+                .map(Some),
+        };
+        match sent {
+            Ok(Some(response)) => {
                 let _response_task = PublishNamespaceResponseTask::run(response);
                 tracing::debug!("forwarded PUBLISH_NAMESPACE");
+            }
+            Ok(None) => {
+                tracing::debug!("no namespace subscription of the session covers the namespace");
+                self.repository
+                    .lock()
+                    .await
+                    .record_namespace_withdrawn(session_id, &track_namespace);
             }
             Err(error) => tracing::error!(?error, "Failed to send publish namespace"),
         }
@@ -334,11 +399,15 @@ mod tests {
         domain::session_peer::SessionPeer,
         session::Session,
         session::session_repository::NewSession,
-        test_support::mock_session::{
-            RecordedControlMessages, recorded_session_answering_subscribe,
-            recorded_session_delaying_publish_namespace, session_repository,
+        test_support::{
+            mock_session::{
+                RecordedControlMessages, recorded_session_answering_subscribe,
+                recorded_session_delaying_publish_namespace, session_repository,
+            },
+            scripted_session::{ScriptedPeer, Sent},
         },
     };
+    use moqt::namespace::NamespaceInterest;
 
     const NAMESPACE: &str = "room/alice";
     const SUBSCRIBER: SessionId = 1;
@@ -481,5 +550,33 @@ mod tests {
         assert!(!sent);
         assert!(recorded.publish_namespace_dones().is_empty());
         assert_eq!(recorded.publish_namespaces(), vec![NAMESPACE.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_namespace_no_subscription_covers_is_neither_sent_nor_recorded() {
+        // Arrange
+        let (new_session, peer) = ScriptedPeer::new_session(SUBSCRIBER);
+        let (mut repository, _session_added_receiver) = session_repository();
+        repository.add(new_session);
+        let forwarder = ControlMessageForwarder {
+            repository: Arc::new(tokio::sync::Mutex::new(repository)),
+        };
+
+        // Act
+        forwarder
+            .publish_namespace(SUBSCRIBER, NAMESPACE.to_string(), || true)
+            .await;
+        let uncovered = peer.sent();
+        peer.subscribe_namespace("room", NamespaceInterest::Namespaces);
+        forwarder
+            .publish_namespace(SUBSCRIBER, NAMESPACE.to_string(), || true)
+            .await;
+
+        // Assert: draft-18 §10.18
+        assert!(uncovered.is_empty());
+        assert_eq!(
+            peer.sent(),
+            vec![Sent::PublishNamespace(NAMESPACE.to_string())]
+        );
     }
 }

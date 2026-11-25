@@ -289,7 +289,7 @@ impl PublishNamespace {
             };
 
             forwarder
-                .publish_namespace(session_id, track_namespace.to_string(), || true)
+                .publish_namespace_to_relay(session_id, track_namespace.to_string())
                 .await;
         }
     }

@@ -20,8 +20,9 @@
 // and the sessions run concurrently. Each action is one step between two
 // awaits: a directory operation, or the decision, record and send of one
 // announcement or withdrawal on a subscriber's session, which
-// `ControlMessageForwarder` holds the session's announcement lock across. The namespace routes
-// (namespace.qnt) appear only as a reconcile that may fail. Publishers and
+// `ControlMessageForwarder` holds the session's announcement lock across.
+// The namespace routes (namespace.qnt) appear only as a reconcile that may
+// fail. Publishers and
 // subscribers are separate sessions: the relay tells a session of its own
 // namespace like any other (`notify_local_subscribers`), so no subscriber is
 // left out. Relay sessions, other relays, SUBSCRIBE_TRACKS and PUBLISH, a
@@ -145,12 +146,16 @@ module namespace_announcements {
   // --- ControlMessageForwarder ------------------------------------------
 
   // The record of `publish_namespace` / `publish_namespace_done`: the send
-  // follows when `sent`.
+  // follows when `sent`. moqt's `begin_publish_subscribed_namespace` sends
+  // nothing when no subscription of the session covers the namespace, and
+  // the relay then takes the record back.
   pure def record(st: State, x: str, n: str, kind: Kind): { st: State, sent: bool } =
     val announced = st.rec.get(x).contains(n)
+    val m = st.moqt.get(x)
+    val covered = m.state != MNone and under(n, m.prefix)
     match kind {
       | Announcement =>
-        if (announced) { st: st, sent: false }
+        if (announced or not(covered)) { st: st, sent: false }
         else { st: { ...st, rec: st.rec.set(x, st.rec.get(x).union(Set(n))) }, sent: true }
       | Withdrawal =>
         { st: { ...st, rec: st.rec.set(x, st.rec.get(x).exclude(Set(n))) }, sent: announced }
