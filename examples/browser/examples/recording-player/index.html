@@ -15,14 +15,14 @@
         <span
           id="alignment"
           tabindex="0"
-          title="Approximate alignment: source clocks have not been calibrated"
+          title="時刻は概算同期（送信側の時計は未校正）"
           class="player-muted cursor-help"
           >ⓘ</span
         >
         <span id="recorded-at" class="player-muted"></span>
         <span id="participants" class="player-muted"></span>
         <div id="member-chips" class="flex -space-x-1"></div>
-        <output id="status" role="status" class="player-muted ml-auto truncate text-xs">Choose a recording.</output>
+        <output id="status" role="status" class="player-muted ml-auto truncate text-xs">録画を選択してください</output>
       </div>
       <div class="relative flex min-h-0 flex-1 max-[860px]:flex-col">
         <main class="player-stage relative min-w-0 flex-1">
@@ -39,7 +39,7 @@
               </label>
               <label class="field-label">
                 <span>Recording ID</span>
-                <input id="recording" type="text" required placeholder="Recorder が発行した ID" class="field" />
+                <input id="recording" type="text" required placeholder="Recording ID" class="field" />
               </label>
               <div class="space-y-2">
                 <div id="relayPresets"></div>

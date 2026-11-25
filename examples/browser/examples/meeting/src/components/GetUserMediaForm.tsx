@@ -28,7 +28,7 @@ export function GetUserMediaForm({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-sm font-semibold text-fg">
           getUserMedia の設定
-          <Tip note="開始する前にキャプチャの条件を設定します" />
+          <Tip note="取得時の解像度・音声処理を設定" />
         </div>
         <button
           type="button"

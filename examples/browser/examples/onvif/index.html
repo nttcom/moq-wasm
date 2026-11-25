@@ -50,7 +50,7 @@
                 </button>
               </div>
             </div>
-            <moq-player id="stage" class="player-stage" controls data-idle="カメラの映像を待っています"></moq-player>
+            <moq-player id="stage" class="player-stage" controls data-idle="カメラ映像を待機中"></moq-player>
             <div class="muted" id="video-stats">-</div>
           </div>
 
@@ -62,8 +62,8 @@
                   class="tip"
                   tabindex="0"
                   role="img"
-                  aria-label="Controller: 押している間だけ動き、離すと止まります。Commands: 各コマンドを 1 つの JSON として ONVIF bridge へ送ります"
-                  data-tip="Controller: 押している間だけ動き、離すと止まります。Commands: 各コマンドを 1 つの JSON として ONVIF bridge へ送ります"
+                  aria-label="Controller: 長押しで移動 / Commands: JSON コマンド送信"
+                  data-tip="Controller: 長押しで移動 / Commands: JSON コマンド送信"
                   ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                 ></span>
               </h2>
@@ -103,15 +103,15 @@
               class="tip"
               tabindex="0"
               role="img"
-              aria-label="映像が出ないときは、別ターミナルで ONVIF カメラの映像を配信します。ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定します"
-              data-tip="映像が出ないときは、別ターミナルで ONVIF カメラの映像を配信します。ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定します"
+              aria-label="別ターミナルで配信（.env に ONVIF_IP / USERNAME / PASSWORD を設定）"
+              data-tip="別ターミナルで配信（.env に ONVIF_IP / USERNAME / PASSWORD を設定）"
               ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
             ></span>
           </summary>
           <div class="setup-split">
             <div class="setup-panel">
               <div class="setup-panel-head">
-                <div class="command-title">クラウドRelay利用</div>
+                <div class="command-title">Cloud Relay</div>
                 <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
               </div>
               <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
@@ -121,7 +121,7 @@ make browser</code></pre>
             </div>
             <div class="setup-panel">
               <div class="setup-panel-head">
-                <div class="command-title">ローカルRelay利用</div>
+                <div class="command-title">Local Relay</div>
                 <code class="setup-relay-url">https://127.0.0.1:4433</code>
               </div>
               <pre><code>make relay

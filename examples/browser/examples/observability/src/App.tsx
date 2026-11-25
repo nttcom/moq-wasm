@@ -47,10 +47,10 @@ const shortAppId = (appId: string) => (appId.length > 12 ? `${appId.slice(0, 8)}
 
 /** Whose stats the page shows: the API answers only the app of the page's token, `anon` without one. */
 const appTitle = {
-  public: '公開の匿名 app: 誰でもこの統計を見られます',
-  temporary: 'このブラウザの Example が共有する一時 app',
-  given: 'URL のトークンの app',
-  unavailable: '一時 app を用意できなかったため、公開の匿名 app を表示しています'
+  public: '公開 app（誰でも閲覧可）',
+  temporary: '一時 app（このブラウザで共有）',
+  given: 'URL トークンの app',
+  unavailable: '一時 app 取得失敗のため公開 app を表示'
 }[access.kind]
 
 const handlesArrowKeys = (target: EventTarget | null) =>
@@ -230,7 +230,7 @@ export default function App() {
           <List size={14} aria-hidden="true" />
           Namespaces
         </button>
-        <div className="timeline" title="← → で 1 秒、Shift + ← → で 10 秒移動">
+        <div className="timeline" title="←→ ±1秒 / Shift+←→ ±10秒">
           <div className="ranges">
             {RANGE_NAMES.map((name) => (
               <button key={name} className={name === range ? 'on' : ''} onClick={() => changeRange(name)}>

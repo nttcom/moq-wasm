@@ -32,11 +32,11 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.access-switch [
 switch (access.kind) {
   case 'public':
     // Everything sent is open to everyone, so the mark warns instead of informing.
-    describe('送信したメディアは誰でも視聴できます')
+    describe('誰でも視聴できます')
     tone('warning', 'triangle-alert')
     break
   case 'given':
-    describe(`URL のトークン（app ${access.namespaceRoot}）で接続します`)
+    describe(`URL トークン（${access.namespaceRoot}）で接続`)
     break
   case 'unavailable':
     // A red mark in place of the ⓘ, so the failure shows without taking room on the page.
@@ -45,8 +45,8 @@ switch (access.kind) {
     tone('danger', 'circle-alert')
     break
   case 'temporary': {
-    describe('URL を共有した相手だけが参加・視聴できます')
-    const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)
+    describe('共有リンクを知る人だけが参加・視聴できます')
+    const shown = temporaryStatus(access, (minutes) => `残り ${minutes} 分`)
     const renew = document.createElement('button')
     renew.type = 'button'
     renew.append(icon('refresh-cw'), 'トークンを作り直す')
@@ -54,8 +54,7 @@ switch (access.kind) {
       await startNewTemporaryApp()
       reloadWithoutToken()
     })
-    renew.title =
-      '今開いている会議はそのまま続きます。これから開く Example は、今の共有リンクや録画とは別の場所になります'
+    renew.title = '新しい一時トークンを発行します（開いている会議は継続、以降のページは別空間）'
     status.replaceChildren(...shown, renew)
   }
 }

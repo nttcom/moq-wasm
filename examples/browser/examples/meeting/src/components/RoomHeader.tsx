@@ -44,7 +44,7 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
       {transcribing && (
         <span
           data-testid="transcriber-badge"
-          title="このルームの発話は文字起こしされています"
+          title="文字起こし中"
           className="rounded-full border border-line-strong bg-sunken px-2 py-0.5 text-xs font-semibold text-muted"
         >
           {transcriberStarting ? 'CC starting' : 'CC'}

@@ -15,21 +15,21 @@
         <summary><h2>使い方</h2></summary>
         <ol class="usage">
           <li>
-            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>「開始」で 2 トラックを
-            Publish / Subscribe
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>「開始」で Stream / Datagram
+            を同時送受信
           </li>
           <li>
             <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-crosshair" /></svg
-            >パッドの上でカーソルを動かす
+            >パッド上でカーソルを動かす
           </li>
           <li>
-            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-zap" /></svg>パケットロスを入れて比べる
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-zap" /></svg>パケットロスを入れて比較
             <span
               class="tip"
               tabindex="0"
               role="img"
-              aria-label="macOS は Network Link Conditioner、Linux は sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms。ストリームは再送を待って止まり、datagram は欠けるだけで遅れません"
-              data-tip="macOS は Network Link Conditioner、Linux は sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms。ストリームは再送を待って止まり、datagram は欠けるだけで遅れません"
+              aria-label="macOS: Network Link Conditioner / Linux: sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms。Stream は再送で止まり、Datagram は欠落のみで遅延しません"
+              data-tip="macOS: Network Link Conditioner / Linux: sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms。Stream は再送で止まり、Datagram は欠落のみで遅延しません"
               ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
             ></span>
           </li>
@@ -44,8 +44,8 @@
               class="tip"
               tabindex="0"
               role="img"
-              aria-label="このページが 2 トラックを Publish し、Relay 経由で自分で Subscribe します"
-              data-tip="このページが 2 トラックを Publish し、Relay 経由で自分で Subscribe します"
+              aria-label="Relay 経由で 2 トラックを自己送受信します"
+              data-tip="Relay 経由で 2 トラックを自己送受信します"
               ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
             ></span>
           </h2>
@@ -83,7 +83,7 @@
         <article class="card lane" data-lane="datagram">
           <div class="lane-head">
             <h2>Datagram</h2>
-            <span class="lane-tag">再送なし・1 オブジェクト 1 datagram</span>
+            <span class="lane-tag">再送なし・順不同</span>
           </div>
           <canvas class="pad" id="pad-datagram" width="640" height="400"></canvas>
           <dl class="lane-stats" id="stats-datagram" data-testid="datagram-stats-datagram"></dl>

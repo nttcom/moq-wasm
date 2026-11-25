@@ -175,7 +175,7 @@ function renderSummary(list: HTMLElement, summary: TrackSummary): void {
   const rows: [string, string][] = [
     ['受信数', summary.received.toString()],
     ['欠落', summary.lost.toString()],
-    ['順序入れ替わり', summary.reordered.toString()],
+    ['順不同', summary.reordered.toString()],
     ['遅延 (最新)', ms(summary.lastLatencyMs)],
     ['遅延 (中央値 / p95)', `${ms(summary.medianLatencyMs)} / ${ms(summary.p95LatencyMs)}`],
     ['最大受信間隔 (10 秒)', ms(summary.maxGapMs)]
