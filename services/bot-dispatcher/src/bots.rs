@@ -2,7 +2,6 @@ use anyhow::Result;
 use aws_lc_rs::{
     constant_time::verify_slices_are_equal,
     digest::{SHA256, digest},
-    rand::{SecureRandom, SystemRandom},
 };
 use google_cloud::IdTokenVerifier;
 use serde::{Deserialize, Serialize};
@@ -423,9 +422,7 @@ fn is_active(record: &BotRecord, now_ms: u64) -> bool {
 
 fn random_hex() -> String {
     let mut bytes = [0u8; 16];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .expect("the system random number generator works");
+    aws_lc_rs::rand::fill(&mut bytes).expect("the system random number generator works");
     hex(&bytes)
 }
 
