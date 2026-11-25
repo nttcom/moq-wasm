@@ -1,30 +1,16 @@
-# reqwest for the VTS and Google's keys
+# `reqwest` for Outbound Calls in `bot-dispatcher`
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-11-18
+Accepted (2026-11-18)
 
 ## What
-
-Add `reqwest` (`json`, `rustls`) as a direct dependency of `bot-dispatcher`.
-It builds the `reqwest::Client` that `google_cloud::MetadataToken` and
-`job-launcher` take.
+Direct dependency of `bot-dispatcher` (`json`, `rustls`) to construct the `reqwest::Client` passed to `google_cloud::MetadataToken` and `job-launcher` (VTS calls use `auth_token::VtsClient`; JWKS fetches use `google_cloud::IdTokenVerifier`).
 
 ## Context
-
-The crates `bot-dispatcher` builds on take a `reqwest::Client`. Launch tokens
-go to the VTS through `auth_token::VtsClient`, and Google's JWKS is fetched by
-`google_cloud::IdTokenVerifier`.
+Shared workspace libraries (`google-cloud`, `job-launcher`) accept a caller-owned `reqwest::Client`.
 
 ## Alternatives
-
-- `hyper`'s client. Lower level, and TLS would be wired by hand.
+- **`hyper` client**: Lower level; requires wiring TLS and connection pooling manually.
 
 ## Decision
-
-Use `reqwest`, already used by `recorder`, `google-cloud` and
-`job-launcher`.
+Use `reqwest`, already used across `recorder`, `google-cloud`, and `job-launcher`.

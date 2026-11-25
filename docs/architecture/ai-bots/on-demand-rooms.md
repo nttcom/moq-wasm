@@ -1,14 +1,13 @@
-# Design: AI demo bots started per room, on demand
+# Design: AI Demo Bots Started per Room, on Demand
 
 ## Status
-Superseded by [the bot service](../bot-dispatcher/architecture.md), which starts each bot as a job
+Superseded by [`bot-dispatcher/architecture.md`](../bot-dispatcher/architecture.md) (which launches each bot as a job). Kept for historical context and the temporary-app token flow.
 
 ## Date
 2026-10-19
 
 ## Scope
-The three pipecat bots under `examples/python/`, their browser pages under
-`examples/browser/examples/`, and how they are deployed:
+Covered the three pipecat demo bots under `examples/python/`, their browser pages under `examples/browser/examples/`, and their Cloud Run deployment:
 
 | Bot | Page | Reads | Publishes |
 | --- | --- | --- | --- |
@@ -16,347 +15,88 @@ The three pipecat bots under `examples/python/`, their browser pages under
 | `moq-camera-detection` | MoQ Camera Detection | `anon/moq-camera-detection/camera` | `anon/moq-camera-detection/detector` |
 | `moq-ptz-tracking` | MoQ PTZ Tracking | `anon/moq-ptz-tracking/viewer`, `anon/onvif/client` | `anon/moq-ptz-tracking/tracker`, `anon/onvif/viewer` |
 
-The System One service, the model server the bots call, stays as it is: a Cloud Run service
-that answers `/v1/systemone` and knows nothing about MoQ
-(see [system-one-on-cloud-run.md](../../../examples/python/system-one-on-cloud-run.md)).
+The System One Cloud Run model server (`/v1/systemone`, MoQ-unaware; see [system-one-on-cloud-run.md](../../../examples/python/system-one-on-cloud-run.md)) stayed unchanged.
 
 ## Context
-Each bot is a process that connects to relay-1 when it starts and stays
-connected until it is stopped. All three run on one VM, which an instance
-schedule keeps up on weekdays 9:00–17:30 Asia/Tokyo only. The pages show a
-notice outside those hours (`examples/browser/utils/botHours.ts`).
-
-Three things go wrong with this shape:
-
-1. The bot's lifetime has nothing to do with use. It runs when nobody has a
-   page open, through every weekday, and the schedule is the only thing that
-   bounds it.
-2. There are no rooms. Every page and its bot use one fixed namespace, so two
-   people who open the camera page at the same time both publish
-   `anon/moq-camera-detection/camera`, and the second one collides with the
-   first.
-3. A bot that is down looks to the page like a bot that judged nothing.
-
-Holding a MoQ session open is cheap and is not the problem. The problem is
-that nothing starts or stops the bot.
+Previously, all three bots ran continuously on one weekday-scheduled VM (9:00–17:30 Asia/Tokyo, with client-side notice in `examples/browser/utils/botHours.ts`):
+1. **Idle cost**: Bots ran even with zero active users.
+2. **Namespace collisions**: Fixed namespaces caused concurrent users to overwrite each other (e.g., `anon/moq-camera-detection/camera`).
+3. **Silent failure**: A down bot was indistinguishable from a bot producing no detections.
 
 ## Decision
-A page asks for a bot when it joins a room and keeps asking for as long as it
-stays. Each bot package gains a `serve` mode: an HTTP server that runs one bot
-per room while at least one page holds a request for that room. Each bot runs
-as its own Cloud Run service.
+Each bot gained a `serve` HTTP mode on Cloud Run that runs one asyncio bot task per room while at least one page holds a request open.
 
-### Rooms in the namespace
-A room ID becomes the element after the demo name:
+### Rooms in the Namespace
+Room IDs (`1–32` chars of `[a-z0-9-]`, taken from `?room=` or auto-generated into the URL) sit under the demo prefix (already covered by `anon/**`):
+- `anon/moq-chat-moderation/<room>/{chat,moderator}`
+- `anon/moq-camera-detection/<room>/{camera,detector}`
+- PTZ tracking keeps its fixed ONVIF namespaces and accepts only `/rooms/onvif`.
 
-```text
-anon/moq-chat-moderation/<room>/chat
-anon/moq-chat-moderation/<room>/moderator
-anon/moq-camera-detection/<room>/camera
-anon/moq-camera-detection/<room>/detector
-```
-
-The page takes the room from the `room` query parameter. Without one, it
-generates a random ID and writes it into the URL so the link can be shared. A
-room ID is 1–32 characters of `[a-z0-9-]`, so it is always a single namespace
-element. The relay's anonymous scope is `anon/**`, so the deeper namespace
-needs no relay change.
-
-PTZ tracking keeps its namespaces and has one fixed room, because there is one
-ONVIF camera behind `anon/onvif/client`. It gets the same on-demand start as
-the other two: its page always requests `/rooms/onvif`, and its server
-accepts no other room.
-
-### The room request
-`GET /rooms/{room}` answers with `text/event-stream` and keeps the response
-open. The page opens it when the user presses Join, before it connects to the
-relay, so the bot's start overlaps with the page's own connect. The page
-closes it on Leave or `pagehide`. The page reads the stream with `fetch` and
-reopens it when it drops, 3 s later as `EventSource` would, because
-`EventSource` cannot send the token of a temporary app in a header (see
-"Temporary apps"). A response that is not an event stream (400, 401, 503) ends
-the request instead.
-
-The stream starts with a `member` event that names the hold. When the page
-closes the stream, it also sends `POST /rooms/{room}/leave?member={id}`,
-without a body or headers so that no CORS preflight is needed, and with
-`keepalive` so that it outlives a closing tab. The server ends that hold at
-once, and the room at once if no other page holds it, without the grace
-period, and answers after the bot has left so that the teardown runs while
-Cloud Run gives the instance CPU.
-
-The server sends a comment line every 15 s. A write to a page that is gone
-fails, so a server the page reaches directly notices a closed tab within one
-interval even when no TCP FIN arrives. Cloud Run does not pass that on: its
-frontend keeps the request to the container open after the browser goes away,
-and the writes keep succeeding until the request times out (measured
-2026-10-22 on the deployed services). The bot therefore also tells the server
-when the room is empty (below).
-
-The page needs no new state for the bot itself. It already sends
-SUBSCRIBE_NAMESPACE for the bot's namespace and starts the event timeline and
-the System One status on the PUBLISH_NAMESPACE that follows, whenever that
-arrives (`setUpSystemOneBotPage` in `examples/browser/utils/systemOneBot.ts`).
-The stream carries the server's own events, each of which ends the response:
-
-| Event | Sent when |
-| --- | --- |
-| `full` | a new room would exceed `--max-rooms` |
-| `closed` | the request comes outside the opening hours, or the hours end while the room runs |
-| `expired` | the room has run for `--max-room-seconds` |
-| `failed` | the bot stopped with an exception |
-
-The page closes the request on any of them, since it reopens any stream the
-server ends, and shows why the bot left. `closed` shows the
-off-hours notice the pages show today.
+### The Room Request (`GET /rooms/{room}`)
 
 ```mermaid
 sequenceDiagram
     participant P as Page
-    participant S as Bot service (Cloud Run)
+    participant S as Bot Service (Cloud Run)
     participant R as Relay
-    participant D as System One (Cloud Run)
-    P->>S: GET /rooms/abc (event-stream, held open)
-    Note over S: first request for abc: start the room's bot
-    S->>R: connect, PUBLISH_NAMESPACE anon/moq-chat-moderation/abc/moderator, SUBSCRIBE_NAMESPACE .../abc
+    participant D as System One
+    P->>S: GET /rooms/abc (text/event-stream, held open)
+    Note over S: First holder starts room bot task
+    S->>R: connect, PUBLISH_NAMESPACE .../abc/moderator, SUBSCRIBE_NAMESPACE .../abc
     P->>R: connect, PUBLISH_NAMESPACE .../abc/chat, SUBSCRIBE_NAMESPACE .../abc/moderator
-    R->>P: PUBLISH_NAMESPACE .../abc/moderator
-    R->>S: PUBLISH_NAMESPACE .../abc/chat
-    S->>R: SUBSCRIBE .../abc/chat
-    P->>R: chat object
     R->>S: chat object
     S->>D: /v1/systemone
     D-->>S: answer
-    S->>R: event timeline
-    R->>P: event timeline
-    P--xS: request closed (Leave, tab closed)
-    Note over S: last request for abc gone: stop the bot after the grace period
+    S->>R: event timeline → P
+    P--xS: Leave / tab close (+ POST /rooms/abc/leave?member=id)
+    Note over S: After grace period (or immediate on leave), stop bot
     S->>R: close session
 ```
 
-### Room lifetime in the server
-The server keeps a map from room ID to a running bot and the number of open
-requests for it.
+- **Stream lifecycle**: Opened via `fetch` on Join (reconnecting after 3 s on unexpected drop; `EventSource` is not used because it cannot send `Authorization: Bearer`). Non-SSE errors (`400`, `401`, `503`) abort retries.
+- **Explicit leave**: Stream starts with a `member` event ID. On Leave/`pagehide`, the page sends `POST /rooms/{room}/leave?member={id}` (bodyless, headerless for no CORS preflight, `keepalive: true`), triggering immediate teardown while Cloud Run still allocates CPU.
+- **Keepalive caveat**: Server writes a comment every 15 s, but Cloud Run's frontend buffers writes after browser disconnect until request timeout (measured 2026-10-22), so bots also detect empty rooms via MoQT namespaces.
+- **Terminal SSE events** (stop page reconnects and display reason): `full` (`--max-rooms` exceeded), `closed` (outside `--open-hours`), `expired` (`--max-room-seconds` reached), `failed` (bot crashed).
 
-- The first request for a room starts the bot as an asyncio task. The task
-  does what `main()` does today, with the room's namespaces. Each room has its
-  own relay session, so one room's failure or GOAWAY does not touch another.
-- Further requests for the same room only raise the count, so every page in a
-  room shares one bot. The pages of a room also share the namespace they
-  publish under. The relay forwards the bot's SUBSCRIBE to one of them, so the
-  bot reads one page's chat at a time, as with the fixed namespace. When that
-  page leaves, the relay ends the track and the bot subscribes again, reaching
-  a page that stayed. In practice the count covers a second tab and the
-  reconnects of one page.
-- When the count drops to zero, the server waits 30 s and then cancels the
-  task. The task closes its relay session before it ends. A request that
-  arrives within the 30 s keeps the bot running, so a page reload or an
-  stream the page reopens does not restart it.
-- The bot follows the namespace its room's pages publish (`.../chat`,
-  `.../camera`, the PTZ `viewer`, a Meeting participant's
-  `{root}/{room}/{user}`). When it has gone unpublished for the grace period,
-  from the start or since the last page withdrew it, the bot closes its relay
-  session and returns. The server then ends the room at once and forgets it.
-  Requests still held for it end without an event, so a page that is in fact
-  still there reconnects and starts a new bot, and one that is gone frees the
-  slot instead of holding it until `--max-room-seconds`.
-- A room stops by itself `--max-room-seconds` (1 h) after its bot started,
-  counted from the first request, so a tab left open does not keep a bot, and
-  through it the System One service, running for the rest of the day. Every open request gets `expired`.
-  The expired room stays in the map, answering `expired` at once, until its
-  last request has been gone for the grace period. A page that
-  reconnects in that window therefore does not start the room again. A page
-  that joins the same room ID later starts a new bot.
-- Outside the opening hours (`--open-hours`) a request for a new room gets
-  `closed`. When the hours end, every running room stops the same way as an
-  expired one, with `closed`. Without `--open-hours` the server is always
-  open, which is what local development and the E2E tests use.
-- SIGTERM, which Cloud Run sends before it stops an instance, cancels every
-  room the same way.
+### Room Lifetime & Cloud Run Settings
+- **Per-room isolation**: First request starts an asyncio task with its own relay session; subsequent requests increment the holder count (shared bot). Dropping to 0 holds waits 30 s before cancelling so reloads do not restart the bot.
+- **Namespace-driven exit**: If the room's page namespace stays unpublished for the grace period, the bot exits and closes held requests (freeing slots left open by disconnected tabs).
+- **Caps & shutdown**: Rooms stop at `--max-room-seconds` (1 h; kept as an `expired` tombstone for one grace period so reconnecting tabs do not restart it), at `--open-hours` close (`closed`), and on `SIGTERM`.
+- **Single instance**: In-memory room map requires `max-instances 1` with high `concurrency`.
 
-The map lives in memory, so the service runs at most one instance
-(`max-instances 1`). Two instances could each start a bot for the same room
-and judge every message twice. One instance holds every room, and requests
-are concurrent (`concurrency` well above the expected number of open pages).
-
-### Cloud Run settings
-| Setting | Value | Reason |
+| Cloud Run setting | Value | Reason |
 | --- | --- | --- |
-| Billing | request-based (`--cpu-throttling`) | A room runs only while a page holds its request, so the room keeps the CPU. The 30 s grace period and the teardown after the last page leaves run throttled. |
-| Instances | min 0, max 1 | Zero rooms means zero instances. The room map needs a single instance. |
-| Request timeout | 3600 s (the maximum) | A request is held for the whole time a page stays in the room, which `--max-room-seconds` keeps within this. If a request still drops, the page opens a new one and the grace period covers the gap. |
-| Ingress | all, unauthenticated | A browser opens the request directly. See "Limits" for abuse. |
-| Service account | own, with `roles/run.invoker` on the System One service | The bot keeps sending the identity token it gets from the metadata server (`--metadata-auth`), which Cloud Run provides as GCE does. |
-
-Request-based billing does not bill an instance's idle tail, the up to
-about 15 minutes it may stay up with no open request before Cloud Run stops
-it. Scanners request the public URL many times a day, and each of their
-requests starts an instance.
-
-The throttled teardown may not reach the relay. The relay then ends the bot's session at its idle timeout, and the
-bot's namespaces outlive the room until then.
+| Billing | Request-based (`--cpu-throttling`) | Avoids billing ~15 min idle tails and scanner wakeups; room holds request open while active. (Throttled teardown may miss relay close, falling back to relay idle timeout.) |
+| Instances | `min 0`, `max 1` | Scale to zero when idle; single room map |
+| Request timeout | `3600 s` | Covers `--max-room-seconds`; page reconnects within grace period if dropped |
+| Ingress | All, unauthenticated | Direct browser access (bounded by Limits below) |
+| Service account | `roles/run.invoker` on System One | Metadata identity token (`--metadata-auth`) |
 
 ### Temporary apps
-A page in temporary mode (examples/browser/README.md "Relay and
-authentication") runs under the namespace root of its own app, `temp-…`,
-instead of `anon`, and its bot must join the same app. The bot service does
-not hold the secret temporary tokens are signed with; only the temporary-apps service
-and the VTS do. The page therefore hands its token to the service, and the
-service keeps a token of its own alive with the issuer's `POST
-/tokens/refresh`.
+Pages in temporary mode run under `temp-…` instead of `anon`, and bots do not hold the temporary-apps signing secret:
 
-- **Handing over.** The room request carries the token as
-  `Authorization: Bearer <token>`. The service answers the CORS preflight
-  this needs (`OPTIONS /rooms/{room}`, allowing `Authorization`). A query
-  parameter would avoid the preflight and keep `EventSource`, but the URL of
-  every request lands in the access logs of Cloud Run and of any proxy, and a
-  temporary token can be refreshed without limit, so a logged token would
-  open the app to whoever reads the logs for as long as they keep refreshing
-  it. A ticket from a separate `POST` would leave a credential to the room in
-  the URL as well. The header costs one preflight per request and
-  `EventSource`'s reconnection, which the page does itself; in exchange
-  each reconnection sends the page's current token. `leave` carries
-  no token: the member ID the stream named is the capability.
-- **Validating.** The service refreshes the token it was handed. The issuer
-  refreshes only a token it signed that has not expired, so the answer both
-  proves the token and names its app: the room's namespace root is the
-  `appId` of that answer, never a value the page sends separately. A refusal
-  answers 401 and an issuer that does not answer 503, both before the stream
-  starts, and no bot starts. A request without `Authorization` is a public
-  request, handled as before under `anon`. The service does not tell a
-  registered app's `?jwt=` token from a forged one: the issuer refuses both,
-  so the page does not send one.
-- **Room key.** Rooms are told apart by namespace root and room ID, so room
-  `abc` of two apps, or of an app and `anon`, runs two bots. The join that
-  starts a room hands its token to the bot; later joins to the running room
-  are validated the same way, and their tokens are dropped.
-- **Connecting.** The bot connects with its token, and the Python module
-  presents the latest one on every connection it opens by itself (GOAWAY, an
-  expired-token close).
-- **Staying past the hour.** Five minutes before its token expires, as the
-  pages do, the bot's session (`moq_wasm.connect`'s `refresh_token`, given
-  `AppToken.refresh`) refreshes it on the issuer and sends the new one to the
-  relay on its open connection (the relay's
-  in-session refresh, docs/architecture/relay/architecture.md "Token
-  refresh"), so the session never reaches the relay's EXPIRED_AUTH_TOKEN and
-  the room does not reconnect. A relay that refuses the new token leaves the
-  session to expire; the bot then connects again with the new token.
-- **When refreshing fails.** A refresh that fails, whether the issuer does
-  not answer or refuses the token, is retried every 30 s while the token is
-  still valid. Once the token expires, the session raises
-  `moq_wasm.TokenExpired` and the room ends with `failed`, which every page holding it sees. A bot cannot stay in an
-  app without a valid token, and a page that is still there can start the
-  room again with its own, fresher token.
-- **Configuration.** `--temporary-apps-url`, else the environment variable
-  `TEMPORARY_APPS_URL`, else the issuer next to the relay: `http://localhost:8083`
-  for a local relay and `https://token-mint.moqt.research.skyway.io`
-  otherwise, the same rule the bot's telemetry follows.
+- **Token handoff**: `GET /rooms/{room}` sends `Authorization: Bearer <token>` (requiring CORS preflight on `OPTIONS`; query params are avoided because URLs land in Cloud Run/proxy access logs and temporary tokens can be refreshed indefinitely). `leave` uses the `member` ID as its capability.
+- **Validation**: Service validates by refreshing the token at `POST /tokens/refresh` on `temporary-apps` (`401` on reject, `503` if unreachable) and uses the returned `appId` as namespace root (missing header defaults to `anon`). Registered `?jwt=` tokens are rejected and not sent by pages.
+- **Room key & refresh**: Keyed by `(namespace_root, room_id)`. The bot refreshes via `moq_wasm.connect(refresh_token=AppToken.refresh)` 5 minutes before expiry using the relay's in-session refresh ([`relay/architecture.md`](../relay/architecture.md) "Token refresh"), retrying every 30 s on failure; expiry raises `TokenExpired` and ends the room with `failed`.
+- **Issuer URL**: `--temporary-apps-url` → `TEMPORARY_APPS_URL` → `http://localhost:8083` (local relay) or `https://token-mint.moqt.research.skyway.io`. (PTZ's camera only publishes under `anon/onvif/client`, so temporary PTZ rooms have no camera.)
 
-`--max-room-seconds` (1 h by default) usually ends a room before the bot's
-first token, issued when the room starts, expires; the refresh keeps a room
-that is configured to run longer, or whose clock drifts, connected.
-
-PTZ tracking follows the page's root as well, but its camera publishes under
-`anon/onvif/client` only, so a temporary PTZ room has no camera to follow.
-
-### Limits
-The endpoint has no authentication, so the server bounds what a request can
-cause, as `recorder serve` does:
-
-- `--max-rooms`. A request for a new room beyond it gets the `full` event and
-  the response ends. The camera bot starts at 1: one camera room already
-  sends the System One service a picture every 0.1 s, and it answers one request at a
-  time. Chat starts at 10.
-- `--max-room-seconds` (1 h) and `--open-hours` (weekdays 9:00–17:30
-  Asia/Tokyo in the deployment), described above.
-- A request whose `Origin` is not an `--allowed-origin` is refused.
-- The relay URL and the System One URL are server settings, so a request cannot
-  point a bot at another relay or model server.
-
-`max-instances 1` on both the bot service and the System One service also bounds the cost.
-
-### Where the page finds the service
-The page derives the bot service URL from the relay URL, as the meeting page
-does for the recorder (`resolveRecorderUrl`): a local relay means a local
-`serve` on a fixed port, and any other relay means the deployed service. A
-`botUrl` query parameter overrides it when it names this machine or a host
-under `moqt.research.skyway.io`; the page ignores any other host, since it
-hands the bot service its token (`urlFromQuery`).
-
-The bot always connects to the relay its server is configured with
-(relay-1 in the deployment). A page that picked relay-2 or relay-3 reaches it
-the way it does today.
-
-### What goes away
-- The bot VM and its instance schedule.
-- `examples/browser/utils/botHours.ts`. The pages keep the off-hours notice
-  but show it on `closed`, so the hours are defined only in the server.
-- The long-running CLI mode of each bot. `serve` also runs locally, so local
-  development and the E2E tests (`tests/browser-e2e/run-chat-moderation-e2e.mjs`,
-  `run-camera-detection-e2e.mjs`) start `serve` and pass `botUrl`, and keep a
-  single code path.
+### Limits & Discovery
+- **Abuse bounds**: `--max-rooms` (camera `1`, chat `10`), `--max-room-seconds` (`1 h`), `--open-hours` (weekdays 9:00–17:30 Asia/Tokyo), `--allowed-origin` check, server-pinned relay/System One URLs, and `max-instances 1`.
+- **URL discovery**: Pages derive bot service URL from relay URL (like `resolveRecorderUrl`), overridable via `?botUrl=` only for localhost or `*.moqt.research.skyway.io` (`urlFromQuery`).
+- **Removed**: Bot VM/schedule, `examples/browser/utils/botHours.ts`, and long-running CLI mode (local dev and E2E use `serve`).
 
 ## Consequences
-
-### Positive
-- Within the opening hours, bots run exactly while someone uses a room, and
-  the cost follows use. Outside them, nothing runs.
-- A forgotten tab costs at most one hour of bot and System One time.
-- Several rooms can run at once, so two people trying the camera page no
-  longer collide.
-- Container stdout reaches Cloud Logging, which it does not on the VM.
-
-### Negative
-- Each bot package gets an HTTP server and a room map. `aiohttp` is already a
-  dependency of all three, so `aiohttp.web` adds no new package.
-- The first page in a room after a quiet period waits for a container start
-  (seconds) on top of the System One service's own cold start, as it does today.
-- Anyone can keep a bot running by holding the request open. The limits
-  above bound how much that costs.
+- **Positive**: Cost tracks usage within open hours; forgotten tabs cap at 1 h; concurrent rooms no longer collide; logs flow to Cloud Logging.
+- **Negative**: Adds `aiohttp.web` server per bot (already a dependency); cold starts add seconds on top of System One; anyone can hold a room open up to the limits.
 
 ## Rollout
-The page and the bot must agree on the namespace, so the order matters:
-
-1. Ship `serve` with the per-room namespaces and deploy the three services.
-   The VM keeps serving the old pages on the old fixed namespaces meanwhile.
-2. Ship the pages that open the room request and use the per-room namespaces.
-3. Delete the VM and its schedule.
+1. Deploy `serve` services with per-room namespaces (VM keeps serving old fixed namespaces).
+2. Ship updated browser pages.
+3. Delete VM and schedule.
 
 ## Alternatives Considered
-
-### Run the current bots unchanged on Cloud Run worker pools
-This is the smallest move: a worker pool runs a process with no HTTP port, and
-Cloud Scheduler can switch it between 0 and 1 instances on the current
-schedule. It keeps all three problems above. It also costs more than the VM:
-about $13–38 a month for the scheduled hours against about $7.
-
-### Embed pipecat in the System One container
-This removes the JPEG and HTTP hop between the bot and the model, but the
-model server runs one request at a time, so throughput does not improve. In
-exchange:
-- The GPU instance (about $1.70/h) stays up for as long as a room is open,
-  including a quiet chat room.
-- Every change to a prompt or to bot logic rebuilds the CUDA image, and each
-  deploy waits through a cold start of about five minutes.
-- The System One service sends all egress through a VPC subnet with no route to the
-  internet, so it cannot reach the relay's public name.
-
-### An always-on dispatcher that finds rooms through the relay
-A small process sends SUBSCRIBE_NAMESPACE for `anon/moq-chat-moderation/` and
-starts a room's bot when a chat broadcast appears, as LiveKit Agents
-dispatches workers. The pages need no HTTP call. It still leaves one process
-running all the time, so it still needs a VM or a worker pool and their
-schedule, which is what this design removes.
-
-### Stop the services outside the opening hours from Cloud Scheduler
-A Cloud Run service cannot be stopped the way a VM can. Closing it at night
-means switching its unauthenticated access or its ingress on a schedule, so
-the deployed state differs from its declared configuration every evening, and
-a page sees only a failed request. A check in the server needs no
-infrastructure, and the page can tell the user why.
-
-### Instance-based billing on the bot service
-It bills each instance's idle tail, and every scanner request starts an
-instance: one hour of real use on 2026-10-21 billed 6.7 hours on the
-transcriber. It would keep the CPU for the grace period and the relay
-teardown.
+- **Cloud Run worker pools**: Keeps idle cost ($13–38/mo vs ~$7 VM), collisions, and silent failure.
+- **Embed pipecat in System One GPU container**: Keeps ~$1.70/h GPU running for quiet rooms, slows prompt deploys (~5 min cold start), and VPC egress blocks public relay access.
+- **Always-on relay dispatcher**: Still requires a 24/7 VM or worker pool.
+- **Cloud Scheduler toggling ingress**: Causes config drift and opaque browser failures instead of `closed` notices.
+- **Instance-based billing**: Bills idle tails and scanner hits (1 h real use billed 6.7 h on transcriber on 2026-10-21).

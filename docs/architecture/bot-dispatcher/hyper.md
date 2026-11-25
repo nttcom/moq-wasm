@@ -1,29 +1,16 @@
-# hyper for the bot-dispatcher HTTP server
+# `hyper` for the `bot-dispatcher` HTTP Server
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-11-18
+Accepted (2026-11-18)
 
 ## What
-
-Add `hyper` 1.x (`http1`, `server`) as a direct dependency of
-`bot-dispatcher`. `server.rs` takes `hyper::Request<Incoming>` from
-`http_server::HttpServer` and answers `http_server::JsonResponse`.
+Direct dependency of `bot-dispatcher` (`hyper` 1.x: `http1`, `server`). `server.rs` accepts `hyper::Request<Incoming>` from `http_server::HttpServer` and returns `http_server::JsonResponse`.
 
 ## Context
-
-`bot-dispatcher` serves six routes with JSON bodies, as the VTS and `temporary-apps` do.
+`bot-dispatcher` serves six JSON routes with no middleware, matching `vts` and `temporary-apps`.
 
 ## Alternatives
-
-- `axum`. Shorter routing, but adds `tower` and its crates for six routes
-  with no middleware.
+- **`axum`**: Pulls in `tower` and router crates for six plain routes.
 
 ## Decision
-
-Use `hyper` through `http-server`, as the other services do. It is already
-compiled in the workspace.
+Use `hyper` via `http-server`, matching workspace services with no new dependency.

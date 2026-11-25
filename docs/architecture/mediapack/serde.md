@@ -1,42 +1,23 @@
-# serde for the LOC extension boundary with JavaScript
+# `serde` for the JavaScript LOC Extension Boundary (`mediapack`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-09-18
+**Status:** Accepted (2026-09-18)
 
 ## What
 
-Add `serde` (with `derive`) as an optional dependency of the `mediapack`
-crate behind a `serde` feature, and enable the `serde` feature of `bytes` with
-it. The feature derives `Serialize` / `Deserialize` for `loc::LocExtension` and
-`loc::LocValue`; `serde_json` is a dev-dependency that pins the JSON shape in a
-unit test.
+Add optional `serde` (`derive`) behind a `serde` feature on `mediapack`, enabling `bytes/serde` alongside it:
+
+- Derives `Serialize`/`Deserialize` for `loc::LocExtension` and `loc::LocValue`.
+- Adds `serde_json` as a dev-dependency to pin the JSON wire shape in unit tests.
 
 ## Context
 
-`sdk/js` hands LOC properties across the JavaScript boundary
-with `serde_wasm_bindgen`, and previously did so through a parallel set of LOC
-types in the `packages` crate. Folding `packages` into `mediapack` leaves the
-`mediapack` types as the only LOC model, so they must be the ones that cross
-the boundary. The shape is `{ id, value: { varint } | { bytes } }`, which is
-the draft-ietf-moq-loc-04 §2.3 representation and is mirrored by
-`sdk/js/js/src/media/internal/loc.ts`.
+`sdk/js` passes LOC properties across the JS boundary with `serde_wasm_bindgen`. After folding the old `packages` crate into `mediapack`, `mediapack` owns the single LOC model. The serialized shape `{ id, value: { varint } | { bytes } }` matches `draft-ietf-moq-loc-04` §2.3 and mirrors `sdk/js/js/src/media/internal/loc.ts`.
 
 ## Alternatives
 
-- Keep a serde-only DTO enum in `sdk/js` and convert to and from
-  `mediapack::loc::LocExtension`. Keeps `mediapack` free of `serde`, but
-  keeps the id-to-name table that the merge is removing alive in a second
-  place.
-- Build the JavaScript objects by hand with `js_sys`. Avoids `serde`, but
-  moves field names into string literals on both sides of the boundary.
+- **Separate serde DTO enum in `sdk/js`:** Keeps `serde` out of `mediapack`, but perpetuates a duplicate ID-to-name mapping.
+- **Manual JS object construction via `js_sys`:** Avoids `serde`, but duplicates field names as string literals on both sides of the boundary.
 
 ## Decision
 
-Derive `serde` behind an opt-in feature so native consumers (`ingest-gateway`,
-`transcode`, `crates/gst-plugin-moqt`) do not pull it in. `serde` and `serde_json`
-are already in the workspace lock, so no new crate enters the dependency tree.
+Derive `serde` behind an opt-in `serde` feature so native consumers (`ingest-gateway`, `transcode`, `crates/gst-plugin-moqt`) do not compile it. `serde` and `serde_json` are already in the workspace lock, adding no new crate to the dependency tree.

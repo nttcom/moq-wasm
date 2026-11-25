@@ -1,31 +1,20 @@
-# ADR: tracing-subscriber in the python crate
+# `tracing-subscriber` for Telemetry and Spans (`python`)
 
-## Status
-Accepted
-
-## Date
-2026-11-16
+**Status:** Accepted (2026-11-16)
 
 ## What
-`sdk/python` depends on `tracing-subscriber` (0.3, already in the workspace) with
-`default-features = false, features = ["registry", "std"]`, as `wasm` does, and on the workspace's
-`telemetry-report`.
+
+Add `tracing-subscriber` 0.3 (`default-features = false`, features: `registry`, `std`, matching `wasm`) and the workspace crate `telemetry-report` to `sdk/python`.
 
 ## Context
-`moqt` and `broadcast` log and open spans through `tracing`, but the module installed no subscriber,
-so a bot's SUBSCRIBE, PUBLISH and connection events were lost and its requests carried no trace
-context. The browser SDK's `init({ logLevel, onLog, onSpan })` installs one; `moq_wasm.init` is its
-Python counterpart. The records the browser and `moq-cli` build come from
-`telemetry_report::SpanRecordLayer` and `log_record`, which need a `tracing-subscriber` `Registry`.
+
+`moqt` and `broadcast` emit `tracing` events and spans, but without a subscriber installed, bot `SUBSCRIBE`/`PUBLISH`/connection events were dropped and requests carried no trace context. `moq_wasm.init` is the Python counterpart to the browser SDK's `init({ logLevel, onLog, onSpan })`, and `telemetry_report::SpanRecordLayer` + `log_record` require a `tracing-subscriber` `Registry`.
 
 ## Alternatives
-- **Call into Python from a `tracing` layer** (forward each event to `logging` at once): every event
-  would take the GIL on a tokio worker, stalling the session's tasks while Python runs.
-- **`pyo3-log`**: bridges the `log` crate to `logging`, not `tracing` spans, so the trace would be
-  lost; it is also a new crate.
+
+- **Call Python directly from a `tracing` layer:** Acquires the GIL on Tokio workers for every event, stalling session tasks.
+- **`pyo3-log`:** Bridges `log` (not `tracing` spans), losing trace context and adding a new crate.
 
 ## Decision
-`set_log_sink` installs `registry()` with a layer that queues `log_record`s and, with spans,
-`SpanRecordLayer`, as the global default subscriber. A daemon thread takes the queued records with
-the GIL released and hands them to `logging` and `init`'s callbacks. The lock file gains no package.
-The subscriber is global, so a process that sets its own cannot also install the module's.
+
+`set_log_sink` installs a global `Registry` with a layer queuing `log_record`s (and `SpanRecordLayer` when spans are enabled). A Python daemon thread drains the queue with the GIL released and forwards records to `logging` and `init` callbacks. No new crate enters the lock file. Because the subscriber is global, a process that installs its own cannot also install the module's.

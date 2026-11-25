@@ -1,34 +1,20 @@
-# hyper, hyper-util and http-body-util for the shared HTTP server
+# `hyper`, `hyper-util`, and `http-body-util` for the Shared HTTP Server (`http-server`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-10
+**Status:** Accepted (2026-11-10)
 
 ## What
 
-Add `hyper` 1.x (features `http1`, `server`), `hyper-util` (feature `tokio`)
-and `http-body-util` as direct dependencies of the `http-server` crate. It
-runs the HTTP/1 accept loop and builds the `Full<Bytes>` JSON bodies the
-services share.
+Add `hyper` 1.x (`http1`, `server`), `hyper-util` (`tokio`), and `http-body-util` as direct dependencies of `http-server` to provide the shared HTTP/1 accept loop and `Full<Bytes>` JSON response helpers.
 
 ## Context
 
-`console`, `vts`, `temporary-apps`, `observability`, `live-translate` and
-`recorder` each copied the same accept loop and JSON response helpers on these
-three crates. Moving them into one crate moves the dependencies with them.
+`console`, `vts`, `temporary-apps`, `observability`, `live-translate`, and `recorder` each duplicated the same accept loop and JSON helpers on these three crates. Extracting them into `http-server` consolidates both code and dependencies.
 
 ## Alternatives
 
-- Keep the copies in each service. Every change to the accept loop or its logs
-  has to be made six times.
-- `axum`. Already rejected for the VTS (see `docs/architecture/vts/hyper.md`):
-  it adds a framework for routing the services do with a `match`.
+- **Keep copies in each service:** Every change to the accept loop or its logging must be repeated six times.
+- **`axum`:** Previously rejected for VTS (see [vts/hyper.md](../vts/hyper.md)); adds a routing framework where services use a plain `match`.
 
 ## Decision
 
-Use the crates the six services already depend on. They are already compiled
-in the workspace, so no new crate enters the dependency tree.
+Use `hyper`, `hyper-util`, and `http-body-util`. All six services already compile them, adding no new crate to the dependency tree.

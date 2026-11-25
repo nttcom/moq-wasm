@@ -1,36 +1,20 @@
-# reqwest for the ClickHouse HTTP interface
+# `reqwest` for the ClickHouse HTTP Interface (`observability`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-06
+**Status:** Accepted (2026-10-06)
 
 ## What
 
-Add `reqwest` (with the `rustls` feature, no default features) as a direct
-dependency of the `observability` crate. `src/clickhouse.rs` uses it to run the
-schema statements and read query results (`FORMAT JSONEachRow`) through
-ClickHouse's HTTP interface.
+Add `reqwest` (`default-features = false`, feature: `rustls`) as a direct dependency of `observability`. `src/clickhouse.rs` executes DDL/queries and reads `FORMAT JSONEachRow` results over ClickHouse's HTTP interface.
 
 ## Context
 
-The observability server stores one snapshot per relay per second in
-ClickHouse and reads time ranges back for the chart drawer. ClickHouse speaks
-a native TCP protocol and an HTTP interface; the HTTP interface takes the same
-SQL and returns rows as JSON lines.
+`observability` writes one snapshot per relay per second to ClickHouse and reads time ranges for charts. ClickHouse's HTTP interface accepts the same SQL as its native TCP protocol and returns newline-delimited JSON.
 
 ## Alternatives
 
-- The `clickhouse` crate (official Rust client, native RowBinary over HTTP).
-  Typed rows and less JSON overhead, but a new crate with its own derive macro;
-  at a few hundred rows per second JSON is not a bottleneck.
-- `hyper` as an HTTP client. Already needed for the API server, but the client
-  side (connection pool, URL encoding, basic auth) would be hand-written.
+- **`clickhouse` crate (RowBinary over HTTP):** Typed rows and lower JSON overhead, but adds a new crate and derive macro when a few hundred rows/sec is nowhere near a JSON bottleneck.
+- **`hyper` as an HTTP client:** Already present for the API server, but requires hand-writing connection pooling, URL encoding, and basic auth.
 
 ## Decision
 
-Use `reqwest` over the HTTP interface. It is already in the workspace lock
-(`ingest-gateway pull`), so no new crate enters the dependency tree.
+Use `reqwest` over ClickHouse's HTTP interface. It is already in the workspace lock (`ingest-gateway pull`), adding no new crate to the dependency tree.

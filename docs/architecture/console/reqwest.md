@@ -1,31 +1,22 @@
-# reqwest for the IAP public keys
+# `reqwest` for IAP Public Keys (`console`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-20
+**Status:** Accepted (2026-10-20)
 
 ## What
 
-Add `reqwest` (with the `rustls` and `json` features, no default features) as
-a direct dependency of the `console` crate. `server.rs` takes `reqwest::Url`
-for the IAP key URL it hands to `google_cloud::IapVerifier`, which fetches
-the keys, and its tests call the server with a `reqwest::Client`.
+Add `reqwest` (`default-features = false`, features: `rustls`, `json`) as a direct dependency of `console`:
+
+- `server.rs` passes `reqwest::Url` for the IAP key URL to `google_cloud::IapVerifier`.
+- Server tests send requests using `reqwest::Client`.
 
 ## Context
 
-The console verifies IAP assertions against keys that IAP rotates;
-`google-cloud` fetches the key set over HTTPS and caches it.
+`console` verifies Google Cloud IAP assertions against public keys that IAP rotates. `google-cloud` fetches and caches that key set over HTTPS.
 
 ## Alternatives
 
-- `hyper` as an HTTP client. Already a dependency for the server, but TLS and
-  connection handling would be hand-written.
+- **`hyper` as an HTTP client:** Already depended on for the server, but TLS and connection handling would be hand-written.
 
 ## Decision
 
-Use `reqwest`. It is already in the workspace lock with the same features
-(`google-cloud`, `vts`), so no new crate enters the dependency tree.
+Use `reqwest`. It is already in the workspace lock with the same features (`google-cloud`, `vts`), adding no new crate to the dependency tree.

@@ -1,57 +1,43 @@
 # `vts` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the design intent,
-module boundaries, runtime flow, or invariants described here change.
+Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
-The `vts` crate is the Verify Token Service: an HTTP service the relay calls
-once per session to check that a client's JWT was signed with the secret of a
-registered app, and whether that app is a relay. Signing tokens is
-`auth-token`'s CLI, not the VTS's.
+Verify Token Service (VTS): an HTTP service called once per session by the relay (and other services) to verify a client JWT's HS256 signature against a registered or temporary app secret, and to report whether the app is a relay.
 
-Besides the registered apps, the VTS knows temporary apps: an `appId` with
-`auth_token::TEMPORARY_APP_ID_PREFIX` (`temp-`) exists only as the tokens
-issued for it, all signed with one secret (`VTS_TEMPORARY_APP_SECRET`). They
-let anyone get an app of their own without registering one; the service that
-issues them holds the same secret.
-
-The service deliberately answers only the signature question. Token lifetime
-(`iat`, `exp`, the maximum TTL, clock leeway) and the meaning of `publish` /
-`subscribe` are the relay's policy (`services/relay/src/modules/auth/`), so one
-clock and one rule set govern both accepting a session and expiring it later.
+- **Signature check only**: Token lifetimes (`iat`, `exp`, max TTL, clock leeway) and `publish`/`subscribe` semantics stay in the caller (e.g., `services/relay/src/modules/auth/`), so one clock and policy govern both acceptance and expiry.
+- **Temporary apps**: Any `appId` prefixed with `auth_token::TEMPORARY_APP_ID_PREFIX` (`temp-`) is verified with one shared secret (`VTS_TEMPORARY_APP_SECRET`) instead of a registry entry.
+- **Signing lives elsewhere**: Token signing is in `auth-token` / `console` / `temporary-apps`.
 
 ## Modules
 
-| Module | Responsibility |
-| --- | --- |
-| `registry.rs` | `Registry`: reads the apps through `app-registry` on every `current` call and keeps the last apps it read. A read that fails logs a warning and returns those last apps. `Registry::load` fails when the first read fails. |
-| `verify.rs` | `verify_token`: `auth_token::decode_unverified_payload` → require string `appId` → pick the secret: the temporary app secret for a temporary app when one is configured, else the registered app's → `auth_token::verify_signature` with it. Returns `VerifiedToken { app_id, is_relay, claims }` or a `RejectReason`; a `SignatureError` maps onto `malformed_token` or `invalid_signature`. |
-| `server.rs` | `VtsServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `GET /healthz` and `POST /verify` against `Secrets` (the `Registry` and the optional temporary app secret); everything else is 404. |
-| `main.rs` | Picks the registry location (`VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET`, not both), loads the `Registry`, reads `VTS_TEMPORARY_APP_SECRET`, binds `0.0.0.0:<port>` and serves until the process is terminated. A registry that cannot be loaded at startup stops the process. |
+| Module | Key types | Responsibility |
+| --- | --- | --- |
+| `registry.rs` | `Registry` | Loads `app_registry::Apps` via `crates/app-registry` on every `current()` call, caching the last good snapshot as a read-failure fallback (with a `WARN` log). `Registry::load` fails hard on initial startup failure. |
+| `verify.rs` | `verify_token`, `VerifiedToken`, `RejectReason` | Decodes unverified `appId`, selects temporary or registered secret, calls `auth_token::verify_signature`, and maps `SignatureError` to `malformed_token` or `invalid_signature`. |
+| `server.rs` | `VtsServer`, `Secrets` | Serves HTTP/1 via `http_server::HttpServer`: `GET /healthz`, `POST /verify`; everything else returns `404`. |
+| `main.rs` | — | Reads `VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET` (mutually exclusive) and `VTS_TEMPORARY_APP_SECRET`, loads `Registry`, and binds `0.0.0.0:<port>`. |
 
-The registered apps are `app_registry::Apps`; parsing, validation and storage live in `crates/app-registry`.
-
-## Request flow
+## Request Flow
 
 ```mermaid
 sequenceDiagram
-    participant R as relay
+    participant R as Caller (relay)
     participant S as server.rs
     participant V as verify.rs
     R->>S: POST /verify {token}
-    S->>S: read body (≤ 16 KiB) and parse JSON
-    alt body invalid
+    S->>S: Read body (≤ 16 KiB) & parse JSON
+    alt invalid body
         S-->>R: 400 {error: invalid_request}
     end
-    S->>S: Registry::current (read the registry, or the last apps read)
+    S->>S: Registry::current (live read, or cached fallback)
     S->>V: verify_token(token, apps)
     V->>V: decode_unverified_payload → appId
-    alt temporary app and secret configured
+    alt temp-* app and VTS_TEMPORARY_APP_SECRET set
         V->>V: verify_signature(token, temporary secret)
-    else
-        V->>V: apps.get(appId)
-        V->>V: verify_signature(token, app.secret)
+    else registered app
+        V->>V: apps.get(appId) → verify_signature(token, app.secret)
     end
     alt rejected
         S-->>R: 401 {error: malformed_token | unknown_app | invalid_signature}
@@ -62,42 +48,22 @@ sequenceDiagram
 
 ## Invariants
 
-- `claims` in the 200 response is the signed payload as-is. The VTS never
-  adds, removes or interprets claims; `auth_token::SignedToken` reads them.
-- Rejections are reported in the order they are detected: `malformed_token`
-  (not three segments, payload not a JSON object, or no non-empty string
-  `appId`), then `unknown_app`, then the signature check: `malformed_token`
-  for a header that is not a JSON object or has no string `alg` and for a
-  signature that is not base64url, else `invalid_signature`. A header whose
-  `alg` is anything other than `HS256` is `invalid_signature`.
-- Signing secrets exist only in the registry and, for temporary apps, in
-  `VTS_TEMPORARY_APP_SECRET`. The relay never receives them.
-- A temporary app is never a relay. While the temporary secret is configured,
-  every `temp-` app is verified with it, so a registered app with that prefix
-  is shadowed; without it, a `temp-` app is looked up in the registry and is
-  normally `unknown_app`.
-- Every `/verify` with a valid body reads the registry, so a rotated secret or
-  a deleted app is refused from the next verification on. A request with an
-  invalid body is answered before the registry is read.
-- While the registry cannot be read, `/verify` keeps verifying with the apps
-  last read, so revocations made during that time take effect only once it can
-  be read again. A new instance that cannot read the registry does not start.
-- The apps last read are replaced by whichever read finishes last; two reads
-  that overlap may leave the one that started earlier. Those apps are used
-  only while the registry cannot be read.
+**Token & claim rules**
+- **Pass-through claims**: `200` returns the signed payload unchanged in `claims`; VTS never modifies or interprets claims.
+- **Temporary app precedence**: Temporary apps are never relays. When `VTS_TEMPORARY_APP_SECRET` is set, it shadows any registered `temp-` app; when unset, `temp-` IDs fall through to registry lookup (normally `unknown_app`).
+- **Secret containment**: Signing secrets live only in the registry and `VTS_TEMPORARY_APP_SECRET`; the relay never receives them.
 
-## Operational notes
+**Deterministic rejection order**
+1. `malformed_token` — not 3 JWT segments, non-object payload, or missing/empty string `appId`.
+2. `unknown_app` — `appId` not found.
+3. Signature check — `malformed_token` for non-object header, missing string `alg`, or invalid base64url signature; `invalid_signature` for non-`HS256` `alg` or MAC mismatch.
 
-- Logging goes through `tracing`, set up by `crates/telemetry-otlp`: `verify ok` /
-  `verify rejected` at INFO, per-connection HTTP errors at DEBUG.
-  `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER` and `VTS_LOG_FILTER` filter, each
-  falling back to `RUST_LOG`.
-- Every request runs in a `vts.request` span that continues the caller's
-  trace from its `x-original-traceparent` header, else its W3C `traceparent`
-  (see "Trace context" in the telemetry architecture), so a verification
-  shows up under the relay's `relay.vts.verify` span. A `/verify` that
-  reaches the registry records `outcome` on the span: `verified`, with the
-  token's `app_id` and `is_relay`, or the rejection reason that
-  `verify rejected` logs. The token and secrets stay out of the span.
-- The Docker image (`services/vts/Dockerfile`) is a `cargo-chef` build onto
-  `distroless/cc`, the same base as the relay, and ships `vts`.
+**Registry & fallback**
+- **Fresh registry on valid requests**: Every valid `/verify` reads the registry so rotated secrets and deleted apps take effect immediately; invalid bodies fail before reading.
+- **Fallback semantics**: During a registry outage, `/verify` falls back to the last loaded snapshot (revocations wait until reads recover), while new instances refuse to start. Overlapping reads overwrite the fallback in completion order.
+
+## Operational Notes
+
+- **Logging**: `telemetry-otlp` logs `verify ok` / `verify rejected` at `INFO` and HTTP connection errors at `DEBUG`. Filters: `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER`, `VTS_LOG_FILTER` (each falling back to `RUST_LOG`).
+- **Tracing**: Requests run in `vts.request`, continuing `x-original-traceparent` (else `traceparent`) under the relay's `relay.vts.verify` span. Records `outcome` (`verified` + `app_id`/`is_relay`, or rejection reason); never records tokens or secrets.
+- **Packaging**: `services/vts/Dockerfile` uses `cargo-chef` → `distroless/cc` (same base as relay).

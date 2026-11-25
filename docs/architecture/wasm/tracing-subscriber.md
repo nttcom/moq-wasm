@@ -1,55 +1,35 @@
-# ADR: tracing-subscriber in the wasm crate
+# `tracing-subscriber` for Structured Browser Telemetry (`wasm`)
 
-## Status
-Accepted
+**Status:** Accepted (2026-10-31)
 
-## Date
-2026-10-31
+## What
+
+Add `tracing-subscriber` 0.3 (`default-features = false`, features: `registry`, `std`) as a `wasm32`-only dependency of `wasm`.
+
+- `setLogSink` installs a global `registry()` with a `LevelFilter` and a custom `Layer` that converts events via `telemetry_report::log_record` into `{ timeMs, level, target, message, fields }` JSON records for the page's `onLog` callback.
+- When `init({ onSpan })` is set, a second layer (`telemetry_report::SpanRecordLayer`, `INFO` and above) emits each closed span as a `SpanRecord`.
+- Record construction lives in `telemetry-report` (target-independent) so it is unit-tested on the host.
 
 ## Context
-`moqt`, `broadcast` and `wasm` log through `tracing`, but the browser build installs no subscriber, so every
-event inside the wasm module was discarded. Pages need these logs: a `tracing::warn!` in
-`sdk/js/src/media_broadcast.rs` was the only report of a dropped frame, and the browser telemetry forwards
-client logs to ClickStack.
 
-The SDK should hand each event to the page as a structured record (`{ timeMs, level, target, message, fields }`)
-through `init({ onLog, logLevel })`, so the page decides whether to print, buffer or send it.
+`moqt`, `broadcast`, and `wasm` emit `tracing` events, but without a subscriber on `wasm32` every event was discarded—including `tracing::warn!` dropped-frame diagnostics in `sdk/js/src/media_broadcast.rs` and client telemetry sent to ClickStack. Pages need structured records via `init({ onLog, logLevel })` rather than pre-formatted console strings.
+
+## Alternatives
+
+- **`tracing-wasm` / `tracing-web`:** Format directly to `console.*` as strings, losing structured fields for forwarding and adding a new crate.
+- **Custom `tracing::Subscriber`:** Avoids `Registry`, but requires hand-writing span ID allocation and enter/exit bookkeeping that `Registry` already provides.
 
 ## Decision
-Add **`tracing-subscriber`** (0.3, already in the workspace) to `wasm`, for wasm32 only, with `default-features = false,
-features = ["registry", "std"]`.
 
-On wasm32, `setLogSink` installs `registry()` with a `LevelFilter` and one custom `Layer` as the global default
-subscriber. The layer turns each event into a JSON record and calls the page's callback. Building the record
-(`telemetry_report::log_record`) does not depend on wasm32, so it is unit tested on the host. With
-`init({ onSpan })` a second layer (`telemetry_report::SpanRecordLayer`, INFO and above) hands each closed span to
-the page as a `SpanRecord`.
+Use `tracing-subscriber`'s `Registry` with custom layers on `wasm32`.
 
 ## Consequences
 
-### Positive
-- `Layer` and `Visit` give typed fields, the target and the level without parsing formatted text.
-- `LevelFilter` drops events below `logLevel` before any record is built.
-- The crate is already compiled for other workspace members, so it adds no new transitive dependency to the
-  lock file.
-
-### Negative
-- The registry pulls `sharded-slab` and `thread_local` into the wasm binary, which only need the event path.
-
-### Neutral
-- The `fmt` feature stays off: its default timer reads `SystemTime`, which panics on `wasm32-unknown-unknown`.
-- The subscriber is global, so a page sets one sink; a second `init({ onLog })` rejects.
-
-## Alternatives Considered
-
-### `tracing-wasm` / `tracing-web`
-Both write to `console.*` in their own format. The page would get strings, not records, and could not forward
-them with fields intact. They also add a crate the workspace does not have.
-
-### Implementing `tracing::Subscriber` directly
-Avoids the registry, but means writing span id allocation and the enter/exit bookkeeping by hand. The registry
-already does this and the workspace already depends on it.
+- **Positive:** Typed fields, target, and level without text parsing; `LevelFilter` drops below-threshold events before allocation; already in `Cargo.lock` (zero new transitive crates).
+- **Negative:** `Registry` pulls `sharded-slab` and `thread_local` into the wasm binary.
+- **Neutral:** `fmt` stays off because its default timer reads `SystemTime` (which panics on `wasm32-unknown-unknown`). The subscriber is global, so a second `init({ onLog })` rejects.
 
 ## References
+
 - [tracing-subscriber `Layer`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/layer/trait.Layer.html)
-- `docs/architecture/wasm/browser-sdk.md` (core API)
+- [browser-sdk.md](browser-sdk.md) (core API)

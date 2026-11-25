@@ -1,49 +1,29 @@
-# GStreamer for Opus decoding and encoding in the translator
+# GStreamer for Opus Decode/Encode (`live-translate`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-06
+**Status:** Accepted (2026-10-06)
 
 ## What
 
-Use `gstreamer` and `gstreamer-app` in the `live-translate` crate. One pipeline
-decodes the broadcaster's Opus packets to 16 kHz mono PCM for Gemini; another
-encodes Gemini's 24 kHz mono PCM into 20 ms Opus packets for the translated
-tracks.
+Use `gstreamer` and `gstreamer-app` in `live-translate`:
+
+- **Input pipeline:** decodes incoming Opus packets and resamples (48 kHz → 16 kHz mono PCM) for Gemini.
+- **Output pipeline:** encodes Gemini's 24 kHz mono PCM into 20 ms Opus packets for translated MoQT tracks.
 
 ## Context
 
-The translator sits between Opus on MoQT and raw PCM on the Gemini Live API in
-both directions, and needs resampling (48 kHz to 16 kHz) on the way in. The
-workspace already depends on GStreamer 0.25 for `crates/transcode` and
-`crates/gst-plugin-moqt`, and CI installs `gstreamer1.0-plugins-base`, which
-contains `opusdec`, `opusenc`, `audioconvert` and `audioresample`.
+The translator bridges Opus on MoQT and raw PCM on the Gemini Live API in both directions. The workspace already depends on GStreamer 0.25 (`crates/transcode`, `crates/gst-plugin-moqt`), and CI installs `gstreamer1.0-plugins-base`, which provides `opusdec`, `opusenc`, `audioconvert`, and `audioresample`.
 
 ## Alternatives
 
-- `opus` (libopus bindings) plus a Rust resampler such as `rubato`. Lighter at
-  run time, but two new crates for a job the existing dependency already does.
-- Pure Rust Opus. Decoders exist; there is no maintained pure Rust encoder.
+- **`opus` (`libopus` bindings) + `rubato` resampler:** Lighter runtime footprint, but adds two new crates for functionality GStreamer already supplies.
+- **Pure-Rust Opus:** Decoders exist, but there is no maintained pure-Rust encoder.
 
 ## Decision
 
-Use GStreamer, driven through `appsrc` / `appsink` like `crates/transcode`.
-Packet timestamps are not taken from GStreamer: the translator stamps encoded
-packets in the order it pushed their frames, because GStreamer re-times buffers
-around the timestamp jumps that silence produces.
+Use GStreamer via `appsrc`/`appsink` (matching `crates/transcode`). Stamp encoded packet timestamps in push order rather than reading them from GStreamer, because GStreamer re-times buffers across timestamp jumps caused by silence.
 
 ## Consequences
 
-### Positive
-- No new crates; decoding, downmixing and resampling are one pipeline string.
-
-### Negative
-- The container image needs the GStreamer runtime and base plugins, so it
-  cannot use the distroless base the other services use.
-- `opusenc` holds back the last frame until the next one arrives, so the final
-  20 ms of each translated utterance is published late and usually dropped by
-  the viewer.
+- **Positive:** No new crates; decoding, downmixing, and resampling are expressed as one pipeline string.
+- **Negative:** Container images require the GStreamer runtime and base plugins (cannot use the distroless base image other services use).
+- **Negative:** `opusenc` holds back the last frame until the next arrives, so the final 20 ms of each translated utterance publishes late and is usually dropped by viewers.

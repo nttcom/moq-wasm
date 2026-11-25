@@ -1,39 +1,21 @@
-# reqwest for sending the CLI's logs to the observability server
+# `reqwest` for Exporting CLI Logs (`moq-cli`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-02
+**Status:** Accepted (2026-11-02)
 
 ## What
 
-Add `reqwest` (with the `json` and `rustls` features, no default features) as a direct
-dependency of `moq-cli`. `telemetry.rs` uses it to `POST` the
-CLI's logs to the observability server's `/api/client-telemetry` every 10 s
-and once more on exit.
+Add `reqwest` (`default-features = false`, features: `json`, `rustls`) as a direct dependency of `moq-cli`. `telemetry.rs` `POST`s CLI logs to the observability server's `/api/client-telemetry` endpoint every 10 s and once on exit.
 
 ## Context
 
-The CLI's logs only reached its stderr, so a session from the CLI left no
-client-side trace in HyperDX. The collector listens only inside the VPC, and
-the CLI usually runs on a laptop, so it cannot export OTLP itself: it posts to
-the observability server's public endpoint, as the browser pages do.
+Previously, CLI logs went only to `stderr`, leaving no client-side traces in HyperDX. Because the OTLP collector listens only inside the VPC while `moq-cli` typically runs on a developer laptop, it must post to the observability server's public HTTP endpoint, just like browser clients.
 
 ## Alternatives
 
-- `crates/telemetry-otlp` (OTLP export to the collector). Works only where the
-  collector is reachable (docker compose, inside the VPC), not from a laptop
-  to the deployed relays.
-- `hyper` directly. TLS, timeouts and connection reuse would be hand-written
-  for one POST.
-- `ureq` (blocking). Would need `spawn_blocking` inside the tokio runtime, and
-  is a crate the workspace does not have yet.
+- **`crates/telemetry-otlp`:** Only works where the OTLP collector is directly reachable (Docker Compose or inside the VPC), not from laptops targeting deployed relays.
+- **`hyper` directly:** Requires hand-writing TLS, timeouts, and connection reuse for a single `POST`.
+- **`ureq` (blocking):** Requires `spawn_blocking` inside Tokio and adds a new crate to the workspace.
 
 ## Decision
 
-Use `reqwest`. It is already in the workspace lock (a direct
-dependency of `observability`, `recorder` and others), so no new crate enters
-the dependency tree.
+Use `reqwest`. It is already in the workspace lock (`observability`, `recorder`, and others), adding no new crate to the dependency tree.

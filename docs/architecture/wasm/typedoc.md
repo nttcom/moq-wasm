@@ -1,43 +1,27 @@
-# ADR: TypeDoc for the browser SDK's API reference
+# TypeDoc for the Browser SDK API Reference (`wasm`)
 
-## Status
-Accepted
+**Status:** Accepted (2026-11-18)
 
-## Date
-2026-11-18
+## What
+
+Add `typedoc` in `sdk/js/js/typedoc/` as a standalone package with its own lock file outside the npm workspace. Its `typedoc.json` ingests the README and four entry points (`moq-wasm`, `moq-wasm/media`, `moq-wasm/recording`, `moq-wasm/element`); `npm run docs` in `examples/browser` writes static HTML to `examples/browser/public/docs/js` for Vite and GitHub Pages.
 
 ## Context
-The browser SDK (`sdk/js/js`) is documented by its README and its TSDoc comments, which only someone reading
-the source or the `.d.ts` files sees. The Example site on GitHub Pages should serve both as pages: the README as a
-guide and every exported class, function and type of the `moq-wasm`, `moq-wasm/media`, `moq-wasm/recording` and
-`moq-wasm/element` entry points as a reference.
+
+`sdk/js/js` is documented via its README and TSDoc comments, previously visible only in source or `.d.ts` files. GitHub Pages should publish both as a browsable guide and API reference.
+
+## Alternatives
+
+- **`npx typedoc` in the deploy job:** Avoids committing a lock file (and its advisory), but lets TypeDoc dependencies float unpinned on every deploy.
+- **`api-documenter`:** Consumes `api-extractor`'s `.api.json`, but outputs raw Markdown that still requires a separate site renderer.
 
 ## Decision
-Add **`typedoc`** in `sdk/js/js/typedoc/`, a package with its own lock file outside the npm workspace.
-`typedoc.json` there takes the four entry points and the README; `npm run docs` in `examples/browser` writes the
-HTML to `examples/browser/public/docs/js`, which Vite serves and copies into the site.
+
+Run pinned `typedoc` from an isolated `sdk/js/js/typedoc/` package.
 
 ## Consequences
 
-### Positive
-- One command turns the README and the TSDoc comments into a searchable site; nothing is written twice.
-
-### Negative
-- TypeDoc supports `typescript` up to 6.0, not the TypeScript 7 the workspace builds with, and takes it as a peer
-  dependency. Inside the workspace, npm put TypeScript 6 in `sdk/js/js/node_modules/.bin`, where it shadowed the
-  workspace's `tsc` and changed the declarations `api-extractor` checks; hence the separate package and lock file.
-- `skipErrorChecking` stops TypeDoc from type checking the sources, which use APIs TypeScript 6's libraries lack
-  (`Uint8Array.fromBase64`).
-- TypeDoc depends on minimatch 10, which GHSA-g3hv-75wg-m249 (DoS through glob patterns) still affects, and calls
-  `Minimatch.matchOne`, which the fixed minimatch 11 removed, so the workspace's override to 11 cannot apply to it.
-  TypeDoc only matches the globs of its own configuration, at build time.
-
-## Alternatives Considered
-
-### `npx typedoc` in the deploy job
-No lock file, so no advisory, but TypeDoc's dependencies would float on every deploy, inside the job that builds
-the published site.
-
-### api-documenter
-It reads the `.api.json` that `api-extractor` already produces, but writes Markdown, which would need a renderer
-and a site around it.
+- **Positive:** One command builds a searchable site directly from the README and TSDoc with zero duplicated prose.
+- **Negative:** TypeDoc supports `typescript` up to 6.0 (not the workspace's TypeScript 7) as a peer dependency. Placing it inside the workspace caused npm to install TypeScript 6 in `sdk/js/js/node_modules/.bin`, shadowing workspace `tsc` and breaking `api-extractor` diffs—hence the isolated package and lock file.
+- **Negative:** `skipErrorChecking` is required because sources use APIs missing from TypeScript 6's lib definitions (such as `Uint8Array.fromBase64`).
+- **Negative:** TypeDoc depends on `minimatch` 10 (affected by `GHSA-g3hv-75wg-m249`) and calls `Minimatch.matchOne`, which `minimatch` 11 removed, blocking the workspace's override. Risk is limited because TypeDoc only evaluates its own config globs at build time.

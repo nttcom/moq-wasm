@@ -1,32 +1,17 @@
-# aws-lc-rs for ES256 verification of IAP assertions
+# `aws-lc-rs` for App Secret Generation in `console`
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-11-10
+Accepted (2026-11-10)
 
 ## What
-
-Add `aws-lc-rs` as a direct dependency of the `console` crate. `apps.rs`
-draws each app's secret from `SystemRandom`. The ES256 signature of the IAP
-assertion is verified by `google_cloud::IapVerifier`
-(see [google-cloud/aws-lc-rs.md](../google-cloud/aws-lc-rs.md)).
+Direct dependency of `console`. `apps.rs` generates per-app signing secrets using `SystemRandom`. (IAP ES256 verification lives in `google_cloud::IapVerifier`; see [`google-cloud/aws-lc-rs.md`](../google-cloud/aws-lc-rs.md).)
 
 ## Context
-
-The console creates the signing secret of every app it registers, which needs
-random bytes from the operating system.
+Registering or rotating an app requires OS-backed cryptographic random bytes for its signing secret.
 
 ## Alternatives
-
-- `rand`. A new crate for what the crypto library already compiled does.
-- `ring`, used here until 2026-11-10. Same API, but a second crypto library
-  once the workspace's TLS moved to `aws-lc-rs`.
+- **`rand`**: Adds a new crate for randomness already provided by the crypto library.
+- **`ring`** (used until 2026-11-10): Compiles a second crypto stack after workspace TLS migrated to `aws-lc-rs`.
 
 ## Decision
-
-Use `aws-lc-rs`. It is already compiled in the workspace for QUIC, TLS and the
-HS256 tokens in `auth-token`.
+Use `aws-lc-rs`, already compiled for QUIC, TLS, and `auth-token`.

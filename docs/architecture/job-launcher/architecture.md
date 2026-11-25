@@ -1,12 +1,15 @@
-# job-launcher
+# `job-launcher` Architecture
 
-`JobLauncher` starts a job and returns without waiting for it to end.
-`Local` spawns a program as a child process, for development; `CloudRun`
-runs an execution of a Cloud Run Job through the Admin API's `jobs:run`,
-replacing the container's arguments with the given ones, and authenticates
-as the workload's own service account (`google-cloud`).
+`JobLauncher` starts a background job and returns immediately without waiting for completion.
 
-A job's arguments are visible to anyone who can view its executions.
+| Backend | Behavior |
+| --- | --- |
+| `Local` | Spawns a child process locally (development). |
+| `CloudRun` | Triggers a Cloud Run Job execution via the Admin API (`jobs:run`), overrides container arguments, and authenticates with the workload's service account (`google-cloud`). |
 
-Used by `recorder`, which starts `recorder composite`, and by `bot-dispatcher`, which
-starts each bot.
+## Security Note
+Job arguments are visible to anyone with permission to view job executions.
+
+## Callers
+- `recorder` — starts `recorder composite`.
+- `bot-dispatcher` — starts each bot job.

@@ -1,45 +1,27 @@
-# PyO3 and maturin for the Python bindings
+# PyO3 and `maturin` for Python Bindings (`python`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-20
+**Status:** Accepted (2026-10-20)
 
 ## What
 
-`sdk/python` depends on `pyo3` (with `abi3-py311` and `anyhow`) to define
-the Python module `moq_wasm._native`, and on `pyo3-build-config` in `build.rs` for the
-macOS link arguments of an extension module. maturin builds the module as a
-wheel; it is a build tool named in `pyproject.toml`, not a Cargo dependency.
+- Add `pyo3` (`abi3-py311`, `anyhow`) to `sdk/python` to expose the `moq_wasm._native` extension module.
+- Add `pyo3-build-config` in `build.rs` for macOS extension link arguments.
+- Build wheels with `maturin` (declared as the build backend in `pyproject.toml`, not a Cargo dependency).
 
 ## Context
 
-The Python bots need joining FETCH, object extension headers and a publisher
-that answers late joiners, which moq-rs does not give them and `moqt` does
-(see [architecture.md](architecture.md)). Python reaches Rust code either
-through the C API of an extension module or through a C ABI loaded with
-`ctypes`/`cffi`.
+Python bots require joining FETCH, object extension headers, and late-joiner publishing—capabilities provided by `moqt` but absent from `moq-rs` (see [architecture.md](architecture.md)). Exposing Rust to Python requires either a CPython C-API extension or a C ABI loaded via `ctypes`/`cffi`.
 
 ## Alternatives
 
-- **cffi or ctypes over a C ABI.** The `moqt` types, async methods and
-  iterators would each need a hand-written C shim and a Python wrapper, with
-  ownership and threading crossing the boundary by hand.
-- **UniFFI**, which moq-ffi uses. It generates the Python side from an
-  interface definition and supports async, but adds its own runtime glue and
-  a code generator to the build, for one target language.
-- **A separate Rust process speaking JSON to Python.** No binding at all, but
-  a second process per bot and a protocol of its own to maintain.
+- **`cffi` / `ctypes` over a C ABI:** Requires hand-written C shims, Python wrappers, and manual ownership/threading across every `moqt` type, async method, and iterator.
+- **UniFFI (as used by `moq-ffi`):** Generates Python bindings with async support, but adds its own runtime glue and code generator for a single target language.
+- **Separate Rust subprocess over JSON:** Avoids FFI, but adds a second process per bot and a custom IPC protocol.
 
 ## Decision
 
-Use PyO3, the common way to write a CPython extension in Rust, and maturin,
-its build tool, which uv runs as the build backend. `abi3-py311` builds one
-module for every CPython from 3.11, the version the bots require, and lets
-`pyo3-build-config` configure the build without an interpreter
-(`PYO3_NO_PYTHON` in `.cargo/config.toml`), so building the workspace needs no
-Python. The extension cannot link as a Cargo test binary, so the crate turns
-its test harness off and is tested with pytest.
+Use PyO3 and `maturin` (invoked by `uv`):
+
+- `abi3-py311` produces one stable-ABI wheel for CPython 3.11+ (matching the bots' minimum version).
+- `pyo3-build-config` with `PYO3_NO_PYTHON` in `.cargo/config.toml` lets Cargo build the workspace without a local Python interpreter.
+- Because a CPython extension cannot link as a Cargo test binary, Cargo's test harness is disabled and tests run via `pytest`.

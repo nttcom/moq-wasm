@@ -1,27 +1,19 @@
-# Serde and JSON for relay snapshots
+# `serde` and `serde_json` for Relay Snapshots (`telemetry`)
 
-## Status
-
-Accepted
+**Status:** Accepted
 
 ## What
 
-`serde` with `derive` defines the relay snapshot's serialization, and
-`serde_json` reads and writes its JSON payload.
+Depend on `serde` (`derive`) and `serde_json` in `telemetry` to serialize and deserialize relay snapshot JSON payloads in `relay_stats`.
 
 ## Context
 
-The relay sends snapshots as the JSON attribute of an OTLP log record, and
-the observability server decodes the ones it stored for `?at=` reads. The
-`relay_stats` module of `telemetry` holds their shared format.
+`relay` attaches snapshots as JSON attributes on OTLP log records, and `observability` decodes stored snapshots for `?at=` historical queries. `telemetry::relay_stats` defines their shared schema.
 
 ## Alternatives
 
-- Encode and decode fields manually. This duplicates Serde's field mapping
-  and defaults, increasing the risk of breaking older snapshots.
+- **Manual field encoding/decoding:** Duplicates `serde` field mappings and defaults, increasing the risk of breaking compatibility with older snapshots.
 
 ## Decision
 
-Keep the existing Serde derives and JSON conversion unchanged. Both
-dependencies already exist in the workspace; the move adds no external
-package to `Cargo.lock`.
+Keep the `serde` derives and `serde_json` serialization in `telemetry`. Both crates already exist in `Cargo.lock`, adding no new external dependency.

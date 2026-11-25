@@ -1,378 +1,202 @@
-# Design: a SIP gateway that bridges phone calls into MoQT rooms
+# Design: SIP Gateway Bridging Phone Calls into MoQT Rooms
 
 ## Status
-Accepted
-
-## Date
-2026-11-20
+Accepted (2026-11-20)
 
 ## Scope
-The service `services/sip-gateway`, which places and answers telephone calls
-through a SIP trunk and bridges each call's audio to a MoQT broadcast, and
-what it uses of:
+`services/sip-gateway` places and answers phone calls over a SIP trunk and bridges each call's audio to a MoQT broadcast.
 
-- `crates/broadcast`: the reading side (`BroadcastReader`), shared with
-  `services/egress-gateway`.
-- `crates/auth-token`: the claim a call request carries.
-- `crates/app-registry`: the phone numbers of an app.
-- The browser SDK (`sdk/js/js`): its call API.
+Collaborating crates:
+- `crates/broadcast`: `BroadcastReader` (shared with `egress-gateway`).
+- `crates/auth-token`: `calls` claim.
+- `crates/app-registry`: per-app phone numbers (`numbers`, `callWebhook`, `allowedDestinations`).
+- `sdk/js/js`: `PhoneCall` API.
 
-A call connects one phone to one MoQT peer. Out of scope: video, more than one
-peer per call (mixing a room's members into one phone leg), call transfer,
-fax, emergency calling, and number provisioning.
+Each call links one phone to one MoQT peer. Out of scope: video, multi-peer mixing, call transfer, fax, emergency calling, and number provisioning.
 
 ## Context
-A browser on the SDK can publish and play Opus audio through a relay, and the
-services around it (`recorder`, the AI bots, `live-translate`) subscribe to a
-room's broadcasts. A telephone cannot join: it speaks SIP and RTP with G.711.
-Bridging one into a room makes a call recordable, translatable and answerable
-by a bot with no change to those services, because the call is one more
-broadcast in the room.
+Existing room services (`recorder`, AI bots, `live-translate`) operate on MoQT Opus broadcasts. Telephones speak SIP + G.711 RTP. Exposing each phone call as a standard broadcast in the room makes calls recordable, translatable, and bot-answerable without modifying those services.
 
-`rsipstack` provides the SIP side (RFC 3261 transactions and dialogs over
-TLS, digest authentication for 401/407, re-INVITE). It does not carry media
-and does not run session timers (RFC 4028): `Session-Expires` is only a
-header to it.
+`rsipstack` handles RFC 3261 SIP transactions/dialogs over TLS, 401/407 digest auth, and re-INVITE, but carries no media and does not run RFC 4028 session timers (`Session-Expires` is only a header).
+
+**Jump to:** [Topology](#topology) · [Auth & API](#authorization--http-api) · [Call Flows](#outbound--inbound-call-flows) · [SIP Trunk](#sip-trunk--local-test-trunk) · [Call Control](#call-control-call--control-tracks) · [Media & Timers](#media--session-timers) · [Modules & Settings](#modules-settings-deployment--telemetry) · [Alternatives](#alternatives--open-questions)
 
 ## Decision
 
 ### Topology
+
+```mermaid
+flowchart LR
+    Browser["Browser (PhoneCall)"] <-->|"MoQT Opus + call/control"| Relay["MoQT Relay"]
+    Relay <-->|"MoQT Opus"| GW["sip-gateway"]
+    GW <-->|"SIP/TLS (rsipstack) + SDES-SRTP G.711 (rustrtc) + GStreamer"| Trunk["SIP Trunk"]
+    Trunk <--> Phone["Telephone"]
 ```
-Browser ──MoQT (Opus)──► Relay ◄──MoQT (Opus)── sip-gateway ──SIP/TLS + SRTP (G.711)──► SIP trunk ──► phone
-                                                 ├ sip    : rsipstack (INVITE, BYE, CANCEL, digest auth)
-                                                 ├ srtp   : rustrtc, one SDES-SRTP session per call
-                                                 ├ codec  : Opus 48 kHz ⇄ G.711 8 kHz (GStreamer)
-                                                 └ moqt   : one broadcast published, one subscribed, per call
-```
 
-A call is a room member. The gateway publishes the phone leg as the broadcast
-`<room>/phone/<call_id>` with an MSF catalog, one Opus audio track and one
-`call` track (below), and subscribes to the one broadcast the call is bridged
-to (the *peer*): a broadcast the page publishes for this call alone, with its
-microphone audio and a `control` track. A page sees the phone appear and
-leave with PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE, as it sees any
-member.
+- **Phone leg**: Published by the gateway as `<room>/phone/<call_id>` (MSF catalog, Opus `audio` track, `call` track). Pages observe join/leave via `PUBLISH_NAMESPACE` / `PUBLISH_NAMESPACE_DONE`.
+- **Peer leg**: Subscribed by the gateway from `<peer>`, a per-call broadcast published by the page (microphone audio + `control` track).
 
-### Who may call
-A call costs money and an outbound call can be abused for toll fraud, so a
-page never starts one. As with bots (docs/architecture/bot-dispatcher/architecture.md),
-the app's server decides and calls the gateway with a short-lived token signed
-with the app's secret, carrying one new claim:
+### Authorization & HTTP API
+To prevent toll fraud, pages never dial directly. Like bots ([`bot-dispatcher/architecture.md`](../bot-dispatcher/architecture.md)), the app server calls `POST /calls` with a short-lived JWT signed with the app secret carrying the `calls` claim (relative namespace prefix; absent = denied).
 
-| Claim | Meaning |
-| --- | --- |
-| `calls` | Relative namespace path under which the token may place, answer and end calls; absent means not allowed |
+- Gateway verifies via VTS, checks `to` is E.164 and matches `allowedDestinations`, and enforces per-app concurrency and max duration limits.
+- Gateway joins the relay with a self-signed client token (`publish: <room>/phone/<call_id>`, `subscribe: <peer>`, lifetime = max call duration + 5 min).
+- Outbound `INVITE` uses the app's first registered number as caller ID, or `anonymous`.
 
-The gateway verifies the token through the VTS. The destination must be
-E.164 and start with one of the app's `allowedDestinations` in the registry;
-the gateway enforces a per-app concurrent-call limit and a maximum call
-duration. The gateway joins the relay with a client token it signs for the
-app (`Claims::issued`), scoped to `publish: <room>/phone/<call_id>` and
-`subscribe: <peer>`, which outlives the maximum duration by five minutes. An
-INVITE shows the app's first number as its caller, or `anonymous`.
-
-`POST /calls` takes `{to, namespace_prefix, peer}`: `namespace_prefix` is the
-room the `calls` claim must cover, and `peer` a broadcast in it (not under
-`<room>/phone`). It answers `201 {call_id, namespace}` as soon as the call is
-started, and refuses with:
+`POST /calls` body: `{to, namespace_prefix, peer}` (`peer` must lie in the room and not under `<room>/phone`). Returns `201 {call_id, namespace}` immediately, or:
 
 | Status | `error` | When |
 | --- | --- | --- |
-| 400 | `invalid_request`, `invalid_destination`, `invalid_peer` | malformed body, `to` not E.164, `peer` outside the room |
-| 401 | `a bearer token is required`, `invalid_token`, `invalid_token_lifetime` | no bearer token, the VTS refuses the token, or it lives longer than 5 minutes |
-| 403 | `forbidden`, `destination_not_allowed` | no `calls` claim for the room or a relay's token; the app's phone settings do not allow `to` |
-| 429 | `too_many_calls` | the app has its maximum of calls in progress |
-| 500 | `internal_error` | the call could not be started |
-| 503 | `vts_unavailable`, `registry_unavailable` | |
+| `400` | `invalid_request`, `invalid_destination`, `invalid_peer` | Malformed body, non-E.164 `to`, or `peer` outside room |
+| `401` | `a bearer token is required`, `invalid_token`, `invalid_token_lifetime` | Missing token, VTS rejection, or lifetime > 5 min |
+| `403` | `forbidden`, `destination_not_allowed` | Missing `calls` claim for room, relay token, or disallowed `to` |
+| `429` | `too_many_calls` | Per-app concurrent call limit reached |
+| `500` | `internal_error` | Call startup failed |
+| `503` | `vts_unavailable`, `registry_unavailable` | Dependency unreachable |
 
-### Outbound call
+### Outbound & Inbound Call Flows
+
+#### Outbound Call
 ```mermaid
 sequenceDiagram
     participant P as Page
-    participant A as App server
+    participant A as App Server
     participant G as sip-gateway
-    participant T as SIP trunk
+    participant T as SIP Trunk
     participant R as Relay
-    P->>A: call +81... (the app's own API)
+    P->>A: Request call to +81...
     A->>G: POST /calls {to, namespace_prefix, peer} + call token
     G-->>A: 201 {call_id, namespace}
     A-->>P: call_id, namespace
     P->>R: PUBLISH_NAMESPACE <peer> (PhoneCall.join)
     G->>R: PUBLISH_NAMESPACE <room>/phone/<id> (call: dialing)
-    G->>T: INVITE over TLS (SDP offer: PCMU, PCMA, telephone-event, SDES crypto)
+    G->>T: INVITE over TLS (PCMU, PCMA, telephone-event, SDES)
     T-->>G: 407 → INVITE with digest
     T-->>G: 180 Ringing (call: ringing)
     T-->>G: 200 OK (call: answered)
     G->>T: ACK
     G->>R: SUBSCRIBE <peer> audio
-    Note over G,T: SRTP ⇄ Opus objects
-    P->>R: control: hangup (PhoneCall.hangUp)
+    Note over G,T: Bidirectional SRTP G.711 ⇄ Opus
+    P->>R: control: hangup
     G->>T: BYE
     G->>R: call: ended, PUBLISH_NAMESPACE_DONE
 ```
 
-### Inbound call
-An app registers its numbers (DIDs) in the registry with the URL of its call
-webhook. An INVITE from outside the trunk's signalling addresses gets `403`,
-one to a number no app has `404`, and one for an app with its maximum of
-calls in progress `486`. The gateway answers the offer first (`488` when it
-is not SDES-SRTP with a G.711 codec), sends `180 Ringing`, and calls the
-webhook:
+#### Inbound Call
+Inbound `INVITE` checks: non-allowlisted signalling IP → `403`; unregistered DID → `404`; per-app call limit reached → `486`; offer lacking SDES-SRTP or G.711 → `488`. Otherwise the gateway replies `180 Ringing` and calls the app's `callWebhook`:
 
-```
+```http
 POST <callWebhook>
-Authorization: Bearer <JWT, HS256 with the app's secret:
-                       {appId, callId, from, to, iat, exp = iat + 5 min}>
+Authorization: Bearer <HS256 JWT signed with app secret: {appId, callId, from, to, iat, exp = iat + 5 min}>
+
 {"call_id": "...", "from": "+8190...", "to": "+8150..."}
 ```
 
-`from` is the caller as the trunk shows it, or `anonymous`. The claims repeat
-the body, so an app server that checks the token can trust them. The app
-server answers within the ringing timeout (60 s), and may hold the request
-while it rings its users:
+`from` is the trunk caller ID or `anonymous` (claims mirror the body for verification). The app server has up to 60 s (ringing timeout) to respond:
 
-| Answer | The gateway |
+| Webhook response | Gateway action |
 | --- | --- |
-| `200 {"namespace_prefix": "<app>/<room>", "peer": "<a broadcast of the room>"}` | publishes `<room>/phone/<call_id>` with the state `ringing`, sends `200 OK` with its SDP answer, and `answered` on the ACK |
-| `200 {"reject": "busy"}` / `200 {"reject": "decline"}` | `486` / `603` |
-| no answer in time, another status, or another body | `480` |
-| a room outside the app, or a peer outside the room | `500` |
+| `200 {"namespace_prefix": "<app>/<room>", "peer": "<broadcast>"}` | Publishes `<room>/phone/<call_id>` (`ringing`), sends SIP `200 OK` + SDP answer, moves to `answered` on `ACK` |
+| `200 {"reject": "busy"}` / `{"reject": "decline"}` | SIP `486` / `603` |
+| Timeout, other status, or invalid body | SIP `480` |
+| Room outside app or peer outside room | SIP `500` |
 
-A CANCEL from the trunk while the webhook is asked ends the call without a
-broadcast. The app server hands `call_id` and the namespace to the page
-through its own channel, and the page joins with `PhoneCall.join`, as for an
-outbound call. From the `200 OK` on, an inbound call runs as an outbound one.
+A trunk `CANCEL` during webhook wait aborts cleanly with no broadcast. After `200 OK`, inbound calls follow the same lifecycle as outbound calls.
 
-### Trunk
-The target trunk is Twilio Elastic SIP Trunking with Secure Trunking on.
-Until there is a Twilio account, a local Asterisk configured as Twilio
-behaves stands in for it (below). What the gateway does follows from Twilio:
+### SIP Trunk & Local Test Trunk
+Target trunk: **Twilio Elastic SIP Trunking** with Secure Trunking enabled (configurable host, credentials, and signalling IPs so other matching trunks need no code changes; `REGISTER` is omitted until needed):
 
-| Concern | Twilio | Gateway |
-| --- | --- | --- |
-| Authentication | no REGISTER; termination (our outbound calls) by IP ACL, credential list (digest on INVITE), or both | sends no REGISTER; answers a 401/407 on INVITE with the configured credentials |
-| Inbound calls | Twilio sends the INVITE to the trunk's origination URI (`sips:<host>:5061;transport=tls`) | listens on a fixed public address; accepts INVITEs only from the configured signalling addresses |
-| Codecs | PCMU, PCMA | offers both, PCMU first; the answer picks one |
-| Security | Secure Trunking: SIP over TLS, SRTP keyed with SDES; unencrypted calls are refused | TLS (5061) only, SDES-SRTP only |
-| DTMF | RFC 2833 / 4733 | `telephone-event` |
-
-SRTP keys travel in the SDP (`a=crypto`, RFC 4568), so signalling is TLS
-only: over UDP or TCP the keys would be readable on the wire. A peer that
-answers without `a=crypto` is refused with `488`. The trunk's host, its
-credentials and its signalling addresses are settings, so another trunk with
-the same shape needs no code; REGISTER waits for a trunk that needs it.
-
-### Local trunk
-`tests/sip-gateway-e2e/` runs Asterisk (PJSIP, `andrius/asterisk:22-cert`)
-in a container as the trunk:
-
-- a TLS transport on 5061 with a certificate from a CA the run creates
-  (rustls refuses a self-signed certificate as its own trust anchor), and
-  `media_encryption=sdes`;
-- an endpoint for the gateway identified by its address and challenging its
-  INVITEs with digest (Twilio's IP ACL plus credential list), with
-  `allow=ulaw,alaw`, `dtmf_mode=rfc4733` and 90 s session timers;
-- a dialplan that stands in for the phone network: one number answers with
-  `Echo()`, one plays a 1 kHz tone, one is busy, one hangs up two seconds
-  after answering, one hangs up once it hears the DTMF digit 5;
-- an AOR for the gateway's listener on the host, so `channel originate`
-  calls the app's number as a phone that echoes what it hears.
-
-`run.sh` starts it with a VTS, a relay and the gateway, and a Rust client
-acts as the page: it publishes a 700 Hz tone as the peer, checks the call's
-states, hears the tone back from the echo, hangs up with `hangup` on its
-`control` track, checks `486` and a hangup from the phone, and sends the DTMF
-digit the phone waits for. It also serves the app's call
-webhook: it has the trunk call the app's number, answers with the room,
-hears its tone back, declines a second call, and keeps an outbound and an
-inbound call up for 100 s across their 90 s session timers. Then the phone example
-(`examples/browser/examples/phone`) runs in Chromium on `PhoneCall`, with
-`app-server.mjs` as its app server (it signs the page's and the call's
-tokens, places the calls and answers the webhook with the room of the page
-that takes the call): it calls the echo, hears it and hangs up, presses the
-digit the DTMF number waits for, gets `486` from the busy number, and answers
-a call to the app's number.
-
-### The `call` track
-A JSON object per state change, each a group of its own whose stream ends at
-once (`Broadcast::send_group`), so a page shows the call's progress, a late
-subscriber reads the current state by joining the current group (a Joining
-FETCH, `subscribe_current_group`), and `ended` reaches the relay although the
-gateway closes its session right after: `moqt::Session::close` waits for the
-peer to acknowledge the streams that ended:
-
-| Field | Meaning |
+| Concern | Twilio / Gateway behavior |
 | --- | --- |
-| `state` | `dialing`, `ringing`, `answered`, `ended` |
-| `reason` | when `ended`: the trunk's final status (`486`, …, or `488` for an answer without SDES-SRTP or G.711); `hangup` (BYE from the trunk, or the peer ended its broadcast); `timeout` (no answer within 60 s, or no audio from the trunk for 30 s); `limit` (the maximum duration); `gateway` (SIGTERM, or a failure of the gateway's own) |
+| Authentication | No `REGISTER`; outbound challenges answered with digest auth (401/407) |
+| Inbound routing | Fixed public TLS listener (`5061`); accepts `INVITE` only from configured signalling IPs |
+| Codecs | Offers `PCMU` then `PCMA`; answer selects one |
+| Security | SIP over TLS (`5061`) + SDES-SRTP (`a=crypto`, RFC 4568) only; unencrypted answers get `488` |
+| DTMF | RFC 2833 / 4733 `telephone-event` only (never in-band) |
 
-Call control stays an application protocol on ordinary MOQT objects; no call
-semantics are added to MOQT, and the presence of a namespace never means
-"ringing" by itself.
+**Local trunk (`tests/sip-gateway-e2e/`)**: Runs containerized Asterisk PJSIP (`andrius/asterisk:22-cert`) with generated CA TLS on 5061, `media_encryption=sdes`, digest auth, `ulaw`/`alaw`, `rfc4733`, 90 s session timers, and a test dialplan (echo, 1 kHz tone, busy, 2 s hangup, DTMF `5` hangup, inbound originate). `run.sh` verifies both a Rust client and Chromium running `examples/browser/examples/phone` (`app-server.mjs`), including 100 s calls across 90 s session-timer refreshes.
 
-The page's `control` track carries one JSON object per command, each a group
-of its own: `{"event":"hangup"}`, and `{"event":"dtmf","digit":"1"}`, which
-the gateway sends to the phone as an RFC 4733 event. The gateway reads it from
-its current group on, so a `hangup` written before the gateway subscribed
-still ends the call; a digit in that group is stale and skipped. A digit is a
-100 ms tone: five packets in the place of the audio, in the same RTP stream
-and with the payload type the SDP gave `telephone-event/8000`, then the final
-packet (E bit) three times (RFC 4733 §2.5.1.4). With a trunk that accepts no
-`telephone-event` the digits are dropped; DTMF is never sent in-band. The
-page hangs up with `hangup` rather than by ending its broadcast:
-`LocalBroadcast` keeps its namespace announced until the session closes, and
-a page's session carries its other broadcasts too. A page whose session
-closes (the tab closed, or lost) ends its broadcast, and the gateway hangs up
-on the PUBLISH_NAMESPACE_DONE.
+### Call Control (`call` & `control` Tracks)
+Call control uses standard MoQT tracks—no call semantics are added to MoQT, and namespace presence alone does not mean "ringing".
 
-### Browser SDK
-`moq-wasm/media` provides `PhoneCall`, which publishes the peer broadcast, plays
-the phone's audio and reads the `call` track. A page never dials: it joins a
-call its app server placed or accepted.
+#### `call` Track (Gateway → Room)
+One JSON object per state change, each its own closed group (`Broadcast::send_group`). Late joiners read current state via `subscribe_current_group`; `moqt::Session::close` waits for stream ACKs so `ended` reaches the relay.
+
+- `state`: `dialing` | `ringing` | `answered` | `ended`
+- `reason` (when `ended`): SIP final status (`486`, `488`, …), `hangup` (trunk `BYE` or peer broadcast ended), `timeout` (60 s no answer or 30 s trunk RTP silence), `limit` (max duration), `gateway` (`SIGTERM` or internal failure).
+
+#### `control` Track (Page → Gateway)
+One JSON object per group: `{"event":"hangup"}` or `{"event":"dtmf","digit":"1"}`.
+
+- Subscribed from current group so an early `hangup` still ends the call; stale DTMF digits in the initial group are skipped.
+- Each DTMF digit replaces audio with 5 packets (100 ms) using the negotiated `telephone-event/8000` payload type, followed by 3 final `E`-bit packets (RFC 4733 §2.5.1.4); dropped if trunk rejected `telephone-event`.
+- Pages hang up via `control` (keeping their shared session alive); tab close triggers hangup via `PUBLISH_NAMESPACE_DONE`.
+
+#### Browser SDK (`moq-wasm/media` `PhoneCall`)
+Wraps `createBroadcast` (mic), `RemoteBroadcast` (phone audio), `publishTrack`/`writeGroup` (`control`), and `subscribeCurrentGroup` (`call`) ([`wasm/browser-sdk.md`](../wasm/browser-sdk.md)):
 
 ```ts
 const call = await PhoneCall.join(session, {
-  call: ['app', 'room', 'phone', callId], // the gateway's broadcast
-  local: ['app', 'room', 'alice', 'call', callId], // the peer broadcast
+  call: ['app', 'room', 'phone', callId],
+  local: ['app', 'room', 'alice', 'call', callId],
   audio: microphoneTrack,
 })
 call.listen((state, reason) => {}) // dialing | ringing | answered | ended
 await call.sendDtmf('1')
-await call.hangUp() // writes hangup on the control track
+await call.hangUp()
 ```
 
-`PhoneCall` is built from `createBroadcast` (the microphone), `RemoteBroadcast`
-(the phone's audio) and the core API: `publishTrack` and `writeGroup` for the
-`control` track, `subscribeCurrentGroup` for the `call` track
-(docs/architecture/wasm/browser-sdk.md).
+### Media & Session Timers
 
-### Media
-- **Phone to MoQT.** Each RTP packet (20 ms) is decoded from G.711, resampled
-  to 48 kHz and encoded to one Opus frame, published as one LOC object.
-  `broadcast` builds the catalog and the track, as for `ingest-gateway`. The
-  capture timestamp counts 20 ms per Opus frame from the time the first
-  frame is published; RTCP sender reports are not used.
-- **MoQT to phone.** The peer's audio is read through `broadcast`'s
-  `BroadcastReader`, with `VideoChoice::Off`: a meeting participant
-  encodes a video rendition only while it has a subscriber. The audio is
-  decoded, resampled to 8 kHz, encoded to the codec
-  the SDP answer chose, and sent every 20 ms from a playout buffer. While the
-  buffer is empty the gateway sends comfort silence, so the trunk never sees a
-  gap in RTP (some trunks hang up on RTP inactivity).
-- **Transcoding** uses GStreamer (`opusdec`/`opusenc`, `audioresample`,
-  `mulawenc`/`alawenc`), already in the workspace through `transcode` and
-  `live-translate`.
-- **Latency.** The audio is subscribed from the largest object with a short
-  DELIVERY TIMEOUT, as `egress-gateway` does. The playout buffer starts
-  playing at 40 ms and, above 120 ms, drops the oldest audio down to 40 ms.
+#### Media Pipeline
+- **Phone → MoQT**: 20 ms G.711 RTP → GStreamer (`mulawdec`/`alawdec`, `audioresample`, `opusenc`) → 48 kHz Opus LOC objects via `broadcast`. Capture timestamps step 20 ms from first published frame (no RTCP SR).
+- **MoQT → Phone**: `BroadcastReader` with `VideoChoice::Off` (prevents meeting peers from encoding video) → `opusdec` → 8 kHz G.711 → 20 ms playout buffer (starts at 40 ms, drops oldest down to 40 ms above 120 ms; emits comfort silence when empty so trunks do not drop idle RTP). Subscribed from `LargestObject` with short `DELIVERY TIMEOUT`.
 
-### Session timers and teardown
-A call ends on BYE from either side, on the peer's `hangup` or
-PUBLISH_NAMESPACE_DONE (also while it rings: the gateway sends CANCEL),
-without an answer within 60 s, on RTP silence from the trunk for 30 s, at the
-maximum duration, and on SIGTERM (every call gets BYE or CANCEL first, and the process waits for them).
+#### Teardown & RFC 4028 Session Timers (`sip_trunk/session_timer`)
+- **Teardown triggers**: `BYE` from either side, peer `hangup` or `PUBLISH_NAMESPACE_DONE` (sends `CANCEL` if ringing), 60 s no answer, 30 s trunk RTP silence, max duration, or `SIGTERM` (sends `BYE`/`CANCEL` and waits).
+- **Post-end linger**: Broadcast stays up 5 s after `ended` (skipped on `SIGTERM`) so late `PhoneCall.join` calls still read the end reason via joining FETCH.
+- **Outbound timer**: `INVITE` sends `Supported: timer`, `Session-Expires: 1800`, `Min-SE: 90` (trunk chooses refresher; defaults to gateway UAC if omitted; no timer if 2xx omits header; `422` not retried).
+- **Inbound timer**: Rejects `< 90 s` with `422` (`Min-SE: 90`); otherwise echoes interval and refresher (defaults to trunk) with `Require: timer`.
+- **Refresh loop**: As refresher, sends unchanged-SDP re-INVITE at `interval / 2` (retries `491` up to 3×; ends with `timeout` on non-2xx; `refresher` refers to the transaction's UAC/UAS per RFC 4028 §4). Otherwise replies `200` (echoing gateway SDP; ignores media changes/hold) and ends the call if unrefreshed `min(32 s, interval / 3)` before expiry. Each in-dialog request runs in its own task.
 
-After `ended` the broadcast stays 5 s (not on SIGTERM), so a page whose
-`PhoneCall.join` finishes after a call that ended at once (a busy phone, a
-refused INVITE) still reads why it ended through its joining FETCH.
+### Modules, Settings, Deployment & Telemetry
 
-Session timers (RFC 4028), which `rsipstack` leaves to the application, run
-in the gateway (`sip_trunk/session_timer`):
-
-- **Outbound.** The INVITE carries `Supported: timer`, `Session-Expires: 1800`
-  and `Min-SE: 90`, and leaves the refresher to the trunk. The 2xx's
-  `Session-Expires` settles the interval and the refresher (the gateway, the
-  UAC, when it names none); a 2xx without one runs no timer. A `422` is not
-  retried: the gateway already asks for 1800 s.
-- **Inbound.** An INVITE asking for less than 90 s gets `422` with `Min-SE: 90`.
-  The gateway takes the interval it asks for, and the refresher it names or
-  else the trunk, and answers with `Session-Expires` and `Require: timer`.
-- **Refreshing.** As the refresher, the gateway sends a re-INVITE with its SDP
-  unchanged at half the interval (again after a 491, up to three times), and
-  ends the call (`timeout`) when it gets no 2xx. The `refresher` parameter
-  names the `uac` or `uas` of the request it travels in (RFC 4028 §4), not of
-  the INVITE that set up the dialog. Otherwise it answers the trunk's re-INVITE or UPDATE with `200` (and
-  its SDP again when the request carries an offer), and ends the call when no
-  refresh comes `min(32 s, interval / 3)` before the session expires. Each
-  in-dialog request is handled in a task of its own, since a re-INVITE waits
-  for the call's answer and its ACK.
-
-A re-INVITE that changes the media (hold, a new address) is answered with the
-gateway's SDP unchanged; the gateway does not follow it.
-
-### Modules
-```
-main.rs          settings from the environment, SIGTERM
-server.rs        POST /calls, GET /healthz
-call_auth.rs     the call token through the VTS, the app's phone settings
-calls.rs         calls in progress, the per-app limit, the relay token,
-                 answering the trunk's INVITEs
-webhook.rs       the app's call webhook: its token, its decision
-call.rs          one call: INVITE, answer, bridge, teardown
-  state_track    the `call` track
-  phone_audio    trunk audio → Opus → the broadcast's `audio` track
-  peer_audio     the peer's broadcast → G.711 → one RTP packet per 20 ms
-  peer_control   the peer's `control` track
-sip_trunk.rs     rsipstack endpoint, TLS listener, INVITE, in-dialog requests,
-                 INVITEs from the trunk's signalling addresses
-  address_range  IP addresses and CIDR blocks
-  session_timer  RFC 4028: what to ask for, accept and send, and when to act
-media/
-  rtp_leg        rustrtc PeerConnection: SDP offer/answer, SRTP, RTP
-  transcoder     GStreamer G.711 ⇄ Opus
-  playout        the 40–120 ms buffer in front of the 20 ms RTP clock
-  g711           PCMU/PCMA payload types, caps, silence
-  dtmf           RFC 4733 telephone-event packets of one digit
-```
-
-### Settings
-| Variable | Meaning |
+#### Modules
+| Path | Responsibility |
 | --- | --- |
-| `PORT` | HTTP port, 8099 by default |
-| `SIP_GATEWAY_SIP_ADDRESS` / `SIP_GATEWAY_SIP_PUBLIC_ADDRESS` | the TLS listener (`0.0.0.0:5061` by default), and the address the trunk reaches it at, which is the Via and Contact of every request |
-| `SIP_GATEWAY_TLS_CERT_FILE` / `SIP_GATEWAY_TLS_KEY_FILE` | the listener's PEM certificate chain and key |
-| `SIP_GATEWAY_TRUNK_HOST` | `host[:port]` of the trunk's TLS signalling, also the host of every Request-URI |
-| `SIP_GATEWAY_TRUNK_CA_FILE` | PEM roots the trunk's certificate is verified against |
-| `SIP_GATEWAY_TRUNK_USERNAME` / `SIP_GATEWAY_TRUNK_PASSWORD` | digest credentials for 401/407 |
-| `SIP_GATEWAY_TRUNK_SIGNALLING_ADDRESSES` | comma-separated IP addresses and CIDR blocks the trunk's INVITEs may come from; empty refuses every inbound call |
-| `SIP_GATEWAY_MEDIA_ADDRESS` | the address the SDP offers for media, when it is not the bound one |
-| `SIP_GATEWAY_RELAY_URL` / `SIP_GATEWAY_RELAY_INSECURE_SKIP_TLS_VERIFY` | the relay calls join |
-| `SIP_GATEWAY_VTS_URL`, `SIP_GATEWAY_REGISTRY_FILE` or `SIP_GATEWAY_REGISTRY_BUCKET`/`_OBJECT` | call token verification and the apps' phone settings |
-| `SIP_GATEWAY_INSECURE_SKIP_AUTH` | `true` accepts every request and destination and joins with no token (a relay without authorization only); with no registry, every inbound call gets `404` |
-| `SIP_GATEWAY_MAX_CALLS_PER_APP` / `SIP_GATEWAY_MAX_CALL_SECONDS` | 2 and 3600 by default |
+| `main.rs`, `server.rs` | Env config, `SIGTERM`, `POST /calls`, `GET /healthz` |
+| `call_auth.rs`, `calls.rs`, `webhook.rs` | VTS auth + app phone settings, active call limits, relay tokens, inbound `INVITE` + webhook |
+| `call.rs` (`state_track`, `phone_audio`, `peer_audio`, `peer_control`) | Single-call lifecycle, tracks, and bidirectional audio bridge |
+| `sip_trunk.rs` (`address_range`, `session_timer`) | `rsipstack` TLS endpoint, IP/CIDR allow-list, RFC 4028 timers |
+| `media/` (`rtp_leg`, `transcoder`, `playout`, `g711`, `dtmf`) | `rustrtc` SRTP/RTP leg, GStreamer transcoding, 40–120 ms playout buffer, G.711 helpers, RFC 4733 DTMF |
 
-### Deployment
-SIP and SRTP need inbound traffic on a stable public address that the trunk
-allow-lists: a VM or GKE node with a static IP, signalling on 5061 (TLS) and
-a UDP port range for SRTP. Cloud Run cannot receive them. The gateway should run in
-the region of the relay it joins.
+#### Settings
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port (default `8099`) |
+| `SIP_GATEWAY_SIP_ADDRESS` / `SIP_GATEWAY_SIP_PUBLIC_ADDRESS` | TLS bind (`0.0.0.0:5061`) and public Via/Contact address |
+| `SIP_GATEWAY_TLS_CERT_FILE` / `SIP_GATEWAY_TLS_KEY_FILE` | PEM cert chain and private key |
+| `SIP_GATEWAY_TRUNK_HOST` / `SIP_GATEWAY_TRUNK_CA_FILE` | Trunk TLS `host[:port]` (Request-URI) and trusted CA PEM |
+| `SIP_GATEWAY_TRUNK_USERNAME` / `SIP_GATEWAY_TRUNK_PASSWORD` | Digest credentials (401/407) |
+| `SIP_GATEWAY_TRUNK_SIGNALLING_ADDRESSES` | Comma-separated IPs/CIDRs allowed to send inbound `INVITE` (empty refuses all) |
+| `SIP_GATEWAY_MEDIA_ADDRESS` | Public media IP advertised in SDP (if different from bound IP) |
+| `SIP_GATEWAY_RELAY_URL` / `SIP_GATEWAY_RELAY_INSECURE_SKIP_TLS_VERIFY` | Target MoQT relay |
+| `SIP_GATEWAY_VTS_URL`, `SIP_GATEWAY_REGISTRY_FILE` or `SIP_GATEWAY_REGISTRY_BUCKET` / `SIP_GATEWAY_REGISTRY_OBJECT` | Token verification and app phone settings |
+| `SIP_GATEWAY_INSECURE_SKIP_AUTH` | `true` skips auth and joins without token (unauthenticated relay only; inbound returns `404` without registry) |
+| `SIP_GATEWAY_MAX_CALLS_PER_APP` / `SIP_GATEWAY_MAX_CALL_SECONDS` | Defaults: `2` and `3600` |
 
-### Telemetry
-Log fields from the vocabulary in `AGENTS.md`: `call_id` (the
-gateway's id, also the namespace element and, for an outbound call, the SIP
-Call-ID), `sip_call_id` (the SIP Call-ID, to join with the trunk's logs),
-`sip_status`, `direction` (`inbound` / `outbound`), `call_end_reason` (the
-`reason` of the `ended` state). Each SIP request and final response the
-gateway sends or receives is one INFO event; `rsipstack`'s own logs stay at
-WARN, since at INFO they carry every message whole, SRTP keys included.
+#### Deployment & Telemetry
+- **Deployment**: Requires a static public IP for inbound TLS (5061) and UDP SRTP (VM or GKE node in the relay's region; Cloud Run cannot accept SIP/SRTP).
+- **Telemetry**: Uses `AGENTS.md` fields (`call_id`, `sip_call_id`, `sip_status`, `direction`, `call_end_reason`). Logs one `INFO` event per SIP request/final response; keeps `rsipstack` at `WARN` because its `INFO` logs dump full messages including SRTP keys.
 
-## Alternatives
-- **`mediapack::rtp` instead of `rustrtc`** (by the author of `rsipstack`):
-  already in the workspace, but has no SRTP, jitter buffer or RFC 4733, which
-  `rustrtc` brings with SDES keying.
-- **DTLS-SRTP instead of SDES**: keys never appear in signalling, but SIP
-  trunks rarely offer it.
-- **Publishing G.711 into MoQT unchanged** (`mediapack` and `broadcast`
-  already know `audio/pcma`): saves one transcode on the phone-to-MoQT side,
-  but leaves PCMU unsupported and every subscriber (players, recorder,
-  translation) to handle a second audio codec.
-- **Ringing through MoQT** instead of the webhook: the gateway publishes the
-  ringing call and a page answers in its own broadcast. Needs no app server
-  for inbound calls, but leaves who may answer to whoever holds a room token.
-- **pipecat's `SIPTransport` (baresip)**: unreleased, Python, and one call per
-  transport; it suits a bot, not a gateway.
+## Alternatives & Open Questions
 
-## Open questions
-- Against Twilio once there is an account: the SRTP crypto suites it accepts,
-  whether it asks for session timers, and its signalling and media address
-  ranges for the allow-list.
+### Alternatives
+- **`mediapack::rtp` instead of `rustrtc`**: Lacks SRTP, jitter buffer, and RFC 4733 DTMF.
+- **DTLS-SRTP instead of SDES**: Rarely supported by SIP trunks.
+- **Publish raw G.711 into MoQT**: Leaves PCMU unsupported and forces every subscriber (players, recorder, translation) to support a second codec.
+- **Ring via MoQT instead of webhook**: Removes the app server requirement, but lets anyone with a room token answer calls.
+- **pipecat `SIPTransport` (baresip)**: Unreleased, Python, single-call per transport.
+
+### Open Questions
+- Verify against a live Twilio account: accepted SRTP crypto suites, session-timer behavior, and production signalling/media IP ranges.

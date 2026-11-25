@@ -1,16 +1,31 @@
-# google-cloud
+# `google-cloud` Architecture
 
-The Google Cloud calls the services make themselves, each a single HTTP
-request over `reqwest`, as the service account the workload runs as. No key
-file is ever read: the identity is the workload's own.
+Minimal HTTP helpers (over `reqwest`) for Google Cloud APIs. Every call authenticates as the workload's own service account—no key file is ever read.
 
-| Module | Responsibility |
+## Modules
+
+| Module | Key types | Responsibility |
+| --- | --- | --- |
+| `metadata_token.rs` | `MetadataToken`, `identity_token` | Fetches service-account OAuth access tokens (`Authorization: Bearer`) and audience-scoped Google ID tokens from the metadata server. |
+| `cloud_storage.rs` | `CloudStorageBucket`, `Endpoint` | Downloads objects with generation and uploads with `ifGenerationMatch` via the Cloud Storage JSON API. |
+| `jwt.rs` | `IapVerifier`, `IdTokenVerifier` | Verifies ES256 IAP assertions and RS256 Google ID tokens using a shared JWKS cache. |
+| `testing.rs` | `FakeCloudStorage`, `SilentServer`, `TestIapKey` | In-memory test doubles on `http-server`'s `HttpServer` (behind the `testing` feature). |
+
+## Key Details
+
+- **Metadata tokens (`metadata_token.rs`)**:
+  - `MetadataToken` reads `instance/service-accounts/default/token` on Cloud Run / Compute Engine and caches it until 1 minute before expiry. Outside Google Cloud, the call fails, so services that also run locally pair it with an environment token fallback.
+  - `identity_token` reads `instance/service-accounts/default/identity` for a target audience (used, e.g., when a recorder job authenticates to `bot-dispatcher`).
+- **Storage endpoints (`cloud_storage.rs`)**: `Endpoint` selects Cloud Storage (attaches `MetadataToken`) or a local emulator via `STORAGE_EMULATOR_HOST` (no token).
+- **JWKS cache (`jwt.rs`)**: 5-second request timeout and 60-second refresh throttle, shared by both verifiers.
+
+## Callers
+
+| Caller | Uses |
 | --- | --- |
-| `metadata_token.rs` | `MetadataToken`: the OAuth access token of the service account a Google Cloud workload (Cloud Run, Compute Engine) runs as, read from the metadata server's `instance/service-accounts/default/token` and cached until a minute before it expires. A caller sends it as `Authorization: Bearer` to a Google API. Outside Google Cloud there is no metadata server and the call fails, so a service that also runs locally pairs it with another source, such as a token passed in the environment. `identity_token` reads the service account's Google ID token for an audience from `instance/service-accounts/default/identity`, which a caller sends to a service that verifies who it is (a recorder job to `bot-dispatcher`). |
-| `cloud_storage.rs` | `CloudStorageBucket`: the Cloud Storage JSON API requests that need an object's generation: download with its generation, upload with `ifGenerationMatch`. `Endpoint` picks Cloud Storage, whose requests carry the `MetadataToken`, or an emulator (`STORAGE_EMULATOR_HOST`), whose requests carry no token. |
-| `jwt.rs` | `IapVerifier` (ES256 IAP assertions) and `IdTokenVerifier` (RS256 Google ID tokens), sharing a 5-second timeout, 60-second refresh-throttled JWKS cache. |
-| `testing.rs` | `FakeCloudStorage`, which serves those requests from memory on `http-server`'s `HttpServer`, `SilentServer`, which never answers, and `TestIapKey` for signing test IAP assertions; behind the `testing` feature. |
-
-Used by `app-registry` (the registry object), `console` (IAP assertion verification), `recorder` (its ID token for
-`bot-dispatcher`), `job-launcher` and `bot-dispatcher` (starting Cloud Run Jobs and verifying bot ID tokens) and
-`live-translate` (the Agent Platform).
+| `app-registry` | `CloudStorageBucket` for the app registry object |
+| `console` | `IapVerifier` for IAP assertion verification |
+| `recorder` | `identity_token` for calling `bot-dispatcher` |
+| `job-launcher` | `MetadataToken` to start Cloud Run Jobs |
+| `bot-dispatcher` | `MetadataToken` (Cloud Run Jobs) and `IdTokenVerifier` (bot ID tokens) |
+| `live-translate` | `MetadataToken` for Agent Platform calls |

@@ -1,36 +1,20 @@
-# base64 for the SDP parameter sets of the RTP payload format
+# `base64` for RTP SDP Parameter Sets (`mediapack`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-13
+**Status:** Accepted (2026-10-13)
 
 ## What
 
-Add `base64` as a dependency of the `mediapack` crate. `rtp::sdp` uses it
-to read and write the `sprop-parameter-sets` attribute, the Base64-encoded
-SPS and PPS an H.264 sender announces out of band (RFC 6184 §8.1).
+Add `base64` as a dependency of `mediapack`. `rtp::sdp` uses it to decode and encode `sprop-parameter-sets`, the Base64-encoded H.264 SPS/PPS announced out of band in SDP (RFC 6184 §8.1).
 
 ## Context
 
-`mediapack::rtp` carries H.264 and AAC over RTP. Every SDP an encoder writes
-for a plain RTP session lists the parameter sets this way, and the LOC
-publishers in this workspace expect them in band before each IDR, so the
-parser has to decode the attribute to seed the parameter set tracker. The
-muxer writes the same attribute so an SDP generated here plays in FFmpeg and
-GStreamer.
+`mediapack::rtp` carries H.264 and AAC over RTP. Encoders advertise parameter sets via `sprop-parameter-sets`, while this workspace's LOC publishers require SPS/PPS in band before every IDR. The SDP parser must decode the attribute to seed `ParameterSetTracker`, and the muxer must encode it so generated SDPs play in FFmpeg and GStreamer.
 
 ## Alternatives
 
-- Decode Base64 by hand. Some 40 lines, but a second implementation of a
-  routine other crates in the workspace already take from `base64`.
-- Pass the attribute through as text and let the caller decode it. Moves the
-  one place that needs the bytes out of the crate that defines the format.
+- **Hand-written Base64 decoder/encoder (~40 lines):** Duplicates functionality already provided by `base64` elsewhere in the workspace.
+- **Pass the raw text attribute to callers:** Pushes format-specific decoding out of the crate that owns RTP/SDP parsing.
 
 ## Decision
 
-Depend on `base64`. `broadcast`, `auth-token`, `ingest-gateway pull` and
-`google-cloud` already use the same version, so no new crate enters the workspace lock.
+Depend on `base64`. `broadcast`, `auth-token`, `ingest-gateway pull`, and `google-cloud` already use the same version, adding no new crate to the workspace lock.

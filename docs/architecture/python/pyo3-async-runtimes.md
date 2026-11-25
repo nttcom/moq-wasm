@@ -1,40 +1,20 @@
-# pyo3-async-runtimes for asyncio awaitables
+# `pyo3-async-runtimes` for `asyncio` Awaitables (`python`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-20
+**Status:** Accepted (2026-10-20)
 
 ## What
 
-`sdk/python` depends on `pyo3-async-runtimes` with `tokio-runtime`. Every
-async method of the module returns an asyncio awaitable made by
-`pyo3_async_runtimes::tokio::future_into_py`, which runs the Rust future on a
-tokio runtime the crate shares across calls.
+Add `pyo3-async-runtimes` (`tokio-runtime`) to `sdk/python`. Every async method returns an `asyncio` awaitable created via `pyo3_async_runtimes::tokio::future_into_py`, executing the Rust future on a shared Tokio runtime.
 
 ## Context
 
-`moqt` is async on tokio: a session's receive loops are tokio tasks and quinn
-binds its sockets through the ambient runtime. The bots are asyncio programs,
-so each call has to start a Rust future and hand Python something it can
-`await` without blocking the event loop.
+`moqt` runs on Tokio (receive loops are Tokio tasks and `quinn` binds sockets on the ambient runtime), while Python bots run on `asyncio`. Async calls must drive Rust futures and return awaitables without blocking the Python event loop.
 
 ## Alternatives
 
-- **Block the calling thread** (`Runtime::block_on` under
-  `Python::allow_threads`). Each call would stall the bot's event loop, which
-  also runs its audio pipeline.
-- **Write the bridge by hand**: spawn the future on a private runtime and
-  resolve an `asyncio.Future` through `loop.call_soon_threadsafe`. That is what
-  `pyo3-async-runtimes` implements, with cancellation and the event-loop
-  lookup handled.
+- **Block the calling thread (`Runtime::block_on` inside `Python::allow_threads`):** Stalls the bot's event loop, including its audio pipeline.
+- **Custom bridge via private runtime + `loop.call_soon_threadsafe`:** Reimplements what `pyo3-async-runtimes` already handles, including cancellation and event-loop lookup.
 
 ## Decision
 
-Use `pyo3-async-runtimes`, maintained alongside PyO3 and versioned with it.
-Its awaitables are `asyncio.Future`s rather than coroutines, so a caller wraps
-one with `asyncio.ensure_future`, not `asyncio.create_task`, to run it in the
-background.
+Use `pyo3-async-runtimes`, which is maintained and versioned alongside PyO3. Because it returns `asyncio.Future` objects rather than coroutines, callers scheduling them in the background must use `asyncio.ensure_future`, not `asyncio.create_task`.

@@ -1,53 +1,28 @@
-# aws-lc-rs as the TLS crypto provider
+# `aws-lc-rs` as the TLS Crypto Provider (`moqt`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-10
+**Status:** Accepted (2026-11-10)
 
 ## What
 
-Run every rustls connection on the `aws-lc-rs` crypto provider: `quinn`,
-`web-transport-quinn` and `tokio-rustls` take their `aws-lc-rs` features,
-`install_default_crypto_provider` installs `rustls::crypto::aws_lc_rs`, and
-`rcgen` signs the self-signed certificate with it. `moqt` also adds `rustls`
-as a direct dependency for one feature, `prefer-post-quantum`; `telemetry-otlp`
-does the same for the services that do not link `moqt`.
+Run every `rustls` connection on the `aws-lc-rs` crypto provider:
+
+- Enable `aws-lc-rs` on `quinn`, `web-transport-quinn`, and `tokio-rustls`.
+- `install_default_crypto_provider` installs `rustls::crypto::aws_lc_rs`, and `rcgen` signs self-signed certificates with it.
+- `moqt` adds `rustls` as a direct dependency solely to enable `prefer-post-quantum`; `telemetry-otlp` does the same for services that do not link `moqt`.
 
 ## Context
 
-A TLS 1.3 handshake recorded today can be decrypted once a large enough
-quantum computer breaks its X25519 key exchange, and meetings carried over
-MoQT may need to stay confidential for longer than that. The hybrid
-X25519MLKEM768 key exchange closes that gap; browsers and major servers
-already negotiate it. `ring` has no ML-KEM, so with `ring` neither MoQT nor
-HTTPS can use it.
+Recorded TLS 1.3 handshakes can later be decrypted once quantum computers break X25519 key exchange. Hybrid `X25519MLKEM768` closes that gap and is already negotiated by browsers and major servers, but `ring` does not implement ML-KEM.
 
-The workspace also compiled two crypto libraries: `ring` for QUIC, WebSocket
-and the token code, and `aws-lc-rs` through `reqwest`, `object_store` and
-`opentelemetry-otlp`.
+Previously, the workspace compiled two crypto libraries: `ring` (QUIC, WebSocket, tokens) and `aws-lc-rs` (via `reqwest`, `object_store`, `opentelemetry-otlp`).
 
-A rustls server picks the key share in the client's order, so a client that
-offers X25519MLKEM768 first gets it. rustls' aws-lc-rs provider lists
-X25519MLKEM768 first only with the `prefer-post-quantum` feature, which is in
-rustls' default features but off here because every crate turns rustls'
-defaults off.
+Because a `rustls` server selects the key share in client preference order, the client must list `X25519MLKEM768` first. `rustls`'s `aws-lc-rs` provider only does so when `prefer-post-quantum` is enabled—a default feature that is otherwise off because workspace crates disable `rustls` defaults.
 
 ## Alternatives
 
-- Keep `ring` and drop `aws-lc-rs` from the HTTP clients. Removes the
-  `aws-lc-sys` build script (about 70 s of a 3m16s clean build, mostly alone
-  on the critical path), but gives up the post-quantum key exchange
-  everywhere, and `reqwest` then panics on any client built before a provider
-  is installed.
-- Keep both. No post-quantum MoQT, two crypto libraries.
+- **Standardize on `ring` and remove `aws-lc-rs` from HTTP clients:** Saves ~70 s of a 3m16s clean build (`aws-lc-sys` on the critical path), but loses post-quantum key exchange everywhere and makes `reqwest` panic if a client is built before installing a provider.
+- **Keep both libraries:** Still no post-quantum MoQT, plus two crypto libraries.
 
 ## Decision
 
-Use `aws-lc-rs` everywhere and enable `prefer-post-quantum`. MoQT over QUIC
-and WebSocket, and HTTPS from `reqwest`, offer and accept X25519MLKEM768; a
-peer without it falls back to X25519. The `aws-lc-sys` build time stays.
-The test in `crypto_provider.rs` fails if the feature is dropped.
+Use `aws-lc-rs` workspace-wide with `prefer-post-quantum` enabled. MoQT (QUIC and WebSocket) and `reqwest` HTTPS connections offer and accept `X25519MLKEM768`, falling back to `X25519` for peers without it. We accept the `aws-lc-sys` build cost. A test in `crypto_provider.rs` fails if `prefer-post-quantum` is dropped.

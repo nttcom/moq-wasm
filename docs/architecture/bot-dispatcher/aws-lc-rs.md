@@ -1,30 +1,16 @@
-# aws-lc-rs for ID token signatures, bot ids and bot keys
+# `aws-lc-rs` for Bot IDs and Local Bot Keys
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-11-18
+Accepted (2026-11-18)
 
 ## What
-
-Add `aws-lc-rs` as a direct dependency of `bot-dispatcher`. `bots.rs` draws
-bot ids and local bot keys from `SystemRandom`, hashes a key with SHA-256 and
-compares it in constant time. The RS256 signature of a Google ID token is
-verified by `google_cloud::IdTokenVerifier`.
+Direct dependency of `bot-dispatcher`. `bots.rs` generates bot IDs and local bot keys via `SystemRandom`, hashes keys with SHA-256, and compares hashes in constant time. (Google ID token RS256 verification lives in `google_cloud::IdTokenVerifier`.)
 
 ## Context
-
-A bot authenticates to `bot-dispatcher` with the ID token of its job's service account
-or, launched locally, with a random key, which needs random bytes and a hash.
+Locally launched bots authenticate with a random key instead of a Google service-account ID token, requiring CSPRNG bytes, SHA-256, and constant-time comparison.
 
 ## Alternatives
-
-- `sha2` and `rand`. Two new crates for what one already in the tree does.
+- **`sha2` + `rand`**: Adds two crates for primitives already present in the tree.
 
 ## Decision
-
-Use `aws-lc-rs`: `auth-token` already compiles it for HS256, and it covers
-randomness, SHA-256 and constant-time comparison.
+Use `aws-lc-rs`: already compiled via `auth-token` and provides randomness, SHA-256, and constant-time comparison in one crate.

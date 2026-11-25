@@ -1,44 +1,25 @@
-# reqwest for the Cloud Storage JSON API
+# `reqwest` for the Cloud Storage JSON API (`google-cloud`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-20
+**Status:** Accepted (2026-10-20)
 
 ## What
 
-Add `reqwest` (with the `rustls` and `json` features, no default features) as a
-direct dependency of the `google-cloud` crate. `src/cloud_storage.rs` uses it to
-download an object with its generation and to upload or delete it with
-`ifGenerationMatch`; `src/metadata_token.rs` uses it to take an access token
-from the metadata server, and `src/jwt.rs` to fetch Google's JWKS.
+Add `reqwest` (`default-features = false`, features: `rustls`, `json`) as a direct dependency of `google-cloud`:
+
+- `src/cloud_storage.rs`: downloads objects with their generation, and uploads or deletes objects conditionally with `ifGenerationMatch`.
+- `src/metadata_token.rs`: fetches access tokens from the GCE metadata server.
+- `src/jwt.rs`: fetches Google's JWKS.
 
 ## Context
 
-In production the app registry is one JSON object in Cloud Storage that the
-VTS reads and the console writes, and the recorder releases a room's lock only
-if no other request took it since. These need four Cloud Storage calls and one
-metadata server call, each a single HTTP request. The decision was first made
-for `app-registry`; the calls moved to `google-cloud` when the recorder needed
-the same ones.
+In production, the app registry is a single Cloud Storage JSON object that VTS reads and `console` writes, and `recorder` releases a room lock only if no other request acquired it in the meantime. These workflows require four Cloud Storage requests and one metadata-server request. The decision originated in `app-registry` and moved to `google-cloud` when `recorder` needed the same operations.
 
 ## Alternatives
 
-- `google-cloud-storage` (official Rust client). Covers the whole Storage API
-  and its own authentication, but brings a large new dependency tree for three
-  requests.
-- `object_store`. One API over Cloud Storage, S3 and local files, with
-  conditional puts, which the recorder uses for its files. It has no
-  conditional delete, and the registry's two stores are three requests to
-  Cloud Storage and a few `tokio::fs` calls.
-- `hyper` as an HTTP client. Already in the workspace for servers, but TLS,
-  connection pooling and URL encoding would be hand-written.
+- **`google-cloud-storage` (official Rust client):** Covers the full Storage API and its own auth, but adds a large dependency tree for a handful of HTTP calls.
+- **`object_store`:** Unified API over Cloud Storage, S3, and local files with conditional puts (used by `recorder` for media files), but lacks conditional delete.
+- **`hyper` as an HTTP client:** Already in the workspace for servers, but TLS, connection pooling, and URL encoding would be hand-written.
 
 ## Decision
 
-Use `reqwest` over the JSON API. It is already in the workspace lock
-(`observability`, `ingest-gateway pull`), so no new crate enters the
-dependency tree.
+Use `reqwest` directly against the JSON API. It is already in the workspace lock (`observability`, `ingest-gateway pull`), adding no new crate to the dependency tree.

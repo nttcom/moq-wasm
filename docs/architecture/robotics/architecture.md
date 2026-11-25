@@ -1,351 +1,139 @@
-# Design: robot teleoperation, cloud policies and data collection over MoQT
+# Design: Robot Teleoperation, Cloud Policies, and Data Collection over MoQT
 
 ## Status
-Accepted. "Not implemented yet" lists what is left.
-
-## Date
-2026-11-20
+Accepted (2026-11-20). See [Not Implemented Yet](#not-implemented-yet) for remaining work.
 
 ## Scope
-The library crate `crates/robotics` defines how a robot, its
-operators and a policy exchange observations and actions over MoQT. It also touches:
+`crates/robotics` defines the MoQT contract between a robot, human operators, and cloud policies.
 
-- `crates/moqt`, where `TrackWriter` takes a Publisher Priority per track.
-- The SDKs, which wrap `robotics`: the Rust SDK (`moq_wasm::robotics`, see
-  docs/architecture/moq-wasm/sdk.md) and the Python SDK for the robot and the
-  policy, the browser SDK for the operator.
-- `services/recorder`, which archives the robot room's event timeline tracks.
-- `services/bot-dispatcher`, which is to gain the bot type `policy`.
-- Two new tools: an exporter writing LeRobot datasets, and later MCAP.
+Touches:
+- `crates/moqt`: per-track Publisher Priority on `TrackWriter`.
+- SDKs: Rust (`moq_wasm::robotics`, [`moq-wasm/sdk.md`](../moq-wasm/sdk.md)), Python (robot/policy), Browser (operator).
+- `services/recorder`: archives robot room event timelines.
+- `services/bot-dispatcher`: upcoming `policy` bot type.
+- Exporters (upcoming): LeRobot datasets, then MCAP.
 
-Teleoperation, cloud inference and data collection are one design: an
-operator driving the robot produces a demonstration, a policy driving it
-produces a rollout, and an operator taking over from a policy produces an
-intervention. All three are the same tracks with a different driver.
-
-Out of scope: the policy model itself, the robot's motion control, physical
-safety beyond holding still when actions stop, more than one robot per room,
-point clouds and other observations that are neither video nor small
-records, and a ROS 2 bridge (its own design).
+Teleoperation (demonstration), policy execution (rollout), and human takeover (intervention) all use the **same tracks**, differing only in the active driver. Out of scope: policy model internals, low-level motion control, physical safety beyond hold-on-stop, multi-robot rooms, point clouds, and ROS 2 bridge.
 
 ## Context
-LiveKit Portal (a robotics layer over LiveKit rooms) moves camera streams,
-robot state and control actions between a robot and its operators, and
-aligns camera frames and state by timestamp so each control tick gets one
-observation. This repository already has the pieces underneath:
-
-- Rooms of broadcasts with MSF catalogs, LOC video with wall-clock LOC
-  Timestamps, and MSF event timeline tracks (`crates/broadcast`, the SDKs).
-- Subscriber Priority and DELIVERY TIMEOUT per subscription, datagrams, and
-  joining FETCH for a late subscriber.
-- Bots started per room (`bot-dispatcher`), a recorder that archives a
-  room's catalogs, LOC media and event timelines on one clock
-  (`recorder`, `format: "moq"`), and replays an archive as MSF VOD.
-
-What is missing is a robot-shaped contract on top: which tracks a robot
-publishes, what an action record says, who may drive, what the robot does
-when actions stop, and how a recording becomes a training dataset.
-
-Robot-side code is often Rust, policy and dataset code is Python, and the
-operator runs in a browser. The logic every side must agree on therefore
-lives once, in Rust, and the SDKs wrap it.
+The repo already provides MSF catalogs, wall-clock LOC video, MSF event timelines, per-subscription priority/`DELIVERY TIMEOUT`, joining FETCH, per-room bots (`bot-dispatcher`), and `format: "moq"` archive/VOD replay (`recorder`). `crates/robotics` adds the shared Rust contract (wrapped by SDKs) for tracks, action freshness, arbitration, dead-man safety, and dataset export.
 
 ## Decision
 
-### Topology
+### Topology & Auth
+
+```mermaid
+flowchart LR
+    Robot["Robot (<room>/robot)"] -->|"cameras (LOC), state, control, episode"| Relay["MoQT Relay"]
+    Relay --> Operator["Operator Page (<room>/operators/<id>)"]
+    Relay --> Policy["Policy Bot (<room>/bots/policy)"]
+    Relay --> Recorder["Recorder (<room>/bots/recorder)"]
+    Operator -->|"action"| Relay
+    Policy -->|"action"| Relay
+    Relay -->|"action tracks"| Robot
 ```
-            ┌──────── <room>/robot ────────┐
- robot ───► │ cameras (LOC)  state  control │ ───► relay ───► operator page
-            │ episode                       │          ├────► policy bot   (<room>/bots/policy)
-            └───────────────────────────────┘          └────► recorder     (<room>/bots/recorder)
- robot ◄─── action of <room>/operators/<id> and <room>/bots/policy
-```
 
-A room holds one robot. The robot publishes the broadcast `<room>/robot`;
-each operator publishes `<room>/operators/<operator_id>`; the policy bot
-publishes `<room>/bots/policy`, as bots do (docs/architecture/bot-dispatcher/architecture.md).
-The robot subscribes to the namespace `<room>` and to the `action` track of
-every broadcast that may drive it.
+- One robot per room (`<room>/robot`). Operators publish `<room>/operators/<operator_id>`; policy publishes `<room>/bots/policy` ([`bot-dispatcher/architecture.md`](../bot-dispatcher/architecture.md)).
+- The relay enforces token `publish` prefixes, so the robot trusts the **namespace** of an action track (never a field inside the payload). Tokens: robot gets `publish: <room>/robot`, `subscribe: <room>`; each operator gets `publish: <room>/operators/<operator_id>`.
 
-The relay enforces each token's `publish` path, so the namespace of an
-action track identifies its sender: the robot trusts a namespace, not a
-field in a record. The app's server issues the robot a token with
-`publish: <room>/robot` and `subscribe: <room>`, and each operator one with
-`publish: <room>/operators/<operator_id>`.
-
-### Tracks
-Every non-media track is an MSF event timeline (draft-ietf-moq-msf-02 §8)
-indexed by wallclock (`T`, milliseconds since the Unix epoch on the robot's
-clock unless noted). Its `data` is a JSON object whose structure the
-track's `eventType` defines (§5.2.6): `io.skyway.research.moqt.robotics.<track>.v1`,
-such as `io.skyway.research.moqt.robotics.state.v1`, in the reverse of the
-relay's domain as the chat's `io.skyway.research.moqt.chat.v1` is.
-Milliseconds are fine enough for control loops up to a few hundred hertz.
+### Tracks & Record Schemas
+Non-media tracks are MSF event timelines (draft-ietf-moq-msf-02 §8) indexed by wallclock `T` (ms on robot clock unless noted), with `eventType` `io.skyway.research.moqt.robotics.<track>.v1` (§5.2.6). Cameras use standard media sources (`add_media_source` / `addSource`) so `LivePlayer` and `recorder` handle them unchanged.
 
 | Broadcast | Track | Packaging | Groups | Content |
 | --- | --- | --- | --- | --- |
-| robot | `camera_<name>` | `loc` | one per keyframe | video, LOC Timestamp in robot wall clock |
-| robot | `state` | `eventtimeline` | one per record | joint positions, velocities, gripper, … at each control tick |
-| robot | `control` | `eventtimeline` | one per record | the current driver and why it changed |
-| robot | `episode` | `eventtimeline` | one per episode | start, task instruction, end, success |
-| operator / policy | `action` | `eventtimeline` | one per record | a chunk of actions and the observation it answers |
+| robot | `camera_<name>` | `loc` | 1 per keyframe | Video with robot wall-clock LOC Timestamp |
+| robot | `state` | `eventtimeline` | 1 per record | Joint positions, velocities, gripper, … per tick |
+| robot | `control` | `eventtimeline` | 1 per record | Active driver and transition reason |
+| robot | `episode` | `eventtimeline` | 1 per episode | Start/task instruction → end/success (incremental §8.4) |
+| operator / policy | `action` | `eventtimeline` | 1 per record | Action chunk + observation `basis` |
 
-`state`, `control` and `action` are independent of their history,
-so each record is its own group of one object, as §8.4 recommends. A late
-subscriber reads the current value with a joining FETCH of the current group
-and needs no periodic repeat. Each group travels on a stream of its own, so
-a subscriber may receive the groups out of order; the newest record is the
-one with the largest Group ID, and a reader that acts on the current value
-drops a group older than one it has read. `episode` is a sequence: each
-episode is one group whose first object opens it and whose later objects
-append to it (§8.4 incremental updates).
+`state`, `control`, and `action` use 1-object groups (§8.4): late subscribers read the latest value via joining FETCH without periodic repeats, and readers drop groups with smaller Group IDs than already seen.
 
-The cameras use the existing media source (`add_media_source` in the Rust and
-Python SDKs, `addSource` in the browser's), so
-the operator page plays them with `LivePlayer` and the recorder stores them
-as it stores any camera.
+#### Record Shapes
 
-#### Records
-`state`:
-```json
-{"T": 1763600000123, "data": {"seq": 4512, "joints": [0.12, -0.40, 1.05, 0.0, 0.33, 0.0], "gripper": 0.8}}
+| Track | Shape & rules |
+| --- | --- |
+| `state` | `{"T": 1763600000123, "data": {"seq": 4512, "joints": [...], "gripper": 0.8}}` (fields beyond `seq` are robot-defined and mapped by exporter config) |
+| `action` | `{"T": 1763600000180, "data": {"seq": 77, "basis": 1763600000123, "dt_ms": 20, "actions": [[...]]}}` (`T` = sender clock, informational only; `basis` = max of newest `state.T` and displayed camera LOC Timestamp in ms; entry `i` targets `basis + (i + 1) × dt_ms`, stale entries skipped, chunk spans ≥ `max_action_age_ms`) |
+| `control` | `{"T": …, "data": {"driver": "operators/alice" \| null, "reason": "action" \| "left" \| "stale" \| "episode"}}` |
+| `episode` | First: `{"T": …, "data": {"event": "start", "id": 12, "task": "..."}}`; last: `{"T": …, "data": {"event": "end", "id": 12, "success": true}}` |
+
+#### Clock-Sync-Free Freshness
+Only the robot's clock judges freshness: `age = now - basis` measures full observation-to-arrival loop latency on the robot's own clock. Camera LOC Timestamps and `state` share the robot's clock, so subscribers align them without NTP/PTP.
+
+### Arbitration & Dead-Man Safety
+`robotics::Arbiter` is a pure, synchronous, I/O-free state machine driven by `robotics::Robot`. Defaults (starting points): `max_action_age = 300 ms`, `hold_timeout = 500 ms`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: Hold(stale)
+    Idle --> Operator: fresh operator action (control: action)
+    Idle --> Policy: start_episode(policy_enabled) (control: episode)
+    Policy --> Operator: fresh operator action / intervention (control: action)
+    Operator --> Policy: operator stale or left (while policy episode open)
+    Operator --> Idle: operator stale or left (no policy episode) → Hold(stale)
+    Policy --> Policy: policy stale → Hold(stale) until next applied action
+    Policy --> Idle: policy left / end_episode → Hold(stale)
+    Operator --> [*]: relay session lost → Hold(session)
+    Policy --> [*]: relay session lost → Hold(session)
+    Idle --> [*]: relay session lost → Hold(session)
 ```
-`data` beyond `seq` is the robot's own schema, and the exporter maps it to
-dataset columns by configuration.
 
-`action`:
-```json
-{"T": 1763600000180, "data": {"seq": 77, "basis": 1763600000123, "dt_ms": 20, "actions": [[0.13, -0.41, 1.04, 0.0, 0.33, 0.0, 0.8]]}}
-```
-- `basis` is the robot timestamp the sender acted on: the `T` of the newest
-  `state` record, or the LOC Timestamp of the newest camera frame it showed
-  (converted to milliseconds), whichever is newer.
-- `actions` is a chunk: entry `i` is meant for robot time
-  `basis + (i + 1) × dt_ms`, and the robot drops an entry whose time has
-  passed when the action arrives. A chunk therefore reaches at least
-  `max_action_age_ms` past `basis`: teleoperation repeats the held velocity,
-  a policy sends its action horizon.
-- `T` is the sender's clock and is informational only.
+- **Driver precedence**: Operators (`operators/<id>`) preempt policy (`bots/policy`); all other namespaces are ignored. An active operator blocks other operators until stale or `PUBLISH_NAMESPACE_DONE`. Policy drives when no operator is active and an episode is open with `policy_enabled`; `PUBLISH_NAMESPACE_DONE` disables policy until the next episode.
+- **Freshness**: Accepted only when sender is eligible, `seq > last_seq` for that namespace, and `0 <= now - basis <= max_action_age`. Entries whose target time already passed are skipped; an empty remaining chunk is ignored (neither advances `seq` nor resets dead-man nor takes control). `PUBLISH_NAMESPACE_DONE` resets that namespace's `last_seq`.
+- **Dead man**: No applied action for `hold_timeout` emits one `Hold(Stale)` (not repeated before an action applies) and publishes `control` (`stale`). Leaving with no fallback driver emits `Hold` immediately.
+- **Session loss**: Immediately emits `Hold(Session)` (even if already holding for `stale`), clears drivers/episode/`seq`, and publishes no `control`.
 
-`control`: `{"T": …, "data": {"driver": "operators/alice", "reason": "action"}}`,
-with `driver` relative to the room, `null` when nobody drives, and `reason`
-one of `action` (an operator's fresh action took the robot), `left`,
-`stale`, `episode`.
-
-`episode`: the first object `{"T": …, "data": {"event": "start", "id": 12, "task": "put the cup on the tray"}}`,
-the last `{"T": …, "data": {"event": "end", "id": 12, "success": true}}`.
-
-### Time without clock synchronisation
-Only the robot's clock judges freshness. An action carries `basis`, a
-timestamp the robot itself issued, so the robot computes the age of an
-action as `now − basis` on its own clock: the whole loop from observation to
-arrival, including the sender's think time. Operators and the policy need
-no synchronised clock, and the same number is the loop latency the robot
-reports.
-
-Camera LOC Timestamps and `state` records are both on the robot's clock, so
-a subscriber aligns them without knowing the robot's offset either.
-
-### Driving and holding still
-`robotics::Robot` runs on the robot and owns arbitration and the dead-man
-rule. The rules live in `robotics::Arbiter`, a synchronous state machine
-without I/O or a clock of its own: each call passes the robot's time, and
-`Robot` feeds it the events it reads from MoQT and acts on what it returns
-(apply an action entry, publish `control`, hold). The application gives
-`Robot` two durations, `max_action_age` (300 ms by default) and
-`hold_timeout` (500 ms by default), and receives the actions to execute and
-the holds as commands (see The robot's runtime). The defaults are starting
-points, to be tuned on the example over a real network:
-
-- **Candidates.** Operators (`operators/<id>`) take precedence over the
-  policy (`bots/policy`); any other namespace never drives. An operator's
-  fresh action makes it the driver while nobody or the policy drives; it
-  drives until its actions go stale or its PUBLISH_NAMESPACE_DONE, and
-  another operator's actions are dropped meanwhile. The policy drives while
-  no operator does and an episode is open with the policy enabled, so it
-  starts at the episode's start and again when the driving operator goes
-  stale or leaves; its PUBLISH_NAMESPACE_DONE stops it until the next
-  episode. An operator's action while the policy drives is an
-  intervention; the `control` record shows it.
-- **Freshness.** An action is applied only when its sender may drive, its
-  `seq` is above the last one applied from the same namespace and
-  `0 ≤ now − basis ≤ max_action_age`; within a chunk, entries whose time has
-  passed are skipped. A chunk with no entry left moved nothing: it counts
-  neither as applied for the dead man nor for `seq`, and makes nobody the
-  driver. Other actions are dropped. A namespace's last `seq` is forgotten
-  with its PUBLISH_NAMESPACE_DONE, so a publisher that returns may start
-  over.
-- **Dead man.** When the driver has applied no action for `hold_timeout`
-  since its last applied one or since it became driver, the robot tells the
-  application to hold (hold position, stop motors: the application's
-  choice) and publishes `control` with reason `stale`. A stale operator
-  stops driving, handing back to the policy during an episode that enables
-  it; the policy stays the driver, once stale until its next applied action.
-  When nobody drives any more, the robot holds at once. A hold is issued
-  once: not again before an action is applied.
-- **Session loss.** When the robot's session to the relay ends, it holds at
-  once, without waiting for `hold_timeout`, even when it already holds
-  because the driver went stale, and forgets the drivers, the episode and
-  every `seq`; it publishes no `control`, which could not reach anyone.
-
-`Robot` publishes `state` from the values the application hands it at each
-control tick, `control` on each change and at each episode start, and
-`episode` on the application's start and end calls. It does not run the
-control loop; the application calls it from its own.
-
-#### The robot's runtime
+#### Robot Runtime (`robotics::Robot`)
 ```rust
 let robot = Robot::run(session, &broadcast, room, ArbiterConfig::default()).await?;
-robot.publish_state(fields).await?;                  // seq and T assigned
+robot.publish_state(fields).await?;
 let id = robot.start_episode(task, policy_enabled).await?;
 robot.end_episode(success).await?;
-while let Some(command) = robot.next_command().await { /* Apply { at_ms, values, driver } or Hold(reason) */ }
+while let Some(cmd) = robot.next_command().await { /* Apply { at_ms, values, driver } | Hold(reason) */ }
 ```
 
-- `broadcast` is the robot's `<room>/robot` broadcast on `session`'s
-  connection (`RelayConnection::with_client_session`), which the application
-  also feeds its cameras into. `Robot::run` offers `state`, `control` and
-  `episode` on it with their priorities and watches the namespaces and
-  tracks under `<room>` with one SUBSCRIBE_NAMESPACE
-  (`Session::watch_tracks`). A session may hold no other SUBSCRIBE_NAMESPACE
-  overlapping `<room>` (NAMESPACE_PREFIX_OVERLAP, draft-14 §9.28), so the
-  robot does not subscribe per candidate namespace.
-- One task owns the `Arbiter` and feeds it, in one order, the namespace
-  events, the candidates' records, the application's episode calls, a tick
-  every `hold_timeout / 10` (at least every 50 ms), and the end of the
-  session. It turns `Apply` and `Hold` into the commands `next_command`
-  returns, and writes `Control` to the `control` track itself.
-  `publish_state` writes directly, without that task.
-- The relay forwards each PUBLISH under `<room>`. The robot accepts a
-  candidate's `action` with the track's Subscriber Priority and DELIVERY
-  TIMEOUT `max_action_age`, from the group the PUBLISH found (a Standalone
-  FETCH of its Largest Location), and rejects every other track. One reader
-  task per accepted PUBLISH reads it until it ends; a PUBLISH of the track
-  again replaces it, so a candidate may announce its namespace before its
-  track and may end the track and publish it again. The
-  PUBLISH_NAMESPACE_DONE drops the candidate's reader and is
-  `Arbiter::left`.
-- Episode ids count from 1 for each `Robot`; `start_episode` fails while an
-  episode is open, `end_episode` while none is.
-- When the session ends, `next_command` returns `Hold(Session)` and then
-  `None`; the `Robot` is not reused.
+- Uses `broadcast` (`<room>/robot` on `RelayConnection::with_client_session`) to offer `state`, `control`, and `episode`, and watches `<room>` with one `SUBSCRIBE_NAMESPACE` (`Session::watch_tracks`, avoiding `NAMESPACE_PREFIX_OVERLAP` draft-14 §9.28).
+- One task owns `Arbiter` and serializes namespace events, candidate records, episode calls, a periodic tick (`max(hold_timeout / 10, 50 ms)`), and session end. `publish_state` writes directly.
+- Accepts candidate `action` `PUBLISH`es (with priority + `DELIVERY TIMEOUT = max_action_age`, starting from Largest Location via Standalone FETCH) and rejects other tracks; re-`PUBLISH` replaces the reader task; `PUBLISH_NAMESPACE_DONE` drops it (`Arbiter::left`).
+- Episode IDs start at 1 per `Robot`; `start_episode` fails while open, `end_episode` fails while closed. Session end yields `Hold(Session)` then `None` (non-reusable).
 
-### Priority and delivery
-Lower values go first (draft-14 §7). Control must not wait behind video:
+### Priority, Delivery & Recording
+Lower numeric priority goes first (draft-14 §7) so control never queues behind video:
 
-| Track | Publisher Priority | Subscriber Priority (driver side) | DELIVERY TIMEOUT |
+| Track | Publisher Priority | Subscriber Priority (driver) | `DELIVERY TIMEOUT` |
 | --- | --- | --- | --- |
-| `action`, `control` | 0 | 0 | `max_action_age` |
-| `state` | 32 | 32 | `max_action_age` for operators and the policy, none for the recorder |
-| `episode` | 64 | 64 | none |
-| cameras | 128 | 128 | the player's default |
+| `action`, `control` | `0` | `0` | `max_action_age` |
+| `state` | `32` | `32` | `max_action_age` (drivers); none (recorder) |
+| `episode` | `64` | `64` | none |
+| cameras | `128` | `128` | player default |
 
-The DELIVERY TIMEOUT is per subscription, so one `state` track serves both
-needs: an operator and the policy drop a record that arrives too late to
-act on, while the recorder receives every record. The `robotics` helpers
-set these values; the application may override them.
+- **Streams over datagrams**: Streams prevent unrecovered uplink loss for the recorder while letting each subscriber pick its own `DELIVERY TIMEOUT`. Publisher Priority is set via `PublishTrackOptions.priority` (default `128`).
+- **Recording & export**: Every broadcast lists its event timelines in its catalog so `recorder` (`format: "moq"`) archives cameras + timelines on one clock (`<room>/bots/policy` is recorded without counting as a human room-keeper). Start recording before opening episodes: `Robot` writes `control` at each episode start even if the driver is unchanged; incomplete episodes opened prior to recording are skipped by the exporter. The Python LeRobot exporter reads via `POST /recordings/{id}/publish` (FETCH), aligning frames by timestamp; MCAP follows later.
 
-The Publisher Priority is set per track through `publish_track` in each SDK
-(`PublishTrackOptions.priority`, 128 by default). The relay must
-let a higher-priority stream open before lower-priority streams that
-wait for credit, which it does not do yet
-(docs/todos/high/relay-lower-priority-streams-block-higher-priority.md); that
-fix is a prerequisite and is handled separately.
+### Policy Bot, SDKs & Telemetry
+- **Policy bot**: Uses `robotics::Driver` on `<room>/bots/policy`, subscribing to `state` (and cameras) and publishing `action` chunks with observation `basis`. `examples/rust/moq-robot-policy` runs standalone; `bot-dispatcher` integration needs a Rust bot-protocol client (like Python's `moq-bot-job`).
+- **SDK wrappers**: Rust robot (`moq_wasm::robotics::run_robot`), Rust policy (`moq_wasm::robotics::offer_actions`), browser operator (`createBroadcast` + `eventTimelines` + `subscribeCurrentGroup`). Rust/Python read timelines via `RemoteBroadcast.event_timeline(name)` (joining FETCH + auto-resubscribe + priority/`DELIVERY TIMEOUT`).
+- **Telemetry**: `INFO` on driver change (`control_reason`), holds (`hold_reason`: `stale`/`session`), and episode start/end (`episode_id`); `DEBUG` on applied-action `loop_latency_ms` (`now - basis`).
 
-Records travel on streams, not datagrams. A datagram is not resent, so the
-recorder would lose records lost on the robot's uplink, and a subscriber
-could not choose reliability per subscription as it does with DELIVERY
-TIMEOUT.
+## Alternatives & Remaining Work
 
-### Recording and datasets
-The recorder's room archive (`format: "moq"`) stores catalogs, LOC cameras
-and the event timelines each catalog lists, on one recording clock. Every broadcast
-of the room therefore lists its tracks in its catalog: the robot's `state`,
-`control` and `episode` (`Robot` offers them), each operator's `action` (the
-browser SDK's `createBroadcast` with `eventTimelines`) and the policy's
-`action`. The recorder records `<room>/bots/policy` as it records a
-participant, without counting it as one that keeps the room alive. A robot
-room is recorded by starting the recorder bot in it, as for a meeting.
-The recording keeps only the records written after it starts, as it does a
-meeting's chat, so it is started before the episodes it should hold. An
-episode opened during the recording starts with its `episode` start and a
-`control` naming its driver, which the robot writes at each episode start
-even when the driver stays. One already open when the recording starts has
-only its end, and the exporter leaves it out: its observations before the
-start are missing too.
+### Alternatives
 
-The exporter writes a LeRobot dataset (one episode per `episode` group:
-the observations at the dataset's fps, aligned by their timestamps, the action applied at each
-frame, the task instruction, success, and which driver produced each frame).
-It reads the recording through the existing replay (`POST
-/recordings/{id}/publish`) with FETCH, so it needs no second archive reader,
-and is written in Python on the `lerobot` package, the format's reference
-writer. MCAP export, for viewing in Foxglove, follows as a later step.
+| Alternative | Why rejected |
+| --- | --- |
+| Custom binary packaging | Violates MSF §5.2.4 packaging values and needs custom parsers everywhere; JSON handles hundreds of Hz today |
+| Datagrams for `action`/`state` | Breaks per-subscriber reliability needed by `recorder` |
+| Relay/service-side arbitration | Only the robot must safely stop when cut off, so arbitration lives on the robot |
+| NTP/PTP clock sync | Unnecessary because `basis` keeps freshness on the robot's clock |
+| Python-only crate | Robot code is often Rust; one Rust crate guarantees shared rules |
+| Direct Rust archive reader for exporter | Duplicates archive parsing already served by recorder VOD replay |
 
-### Policy bot
-The policy publishes `<room>/bots/policy` with `robotics::Driver`, which
-lists `action` in its catalog and sends each chunk as a group of its own. It
-subscribes to the robot's `state` (and, for a real model, its cameras),
-runs the model the deployment configures, and publishes `action` chunks with
-the `basis` of the observation it used. Which model, and whether inference
-runs in the bot or in a separate server, is the deployment's choice. The
-example, `examples/rust/moq-robot-policy`, drives the simulated robot to a
-point and runs on its own; starting it from `bot-dispatcher` as the type
-`policy` needs a Rust client of the bot protocol (its token and heartbeats),
-which the Python bots have in `moq-bot-job`.
+### Not Implemented Yet
+- `relay`: open higher-priority streams ahead of lower-priority ones waiting for credit (`docs/todos/high/relay-lower-priority-streams-block-higher-priority.md`).
+- `bot-dispatcher` `policy` type + Rust bot-protocol client.
+- Python SDK robotics wrapper.
+- LeRobot exporter, MCAP export, and ROS 2 bridge.
 
-### SDKs
-`robotics` holds the record types, `Robot`, `Driver` and the track setup
-helpers. Each SDK wraps it without reimplementing it:
-
-| Side | SDK | Uses |
-| --- | --- | --- |
-| robot | Rust (`moq_wasm::robotics::run_robot`) | `Robot` |
-| operator | browser | `createBroadcast` with `eventTimelines`, records written as JSON |
-| policy bot | Rust (`moq_wasm::robotics::offer_actions`) | `Driver`, `State` |
-
-The records are read through `RemoteBroadcast.event_timeline(name)` of the
-Rust and Python SDKs' media layer, which starts from the record the relay
-holds (a joining FETCH) and subscribes again when the track ends, with the
-`priority` and `delivery_timeout` of a SUBSCRIBE, which the table in Priority
-and delivery sets per track. The browser's operator page reads them with
-`subscribeCurrentGroup`.
-
-### Telemetry
-`Robot` logs each driver change (with `control_reason`), each hold, and each
-episode's start and end at INFO, and the loop latency of each applied action
-at DEBUG. Log fields from the
-vocabulary in `AGENTS.md`: `driver` (the namespace driving,
-relative to the room), `hold_reason` (`stale`, `session`), `control_reason`,
-`episode_id`, and `loop_latency_ms` (`now − basis` of an applied action).
-
-## Alternatives
-- **A custom binary packaging instead of JSON event timelines**: smaller
-  records at high rates, but needs a packaging value MSF does not define
-  (§5.2.4) and its own parser in every SDK and the recorder. A few hundred
-  JSON records per second of joint values are well within what the relay
-  and SDKs carry; revisit when a robot needs kHz rates or large states.
-- **Datagrams for `action` and `state`**: no head-of-line blocking and no
-  stream credit, but no per-subscriber reliability, so recordings would
-  miss records (see Priority and delivery).
-- **Arbitration in the relay or a control service**: one place to decide,
-  but the robot is the only party that must stop when the decision cannot
-  reach it, so it decides.
-- **Synchronising clocks (NTP, PTP) to judge freshness**: needed only if
-  senders stamped their own time; `basis` makes the robot's clock enough.
-- **Python-only implementation**: faster to start, but robot code is often
-  Rust, and the robot, the policy and the exporter must agree on the same
-  records and rules.
-- **A Rust archive reader for the exporter**: faster than replaying, but a
-  second reader of the archive format beside the recorder's replay.
-
-## Not implemented yet
-- `relay`: let higher-priority streams open first
-  (docs/todos/high/relay-lower-priority-streams-block-higher-priority.md).
-- The `bot-dispatcher` type `policy`, with a Rust client of the bot protocol.
-- The Python SDK's robotics module, when a Python robot needs it.
-- The LeRobot exporter, MCAP export, and a ROS 2 bridge (its own design).
-
-## Open questions
-- How fast the replay serves FETCH for a long recording, which sets how long
-  an export takes.
+### Open Questions
+- VOD FETCH throughput for long recordings (governs dataset export speed).

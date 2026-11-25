@@ -1,44 +1,24 @@
-# reqwest for starting Cloud Run Jobs
+# `reqwest` for Launching Cloud Run Jobs (`recorder`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-19
+**Status:** Accepted (2026-10-19)
 
 ## What
 
-Add `reqwest` (`default-features = false`, `json` and `rustls`) to
-`services/recorder` as a direct dependency. `bot_job::composite_launcher` hands
-its client to `JobLauncher::CloudRun` (`job-launcher`), which starts a Cloud
-Run Job execution with `POST https://run.googleapis.com/v2/<job>:run` and an
-access token that `google-cloud`'s `MetadataToken` reads from the GCE
-metadata server. The recorder also calls `bot-dispatcher` with it.
+Add `reqwest` (`default-features = false`, features: `json`, `rustls`) as a direct dependency of `services/recorder`:
+
+- `bot_job::composite_launcher` passes its client to `JobLauncher::CloudRun` (`job-launcher`), which invokes `POST https://run.googleapis.com/v2/<job>:run` with an access token from `google-cloud`'s `MetadataToken`.
+- `recorder` also calls `bot-dispatcher` with it.
 
 ## Context
 
-`recorder serve` no longer records in its own process: every room recording
-and every composite runs as a job, so the API can scale to zero on Cloud Run
-and a composite gets the CPU of a job of its own. On Cloud Run the API starts
-those jobs through the Cloud Run Admin API, which needs an HTTPS client and an
-OAuth token of the service's service account.
+`recorder serve` delegates room recording and compositing to separate jobs so the API scales to zero on Cloud Run and each composite gets dedicated CPU. Starting Cloud Run Jobs via the Admin API requires an HTTPS client and a service-account OAuth token.
 
 ## Alternatives
 
-- **`google-cloud-run` / `google-cloud-auth` SDK crates.** Typed requests and a
-  token cache, but a large generated client for one REST call, plus its own
-  error and runtime types.
-- **hyper's client with `hyper-rustls`.** `hyper` is already a dependency for
-  the API server, but its client needs `hyper-util`'s legacy client, a TLS
-  connector and hand-written JSON bodies: more code for the same call.
-- **`gcloud run jobs execute` from a shell.** No Rust code, but the image would
-  need the Cloud SDK and a shell, and errors would come back as process output.
+- **`google-cloud-run` / `google-cloud-auth` SDK crates:** Typed requests and token caching, but adds a large generated client and separate error/runtime types for a single REST endpoint.
+- **`hyper` + `hyper-rustls`:** Requires `hyper-util`'s legacy client, manual TLS setup, and manual JSON bodies.
+- **Shelling out to `gcloud run jobs execute`:** Requires bundling the Cloud SDK and a shell in the image, and forces parsing CLI output for errors.
 
 ## Decision
 
-Use `reqwest` with the same features as `job-launcher`. It is already in the
-lock file through `object_store`'s `gcp` feature, so the addition brings no new
-crate into the build. The token is requested per launch: launches are rare
-(one per recording and per composite), so caching it is not worth the code.
+Use `reqwest` with the same features as `job-launcher`. It is already in the workspace lock (via `object_store`'s `gcp` feature), adding no new crate. Tokens are fetched per launch rather than cached because launches are rare (one per recording or composite).

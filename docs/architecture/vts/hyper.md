@@ -1,38 +1,21 @@
-# hyper for the VTS HTTP server
+# `hyper` for the VTS HTTP Server (`vts`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-05
+**Status:** Accepted (2026-10-05)
 
 ## What
 
-Add `hyper` 1.x (features `http1`, `server`) as a direct dependency of the
-`vts` crate. `server.rs` serves `GET /healthz` and `POST /verify` over HTTP/1
-with it.
+Add `hyper` 1.x (`http1`, `server`) as a direct dependency of `vts`. `server.rs` serves `GET /healthz` and `POST /verify` over HTTP/1.
 
 ## Context
 
-The VTS was a Node.js service on `node:http`. Rewriting it in Rust needs an
-HTTP/1 server for two routes, a 16 KiB body limit and JSON bodies. The relay
-already calls the VTS with `reqwest`, which is built on `hyper`.
+Rewriting VTS from Node.js (`node:http`) to Rust requires an HTTP/1 server for two JSON routes with a 16 KiB body limit. `relay` already calls VTS via `reqwest`, which depends on `hyper`.
 
 ## Alternatives
 
-- `axum`. Shorter route declarations, but adds `axum`, `axum-core`, `tower`,
-  `tower-layer`, `tower-service` and `matchit` to the dependency tree for two
-  routes with no middleware.
-- `actix-web`, `warp`, `rocket`. Full frameworks with their own runtimes or
-  filter DSLs; far more than two routes need.
-- Hand-written HTTP/1 on `tokio::net::TcpStream`. Would reimplement request
-  parsing, keep-alive and framing that `hyper` already gets right.
+- **`axum`:** Pulls in `axum`, `axum-core`, `tower`, `tower-layer`, `tower-service`, and `matchit` for two routes with no middleware.
+- **`actix-web`, `warp`, `rocket`:** Full frameworks with custom runtimes or filter DSLs—excessive for two endpoints.
+- **Hand-written HTTP/1 on `tokio::net::TcpStream`:** Reimplements request parsing, keep-alive, and framing.
 
 ## Decision
 
-Use `hyper` directly. It is already compiled in the workspace (a transitive
-dependency of `reqwest` and `tonic`), so no new crate enters the dependency
-tree, and `http-server`'s accept loop plus a `match` on method and path is
-enough for the VTS's routing.
+Use `hyper` directly with `http-server`'s accept loop and a `match` on method and path. `hyper` is already in the workspace (transitively via `reqwest` and `tonic`), adding no new crate to the dependency tree.

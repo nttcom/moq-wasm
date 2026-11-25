@@ -1,40 +1,20 @@
-# serde_json for reading a catalog object
+# `serde_json` for Catalog Parsing (`msf`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-13
+**Status:** Accepted (2026-11-13)
 
 ## What
 
-Move `serde_json` from a dev-dependency to a dependency of the `msf` crate.
-`Catalog::parse` uses it to read a catalog object and to refuse one whose
-`version` it does not read or that is a delta update.
+Promote `serde_json` from a dev-dependency to a regular dependency of `msf`. `Catalog::parse` uses it to parse catalog objects and reject unsupported `version` values or delta updates.
 
 ## Context
 
-draft-ietf-moq-msf-02 §5.1.1: "A subscriber MUST NOT attempt to parse a
-catalog version which it does not understand." Every reader (the recorder,
-live-translate, egress-gateway, moq-cli and the browser through
-`sdk/js`) deserialized the catalog with `serde_json` itself and never
-looked at `version`. A delta update (§5.1.6) carries no `version` (§5.3), so
-the check needs the JSON document before it becomes a `Catalog`.
+`draft-ietf-moq-msf-02` §5.1.1 states: *"A subscriber MUST NOT attempt to parse a catalog version which it does not understand."* Previously, every consumer (`recorder`, `live-translate`, `egress-gateway`, `moq-cli`, and `sdk/js`) deserialized catalogs with `serde_json` directly without checking `version`. Because delta updates (§5.1.6) omit `version` (§5.3), validation must inspect the JSON document before constructing a `Catalog`.
 
 ## Alternatives
 
-- A `Catalog::check(&self)` the readers call after deserializing. Keeps `msf`
-  free of `serde_json`, but leaves each reader to remember the call, and a
-  delta update fails to deserialize before it can be told apart from a
-  malformed object.
-- A custom `Deserialize` that rejects the version. Hides the check inside
-  serde and still cannot return why a catalog was refused without a typed
-  error out of serde's error.
+- **`Catalog::check(&self)` called after deserialization:** Keeps `serde_json` out of `msf`, but relies on every consumer to call it and lets delta updates fail deserialization before they can be distinguished from malformed JSON.
+- **Custom `Deserialize` checking `version`:** Hides validation inside `serde` and loses typed refusal reasons inside `serde`'s error type.
 
 ## Decision
 
-Parse in `msf`, the crate that owns the catalog format, with `serde_json`.
-It is already in the workspace lock, so no new crate enters the dependency
-tree.
+Centralize parsing and version validation in `msf::Catalog::parse` using `serde_json`. It is already in the workspace lock, adding no new crate to the dependency tree.

@@ -1,35 +1,20 @@
-# http for the trace context helpers
+# `http` for Trace-Context Header Helpers (`telemetry-otlp`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-27
+**Status:** Accepted (2026-10-27)
 
 ## What
 
-`telemetry-otlp` depends on `http` 1.x so `inject_trace_context` and
-`continue_trace_from` read and write W3C `traceparent` headers in an
-`http::HeaderMap`.
+Add `http` 1.x to `telemetry-otlp` so `inject_trace_context` and `continue_trace_from` read and write W3C `traceparent` headers directly on `http::HeaderMap`.
 
 ## Context
 
-The relay calls the VTS with `reqwest` and the VTS serves with `hyper`. Both
-expose their headers as `http::HeaderMap`, so one pair of helpers taking that
-type covers the client and the server.
+`relay` calls VTS with `reqwest` and VTS serves requests with `hyper`. Both represent HTTP headers as `http::HeaderMap`, allowing one pair of helpers to serve both client and server.
 
 ## Alternatives
 
-- `opentelemetry-http`, which ships the same `HeaderMap` injector and
-  extractor. It also pulls in an HTTP client abstraction the helpers do not
-  use.
-- Helpers taking a `HashMap<String, String>`. No dependency, but each caller
-  converts to and from its `HeaderMap`.
+- **`opentelemetry-http`:** Provides `HeaderMap` injector/extractor helpers, but pulls in an unused HTTP client abstraction.
+- **`HashMap<String, String>` helpers:** Avoids the dependency, but forces every caller to convert to and from `HeaderMap`.
 
 ## Decision
 
-Depend on `http` directly and implement the two small `Injector` /
-`Extractor` adapters in `telemetry-otlp`. `http` is already compiled in the
-workspace through `reqwest` and `hyper`, so no new crate enters `Cargo.lock`.
+Depend directly on `http` and implement the two small `Injector`/`Extractor` adapters in `telemetry-otlp`. `http` is already in `Cargo.lock` via `reqwest` and `hyper`, adding no new crate.

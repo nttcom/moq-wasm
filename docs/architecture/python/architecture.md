@@ -1,77 +1,60 @@
-# Design: Python bindings for `moqt`
+# Design: Python Bindings for `moqt`
 
-The bindings are the native module `moq_wasm._native` of the Python SDK
-`moq-wasm`; the SDK built on them is designed in [sdk.md](sdk.md).
+Native extension module `moq_wasm._native` inside the Python SDK `moq-wasm`. For the Python SDK layers built on top, see [sdk.md](sdk.md).
 
 ## Status
-Accepted
-
-## Date
-2026-10-20
+Accepted (2026-10-20)
 
 ## Scope
-A new crate `sdk/python` that builds the Python module `moq_wasm._native` with PyO3, a
-helper in `moqt` so the module and `broadcast` share one way of serving
-published tracks, and the use of the module by the Meeting transcriber and the AI demo
-bots under `examples/python/`.
+- `sdk/python` (Cargo package `python`) builds the PyO3 `cdylib` `moq_wasm._native`.
+- Reuses `moqt::client::Session` and `publish::Origin` so Python bots, the browser SDK, and Rust clients share one protocol implementation.
+- Used by the Meeting transcriber and AI demo bots under `examples/python/`.
 
 ## Context
-The Python bots reach the relay through moq-rs (`moq-rs` 0.4.7, via pipecat).
-The Meeting transcriber showed where that stops working against this
-repository's relay and pages:
+Previously, Python bots used `moq-rs` 0.4.7 (via pipecat), which broke against this repository's relay and browser pages:
+- **No joining FETCH**: Late subscribers to an active catalog track received nothing until a new group arrived (`AbsoluteStart {0, 0}` in draft-14 only delivers objects published *after* `SUBSCRIBE`).
+- **No mid-group joins**: Refused joining an event timeline mid-group.
+- **No LOC extension headers**: Used its own payload layout instead of exposing draft-ietf-moq-loc-04 extension headers (Timestamp).
+- **Breaking upstream drift**: `moq-rs` 0.5 replaced announcements with routes, leaving the pinned 0.4.7 behind.
 
-- moq-rs has no joining FETCH. A track the relay already subscribes to for
-  someone else delivers nothing until the publisher sends a new group, so the
-  transcriber gets no catalog from a participant others already watch.
-  draft-14 defines AbsoluteStart `{0, 0}` as the objects published after the
-  SUBSCRIBE is processed, so subscribing from group 0 does not help.
-- moq-rs refuses a group that it joins in the middle, which is how a late
-  subscriber meets any event timeline.
-- moq-rs reads LOC as its own payload layout, and does not expose an object's
-  extension headers, where draft-ietf-moq-loc-04 puts the Timestamp.
-- 0.5 replaced the announcement API with routes, so the version the bots pin
-  is already behind.
-
-`moqt` does all of this: `Subscriber::subscribe_current_group`, objects with
-their extension headers, and `publish::Origin`, which caches what it publishes
-and answers SUBSCRIBE and FETCH.
+`moqt` solves all four via `Subscriber::subscribe_current_group`, extension-header exposure, and `publish::Origin`.
 
 ## Decision
 
-### The crate
-`sdk/python` (package `python`, like `sdk/js`) builds a `cdylib`,
-the module `moq_wasm._native` of the distribution `moq-wasm`, with PyO3 and
-maturin. Its method names follow the browser SDK's `MoqSession`. Every async method returns an asyncio
-awaitable through `pyo3-async-runtimes` on its tokio runtime; the module
-enters that runtime before it creates the quinn endpoint, which binds through
-the ambient runtime. The ABI is `abi3-py311`, the Python version the bots
-require:
+### The Crate & Runtime Bridge
+
+```mermaid
+flowchart LR
+    Py["Python asyncio (moq_wasm)"] <-->|"pyo3-async-runtimes (abi3-py311)"| Native["moq_wasm._native (cdylib)"]
+    Native --> Client["moqt::client::Session (Tokio runtime)"]
+    Client --> Handlers["1. MediaBroadcast RelayConnection (add_handler)"]
+    Client --> Origin["2. Origin (publish_track cache)"]
+    Client --> Watchers["3. NamespaceWatchers"]
+```
+
+- **Bindings**: Built with PyO3 + maturin targeting `abi3-py311`. Method names mirror JS `MoqSession`.
+- **Tokio runtime**: Async methods return asyncio awaitables via `pyo3-async-runtimes`. The module enters that Tokio runtime before creating the `quinn` endpoint so sockets bind to the right runtime.
+- **Excluded**: Server `listen`, raw request handlers, and peer-initiated `PUBLISH` (rejected as `Uninterested`). Full method list is in [sdk.md](sdk.md) ("Core: `moq_wasm`").
 
 ```python
 import moq_wasm
 
 session = await moq_wasm.connect("https://relay.example:4433", verify_certificate=True)
 
-# Namespaces under a prefix, as they are published and withdrawn. The loop
-# runs until the session ends, so it takes a task of its own.
+# Watch namespaces until session closes (run in its own task).
 async for event in await session.watch_namespaces(["anon", "room"]):
     event.namespace  # ["anon", "room", "alice"]
     event.active     # False after PUBLISH_NAMESPACE_DONE
 
-# subscribe_current_group sends a joining FETCH for the group the relay holds,
-# whose objects come before the live ones.
+# Joining FETCH delivers cached current group before live objects.
 track = await session.subscribe_current_group(["anon", "room", "alice"], "catalog")
-async for obj in track:  # ends with the subscription (PUBLISH_DONE, close())
-    obj.group_id, obj.object_id
-    obj.payload  # bytes
-    # Checked by msf's Catalog::parse: ValueError on a version other than
-    # draft-02, a delta update or an invalid catalog.
-    catalog = moq_wasm.parse_catalog(obj.payload)
+async for obj in track:  # ends on PUBLISH_DONE or close()
+    catalog = moq_wasm.parse_catalog(obj.payload)  # ValueError if invalid/delta/non-draft-02
 
-# Tracks published through moqt's Origin; the session answers their
-# SUBSCRIBEs and FETCHes from its cache. A track is registered before the
-# namespace is published, since the relay may forward a SUBSCRIBE at once.
-transcript = await session.publish_track(["anon", "room", "bots", "transcriber"], "transcript", retention_seconds=3600)
+# Register tracks before announce so immediate forwarded SUBSCRIBEs succeed.
+transcript = await session.publish_track(
+    ["anon", "room", "bots", "transcriber"], "transcript", retention_seconds=3600
+)
 await session.announce(["anon", "room", "bots", "transcriber"])
 await transcript.write(payload, new_group=True)
 await transcript.write(payload)
@@ -79,113 +62,38 @@ await transcript.write(payload)
 await session.close()
 ```
 
-Left out: the server side (`listen`), raw request handlers and PUBLISH from a
-peer (rejected as `Uninterested`, as the recorder does). The request methods
-are listed in sdk.md "Core: `moq_wasm`".
-
-### Authorization tokens
-A bot that serves a temporary app's room connects with that app's token and
-must outlive it (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
-apps"):
+### Authorization Tokens
+Bots serving temporary apps must outlive the initial token ([`on-demand-rooms.md`](../ai-bots/on-demand-rooms.md) "Temporary apps"):
 
 ```python
 session = await moq_wasm._native.connect(url, token=jwt, refreshes_token=True)
 await session.refresh_token(later_jwt, app_id="temp-3f9a…")
 ```
 
-The SDK's `moq_wasm.connect(url, token=, refresh_token=)` calls these when the
-token is due (sdk.md "Core").
+- **`refreshes_token=True`**: Passes an `AuthorizationTokenSource::provider` reading the session's latest token, so GOAWAY migrations and `EXPIRED_AUTH_TOKEN` reconnects present the refreshed token.
+- **`refreshes_token=False`**: Passes a static token; GOAWAY reuses it, `EXPIRED_AUTH_TOKEN` closes the session, and `refresh_token()` raises.
+- **`refresh_token()` behavior**: Sends the relay's in-session `TRACK_STATUS` refresh for `[app_id]` ([`relay/architecture.md`](../relay/architecture.md) "Token refresh") and updates the stored current token regardless of relay acceptance (if refused, the active connection keeps the old token until expiry and the next connection presents the new one). Fetching new tokens belongs to callers (`moq_wasm.connect` in [sdk.md](sdk.md) "Core").
 
-With `refreshes_token`, `connect` hands `moqt` an
-`AuthorizationTokenSource::provider` that reads the session's current token,
-so a connection the session opens by itself (to follow GOAWAY, or after the
-relay closed it for an expired token) presents the latest one. Without it,
-`connect` hands `moqt` the token itself: the session follows GOAWAY with it,
-the relay's close for an expired token ends the session, as no later token
-can come, and `refresh_token` raises. `refresh_token` sends the relay's
-in-session refresh, a
-TRACK_STATUS for `[app_id]` that carries the token (docs/architecture/relay/
-architecture.md "Token refresh"), and makes the token current whether or not
-the relay accepts it: a relay that refuses it keeps the connection's token
-until it expires, and the next connection presents the new one. Getting a later token is the caller's job: the module knows
-nothing of the temporary-apps service.
+### One Event Loop per Session
+The native `Session` wraps `moqt::client::Session` ([`moqt/architecture.md`](../moqt/architecture.md) "`client` — the client session"), dispatching events in strict priority order:
+1. Active `MediaBroadcast` `RelayConnection` handlers (registered via `add_handler`, removed on `MediaBroadcast.close`).
+2. `Origin` — answers `SUBSCRIBE`, `FETCH`, and `TRACK_STATUS` for `publish_track` tracks.
+3. `NamespaceWatchers` — forwards `PUBLISH_NAMESPACE` / `PUBLISH_NAMESPACE_DONE` to matching `watch_namespaces` iterators.
+4. Fallback — unknown `SUBSCRIBE` gets `TRACK_DOES_NOT_EXIST`; `PUBLISH` gets `UNINTERESTED`.
+5. Teardown — session close ends every iterator.
 
-### One event loop per session
-A session has one event receiver. The native `Session` wraps a
-`moqt::client::Session`, which owns the loop
-(docs/architecture/moqt/architecture.md "`client` — the client session"):
-
-- The `RelayConnection` of each media broadcast (sdk.md "Publishing media")
-  sees an event first. `media_broadcast` adds it with `add_handler`;
-  `MediaBroadcast.close` removes it.
-- The session's `Origin` answers SUBSCRIBE, FETCH and TRACK_STATUS for the
-  tracks `publish_track` registered.
-- `NamespaceWatchers` hands PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE to
-  every `watch_namespaces` iterator whose prefix matches.
-- Any other SUBSCRIBE gets TRACK_DOES_NOT_EXIST, any PUBLISH UNINTERESTED.
-- The session ending, or `close`, ends every iterator.
-
-The browser SDK binds the same `client::Session`, so both answer the relay alike.
-
-### Build and CI
-- `[lib] test = false`: an extension module cannot link as a test binary, so
-  the module is tested with pytest.
-- The module is abi3, which `pyo3-build-config` configures without an
-  interpreter. `.cargo/config.toml` sets `PYO3_NO_PYTHON` and
-  `PYO3_BUILD_EXTENSION_MODULE`, so `cargo build` and `clippy` of the workspace
-  need no Python and link the crate as an extension module.
-- pytest runs the module against a relay and a VTS started from this
-  workspace on free ports (`tests/conftest.py`), in the `python.yml` workflow
-  when the crate, the crates it builds on, the relay, the VTS or the Python
-  examples its tests cover change.
-
-### Using it from the bots
-A bot depends on the module by path (`moq-wasm = { path = "../../../sdk/python" }`
-in `[tool.uv.sources]`), and uv builds it with maturin, so building a bot
-needs a Rust toolchain. `examples/python/Dockerfile` has a builder stage
-that compiles the wheel.
-
-The bots use the SDK's media layer ([sdk.md](sdk.md) "Media") rather than
-these bindings directly:
-- `watch_broadcasts` runs a handler per participant, or per page namespace,
-  and returns once the room has stayed empty for the grace period;
-- `RemoteBroadcast.catalogs` and `follow` read a participant's catalog and
-  tracks, subscribing again when the page that published them leaves;
-- `create_broadcast` publishes the bot's namespace with its event timeline
-  and status tracks, so a late joiner's FETCH is answered from the cache;
-- `moq_wasm.codecs` decodes the Opus audio and H.264 video. A video
-  subscription that joins a group in the middle decodes nothing until the
-  next group, which starts at a keyframe.
+### Build, CI, and Bot Usage
+- **Extension linking**: `[lib] test = false` (extension modules cannot link as Rust test binaries; tested via pytest). `.cargo/config.toml` sets `PYO3_NO_PYTHON` and `PYO3_BUILD_EXTENSION_MODULE` so workspace `cargo build`/`clippy` need no Python interpreter.
+- **CI**: `python.yml` runs pytest against a workspace relay + VTS on ephemeral ports (`tests/conftest.py`).
+- **Bot builds**: Bots depend on `sdk/python` by path (`[tool.uv.sources]`); `uv` builds via maturin (requires Rust toolchain; `examples/python/Dockerfile` uses a builder stage).
+- **Bot API**: Bots use the SDK's media layer ([sdk.md](sdk.md) "Media"): `watch_broadcasts`, `RemoteBroadcast.catalogs`/`follow`, `create_broadcast`, and `moq_wasm.codecs` (mid-group video joins wait for the next keyframe group).
 
 ## Consequences
-
-### Positive
-- Python code meets the relay through the same implementation as the relay,
-  the recorder and the browser.
-- The transcriber reads the catalog of a participant others already watch,
-  and serves its transcript to late joiners.
-
-### Negative
-- Building a bot needs Rust and takes minutes instead of seconds.
-- The module's API is a second public surface of `moqt` to keep working
-  through changes such as draft-18.
+- **Positive**: Python shares the exact MoQT stack with the relay, recorder, and browser; transcriber reads active catalogs and serves transcripts to late joiners.
+- **Negative**: Building bots requires Rust and takes minutes; adds a public API surface to maintain across protocol drafts (e.g., draft-18).
 
 ## Alternatives Considered
-
-### Re-send the Meeting catalog periodically
-`broadcast` re-sends its catalog every 30 s, so the Meeting could too. The
-transcriber would then see each catalog within one period. It leaves moq-rs's
-other gaps (mid-group joins, extension headers) in place and makes the
-transcriber's start depend on the period.
-
-### Subscribe to the default audio track name
-Works without any catalog, but breaks for a room whose catalog was edited.
-
-### Add joining FETCH to moq-rs
-It is the fix for every moq-rs user, but its schedule is not ours, and it
-would not cover the extension headers.
-
-### A thin one-to-one wrapper of `Session`, `Subscriber` and `Publisher`
-It would expose every handler to Python and leave each bot to write the event
-routing and the joining FETCH that the recorder and `broadcast` already have in
-Rust.
+- **Periodic Meeting catalog re-sends**: Would let transcriber see catalogs after one period, but leaves `moq-rs` mid-group and extension-header gaps unfixed and delays startup.
+- **Hardcode default audio track name**: Breaks whenever a room customizes its catalog.
+- **Contribute joining FETCH to `moq-rs`**: Upstream schedule is external and does not address extension headers.
+- **Thin 1:1 wrapper of `Session`/`Subscriber`/`Publisher`**: Forces every Python bot to reimplement event routing and joining FETCH already built in Rust.

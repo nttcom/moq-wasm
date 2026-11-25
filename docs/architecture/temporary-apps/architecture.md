@@ -1,38 +1,39 @@
 # `temporary-apps` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the design intent,
-module boundaries, runtime flow, or invariants described here change.
+Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
-`temporary-apps` hands anyone the token of a new temporary app, and a new token
-for an app whose token has not expired. A temporary app has no registry entry:
-its `appId` carries `auth_token::TEMPORARY_APP_ID_PREFIX`, and every token of
-every temporary app is signed with one secret that the VTS verifies them with
-(see the VTS architecture). The examples use these apps so that a demo runs
-under a namespace root only the people its link reaches know, rather than the
-public `anon` root.
+Issues and refreshes tokens for temporary apps so demos run under an unguessable namespace root instead of public `anon`.
 
-There are no accounts. Who may join an app is whoever holds one of its
-tokens; a token expires an hour after it is signed, which is the only way an
-app is revoked.
+Temporary apps have no registry entry and no accounts:
+- Every `appId` uses `auth_token::TEMPORARY_APP_ID_PREFIX` (`temp-<32 hex>`).
+- All temporary tokens are signed with one shared secret that VTS verifies ([`vts/architecture.md`](../vts/architecture.md)).
+- Anyone holding a valid token can join; expiry (1 hour) is the only revocation mechanism.
 
 ## Modules
 
-| Module | Responsibility |
-| --- | --- |
-| `issuer.rs` | `TemporaryApps`: `issue` signs `Claims::issued` for a new `temp-<32 hex>` app with `publish` and `subscribe` `""` and a one-hour lifetime; `refresh` verifies the token with the secret, requires a temporary `appId` and an `exp` after now, and signs a new hour for the same app. A failed refresh is a `RefreshError`. `verify` is the check `refresh` makes, and `sign_launch` signs the one-minute launch token `bot-dispatcher` takes from an app server, with `bots` `""` and no `publish` or `subscribe`. |
-| `bot_proxy.rs` | `BotProxy`: the bot types a temporary app may reach, the launch limit per client address, and the call to `bot-dispatcher` with a launch token. |
-| `rate_limit.rs` | `RateLimit`: fixed windows per client address, counted in this process. |
-| `server.rs` | `TemporaryAppsServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, the app server routes of `bot-dispatcher` (`POST`/`GET /bots/{type}`, `GET`/`DELETE /bots/{type}/{id}`), `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`). |
-| `main.rs` | Reads `TEMPORARY_APPS_SECRET`, `TEMPORARY_APPS_TRUSTED_PROXY_HOPS`, `TEMPORARY_APPS_BOT_DISPATCHER_URL`, `TEMPORARY_APPS_BOT_TYPES` and `PORT`, and serves until terminated. |
+| Module | Key types | Responsibility |
+| --- | --- | --- |
+| `issuer.rs` | `TemporaryApps`, `RefreshError` | `issue` mints a 1-hour token (`publish`/`subscribe` = `""`); `refresh` validates via `verify` (signature, temporary `appId`, unexpired `exp`) and mints another hour; `sign_launch` mints a 1-minute `bot-dispatcher` launch token (`bots` = `""`, no `publish`/`subscribe`). |
+| `bot_proxy.rs` | `BotProxy` | Enforces allowed bot types and per-IP launch limits, then forwards requests to `bot-dispatcher` with a launch token. |
+| `rate_limit.rs` | `RateLimit` | In-process fixed-window counters per client IP. |
+| `server.rs` | `TemporaryAppsServer` | HTTP/1 server via `http_server::HttpServer` with wildcard CORS (`*`). |
+| `main.rs` | — | Reads config env vars and serves until shutdown. |
+
+### Routes & Configuration
+
+| Route | Auth / Rate limit | Purpose |
+| --- | --- | --- |
+| `POST /tokens` | Rate limited per IP | Mint a new temporary app token |
+| `POST /tokens/refresh` | Valid unexpired temp token | Extend an existing temporary app by 1 hour |
+| `POST`/`GET /bots/{type}`, `GET`/`DELETE /bots/{type}/{id}` | Valid temp token (`POST` limited to 10/IP/hour) | Proxy to `bot-dispatcher` as the app server |
+| `GET /healthz`, `OPTIONS` | None | Health check and CORS preflight |
+
+Env vars: `TEMPORARY_APPS_SECRET`, `TEMPORARY_APPS_TRUSTED_PROXY_HOPS`, `TEMPORARY_APPS_BOT_DISPATCHER_URL`, `TEMPORARY_APPS_BOT_TYPES`, `PORT`.
 
 ## Bots
-
-The service is the app server of every temporary app
-(docs/architecture/bot-dispatcher/architecture.md "Temporary apps"): a page that wants
-a bot in its room calls the `/bots` routes here with its own token, and the
-call goes on to `bot-dispatcher` with a launch token for the page's app.
+`temporary-apps` acts as the app server for all temporary apps ([`bot-dispatcher/architecture.md`](../bot-dispatcher/architecture.md) "Temporary apps"): pages call `/bots` with their page token, and this service forwards to `bot-dispatcher` with a short-lived launch token scoped to the page's `appId`.
 
 ```mermaid
 sequenceDiagram
@@ -40,47 +41,26 @@ sequenceDiagram
     participant T as temporary-apps
     participant B as bot-dispatcher
     P->>T: POST /bots/recorder {namespace_prefix} + page token
-    T->>T: verify the page token (as a refresh does), launch limit
-    T->>B: POST /bots/recorder {namespace_prefix} + launch token for the app
-    B-->>T: 201 the bot
-    T-->>P: 201 the bot
+    T->>T: Verify page token + check launch rate limit
+    T->>B: POST /bots/recorder {namespace_prefix} + 1-min launch token
+    B-->>T: 201 bot
+    T-->>P: 201 bot
 ```
 
-- The app is the page token's `appId`; `bot-dispatcher` refuses a room outside it,
-  since the launch token's `bots` claim covers that app only.
-- A type outside `TEMPORARY_APPS_BOT_TYPES`, and the routes the bots
-  themselves call (`/token`, `/heartbeat`), are `404` here.
-- `POST` counts against 10 calls per client address per hour, in fixed windows
-  of this process like `POST /tokens`.
-- `POST /bots/{type}` with `stay_when_empty: true` is refused with `403 forbidden`
-  without calling `bot-dispatcher` (anyone can create a temporary app); `false`
-  is forwarded.
-- Without `TEMPORARY_APPS_BOT_DISPATCHER_URL` every `/bots` route is `404`.
+- **App scoping**: `bot-dispatcher` rejects rooms outside the page token's `appId` because the launch token's `bots` claim covers only that app.
+- **`stay_when_empty` rejected**: `POST /bots/{type}` with `stay_when_empty: true` returns `403 forbidden` without calling `bot-dispatcher` (`false` is forwarded).
+- **Hidden routes**: Bot types outside `TEMPORARY_APPS_BOT_TYPES`, bot-internal routes (`/token`, `/heartbeat`), and all `/bots` routes when `TEMPORARY_APPS_BOT_DISPATCHER_URL` is unset return `404`.
 
 ## Invariants
 
-- The service keeps no state besides the rate limit counts: an app exists only
-  as its tokens, so any number of instances serve the same apps.
-- An expired token cannot be refreshed, so a link holding it stops working an
-  hour after it was signed even while the app lives on through refreshes made
-  by the pages still using it.
-- Only `POST /tokens` and `POST /bots/{type}` are rate limited, each with its
-  own count. A refresh needs a valid token, and refreshing does not create an
-  app.
-- The client address is the `X-Forwarded-For` entry that the outermost of the
-  trusted proxies (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`) appended; entries the client wrote before it are
-  ignored, so a client cannot pose as another address. Without the header, or
-  with `0` hops, it is the peer address.
-- With several instances, each counts on its own, so a client may get up to
-  the limit from every instance.
+- **Stateless apps**: Only rate-limit counters live in memory; any instance serves any temporary app.
+- **No refresh after expiry**: An expired link stops working after 1 hour even if active pages keep refreshing newer tokens for the same app.
+- **Selective rate limits**: Only `POST /tokens` and `POST /bots/{type}` have separate per-IP counters; refreshes require a valid token and create no new app.
+- **Proxy-safe client IP**: Client IP comes from the `X-Forwarded-For` entry added by the outermost trusted proxy (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`), ignoring client-supplied prefixes; falls back to peer address when absent or `0`.
+- **Per-instance limits**: Multiple instances count independently, so effective limits scale with instance count.
 
-## Operational notes
+## Operational Notes
 
-- `temporary token issued` / `temporary token refreshed` are logged at INFO
-  with the `app_id`, as is `bot request forwarded` with its `bot_type`;
-  refusals at INFO with `error`. A signing failure is an
-  ERROR. Tokens never reach logs or spans.
-- Every request runs in a `temporary_apps.request` span that continues the
-  caller's trace and records the `app_id` it answered for.
-- The Docker image (`services/temporary-apps/Dockerfile`) is the same
-  `cargo-chef` build onto `distroless/cc` as the VTS.
+- **Logging**: `temporary token issued`, `temporary token refreshed` (`app_id`), `bot request forwarded` (`bot_type`), and refusals (`error`) log at `INFO`; signing failures at `ERROR`. Tokens never appear in logs or spans.
+- **Tracing**: Every request runs in `temporary_apps.request`, continuing the caller's trace and recording `app_id`.
+- **Packaging**: `services/temporary-apps/Dockerfile` uses the same `cargo-chef` → `distroless/cc` build as VTS.

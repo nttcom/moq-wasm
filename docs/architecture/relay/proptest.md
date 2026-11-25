@@ -1,59 +1,29 @@
-# proptest for property-based cache tests in relay
+# `proptest` for Cache Range Property Tests (`relay`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-19
+**Status:** Accepted (2026-11-19)
 
 ## What
 
-Add `proptest` as a dev-dependency of the `relay` crate, with default
-features off and only `std` on. The tests use it to check the cache's
-bookkeeping of known positions against brute-force models:
+Add `proptest` (`default-features = false`, feature: `std`) as a dev-dependency of `relay` to test cache known-position bookkeeping against brute-force reference models:
 
-- after any sequence of inserted and removed ranges, `KnownRanges` answers
-  `covers_until` and `end_of_range_containing` as a set of known positions
-  does, and its ranges stay disjoint and never adjacent;
-- the known ranges an ascending upstream FETCH response leaves are its range
-  less the stretches it marked unknown;
-- `plan_fetch` plans exactly the unexpired cached objects in the range, in
-  either group order, with one unknown stretch through the position before
-  the next object for each run of positions the cache does not know.
+- **`KnownRanges`:** After arbitrary range insertions and removals, `covers_until` and `end_of_range_containing` match a position set, and stored ranges remain disjoint and non-adjacent.
+- **Upstream FETCH ingestion:** An ascending upstream FETCH response records its full range minus any stretches marked unknown.
+- **`plan_fetch`:** Plans exactly the unexpired cached objects in range (in either group order) and emits one unknown stretch through the position before the next object for every unknown run.
 
-`test_support::location_strategies` generates the positions, shared by the
-three. Each group has the Object IDs 0 to 5, `u64::MAX`, and one stand-in for
-every ID between, so a model over a few dozen positions decides every
-position, including the last of a group. The groups start at Group ID 0 or
-end at `u64::MAX`, which a draft-18 publisher can send, so a range also ends
-past the last Location.
+Shared generator `test_support::location_strategies` models each group with Object IDs `0..=5`, `u64::MAX`, and one stand-in for intermediate IDs, with groups starting at `0` or ending at `u64::MAX` (covering draft-18 ranges ending past the last `Location`).
 
 ## Context
 
-A FETCH served from the cache reports every position it does not know as
-unknown and says nothing about a position it knows, which tells the
-subscriber that no object is there. An off-by-one in a range end or a group
-boundary therefore either hides an object or reports a gap that is not
-there. The example tests check a few hand-picked layouts; the bounds that
-meet at a group's first or last object, adjacent ranges, expired objects and
-descending order combine in more ways than they list.
+Cache-served FETCH responses emit unknown stretches for unknown positions and omit known empty positions (telling subscribers no object exists there). Any off-by-one at a range end or group boundary either hides an object or reports a bogus gap. Combinations of group boundaries, adjacent ranges, expired objects, and descending order outgrow hand-written examples.
 
 ## Alternatives
 
-- Exhaustive loops over every layout of a smaller domain: no shrinking, and
-  the domain that stays fast is too small to hold an expired object between
-  two known ranges in three groups.
-- `cargo-fuzz`: needs nightly and runs outside `cargo test`.
-- More example tests: each one covers only the layout written in it.
+- **Exhaustive loops over a tiny domain:** No shrinking, and fast domains are too small to fit an expired object between two known ranges across three groups.
+- **`cargo-fuzz`:** Requires nightly Rust and runs outside `cargo test`.
+- **More example tests:** Only checks layouts explicitly written by the author.
 
 ## Decision
 
-Use `proptest`, as `moqt` and `mediapack` do. It runs in `cargo test` on
-stable (256 cases per property by default, set by `PROPTEST_CASES`), and as a
-dev-dependency it adds nothing to the relay binary.
+Use `proptest`, matching `moqt` and `mediapack`. It runs in `cargo test` on stable (256 cases per property by default; override via `PROPTEST_CASES`) and stays out of the `relay` binary.
 
-A failing case is written to `services/relay/proptest-regressions/` and
-replayed first on the next run; commit that file with the fix of the failure
-it found.
+Failing cases are saved under `services/relay/proptest-regressions/` and replayed first on the next run; commit regression files alongside their fixes.

@@ -1,51 +1,27 @@
-# proptest for property-based demuxer tests in mediapack
+# `proptest` for Demuxer Property Tests (`mediapack`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-19
+**Status:** Accepted (2026-11-19)
 
 ## What
 
-Add `proptest` as a dev-dependency of the `mediapack` crate, with default
-features off and only `std` on. The tests use it to state two properties of
-the byte-stream demuxers:
+Add `proptest` (`default-features = false`, feature: `std`) as a dev-dependency of `mediapack` to check two byte-stream demuxer properties:
 
-- the MPEG-TS, FLV, fragmented MP4 and Annex-B demuxers report the same
-  events from a fixture however it is cut into chunks, and the ADTS reader
-  reads back generated frames however their stream is cut;
-- demuxing what the MPEG-TS and RTP muxers wrote gives back generated video
-  and audio samples, with their timestamps, and the RTP demuxer gives them
-  back when adjacent packets swap.
+- **Chunk-boundary invariance:** MPEG-TS, FLV, fragmented MP4, and Annex-B demuxers emit identical events from a fixture regardless of how input bytes are chunked; the ADTS reader recovers generated frames across arbitrary splits.
+- **Mux/demux round-trip:** Demuxing output from the MPEG-TS and RTP muxers recovers generated video/audio samples and timestamps, including when adjacent RTP packets are reordered.
 
-`test_support::cuts` and `test_support::push_in_chunks` cut the input and feed
-it to a demuxer, shared by the tests of each format.
+Shared helpers `test_support::cuts` and `test_support::push_in_chunks` split and feed inputs across all format tests.
 
 ## Context
 
-A demuxer receives a stream in chunks of whatever size the network or file
-reads give it, so every boundary in a container can fall inside a chunk or
-between two. The example tests feed a fixture whole or in one fixed chunk
-size, which reaches few of those boundaries. A property over random cut
-points reaches them all and shrinks a failure to a single cut.
+Network and file reads deliver streams in arbitrary chunk sizes, so container boundaries can land inside or between chunks. Fixed-chunk unit tests miss most split positions; randomized cuts explore them and shrink failures to a single split.
 
 ## Alternatives
 
-- Feed every fixture at every single cut point in a loop: covers one cut
-  exhaustively but not two or more, and repeats the same loop per format.
-- `cargo-fuzz`: finds crashes on malformed input, but needs nightly and runs
-  outside `cargo test`; it does not check that well-formed input gives the
-  same events.
+- **Exhaustive single-cut loop per fixture:** Covers one cut point, not multi-chunk splits, and duplicates loop boilerplate per format.
+- **`cargo-fuzz`:** Targets crash finding on malformed input, requires nightly Rust, runs outside `cargo test`, and does not assert event equivalence on valid streams.
 
 ## Decision
 
-Use `proptest`, as `moqt` does for its codec. It runs in `cargo test` on
-stable (256 cases per property by default, set by `PROPTEST_CASES`), and as a
-dev-dependency it reaches no crate that depends on `mediapack`.
+Use `proptest`, matching `moqt`. It runs in `cargo test` on stable (256 cases per property by default; override via `PROPTEST_CASES`) and never propagates to downstream crates.
 
-A failing case is written to `crates/mediapack/proptest-regressions/` and
-replayed first on the next run; commit that file with the fix of the failure
-it found.
+Failing cases are written to `crates/mediapack/proptest-regressions/` and replayed first on the next run; commit regression files alongside their fixes.

@@ -1,35 +1,23 @@
-# GStreamer for Opus and G.711 transcoding
+# GStreamer for Opus and G.711 Transcoding (`sip-gateway`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-20
+**Status:** Accepted (2026-11-20)
 
 ## What
 
-Add `gstreamer` and `gstreamer-app` 0.25 as dependencies of `sip-gateway`.
-`media/transcoder.rs` runs two `appsrc` to `appsink` pipelines per call:
-G.711 at 8 kHz to 20 ms Opus frames at 48 kHz (`mulawdec`/`alawdec`,
-`audioresample`, `opusenc`), and Opus to G.711 (`opusdec`, `audioresample`,
-`mulawenc`/`alawenc`).
+Add `gstreamer` and `gstreamer-app` 0.25 to `sip-gateway`. `media/transcoder.rs` runs two `appsrc` → `appsink` pipelines per call:
+
+- **Trunk → MoQT:** G.711 (8 kHz) → 20 ms Opus (48 kHz) via `mulawdec`/`alawdec ! audioresample ! opusenc`.
+- **MoQT → Trunk:** Opus (48 kHz) → G.711 (8 kHz) via `opusdec ! audioresample ! mulawenc`/`alawenc`.
 
 ## Context
 
-A page publishes and plays Opus at 48 kHz; a trunk sends and takes G.711
-at 8 kHz. Every call transcodes both ways and resamples by 6.
+Browser clients publish and play 48 kHz Opus, whereas SIP trunks send and expect 8 kHz G.711. Every call must transcode both directions and resample by a factor of 6.
 
 ## Alternatives
 
-- `audiopus` plus hand-written G.711 tables and a resampler. Three pieces,
-  one a C binding of its own, for what GStreamer already does.
-- Publishing G.711 into MoQT unchanged. Saves one direction's transcode but
-  leaves every subscriber (players, `recorder`, `live-translate`) to handle
-  a second audio codec, and PCMU unsupported.
+- **`audiopus` + custom G.711 tables + resampler:** Three separate pieces (including a new C binding) duplicating what GStreamer already does.
+- **Publish G.711 directly onto MoQT:** Eliminates one transcode direction, but forces every subscriber (browsers, `recorder`, `live-translate`) to support a second codec (with PCMU unsupported).
 
 ## Decision
 
-Use GStreamer, which `transcode` and `live-translate` already link, with
-the same `appsrc`/`appsink` shape as `live-translate`'s Opus codec.
+Use GStreamer, matching `transcode` and `live-translate`'s `appsrc`/`appsink` pattern.

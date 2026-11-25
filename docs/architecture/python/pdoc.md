@@ -1,32 +1,25 @@
-# ADR: pdoc for the Python SDK's API reference
+# `pdoc` for the Python SDK API Reference (`python`)
 
-## Status
-Accepted
+**Status:** Accepted (2026-11-18)
 
-## Date
-2026-11-18
+## What
+
+Add `pdoc` to the `dev` dependency group of `sdk/python`. `moq_wasm/__init__.py` embeds the README as its module docstring, and `npm run docs` in `examples/browser` runs `uv run pdoc` over `moq_wasm`, `moq_wasm.media`, `moq_wasm.codecs`, and `moq_wasm.pipecat`, outputting HTML to `examples/browser/public/docs/python`.
 
 ## Context
-The Python SDK (`sdk/python`) is documented by its README and its docstrings. The Example site on GitHub Pages
-should serve both as pages, next to the browser SDK's reference.
+
+The Python SDK is documented via its README and docstrings, and GitHub Pages should publish both alongside the browser SDK reference.
+
+## Alternatives
+
+- **Sphinx with `autodoc`:** Can mock `_native` instead of compiling it, but requires configuration files, a theme, and reStructuredText or a Markdown plugin for the README.
 
 ## Decision
-Add **`pdoc`** to the `dev` dependency group. `moq_wasm/__init__.py` includes the README as its docstring, and
-`npm run docs` in `examples/browser` runs `uv run pdoc` on `moq_wasm`, `moq_wasm.media`, `moq_wasm.codecs` and
-`moq_wasm.pipecat`, writing the HTML to `examples/browser/public/docs/python`.
+
+Use `pdoc` to generate static HTML directly from existing docstrings and type annotations with zero configuration.
 
 ## Consequences
 
-### Positive
-- No configuration file: pdoc reads the docstrings and type annotations as they are.
-
-### Negative
-- pdoc imports the package, so the docs build compiles the native module `moq_wasm._native`, which adds minutes to
-  the GitHub Pages deploy.
-- The methods of the classes `_native` defines show neither a signature nor a docstring.
-
-## Alternatives Considered
-
-### Sphinx with autodoc
-It can mock `_native` instead of building it, but needs a configuration, a theme and reStructuredText or a
-Markdown extension around the README.
+- **Positive:** No configuration files; reads docstrings and type annotations as-is.
+- **Negative:** `pdoc` imports the package, forcing GitHub Pages deploys to compile `moq_wasm._native` (adding several minutes).
+- **Negative:** Methods defined on `_native` classes render without signatures or docstrings.
