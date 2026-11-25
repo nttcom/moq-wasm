@@ -3541,8 +3541,6 @@ dependencies = [
  "opentelemetry_sdk",
  "proptest",
  "redis",
- "serde",
- "serde_json",
  "telemetry",
  "telemetry-otlp",
  "thiserror 2.0.21",
