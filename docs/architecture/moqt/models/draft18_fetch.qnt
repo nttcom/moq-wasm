@@ -2,8 +2,9 @@
 // (this side) serves it (docs/spec/draft-ietf-moq-transport-18.txt §5.2).
 //
 // Code (crates/moqt/src/modules/moqt/):
-// - version/draft18.rs: the `Requests::incoming` entry with `fetch_end`
-//   (`FetchEnd`) and `fetch_response`; `advance_fetch`,
+// - version/draft18.rs: the `Requests::incoming` entry with `fetch`
+//   (`ServedFetch`: `Open`, `ResponseAttached`, `OkSent`, `ResponseEnded`;
+//   the entry's removal is `Done`); `advance_fetch`,
 //   `fetch_response_ended`, `attach_fetch_response`, `reset_cancelled_fetch`,
 //   `send_on_incoming`, `respond(FetchOk)` and `respond(Error)`.
 // - version/draft18/request_streams.rs: `IncomingRequestTask::serve` watching
@@ -70,11 +71,11 @@ module draft18_fetch {
   // already finished or reset, and returns Ok on one the peer stopped.
   const CLOSE_MAY_FAIL: bool
 
-  // The `incoming` entry of the FETCH and its `fetch_end`.
+  // The `incoming` entry of the FETCH and its `ServedFetch`.
   type Entry =
-    | EDelivered       // neither FETCH_OK sent nor response ended
-    | EOkSent          // fetch_ok_sent
-    | EResponseEnded   // response_ended
+    | EDelivered       // `Open` or `ResponseAttached`
+    | EOkSent          // `OkSent`
+    | EResponseEnded   // `ResponseEnded`
     | ERemoved
 
   // This side's half of the request stream.
@@ -103,7 +104,7 @@ module draft18_fetch {
 
   type State = {
     entry: Entry,
-    // `fetch_response` is set.
+    // `ServedFetch` holds the response stream.
     attached: bool,
     half: Half,
     resp: Resp,
