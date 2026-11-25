@@ -4,16 +4,17 @@
 //
 // Code mapping:
 // - `GroupCutover::{waiting_after, take_previous, take_current,
-//   release_previous, previous_ended}` (group_cutover.rs:64-130).
-// - `SinkCutover::takes` (domains/connection.rs:165-173) calls
+//   release_previous, previous_ended}` (group_cutover.rs:64-134).
+// - `SinkCutover::takes` (domains/connection.rs:163-171) calls
 //   `take_previous`/`take_current` under the `GroupCutover` mutex with
-//   `location_of` (connection.rs:155-163): a datagram's own location, or
-//   `(group, 0)` for a whole subgroup stream, even one that starts mid-group.
-// - `current_start` is `first_whole_group` (session/migration_task.rs:772-783):
+//   `group_of` (connection.rs:156-161): the group of a datagram or of a
+//   subgroup stream, even one that starts mid-group. Before CUT_FROM_START
+//   `take_current` also took the object ID, `0` for a subgroup stream.
+// - `current_start` is `first_whole_group` (session/migration_task.rs:824-835):
 //   the first group the new subscription delivers whole.
-// - `release_when_idle` (session/migration_task.rs:587-608) calls
+// - `release_when_idle` (session/migration_task.rs:639-662) calls
 //   `release_previous` once no subgroup stream is open on the previous
-//   connection; `Router::retire` (migration_task.rs:312-334) calls
+//   connection; `Router::retire` (migration_task.rs:364-386) calls
 //   `previous_ended` and closes the previous connection.
 //
 // One action = one hold of the `GroupCutover` mutex: one object (datagram)
@@ -282,7 +283,7 @@ module group_cutover {
 module group_cutover_subgroups_current {
   import group_cutover(
     GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = false,
-    CUT_FROM_START = false, KEEP_NEWEST = false,
+    CUT_FROM_START = true, KEEP_NEWEST = false,
   ).*
 }
 
@@ -290,7 +291,7 @@ module group_cutover_subgroups_current {
 module group_cutover_datagrams_current {
   import group_cutover(
     GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = true,
-    CUT_FROM_START = false, KEEP_NEWEST = false,
+    CUT_FROM_START = true, KEEP_NEWEST = false,
   ).*
 }
 
