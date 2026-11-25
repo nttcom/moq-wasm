@@ -5,26 +5,30 @@
 //
 // Outbound: this side sends REQUEST_UPDATEs and waits for their answers
 // (crates/moqt/src/modules/moqt/version/draft18.rs).
+// `OQueued` / `OPartial` are a live `QueuedUpdate` and `OWaiting` an
+// `UpdateAnswer` (crates/moqt/src/modules/moqt/version/update_answer.rs).
 // - `outStart`: `send_request_update` with the Request ID reservation held
 //   (the reservation serializes updates): clones the stream and, when
-//   PUSH_BEFORE_WRITE, pushes the answer waiter on `update_waiters`
-//   (`push_back`, one `std::sync::Mutex` hold).
+//   PUSH_BEFORE_WRITE, queues the answer waiter with
+//   `UpdateWaiters::enqueue` (`push_back`, one `std::sync::Mutex` hold).
 // - `outWriteSome` / `outWriteDone` / `outWriteFail`: the
 //   `stream.sender.send(&message).await`. quinn's `write_all` can write part
-//   of the message and then wait for flow control. A failed write pops the
-//   waiter (`pop_back`, the reservation keeps it last); a finished one
-//   consumes the Request ID.
+//   of the message and then wait for flow control. A failed write runs
+//   `QueuedUpdate::withdraw_unwritten` (`pop_back`, the reservation keeps it
+//   last); a finished one consumes the Request ID and turns the
+//   `QueuedUpdate` `written` into an `UpdateAnswer`.
 // - `outPush`: only when PUSH_BEFORE_WRITE is off: the waiter is pushed
 //   after the write, as a separate lock hold.
-// - `outCancel`: the caller's future is dropped inside the send await. The
-//   waiter stays queued and the reservation is released unconsumed; bytes
-//   already written stay on the stream (a torn message).
+// - `outCancel`: the caller's future is dropped inside the send await,
+//   dropping the `QueuedUpdate`. The waiter stays queued and the
+//   reservation is released unconsumed; bytes already written stay on the
+//   stream (a torn message).
 // - `outTimeout`: `UpdateAnswer::wait` gives up after the control message
 //   timeout and drops its receiver; the waiter stays queued.
 // - `peerAnswer`: the peer answers its oldest unanswered update.
 // - `outReceiveAnswer`: the request stream's reader runs `answer_update`
-//   (`pop_front` under the waiters lock) for a REQUEST_OK / REQUEST_ERROR;
-//   an answer with no waiter is ignored.
+//   (`UpdateWaiters::answer_front`: `pop_front` under the waiters lock) for
+//   a REQUEST_OK / REQUEST_ERROR; an answer with no waiter is ignored.
 // Updates carry a ghost index (their order of issue) so the model can tell
 // which update an answer belongs to.
 //

@@ -65,7 +65,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | Outgoing request stream | `requests.outgoing[id]`; caller side `RequestCancel(CallerState)` (`AwaitingResponse` / `Delivered` / `Ended`) in `version/draft18.rs`; task side `FirstMessage` in `version/draft18/request_streams.rs` | `Opening`, `AwaitingResponse`, `Established`, `Rejected`, `Ended` | [`draft18_outgoing_request.qnt`](models/draft18_outgoing_request.qnt) |
 | Incoming request stream | task locals `reading`, `watching_stop`, `go_away_received`, `kind`/`updated_kind`; `requests.incoming[id]` | `Accepting`, `Open`, `AnsweredReading`, `HalfClosed`, `Ended` | — |
 | Serving FETCH | `fetch_end{fetch_ok_sent, response_ended}`, `fetch_response`, entry presence | `Open`, `ResponseAttached`, `OkSent`, `ResponseEnded`, `Done`, `Cancelled`, `Rejected` | [`draft18_fetch.qnt`](models/draft18_fetch.qnt) |
-| REQUEST_UPDATE | outbound `update_waiters` queue; inbound `FuturesOrdered` + `AnswerSlot` | per update: `Queued`, `Written`, `Answered`, `TimedOut` | [`draft18_request_update.qnt`](models/draft18_request_update.qnt) |
+| REQUEST_UPDATE | outbound `UpdateWaiters` queue (`enqueue` / `withdraw_unwritten` / `answer_front`) and per-update typestate `QueuedUpdate` → `UpdateAnswer` in `version/update_answer.rs`; inbound `FuturesOrdered` + `AnswerSlot` | per update: `Queued`, `Written`, `Answered`, `TimedOut` | [`draft18_request_update.qnt`](models/draft18_request_update.qnt) |
 | Namespace subscription / advertisement | `held_namespaces`, `accepted`, `advertised`, `blocked_tracks` | `Unanswered{held}`, `Accepted`, `Removed`; per track `Blocked` | — |
 | Registry binding | `binding: OnceLock` | `Unbound`, `Bound` | — |
 

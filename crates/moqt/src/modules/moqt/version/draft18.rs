@@ -14,7 +14,7 @@ pub(crate) mod request_streams;
 pub(crate) mod setup;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     mem,
     sync::{
         Arc, Weak,
@@ -42,7 +42,7 @@ use crate::{
             version::{
                 self, Notification, OutgoingRequest, OutgoingResponse, RequestIdReservation,
                 UpdateAnswer,
-                update_answer::{UpdateAnswerSender, UpdateOutcome},
+                update_answer::{UpdateOutcome, UpdateWaiters},
             },
         },
         transport::{
@@ -141,10 +141,7 @@ struct RequestStream {
     /// namespaces to send as NAMESPACE after its REQUEST_OK, as the first
     /// message of the response is REQUEST_OK or REQUEST_ERROR (§10.18).
     held_namespaces: Option<HashSet<Vec<String>>>,
-    /// The waiters of this side's REQUEST_UPDATEs on the stream, oldest
-    /// first: the peer answers each with exactly one REQUEST_OK or
-    /// REQUEST_ERROR, in order (§10.9).
-    update_waiters: Arc<std::sync::Mutex<VecDeque<UpdateAnswerSender>>>,
+    update_waiters: Arc<UpdateWaiters>,
     /// For a SUBSCRIBE_TRACKS the peer sent: the tracks PUBLISH_BLOCKED went
     /// out for on it. No PUBLISH for them follows while the stream lives
     /// (§6.1), whatever prefix it moves to (§10.9.2).
@@ -912,24 +909,13 @@ impl ControlChannel {
         let Some(stream) = stream else {
             return Err(TransportSendError::ClosedStream);
         };
-        // The reservation keeps the waiters in the order the updates are
-        // written.
-        let (answer_sender, answer) = tokio::sync::oneshot::channel();
-        stream
-            .update_waiters
-            .lock()
-            .expect("draft-18 update waiters poisoned")
-            .push_back(answer_sender);
+        let update = stream.update_waiters.enqueue();
         if let Err(error) = stream.sender.send(&message).await {
-            stream
-                .update_waiters
-                .lock()
-                .expect("draft-18 update waiters poisoned")
-                .pop_back();
+            update.withdraw_unwritten();
             return Err(error);
         }
         self.consume(reservation);
-        Ok(UpdateAnswer(Some(answer)))
+        Ok(update.written())
     }
 
     /// Hands the peer's REQUEST_OK or REQUEST_ERROR on `request_id`'s stream
@@ -945,14 +931,8 @@ impl ControlChannel {
                 .or_else(|| requests.incoming.get(&request_id))
                 .map(|stream| stream.update_waiters.clone())
         };
-        let waiter = waiters.and_then(|waiters| {
-            waiters
-                .lock()
-                .expect("draft-18 update waiters poisoned")
-                .pop_front()
-        });
-        if let Some(waiter) = waiter {
-            let _ = waiter.send(outcome);
+        if let Some(waiters) = waiters {
+            waiters.answer_front(outcome);
         }
     }
 

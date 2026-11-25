@@ -21,6 +21,7 @@ Add `proptest` (`default-features = false`, feature: `std`) as a dev-dependency 
 
 **Session state**
 - During session migration, `GroupCutover` delivers each group from at most one subscription (all objects or none) and starts from the current subscription only at group start while the previous subscription may still deliver it.
+- `UpdateWaiters` hands every REQUEST_UPDATE answer to the caller of the update it answers when updates are written or withdrawn one at a time.
 - `ObjectLedger` rejects an object copy if and only if it conflicts with an accepted copy, making malformation detection independent of arrival order.
 
 Shared strategies live in `modules/test_support/control_message_strategies.rs` and `modules/test_support/object_strategies.rs`. They bias toward encoding boundaries (varint width edges, object/group gaps of `0..=3` where deltas are omitted or shortened) that uniform random generation rarely hits.
