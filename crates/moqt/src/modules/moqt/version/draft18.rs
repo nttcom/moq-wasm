@@ -1301,7 +1301,7 @@ mod tests {
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
-                data_receiver, datagram_object, in_memory_draft18_sessions,
+                data_receiver, datagram_object, in_memory_draft18_sessions, location,
                 mandatory_track_properties, next_datagram, next_event, next_subgroup,
                 notify_datagram, published_track_between, read_fetch_objects, sent_update,
                 spawn_connected_draft18_sessions, subscribed_track_reader,
@@ -1753,20 +1753,14 @@ mod tests {
     async fn a_fetch_returns_its_objects() {
         // Arrange
         let (client, server) = spawn_connected_draft18_sessions("draft18-fetch", "moqt").await;
-        let end = Location {
-            group_id: 2,
-            object_id: 0,
-        };
+        let end = location(2, 0);
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
                 .fetch(
                     "ns".into(),
                     "track".into(),
-                    Location {
-                        group_id: 0,
-                        object_id: 0,
-                    },
+                    location(0, 0),
                     end,
                     FetchOption::default(),
                 )
@@ -1777,10 +1771,7 @@ mod tests {
         };
         let objects: Vec<Object> = (0..3)
             .map(|index| Object {
-                location: Location {
-                    group_id: index / 2,
-                    object_id: index % 2,
-                },
+                location: location(index / 2, index % 2),
                 forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
                 publisher_priority: 128,
                 status: ObjectStatus::Normal,
@@ -1830,15 +1821,9 @@ mod tests {
                 scheme,
             )
             .await;
-            let end = Location {
-                group_id: 0,
-                object_id: 1,
-            };
+            let end = location(0, 1);
             let object = Object {
-                location: Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
+                location: location(0, 0),
                 forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
                 publisher_priority: 128,
                 status: ObjectStatus::Normal,
@@ -1875,10 +1860,7 @@ mod tests {
                     subscriber.fetch(
                         "ns".into(),
                         "track".into(),
-                        Location {
-                            group_id: 0,
-                            object_id: 0,
-                        },
+                        location(0, 0),
                         end,
                         FetchOption::default(),
                     ),
@@ -1928,20 +1910,14 @@ mod tests {
         FetchHandler,
         FetchDataSender,
     ) {
-        let end = Location {
-            group_id: 1,
-            object_id: 0,
-        };
+        let end = location(1, 0);
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             let handle = subscriber
                 .fetch(
                     "ns".into(),
                     "track".into(),
-                    Location {
-                        group_id: 0,
-                        object_id: 0,
-                    },
+                    location(0, 0),
                     end,
                     FetchOption::default(),
                 )
@@ -1982,10 +1958,7 @@ mod tests {
             payload: Bytes::from_static(b"o"),
             ends_group: false,
         };
-        let unknown_through = Location {
-            group_id: 2,
-            object_id: u64::MAX,
-        };
+        let unknown_through = location(2, u64::MAX);
 
         // Act
         sender.send_object(&object(0)).await.unwrap();
@@ -2046,10 +2019,7 @@ mod tests {
         let first = within(receiver.receive()).await.unwrap();
         let second = within(receiver.receive()).await.unwrap();
         let reported = sender
-            .report_unknown_range(Location {
-                group_id: 0,
-                object_id: u64::MAX,
-            })
+            .report_unknown_range(location(0, u64::MAX))
             .await
             .unwrap();
         let end = within(receiver.receive()).await;
@@ -2372,10 +2342,7 @@ mod tests {
             let (sender, request_stream) =
                 fetch_with_stopped_response_stream(&client, &server).await;
             let object = Object {
-                location: Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
+                location: location(0, 0),
                 forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
                 publisher_priority: 128,
                 status: ObjectStatus::Normal,
@@ -2495,14 +2462,8 @@ mod tests {
             fetch_params: FetchParams::Standalone {
                 track_namespace: vec!["ns".to_string()],
                 track_name: "track".to_string(),
-                start_location: Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
-                end_location: Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
+                start_location: location(0, 0),
+                end_location: location(1, 0),
             },
             authorization_tokens: vec![],
             fill_timeout: None,
@@ -2521,15 +2482,7 @@ mod tests {
             server.receive_event(),
         )
         .await;
-        let answered = handler
-            .ok(
-                false,
-                Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
-            )
-            .await;
+        let answered = handler.ok(false, location(1, 0)).await;
 
         // Assert: §3.3.2 cancels by reset, not by FIN
         assert!(later.is_err(), "{later:?}");
@@ -2550,14 +2503,8 @@ mod tests {
             fetch_params: FetchParams::Standalone {
                 track_namespace: vec!["ns".to_string()],
                 track_name: "track".to_string(),
-                start_location: Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
-                end_location: Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
+                start_location: location(0, 0),
+                end_location: location(1, 0),
             },
             authorization_tokens: vec![],
             fill_timeout: Some(0),
@@ -3857,10 +3804,7 @@ mod tests {
             spawn_connected_draft18_sessions("draft18-update-largest", "moqt").await;
         let (sender, mut receiver) = raw_subscription(&client, &server).await;
         let handler = requested_update(&client, &server, &sender).await;
-        let largest = Location {
-            group_id: 3,
-            object_id: 1,
-        };
+        let largest = location(3, 1);
 
         // Act
         let told = handler.ok(Some(largest));
@@ -3999,10 +3943,7 @@ mod tests {
             &track.client,
         )
         .await;
-        first.ok(Some(Location {
-            group_id: 3,
-            object_id: 1,
-        }));
+        first.ok(Some(location(3, 1)));
         let _second = sent_update(
             subscriber.update_forward(&track.accepted, true),
             &track.client,
@@ -4206,10 +4147,7 @@ mod tests {
         // Arrange
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-track-status-ok", "moqt").await;
-        let largest = Location {
-            group_id: 4,
-            object_id: 2,
-        };
+        let largest = location(4, 2);
         let subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
@@ -4275,14 +4213,8 @@ mod tests {
                 .fetch(
                     "ns".into(),
                     "track".into(),
-                    Location {
-                        group_id: 0,
-                        object_id: 0,
-                    },
-                    Location {
-                        group_id: 1,
-                        object_id: 0,
-                    },
+                    location(0, 0),
+                    location(1, 0),
                     FetchOption::default(),
                 )
                 .await

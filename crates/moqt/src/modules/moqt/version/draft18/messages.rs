@@ -1191,6 +1191,7 @@ mod tests {
         constants::TerminationErrorCode,
         control_messages::messages::parameters::trace_context::TEST_TRACEPARENT,
     };
+    use crate::modules::test_support::location;
 
     fn traceparent() -> Option<TraceContext> {
         TraceContext::parse(TEST_TRACEPARENT.as_bytes())
@@ -1210,13 +1211,6 @@ mod tests {
                 .map(|&(key, value)| varint_property(key, value))
                 .collect(),
         )
-    }
-
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
     }
 
     fn decode(framed: BytesMut) -> Message {

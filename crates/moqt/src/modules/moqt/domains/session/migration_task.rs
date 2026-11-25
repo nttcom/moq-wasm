@@ -815,10 +815,11 @@ mod tests {
             moqt::version::Version,
             test_support::{
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
-                client_with_config, data_receiver, datagram_object, native_client_with_config,
-                next_datagram, next_event, next_subgroup, open_subgroup, self_signed_server_config,
-                send_payload, sent_update, spawn_native_server, spawn_native_server_handshake,
-                spawn_server, subscribe_namespace_accepted, subscribed_track_reader, within,
+                client_with_config, data_receiver, datagram_object, location,
+                native_client_with_config, next_datagram, next_event, next_subgroup, open_subgroup,
+                self_signed_server_config, send_payload, sent_update, spawn_native_server,
+                spawn_native_server_handshake, spawn_server, subscribe_namespace_accepted,
+                subscribed_track_reader, within,
             },
         },
         namespace::NamespaceInterest,
@@ -838,10 +839,7 @@ mod tests {
     fn the_first_whole_group_follows_a_largest_object_with_the_largest_object_id() {
         // Arrange
         let content_exists = ContentExists::True {
-            location: Location {
-                group_id: 4,
-                object_id: u64::MAX,
-            },
+            location: location(4, u64::MAX),
         };
 
         // Act
@@ -861,10 +859,7 @@ mod tests {
             FilterType::LargestObject,
             FilterType::NextGroupStart,
             FilterType::AbsoluteStart {
-                location: Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
+                location: location(0, 0),
             },
         ];
 
@@ -1023,10 +1018,7 @@ mod tests {
     fn absolute_range(start_group: u64, end_group: u64) -> SubscribeOption {
         SubscribeOption {
             filter_type: FilterType::AbsoluteRange {
-                location: Location {
-                    group_id: start_group,
-                    object_id: 0,
-                },
+                location: location(start_group, 0),
                 end_group,
             },
             ..SubscribeOption::default()
@@ -1103,10 +1095,7 @@ mod tests {
             .unwrap();
         let server_b = accept_b.await.unwrap();
         let largest = ContentExists::True {
-            location: Location {
-                group_id: 5,
-                object_id: 3,
-            },
+            location: location(5, 3),
         };
         let _ = serve_subscribe_with_content(&server_b, largest).await;
         let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
@@ -1121,10 +1110,7 @@ mod tests {
     /// The Start Location the SUBSCRIBE sent again established: past B's
     /// Largest Object, later than A's {0, 0}.
     const START_ON_B: FilterType = FilterType::AbsoluteStart {
-        location: Location {
-            group_id: 6,
-            object_id: 0,
-        },
+        location: location(6, 0),
     };
 
     #[tokio::test]
@@ -1270,10 +1256,7 @@ mod tests {
         assert_eq!(
             filter_b,
             FilterType::AbsoluteRange {
-                location: Location {
-                    group_id: 2,
-                    object_id: 0
-                },
+                location: location(2, 0),
                 end_group: 3
             }
         );
@@ -1309,10 +1292,7 @@ mod tests {
         assert_eq!(
             filter_b,
             FilterType::AbsoluteRange {
-                location: Location {
-                    group_id: 2,
-                    object_id: 0
-                },
+                location: location(2, 0),
                 end_group: 3
             }
         );
@@ -1445,10 +1425,7 @@ mod tests {
                 .unwrap();
             let server_b = accept_b.await.unwrap();
             let largest_on_b = ContentExists::True {
-                location: Location {
-                    group_id: 2,
-                    object_id: 0,
-                },
+                location: location(2, 0),
             };
             let (sender_b, _, _) = serve_subscribe_with_content(&server_b, largest_on_b).await;
             let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
@@ -1983,19 +1960,13 @@ mod tests {
             server_a,
             server_b,
         } = Migration::connect(name, hop).await;
-        let end = Location {
-            group_id: 1,
-            object_id: 3,
-        };
+        let end = location(1, 3);
         let mut subscriber = client.subscriber();
         let (handle, (_, sender_a)) = tokio::join!(
             subscriber.fetch(
                 "ns".into(),
                 "track".into(),
-                Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
+                location(1, 0),
                 end,
                 FetchOption::default(),
             ),
@@ -2037,13 +2008,7 @@ mod tests {
         let rest = within(rest).await.unwrap();
 
         // Assert: B is asked from the first object A did not deliver
-        assert_eq!(
-            start_b,
-            Location {
-                group_id: 1,
-                object_id: 2
-            }
-        );
+        assert_eq!(start_b, location(1, 2));
         assert_eq!(rest.unwrap(), vec![Bytes::from("o2")]);
     }
 
@@ -2077,20 +2042,14 @@ mod tests {
         let (port_b, accept_b) = spawn_server(&format!("{name}-b"), Version::Draft18);
         let client = connect(port_a, Version::Draft18).await;
         let server_a = accept_a.await.unwrap();
-        let end = Location {
-            group_id: 1,
-            object_id: 3,
-        };
+        let end = location(1, 3);
         let mut subscriber = client.subscriber();
         let first_sent = std::time::Instant::now();
         let (handle, (_, _sender_a)) = tokio::join!(
             subscriber.fetch(
                 "ns".into(),
                 "track".into(),
-                Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
+                location(1, 0),
                 end,
                 FetchOption {
                     fill_timeout: Some(fill_timeout),
@@ -2175,10 +2134,7 @@ mod tests {
                 }
             })
             .await;
-            let end = Location {
-                group_id: 1,
-                object_id: 1,
-            };
+            let end = location(1, 1);
 
             // Act: B answers a FETCH with object {1, 0} carrying another payload
             let mut subscriber = client.subscriber();
@@ -2186,10 +2142,7 @@ mod tests {
                 subscriber.fetch(
                     "ns".into(),
                     "track".into(),
-                    Location {
-                        group_id: 1,
-                        object_id: 0,
-                    },
+                    location(1, 0),
                     end,
                     FetchOption::default(),
                 ),
@@ -2206,10 +2159,7 @@ mod tests {
             assert_eq!(
                 fetched.unwrap_err().downcast_ref::<MalformedTrackError>(),
                 Some(&MalformedTrackError::ConflictingDuplicate {
-                    location: Location {
-                        group_id: 1,
-                        object_id: 0
-                    }
+                    location: location(1, 0)
                 })
             );
         }
@@ -2222,10 +2172,7 @@ mod tests {
         let (port_b, accept_b) = spawn_native_server("session-migration-joining-b");
         let client = connect(port_a, Version::Draft14).await;
         let server_a = accept_a.await.unwrap();
-        let largest = Location {
-            group_id: 3,
-            object_id: 2,
-        };
+        let largest = location(3, 2);
         let mut subscriber = client.subscriber();
         let (subscription, _) = tokio::join!(
             subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
@@ -2265,10 +2212,7 @@ mod tests {
             FetchParams::Standalone {
                 track_namespace: vec!["ns".to_string()],
                 track_name: "track".to_string(),
-                start_location: Location {
-                    group_id: 3,
-                    object_id: 0,
-                },
+                start_location: location(3, 0),
                 end_location: largest.end_after(),
             }
         );

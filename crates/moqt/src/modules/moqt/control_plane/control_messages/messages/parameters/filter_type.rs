@@ -117,13 +117,7 @@ impl FilterType {
 mod tests {
     use super::FilterType;
     use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
-
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
-    }
+    use crate::modules::test_support::location;
 
     fn decode(payload: &[u8]) -> Option<FilterType> {
         FilterType::decode(&mut std::io::Cursor::new(payload)).ok()

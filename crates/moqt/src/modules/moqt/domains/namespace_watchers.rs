@@ -71,11 +71,8 @@ impl NamespaceWatchers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::moqt::domains::namespace_tuple;
     use crate::modules::test_support::{next_event, spawn_connected_native_sessions};
-
-    fn namespace(path: &str) -> Vec<String> {
-        path.split('/').map(str::to_string).collect()
-    }
 
     async fn handle_next(client: &crate::Session, watchers: &NamespaceWatchers) {
         let event = next_event(client).await;
@@ -87,8 +84,8 @@ mod tests {
         // Arrange
         let (client, server) = spawn_connected_native_sessions("namespace-watchers").await;
         let watchers = NamespaceWatchers::default();
-        let mut room = watchers.watch(namespace("anon/room"));
-        let mut other = watchers.watch(namespace("anon/other"));
+        let mut room = watchers.watch(namespace_tuple("anon/room"));
+        let mut other = watchers.watch(namespace_tuple("anon/other"));
 
         // Act
         let publisher = server.publisher();
@@ -107,11 +104,11 @@ mod tests {
             [room.recv().await.unwrap(), room.recv().await.unwrap()],
             [
                 NamespaceEvent {
-                    namespace: namespace("anon/room/alice"),
+                    namespace: namespace_tuple("anon/room/alice"),
                     active: true,
                 },
                 NamespaceEvent {
-                    namespace: namespace("anon/room/alice"),
+                    namespace: namespace_tuple("anon/room/alice"),
                     active: false,
                 },
             ]
@@ -124,7 +121,7 @@ mod tests {
     async fn disconnected_ends_every_watcher_and_is_returned() {
         // Arrange
         let watchers = NamespaceWatchers::default();
-        let mut room = watchers.watch(namespace("anon/room"));
+        let mut room = watchers.watch(namespace_tuple("anon/room"));
 
         // Act
         let returned = watchers.handle(SessionEvent::Disconnected()).await;
