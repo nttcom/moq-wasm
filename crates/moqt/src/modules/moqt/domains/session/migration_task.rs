@@ -232,7 +232,7 @@ impl Router {
                         if !migration.current_closed() {
                             let close = current.connection.transport.closed().await;
                             if !self.reconnects(&current.connection, &close).await {
-                                self.finish(&current).await;
+                                self.finish(&current, previous.take()).await;
                                 return;
                             }
                             tracing::info!(%close, url = %self.url, "connection lost; reconnecting");
@@ -302,7 +302,7 @@ impl Router {
                                 // `Session::close` closed the session while it moved.
                                 current.connection.close(TerminationErrorCode::NoError, "");
                                 self.retire(moved_from);
-                                self.finish(&current).await;
+                                self.finish(&current, None).await;
                                 return;
                             }
                             if ended.reads_current() {
@@ -320,7 +320,7 @@ impl Router {
                         Err(error) => {
                             tracing::warn!(error = format!("{error:#}"), "migration failed; staying on the current connection");
                             if !ended.reads_current() {
-                                self.finish(&current).await;
+                                self.finish(&current, previous.take()).await;
                                 return;
                             }
                         }
@@ -388,7 +388,12 @@ impl Router {
         }
     }
 
-    async fn finish(&self, current: &Live) {
+    /// Ends the session once `current` has closed; retires `previous`, so the
+    /// session leaves no connection open.
+    async fn finish(&self, current: &Live, previous: Option<Previous>) {
+        if let Some(previous) = previous {
+            self.retire(previous);
+        }
         let close = current.connection.transport.closed().await;
         self.session.end_moves();
         self.closed_sender.send_replace(Some(close));
@@ -2094,6 +2099,33 @@ mod tests {
                 panic!("expected UNSUBSCRIBE, got {event:?}");
             };
             assert_eq!(handler.subscribe_id(), served.request_id());
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_a_session_that_still_serves_the_old_server_closes_both_connections() {
+        for version in DRAFTS {
+            // Arrange
+            let Migration {
+                client,
+                server_a,
+                server_b,
+            } = Migration::connect("migration-close-with-previous", Hop::within(version)).await;
+            let mut subscriber_a = server_a.subscriber();
+            let (_, _served) = tokio::join!(
+                subscriber_a.subscribe("ns".into(), "served".into(), SubscribeOption::default()),
+                serve_subscribe(&client)
+            );
+            let _server_b = server_b.named_by(&server_a).await;
+            assert!(within(client.moved_past(0)).await);
+
+            // Act
+            let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, client.close()).await;
+            let previous_closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+
+            // Assert
+            assert!(closed.is_ok(), "Session::close must return");
+            assert!(previous_closed.is_ok(), "the old connection must close");
         }
     }
 

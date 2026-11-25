@@ -103,7 +103,7 @@ Every `*_current` instance except `origin_current`, `response_guard_current`, `d
 | --- | --- | --- |
 | `origin_sessions` | A session that is both a subscriber and a PUBLISH peer of one track gets two serving outlets (SUBSCRIBE registered while `publish` awaits PUBLISH_OK); every object is sent twice | `RECHECK_ON_REGISTER` + `SUBSCRIBE_ENDS_PUBLISH` |
 | `subscription` | Client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves | `DONE_BEFORE_SUBSCRIBE` |
-| `migration` | `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry; a session ending with a `previous` leaves it open | `FIX_FINISH_CLOSES_PREVIOUS`, `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
+| `migration` | `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry | `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
 | `track_follower` | A withdrawal (`active=false`) keeps the handover flag, so the follower resubscribes to a gone publisher; `TrackWatch::next` never returns `None` after the session ends | `CLEAR_ON_WITHDRAWAL`, `END_DROPS_HANDLERS` |
 
 Refuted by the models: Origin outlets surviving a disconnect (one `Origin` per client session; `retire` releases them), Forward State demand drift, `group` and `abandoned` both set in `TrackWriter`, `ended` before a failing `close()` leaking a FETCH entry (quinn's `finish` does not fail there), and PUBLISH_NAMESPACE_DONE racing an in-flight PUBLISH_NAMESPACE (the peer sees them in order).

@@ -83,7 +83,7 @@ When `follow_go_away` is `true`, `Session` also replaces an unexpectedly lost co
 - **Closed during a GOAWAY move**: A move that completes after the current connection closed retires that connection at once, like a reconnect; when `Session::close` closed it, the move closes the new connection and the session ends.
 
 ### Closing the Previous Connection
-Closes with `NO_ERROR` once the peer takes no published tracks there and all carried subscriptions have zero open subgroup streams (`OpenSubgroups`), or when the server closes it:
+Closes with `NO_ERROR` once the peer takes no published tracks there and all carried subscriptions have zero open subgroup streams (`OpenSubgroups`), when the server closes it, or when the session ends:
 - A subscription with no open streams at move time cuts over immediately after its newest handed-out group.
 - Long-lived groups are capped by a **5 s** grace after all subscriptions cut over (**10 s** if a track receives nothing on the new connection).
 - Un-unsubscribed `SUBSCRIBE`s from the previous server, and `PUBLISH`es rejected by the new server, then emit an `Unsubscribe` event.
