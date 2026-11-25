@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Semaphore;
 
 use crate::{
     modules::client::routes::Routes,
@@ -16,12 +16,12 @@ pub struct TrackWriter {
     routes: Arc<Routes>,
     namespace: String,
     track: String,
-    subscribers: Mutex<mpsc::UnboundedReceiver<()>>,
+    subscribers: Arc<Semaphore>,
 }
 
 impl TrackWriter {
     pub(super) fn new(routes: Arc<Routes>, namespace: String, track: String) -> Self {
-        let subscribers = Mutex::new(routes.watch_subscribers(&namespace, &track));
+        let subscribers = routes.watch_subscribers(&namespace, &track);
         Self {
             routes,
             namespace,
@@ -77,7 +77,20 @@ impl TrackWriter {
     /// object. A later `publish_track` of the same track takes the
     /// notifications over.
     pub async fn next_subscriber(&self) -> bool {
-        self.subscribers.lock().await.recv().await.is_some()
+        match self.subscribers.acquire().await {
+            Ok(permit) => {
+                permit.forget();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+impl Drop for TrackWriter {
+    fn drop(&mut self) {
+        self.routes
+            .unwatch_subscribers(&self.namespace, &self.track, &self.subscribers);
     }
 }
 
@@ -85,5 +98,64 @@ fn sent_group(outcome: WriteOutcome) -> Option<u64> {
     match outcome {
         WriteOutcome::Sent(placement) => Some(placement.location.group_id),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::FutureExt;
+
+    use super::*;
+
+    fn key() -> (String, String) {
+        ("ns".to_string(), "track".to_string())
+    }
+
+    #[tokio::test]
+    async fn each_answered_subscribe_resolves_one_next_subscriber() {
+        // Arrange
+        let routes = Arc::new(Routes::default());
+        let writer = TrackWriter::new(Arc::clone(&routes), key().0, key().1);
+
+        // Act
+        routes.notify_subscribed(&key());
+        routes.notify_subscribed(&key());
+
+        // Assert
+        assert_eq!(writer.next_subscriber().now_or_never(), Some(true));
+        assert_eq!(writer.next_subscriber().now_or_never(), Some(true));
+        assert_eq!(writer.next_subscriber().now_or_never(), None);
+    }
+
+    #[tokio::test]
+    async fn next_subscriber_is_false_once_the_session_ends_or_a_later_writer_takes_over() {
+        // Arrange
+        let routes = Arc::new(Routes::default());
+        let replaced = TrackWriter::new(Arc::clone(&routes), key().0, key().1);
+        let ended = TrackWriter::new(Arc::clone(&routes), key().0, key().1);
+
+        // Act
+        routes.end();
+
+        // Assert
+        assert_eq!(replaced.next_subscriber().now_or_never(), Some(false));
+        assert_eq!(ended.next_subscriber().now_or_never(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_writer_leaves_the_watch_of_the_writer_that_replaced_it() {
+        // Arrange
+        let routes = Arc::new(Routes::default());
+        let replaced = TrackWriter::new(Arc::clone(&routes), key().0, key().1);
+        let current = TrackWriter::new(Arc::clone(&routes), key().0, key().1);
+
+        // Act
+        drop(replaced);
+        routes.notify_subscribed(&key());
+
+        // Assert
+        assert_eq!(current.next_subscriber().now_or_never(), Some(true));
+        drop(current);
+        assert!(routes.subscriber_watchers_is_empty());
     }
 }

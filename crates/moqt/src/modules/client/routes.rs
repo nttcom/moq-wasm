@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, oneshot};
 use tracing::Instrument;
 
 use crate::modules::extensions::mutex::lock;
@@ -40,7 +40,8 @@ pub(super) struct Routes {
     next_handler_id: AtomicU64,
     pub(super) watchers: NamespaceWatchers,
     publish_done: Mutex<HashMap<u64, oneshot::Sender<PublishDone>>>,
-    subscriber_watchers: Mutex<HashMap<TrackKey, mpsc::UnboundedSender<()>>>,
+    /// One permit per answered SUBSCRIBE `next_subscriber` has not taken.
+    subscriber_watchers: Mutex<HashMap<TrackKey, Arc<Semaphore>>>,
 }
 
 impl Routes {
@@ -65,16 +66,37 @@ impl Routes {
         lock(&self.publish_done).remove(&request_id);
     }
 
-    /// Receives once per SUBSCRIBE `origin` answers for the track; ends with
-    /// the session. Watching a track again replaces the earlier watch.
-    pub(super) fn watch_subscribers(
+    /// Returns a semaphore that gains a permit per SUBSCRIBE `origin` answers
+    /// for the track. It closes when the session ends or the track is
+    /// watched again.
+    pub(super) fn watch_subscribers(&self, namespace: &str, track: &str) -> Arc<Semaphore> {
+        let subscribers = Arc::new(Semaphore::new(0));
+        let replaced = lock(&self.subscriber_watchers).insert(
+            (namespace.to_string(), track.to_string()),
+            Arc::clone(&subscribers),
+        );
+        if let Some(replaced) = replaced {
+            replaced.close();
+        }
+        subscribers
+    }
+
+    /// Removes the watch `subscribers` unless a later watch of the track
+    /// replaced it.
+    pub(super) fn unwatch_subscribers(
         &self,
         namespace: &str,
         track: &str,
-    ) -> mpsc::UnboundedReceiver<()> {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        lock(&self.subscriber_watchers).insert((namespace.to_string(), track.to_string()), sender);
-        receiver
+        subscribers: &Arc<Semaphore>,
+    ) {
+        let mut watchers = lock(&self.subscriber_watchers);
+        let key = (namespace.to_string(), track.to_string());
+        if watchers
+            .get(&key)
+            .is_some_and(|watched| Arc::ptr_eq(watched, subscribers))
+        {
+            watchers.remove(&key);
+        }
     }
 
     /// Returns once the session has ended.
@@ -108,7 +130,9 @@ impl Routes {
     pub(super) fn end(&self) {
         self.watchers.close();
         lock(&self.publish_done).clear();
-        lock(&self.subscriber_watchers).clear();
+        for (_, subscribers) in lock(&self.subscriber_watchers).drain() {
+            subscribers.close();
+        }
     }
 
     async fn pass_handlers(&self, event: SessionEvent) -> Option<SessionEvent> {
@@ -188,9 +212,14 @@ impl Routes {
         true
     }
 
-    fn notify_subscribed(&self, track: &TrackKey) {
-        if let Some(sender) = lock(&self.subscriber_watchers).get(track) {
-            let _ = sender.send(());
+    #[cfg(test)]
+    pub(super) fn subscriber_watchers_is_empty(&self) -> bool {
+        lock(&self.subscriber_watchers).is_empty()
+    }
+
+    pub(super) fn notify_subscribed(&self, track: &TrackKey) {
+        if let Some(subscribers) = lock(&self.subscriber_watchers).get(track) {
+            subscribers.add_permits(1);
         }
     }
 }
