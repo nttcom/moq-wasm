@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -10,26 +10,9 @@ use async_trait::async_trait;
 use redis::AsyncCommands;
 use tokio::sync::watch;
 
-use super::{RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use super::{RelayInfo, RelayRouteRegistry};
 use crate::modules::domain::track_key::{TrackKey, namespace_has_prefix};
 use crate::modules::observability::stats_export_task::unix_millis_now;
-
-#[derive(Clone, Copy)]
-enum RouteKind {
-    Upsert,
-    NamespaceSubscriber,
-}
-
-impl RouteKind {
-    fn register_script(self) -> redis::Script {
-        match self {
-            Self::Upsert => redis::Script::new(include_str!("scripts/upsert_route.lua")),
-            Self::NamespaceSubscriber => {
-                redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"))
-            }
-        }
-    }
-}
 
 pub(crate) struct RedisRelayRouteRegistry {
     relay: RelayInfo,
@@ -41,7 +24,7 @@ pub(crate) struct RedisRelayRouteRegistry {
     /// loaded migration target.
     client_sessions: watch::Receiver<usize>,
     connection: redis::aio::ConnectionManager,
-    owned_routes: tokio::sync::Mutex<HashMap<String, RouteKind>>,
+    owned_routes: tokio::sync::Mutex<HashSet<String>>,
 }
 
 impl RedisRelayRouteRegistry {
@@ -66,7 +49,7 @@ impl RedisRelayRouteRegistry {
             draining: AtomicBool::new(false),
             client_sessions,
             connection,
-            owned_routes: tokio::sync::Mutex::new(HashMap::new()),
+            owned_routes: tokio::sync::Mutex::new(HashSet::new()),
         });
         registry.register_relay().await?;
         registry.spawn_heartbeat();
@@ -145,18 +128,18 @@ impl RedisRelayRouteRegistry {
         let mut connection = self.connection.clone();
         let mut pipe = redis::pipe();
         pipe.atomic();
-        for key in owned_routes.keys() {
+        for key in owned_routes.iter() {
             pipe.hexists(key, &self.relay.relay_id)
                 .expire(key, Self::ROUTE_TTL_SECONDS as i64)
                 .ignore();
         }
         let still_registered: Vec<bool> = pipe.query_async(&mut connection).await?;
 
-        for ((key, kind), still_registered) in owned_routes.iter().zip(still_registered) {
+        for (key, still_registered) in owned_routes.iter().zip(still_registered) {
             if still_registered {
                 continue;
             }
-            match self.invoke_register_script(*kind, key).await {
+            match self.invoke_register_script(key).await {
                 Ok(()) => tracing::warn!(route_key = %key, "restored route lost from redis"),
                 Err(err) => {
                     tracing::warn!(error = ?err, route_key = %key, "failed to restore route lost from redis")
@@ -193,30 +176,21 @@ impl RedisRelayRouteRegistry {
         Ok(routes)
     }
 
-    async fn register_route(&self, kind: RouteKind, key: String) -> Result<(), RegisterRouteError> {
+    async fn register_route(&self, key: String) -> anyhow::Result<()> {
         let mut owned_routes = self.owned_routes.lock().await;
-        self.invoke_register_script(kind, &key).await?;
-        owned_routes.insert(key, kind);
+        self.invoke_register_script(&key).await?;
+        owned_routes.insert(key);
         Ok(())
     }
 
-    async fn invoke_register_script(
-        &self,
-        kind: RouteKind,
-        key: &str,
-    ) -> Result<(), RegisterRouteError> {
+    async fn invoke_register_script(&self, key: &str) -> anyhow::Result<()> {
         let mut connection = self.connection.clone();
-        let registered: i64 = kind
-            .register_script()
+        let _: i64 = redis::Script::new(include_str!("scripts/upsert_route.lua"))
             .key(key)
             .arg(&self.relay.relay_id)
             .arg(Self::ROUTE_TTL_SECONDS)
             .invoke_async(&mut connection)
-            .await
-            .map_err(|e| RegisterRouteError::Other(e.into()))?;
-        if registered == 0 {
-            return Err(RegisterRouteError::Conflict);
-        }
+            .await?;
         Ok(())
     }
 
@@ -313,23 +287,16 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 
     async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
-        Ok(self
-            .register_route(
-                RouteKind::Upsert,
-                Self::publisher_namespace_key(track_namespace),
-            )
-            .await?)
+        self.register_route(Self::publisher_namespace_key(track_namespace))
+            .await
     }
 
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterRouteError> {
-        self.register_route(
-            RouteKind::NamespaceSubscriber,
-            Self::subscriber_namespace_key(track_namespace_prefix),
-        )
-        .await
+    ) -> anyhow::Result<()> {
+        self.register_route(Self::subscriber_namespace_key(track_namespace_prefix))
+            .await
     }
 
     async fn find_active_namespace_publishers(
@@ -341,9 +308,8 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 
     async fn register_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
-        Ok(self
-            .register_route(RouteKind::Upsert, Self::publisher_track_key(track_key))
-            .await?)
+        self.register_route(Self::publisher_track_key(track_key))
+            .await
     }
 
     async fn unregister_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
@@ -360,12 +326,8 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 
     async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
-        Ok(self
-            .register_route(
-                RouteKind::Upsert,
-                Self::watched_namespace_key(track_namespace),
-            )
-            .await?)
+        self.register_route(Self::watched_namespace_key(track_namespace))
+            .await
     }
 
     async fn unregister_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {

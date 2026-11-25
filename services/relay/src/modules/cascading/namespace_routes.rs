@@ -28,14 +28,72 @@ impl HeldRoutes {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Route<'a> {
+    Publisher(&'a str),
+    Subscriber(&'a str),
+}
+
+impl Route<'_> {
+    fn is_wanted(self, table: &InMemoryLocalPubSubDirectory) -> bool {
+        match self {
+            Self::Publisher(track_namespace) => {
+                table.has_client_namespace_publisher(track_namespace)
+            }
+            Self::Subscriber(track_namespace_prefix) => {
+                table.has_client_namespace_subscriber(track_namespace_prefix)
+            }
+        }
+    }
+
+    async fn register(self, route_registry: &dyn RelayRouteRegistry) -> anyhow::Result<()> {
+        match self {
+            Self::Publisher(track_namespace) => {
+                route_registry
+                    .register_namespace_publisher(track_namespace)
+                    .await
+            }
+            Self::Subscriber(track_namespace_prefix) => {
+                route_registry
+                    .register_namespace_subscriber(track_namespace_prefix)
+                    .await
+            }
+        }
+    }
+
+    /// Logs a failure: the route expires as the heartbeat no longer
+    /// refreshes it.
+    async fn unregister(self, route_registry: &dyn RelayRouteRegistry) {
+        match self {
+            Self::Publisher(track_namespace) => {
+                if let Err(error) = route_registry
+                    .unregister_namespace_publisher(track_namespace)
+                    .await
+                {
+                    tracing::warn!(?error, %track_namespace, "failed to unregister namespace publisher route");
+                }
+            }
+            Self::Subscriber(track_namespace_prefix) => {
+                if let Err(error) = route_registry
+                    .unregister_namespace_subscriber(track_namespace_prefix)
+                    .await
+                {
+                    tracing::warn!(?error, %track_namespace_prefix, "failed to unregister namespace subscriber route");
+                }
+            }
+        }
+    }
+}
+
 /// The namespace routes this relay holds in the route registry. After each
-/// change of a namespace's client publishers in the directory, `reconcile`
-/// reads them again under the namespace's lock and registers or withdraws
-/// the route to match, so two changes crossing each other leave the route
-/// the directory asks for.
+/// change of a namespace's client publishers or a prefix's client subscribers
+/// in the directory, a reconcile reads them again under the route's lock and
+/// registers or withdraws the route to match, so two changes crossing each
+/// other leave the route the directory asks for.
 pub(crate) struct NamespaceRoutes {
     route_registry: Arc<dyn RelayRouteRegistry>,
     publishers: HeldRoutes,
+    subscribers: HeldRoutes,
 }
 
 impl NamespaceRoutes {
@@ -43,35 +101,54 @@ impl NamespaceRoutes {
         Self {
             route_registry,
             publishers: HeldRoutes::default(),
+            subscribers: HeldRoutes::default(),
         }
     }
 
     /// Registers the namespace's publisher route while a client publishes the
     /// namespace and withdraws it once none does. Fails only when the route
     /// could not be registered; a failed withdrawal is logged. Returns whether
-    /// it withdrew the route, and the route
-    /// expires as the heartbeat no longer refreshes it.
+    /// it withdrew the route.
     pub(crate) async fn reconcile_publisher(
         &self,
         track_namespace: &str,
         table: &InMemoryLocalPubSubDirectory,
     ) -> anyhow::Result<bool> {
-        let mut held = self.publishers.lock(track_namespace).await;
-        let wanted = table.has_client_namespace_publisher(track_namespace);
+        self.reconcile(&self.publishers, Route::Publisher(track_namespace), table)
+            .await
+    }
+
+    /// `reconcile_publisher` for the prefix's subscriber route, held while a
+    /// client subscribes to the prefix.
+    pub(crate) async fn reconcile_subscriber(
+        &self,
+        track_namespace_prefix: &str,
+        table: &InMemoryLocalPubSubDirectory,
+    ) -> anyhow::Result<bool> {
+        self.reconcile(
+            &self.subscribers,
+            Route::Subscriber(track_namespace_prefix),
+            table,
+        )
+        .await
+    }
+
+    async fn reconcile(
+        &self,
+        held_routes: &HeldRoutes,
+        route: Route<'_>,
+        table: &InMemoryLocalPubSubDirectory,
+    ) -> anyhow::Result<bool> {
+        let (Route::Publisher(key) | Route::Subscriber(key)) = route;
+        let mut held = held_routes.lock(key).await;
+        let wanted = route.is_wanted(table);
         let withdrawn = match (wanted, *held) {
-            (true, false) => self
-                .route_registry
-                .register_namespace_publisher(track_namespace)
+            (true, false) => route
+                .register(self.route_registry.as_ref())
                 .await
                 .map(|()| false),
             (false, true) => {
-                if let Err(error) = self
-                    .route_registry
-                    .unregister_namespace_publisher(track_namespace)
-                    .await
-                {
-                    tracing::warn!(?error, %track_namespace, "failed to unregister namespace publisher route");
-                }
+                route.unregister(self.route_registry.as_ref()).await;
                 Ok(true)
             }
             _ => Ok(false),
@@ -80,7 +157,7 @@ impl NamespaceRoutes {
             *held = wanted;
         }
         drop(held);
-        self.publishers.forget_unheld(track_namespace);
+        held_routes.forget_unheld(key);
         withdrawn
     }
 }

@@ -74,8 +74,7 @@ async fn cleanup_removed_session(
                 &track_namespace_prefix,
                 table,
                 forwarder,
-                deps.route_registry.as_ref(),
-                deps.inter_relay_connection_manager.as_ref(),
+                deps.cascading_relay_context(),
             )
             .await;
         }

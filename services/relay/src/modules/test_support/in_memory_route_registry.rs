@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 
 use crate::modules::{
-    cascading::route_registry::{RegisterRouteError, RelayInfo, RelayRouteRegistry},
+    cascading::route_registry::{RelayInfo, RelayRouteRegistry},
     domain::track_key::TrackKey,
 };
 
@@ -84,22 +84,18 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
         Ok(())
     }
 
-    /// Like `register_namespace_subscriber.lua`, refuses a prefix the relay
-    /// already holds.
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterRouteError> {
+    ) -> anyhow::Result<()> {
         self.pass_held_call().await;
-        if self
-            .lock()
-            .namespace_subscribers
-            .insert(track_namespace_prefix.to_string())
-        {
-            Ok(())
-        } else {
-            Err(RegisterRouteError::Conflict)
+        if self.registration_fails() {
+            anyhow::bail!("route registry down");
         }
+        self.lock()
+            .namespace_subscribers
+            .insert(track_namespace_prefix.to_string());
+        Ok(())
     }
 
     async fn find_active_namespace_publishers(

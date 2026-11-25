@@ -499,8 +499,6 @@ impl InMemoryLocalPubSubDirectory {
         }
     }
 
-    /// Returns true when this registration adds the first client subscriber
-    /// for the prefix, i.e. the caller should register the Redis route.
     #[tracing::instrument(
         level = "debug",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
@@ -512,7 +510,7 @@ impl InMemoryLocalPubSubDirectory {
         session_id: SessionId,
         track_namespace_prefix: String,
         subscription: NamespaceSubscription,
-    ) -> bool {
+    ) {
         let subscriptions = self
             .subscriber_namespaces
             .entry(track_namespace_prefix.clone())
@@ -524,9 +522,15 @@ impl InMemoryLocalPubSubDirectory {
                 );
                 DashMap::new()
             });
-        let had_client = has_client_subscription(&subscriptions);
         subscriptions.insert((session_id, subscription.interest), subscription);
-        subscription.peer == SessionPeer::Client && !had_client
+    }
+
+    /// Whether a client subscribes to exactly this prefix; such a client owns
+    /// the prefix's Redis route.
+    pub(crate) fn has_client_namespace_subscriber(&self, track_namespace_prefix: &str) -> bool {
+        self.subscriber_namespaces
+            .get(track_namespace_prefix)
+            .is_some_and(|subscriptions| has_client_subscription(&subscriptions))
     }
 
     /// Whether `session_id` already holds a subscription overlapping this one:
@@ -1691,31 +1695,31 @@ mod tests {
     }
 
     #[test]
-    fn register_subscribe_namespace_reports_only_the_first_client() {
-        // Arrange: Start with a relay subscriber, which never owns the route.
+    fn only_a_client_subscription_of_the_prefix_makes_a_client_subscriber() {
+        // Arrange: a relay subscribes to the prefix and a client to a longer one
         let table = InMemoryLocalPubSubDirectory::new();
-
-        // Act: Register a relay subscriber and then two client subscribers.
-        let relay_is_first = table.register_subscribe_namespace(
+        table.register_subscribe_namespace(
             1,
             "room".to_string(),
             namespaces_and_tracks(SessionPeer::Relay),
         );
-        let first_client = table.register_subscribe_namespace(
+        table.register_subscribe_namespace(
             2,
-            "room".to_string(),
+            "room/a".to_string(),
             namespaces_and_tracks(SessionPeer::Client),
         );
-        let second_client = table.register_subscribe_namespace(
+        let before = table.has_client_namespace_subscriber("room");
+
+        // Act
+        table.register_subscribe_namespace(
             3,
             "room".to_string(),
             namespaces_and_tracks(SessionPeer::Client),
         );
 
-        // Assert: Only the first client registration requests route registration.
-        assert!(!relay_is_first);
-        assert!(first_client);
-        assert!(!second_client);
+        // Assert
+        assert!(!before);
+        assert!(table.has_client_namespace_subscriber("room"));
     }
 
     #[test]

@@ -1,10 +1,6 @@
 use moqt::namespace::NamespaceInterest;
 
 use crate::modules::{
-    cascading::{
-        inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry,
-    },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
@@ -49,8 +45,7 @@ impl UnsubscribeNamespace {
             track_namespace_prefix,
             table,
             forwarder,
-            cascading_relay_context.route_registry,
-            cascading_relay_context.inter_relay_connection_manager,
+            cascading_relay_context,
         )
         .await;
     }
@@ -65,23 +60,24 @@ impl UnsubscribeNamespace {
         track_namespace_prefix: &str,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        route_registry: &dyn RelayRouteRegistry,
-        inter_relay_connection_manager: &InterRelayConnectionManager,
+        cascading_relay_context: CascadingRelayContext<'_>,
     ) {
         table.purge_relay_publish_namespaces(track_namespace_prefix);
 
-        if let Err(err) = route_registry
-            .unregister_namespace_subscriber(track_namespace_prefix)
+        if let Err(err) = cascading_relay_context
+            .namespace_routes
+            .reconcile_subscriber(track_namespace_prefix, table)
             .await
         {
             tracing::warn!(
                 error = ?err,
                 track_namespace_prefix = %track_namespace_prefix,
-                "failed to unregister namespace subscription route"
+                "failed to register namespace subscription route"
             );
         }
 
-        let released = inter_relay_connection_manager
+        let released = cascading_relay_context
+            .inter_relay_connection_manager
             .namespace_subscriptions
             .remove_under_prefix(track_namespace_prefix, |track_namespace| {
                 table.is_watched_by_client(track_namespace)
@@ -116,6 +112,7 @@ mod tests {
             },
             verified_token::VerifiedToken,
         },
+        cascading::{namespace_routes::NamespaceRoutes, route_registry::NoopRelayRouteRegistry},
         test_support::{
             directory_fixtures::inter_relay_connection_manager,
             mock_session::{add_recorded_relay_session, session_repository_with_sessions},
@@ -168,8 +165,11 @@ mod tests {
             "APP/room",
             &InMemoryLocalPubSubDirectory::new(),
             &ControlMessageForwarder { repository },
-            &StubRouteRegistry::with_namespace_routes(&[]),
-            &inter_relay_connection_manager,
+            CascadingRelayContext {
+                route_registry: &NoopRelayRouteRegistry,
+                namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
+                inter_relay_connection_manager: &inter_relay_connection_manager,
+            },
         )
         .await;
 
