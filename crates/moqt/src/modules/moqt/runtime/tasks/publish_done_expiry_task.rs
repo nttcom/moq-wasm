@@ -1,13 +1,17 @@
-use std::{collections::HashSet, sync::Weak, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use futures::{StreamExt, stream::FuturesUnordered};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{Instrument, Span};
 
 use crate::modules::{
     executor::{self, JoinHandle},
     moqt::{
-        control_plane::handler::publish_done_handler::PublishDoneHandler,
+        control_plane::{enums::RequestId, handler::publish_done_handler::PublishDoneHandler},
         domains::{connection::Connection, session_context::SessionContext},
     },
 };
@@ -36,6 +40,7 @@ impl PublishDoneExpiryTask {
             "Publish Done Expiry",
             async move {
                 let mut expiries = FuturesUnordered::new();
+                // Requests whose countdown is in `expiries`.
                 let mut waiting = HashSet::new();
                 loop {
                     tokio::select! {
@@ -44,31 +49,19 @@ impl PublishDoneExpiryTask {
                             if !waiting.insert(request_id) {
                                 continue;
                             }
-                            let arrived_streams = match connection.upgrade() {
-                                // A datagram track sends 0, and its datagrams can still
-                                // follow PUBLISH_DONE, so 0 waits the grace period.
-                                Some(connection) if publish_done.stream_count() > 0 => {
-                                    connection.arrived_streams(request_id).await
-                                }
-                                _ => None,
-                            };
+                            let countdown = Countdown::look_up(
+                                connection.upgrade(),
+                                request_id,
+                                publish_done.stream_count(),
+                            )
+                            .await;
                             let ended = (session_context.upgrade(), connection.upgrade());
                             expiries.push(async move {
                                 if let (Some(session), Some(connection)) = ended {
                                     session.forget_ended_subscription(&connection, request_id).await;
                                 }
-                                let _ = executor::timeout(PUBLISH_DONE_GRACE_PERIOD, async {
-                                    match arrived_streams {
-                                        Some(mut arrived_streams) => {
-                                            // Fails once the sink is gone, which ends the wait too.
-                                            let _ = arrived_streams
-                                                .wait_for(|count| *count >= publish_done.stream_count())
-                                                .await;
-                                        }
-                                        None => std::future::pending().await,
-                                    }
-                                })
-                                .await;
+                                let _ = executor::timeout(PUBLISH_DONE_GRACE_PERIOD, countdown.counted())
+                                    .await;
                                 request_id
                             });
                         }
@@ -91,13 +84,65 @@ impl PublishDoneExpiryTask {
     }
 }
 
+/// What ends a PUBLISH_DONE's wait before `PUBLISH_DONE_GRACE_PERIOD` does.
+enum Countdown {
+    /// Ends once `arrived` reaches the Stream Count `needed`, or once the
+    /// subscription's sink is gone.
+    Counting {
+        arrived: watch::Receiver<u64>,
+        needed: u64,
+    },
+    /// Grace only: a Stream Count of 0 (sent by a datagram track, whose
+    /// datagrams can still follow PUBLISH_DONE), no sink receiver installed
+    /// for the request (not registered yet, or already cancelled), or no
+    /// connection.
+    GraceOnly,
+}
+
+impl Countdown {
+    async fn look_up(
+        connection: Option<Arc<Connection>>,
+        request_id: RequestId,
+        needed: u64,
+    ) -> Self {
+        if needed == 0 {
+            return Self::GraceOnly;
+        }
+        let Some(connection) = connection else {
+            return Self::GraceOnly;
+        };
+        match connection.arrived_streams(request_id).await {
+            Some(arrived) => Self::Counting { arrived, needed },
+            None => Self::GraceOnly,
+        }
+    }
+
+    /// Never resolves for a grace-only countdown.
+    async fn counted(self) {
+        match self {
+            Self::Counting {
+                mut arrived,
+                needed,
+            } => {
+                // Fails once the sink is gone, which ends the wait too.
+                let _ = arrived.wait_for(|count| *count >= needed).await;
+            }
+            Self::GraceOnly => std::future::pending().await,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use tokio::{sync::mpsc::error::TryRecvError, time::Instant};
+    use futures::FutureExt;
+    use tokio::{
+        sync::{mpsc::error::TryRecvError, watch},
+        time::Instant,
+    };
 
-    use super::PUBLISH_DONE_GRACE_PERIOD;
+    use super::{Countdown, PUBLISH_DONE_GRACE_PERIOD};
     use crate::{
         Session, SessionEvent, Subscription, Version,
         modules::{
@@ -258,5 +303,51 @@ mod tests {
             assert!(matches!(received, Ok(None)));
             tokio::time::resume();
         }
+    }
+
+    #[tokio::test]
+    async fn stream_count_of_0_is_grace_only() {
+        // Act
+        let countdown = Countdown::look_up(None, 0, 0).await;
+
+        // Assert
+        assert!(matches!(countdown, Countdown::GraceOnly));
+        assert!(countdown.counted().now_or_never().is_none());
+    }
+
+    #[tokio::test]
+    async fn counted_streams_without_a_connection_are_grace_only() {
+        // Act
+        let countdown = Countdown::look_up(None, 0, 1).await;
+
+        // Assert
+        assert!(matches!(countdown, Countdown::GraceOnly));
+        assert!(countdown.counted().now_or_never().is_none());
+    }
+
+    #[tokio::test]
+    async fn counting_ends_once_its_sink_is_gone() {
+        // Arrange
+        let (sender, arrived) = watch::channel(0);
+        let countdown = Countdown::Counting { arrived, needed: 2 };
+
+        // Act
+        drop(sender);
+
+        // Assert
+        assert!(countdown.counted().now_or_never().is_some());
+    }
+
+    #[tokio::test]
+    async fn counting_ends_once_the_needed_streams_arrived() {
+        // Arrange
+        let (sender, arrived) = watch::channel(1);
+        let countdown = Countdown::Counting { arrived, needed: 2 };
+
+        // Act
+        sender.send_replace(2);
+
+        // Assert
+        assert!(countdown.counted().now_or_never().is_some());
     }
 }
