@@ -645,6 +645,15 @@ impl ControlChannel {
         map.remove(&request_id)
     }
 
+    fn take_all_by_kind(
+        map: &mut HashMap<RequestId, RequestStream>,
+        kind: &RequestStreamKind,
+    ) -> Vec<RequestStream> {
+        map.extract_if(|_, stream| &stream.kind == kind)
+            .map(|(_, stream)| stream)
+            .collect()
+    }
+
     /// The stream of a PUBLISH. §6.1: one for a track the peer's
     /// SUBSCRIBE_TRACKS covers does not wait for the peer's stream limit;
     /// when it allows none, PUBLISH_BLOCKED goes on that SUBSCRIBE_TRACKS
@@ -1086,9 +1095,10 @@ impl ControlChannel {
                     }
                     return Ok(());
                 }
+                // One PUBLISH_NAMESPACE_DONE withdraws every PUBLISH_NAMESPACE of the namespace.
                 let kind = RequestStreamKind::PublishNamespace(done.track_namespace);
-                let stream = Self::take_by_kind(&mut self.requests().outgoing, &kind);
-                if stream.is_none() {
+                let streams = Self::take_all_by_kind(&mut self.requests().outgoing, &kind);
+                if streams.is_empty() {
                     // draft-18 withdraws a namespace only on the request that
                     // told of it (§6.2, §10.17).
                     tracing::debug!(
@@ -1096,7 +1106,10 @@ impl ControlChannel {
                         "no request told the peer of the namespace; nothing withdrawn"
                     );
                 }
-                cancel(stream).await
+                for stream in streams {
+                    cancel(Some(stream)).await?;
+                }
+                Ok(())
             }
             Notification::PublishNamespaceCancel { namespace, .. } => {
                 let kind = RequestStreamKind::PublishNamespace(namespace);
@@ -2639,6 +2652,43 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE_DONE, got {withdrawn:?}");
         };
         assert_eq!(withdrawn.track_namespace(), "live/room");
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_done_withdraws_every_request_of_its_namespace() {
+        // Arrange: the namespace was published twice, on two requests
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-done-every-request", "moqt").await;
+        let mut announced = Vec::new();
+        for _ in 0..2 {
+            let publisher = client.publisher();
+            let request =
+                tokio::spawn(async move { publisher.publish_namespace("live/room".into()).await });
+            let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+                panic!("expected PUBLISH_NAMESPACE");
+            };
+            handler.ok().await.unwrap();
+            request.await.unwrap().unwrap();
+            announced.push(handler.request_id());
+        }
+
+        // Act
+        client
+            .publisher()
+            .publish_namespace_done("live/room".into())
+            .await
+            .unwrap();
+        let mut withdrawn = Vec::new();
+        for _ in 0..2 {
+            let SessionEvent::PublishNamespaceDone(done) = next_event(&server).await else {
+                panic!("expected PUBLISH_NAMESPACE_DONE");
+            };
+            withdrawn.push(done.request_id().unwrap());
+        }
+
+        // Assert
+        withdrawn.sort();
+        assert_eq!(withdrawn, announced);
     }
 
     #[tokio::test]
