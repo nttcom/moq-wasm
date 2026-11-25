@@ -71,7 +71,6 @@ pub(crate) struct BotView {
 #[derive(Debug, Deserialize)]
 pub(crate) struct StartRequest {
     pub(crate) namespace_prefix: String,
-    #[serde(default)]
     pub(crate) options: Option<Value>,
     /// Keeps the bot in a room without human members until its longest run,
     /// for an app server that ends the bot itself.
@@ -82,11 +81,9 @@ pub(crate) struct StartRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct Heartbeat {
     pub(crate) state: BotState,
-    #[serde(default)]
     pub(crate) error: Option<String>,
     /// What the bot produces, specific to its type. It replaces what the
     /// last heartbeat reported, so `None` leaves the bot with none.
-    #[serde(default)]
     pub(crate) output: Option<Map<String, Value>>,
 }
 
