@@ -156,7 +156,7 @@ impl RecordingJob {
         let id = self.record_state.id.clone();
         let prefix = self.record_state.namespace_prefix.clone();
         let status = Arc::new(Mutex::new(RoomStatus {
-            state: RoomState::Recording,
+            state: RoomState::Starting,
             members: Vec::new(),
         }));
         let (stop_sender, stop) = watch::channel(false);

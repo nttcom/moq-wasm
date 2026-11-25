@@ -86,6 +86,7 @@ Each object has one writer, requiring no database or CAS (identical on `file://`
 - Ignores `<room>/recordings/<id>/` (replays) and `<room>/bots/` (except MoQ archives also record `<room>/bots/transcriber` and `<room>/bots/policy` without counting them as room-keepers).
 - Runs two `record_broadcast` tasks per participant (camera + optional screen share), rejects forwarded `PUBLISH` with `UNINTERESTED`, handles GOAWAY re-announcements idempotently, and syncs state at least every 30 s (`StateSyncTask`; API marks jobs silent > 90 s as `failed`).
 - Stops on `bot-dispatcher` stop, `SIGTERM`/`SIGINT`, `--max-seconds`, or `--grace-seconds` with no active participant (participants count up to 10 s past `PUBLISH_DONE`).
+- Stays `starting` until the relay accepts its `SUBSCRIBE_NAMESPACE` for the room and `PUBLISH_NAMESPACE` for its presence; a stop before then moves it to `stopping`. The heartbeat reports `running` while `starting`.
 
 ### Auth, Listing & Signed URLs
 - Every request verifies its Bearer token via `AUTH_VTS_URL` (`subscribe` claim must cover room element-wise; `--insecure-skip-auth` bypasses for local dev). Replays forward the caller's token (`relay::ServiceToken`, renewed via `--temporary-apps-url` for temp apps). Tokens are never persisted.

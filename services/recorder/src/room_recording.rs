@@ -177,6 +177,7 @@ async fn follow_members(
         .publisher()
         .publish_namespace(config.presence.clone())
         .await?;
+    joined(status);
     tracing::info!(prefix = namespace_prefix, "room recording started");
     let (member_stop_sender, member_stop) = watch::channel(false);
     let mut members: JoinSet<MemberFiles> = JoinSet::new();
@@ -412,9 +413,16 @@ impl AutoStop {
     }
 }
 
+fn joined(status: &Mutex<RoomStatus>) {
+    let mut status = lock(status);
+    if status.state == RoomState::Starting {
+        status.state = RoomState::Recording;
+    }
+}
+
 pub(crate) fn stopping(status: &Mutex<RoomStatus>) {
     let mut status = lock(status);
-    if status.state == RoomState::Recording {
+    if matches!(status.state, RoomState::Starting | RoomState::Recording) {
         status.state = RoomState::Stopping;
     }
 }
@@ -653,6 +661,38 @@ mod tests {
         ));
         assert!(!is_under(prefix, "app/room2/recordings/id", "recordings"));
         assert!(!is_under(prefix, "app/room/alice", "recordings"));
+    }
+
+    fn status(state: RoomState) -> Mutex<RoomStatus> {
+        Mutex::new(RoomStatus {
+            state,
+            members: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn joining_the_room_turns_a_starting_recording_into_recording() {
+        // Arrange
+        let status = status(RoomState::Starting);
+
+        // Act
+        joined(&status);
+
+        // Assert
+        assert_eq!(lock(&status).state, RoomState::Recording);
+    }
+
+    #[test]
+    fn a_stop_during_the_join_survives_the_join() {
+        // Arrange
+        let status = status(RoomState::Starting);
+
+        // Act
+        stopping(&status);
+        joined(&status);
+
+        // Assert
+        assert_eq!(lock(&status).state, RoomState::Stopping);
     }
 
     fn recorded(path: &std::path::Path, origin_ms: u64) -> RecordedFile {
