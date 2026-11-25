@@ -24,7 +24,7 @@ OBS does not yet list services that plugins register under **Settings → Stream
     "type": "moqt_service",
     "settings": {
       "server": "moqt://127.0.0.1:4433",
-      "namespace": "<app-id>/obs/live",
+      "namespace": "obs/live",
       "bearer_token": "<JWT>",
       "insecure_skip_tls_verify": true
     }
@@ -40,7 +40,7 @@ Then press **Start Streaming** and watch the namespace in **Live Viewer**. The *
 | Setting | Required | Default | Description |
 | --- | --- | --- | --- |
 | `server` | Yes | — | `moqt://host:port` (QUIC) or `https://host:port` (WebTransport) |
-| `namespace` | Yes | — | `/`-separated MoQT namespace under the token's app (e.g. `<app-id>/obs/live`) |
+| `namespace` | Yes | — | `/`-separated MoQT namespace under the token's app (e.g. `obs/live`). The plugin puts the token's `appId` in front, so viewers find the stream at `<appId>/obs/live`; a namespace that already starts with the `appId` is used as written |
 | `bearer_token` | One of the two | — | JWT sent in `CLIENT_SETUP`, with a `publish` claim that covers the namespace (mint one with [`auth-token`](../auth-token/README.md)) |
 | `bearer_token_file` | One of the two | — | Path of a file that holds the JWT. It is read at each start and every 10 s while streaming, so a stream can outlast its first token |
 | `insecure_skip_tls_verify` | No | `false` | Skip TLS certificate verification (local self-signed relays only) |

@@ -144,14 +144,14 @@ impl MoqtOutput {
         true
     }
 
-    /// The service's settings, with the token of a token file read into the
-    /// target.
+    /// The service's settings, with the token of a token file read.
     fn read_settings(&self) -> Result<PublishSettings> {
-        let mut settings = self.shared.read_settings()?;
-        if let Some(path) = &settings.token_file {
-            settings.target.auth_token = Some(self.runtime.block_on(read_token_file(path))?);
-        }
-        Ok(settings)
+        let settings = self.shared.read_settings()?;
+        let Some(path) = &settings.token_file else {
+            return Ok(settings);
+        };
+        let token = self.runtime.block_on(read_token_file(path))?;
+        settings.with_token(token)
     }
 
     fn stop(&self) {

@@ -34,7 +34,7 @@ flowchart LR
 - **Panics**: A panic leaving an `extern "C"` callback aborts OBS and any recording in progress, so `start`, `stop`, `encoded_packet`, and `destroy` catch it and report failure instead.
 
 ## Service Selection
-The frontend picks the output by protocol: `moqt_service` returns `MoQT`, and `moqt_output` is the only output registered for it. The output reads `server`, `namespace`, `bearer_token`, `bearer_token_file`, and `insecure_skip_tls_verify` from the service's settings at each start, so the service holds no state. The URL, the namespace, and exactly one of the token and the token file are required: the plugin has no tokenless (`anon/**`) mode.
+The frontend picks the output by protocol: `moqt_service` returns `MoQT`, and `moqt_output` is the only output registered for it. The output reads `server`, `namespace`, `bearer_token`, `bearer_token_file`, and `insecure_skip_tls_verify` from the service's settings at each start, so the service holds no state. The URL, the namespace, and exactly one of the token and the token file are required: the plugin has no tokenless (`anon/**`) mode. A relay admits a token only into the namespaces of its app, so the output puts the token's `appId` claim in front of the namespace unless the namespace starts with it already.
 
 OBS's **Settings → Stream** page lists only its built-in services, so the service is set through the profile's `service.json` or obs-websocket's `SetStreamServiceSettings` (see the crate README). A settings dock or the frontend's own service list would replace that step without changing the output.
 
