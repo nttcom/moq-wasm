@@ -36,7 +36,6 @@ pub struct ProcessStats {
     #[serde(default)]
     pub client_sessions: u64,
     /// Unix milliseconds when the relay sent GOAWAY; `None` while it serves.
-    #[serde(default)]
     pub draining_since_ms: Option<u64>,
 }
 
