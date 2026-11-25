@@ -22,7 +22,7 @@ GET /healthz -> 200 { "status": "ok" }
 - Tokens last 1 hour with full publish/subscribe access under their `appId`.
 - Refreshing requires an unexpired token issued by this service, keeping an app alive while refreshed.
 - Rate limits per client IP: 30 `POST /tokens` per hour; 10 `POST /bots/{type}` per hour.
-- `/bots/{type}` proxies bot requests to `bot-dispatcher` for the caller's temporary app.
+- `/bots/{type}` proxies bot requests to `bot-dispatcher` for the caller's temporary app (`stay_when_empty: true` is rejected with `403 forbidden` and not forwarded; `false` is forwarded).
 
 ## Configuration
 

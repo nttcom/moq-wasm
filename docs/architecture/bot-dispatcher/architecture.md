@@ -148,8 +148,8 @@ A **human member** is a namespace under the room that is not under one of the
 reserved elements `bots` and `recordings` (the recorder's replays).
 
 ### When a bot ends
-Every bot ends by itself once the room has had no human member for its type's
-grace period, counted from its start too. The grace period differs by type
+By default, a bot ends by itself once the room has had no human member for its
+type's grace period, counted from its start too. The grace period differs by type
 because a room that empties for a reload or a break should not split a
 recording:
 
@@ -160,7 +160,12 @@ recording:
 
 A bot also ends on `DELETE /bots/{type}/{id}` (the next heartbeat answers
 `{stop: true}`), at its longest run, and on SIGTERM. Since only publishers are
-visible to a bot, a room of listeners who publish nothing counts as empty.
+visible to a bot, a room of listeners who publish nothing counts as empty. A
+registered app's server that knows when its room ends may opt out per launch
+with `stay_when_empty: true` (default `false`; not stored or returned on the
+bot record): `bot-dispatcher` then passes the type's `max_seconds` as
+`--grace-seconds`, so an empty room does not end the bot before its longest run.
+`services/temporary-apps` refuses `stay_when_empty: true` with `403 forbidden`.
 
 ### Launchers
 Each bot type names its launcher. The first and only one is a Cloud Run Job
@@ -190,7 +195,7 @@ composite) in its store for `recorder serve`'s read API.
 
 | Route | Caller | Answer |
 | --- | --- | --- |
-| `POST /bots/{type}` `{namespace_prefix, options}` | app server | `201` the bot; `400 invalid_options` if the type's options table refuses `options`; `409` if the room runs that type; `503` at a limit |
+| `POST /bots/{type}` `{namespace_prefix, options?, stay_when_empty?}` | app server | `201` the bot; `400 invalid_options` if the type's options table refuses `options`; `409` if the room runs that type; `503` at a limit |
 | `GET /bots?namespace_prefix=` | app server | `{"bots": […]}` the room's latest bot of each configured type that had one, in type-name order |
 | `GET /bots/{type}?namespace_prefix=` | app server | the room's latest bot of that type |
 | `GET /bots/{type}/{id}` | app server | the bot |
@@ -224,8 +229,10 @@ same way as a registered one:
   not expired), signs a launch token whose `bots` claim is the page's
   `publish` claim, and forwards the request.
 - What a temporary app may start is the temporary-apps service's policy: the bot types it
-  allows (`TEMPORARY_APPS_BOT_TYPES`) and a rate limit per client address, the
-  same fixed windows as `POST /tokens`.
+  allows (`TEMPORARY_APPS_BOT_TYPES`), a rate limit per client address (the
+  same fixed windows as `POST /tokens`), and refusing `stay_when_empty: true`
+  with `403 forbidden` so an anonymous page cannot keep a bot running in an
+  empty room until its longest run.
 - Anyone can create a temporary app, so anyone can still start a bot in one.
   What changes is that the decision and its limits sit in a server.
 
@@ -259,14 +266,16 @@ an option another value (absent/`null` or a subset passes; cross-option
 constraints such as `composite: true` with `format: "moq"` are still judged by
 the bot). A type without a table forwards `options` unchecked.
 Every bot gets the same token claims (above), so they are not configured.
-There are no limits per app and no opening hours: a bot runs only while its
-room has a member, for its type's longest run at most, a type runs at most
-`max_running` bots, and the deployment's daily cost limit, which stops every
-paid workload once reached, bounds what bots spend around the clock. A request
-for a type not in the file is `404`.
+There are no limits per app and no opening hours: by default a bot runs only
+while its room has a publishing member (a registered app's server may opt out
+per launch with `stay_when_empty: true`), every bot runs for its type's longest
+run at most, a type runs at most `max_running` bots, and the deployment's daily
+cost limit, which stops every paid workload once reached, bounds what bots spend
+around the clock. A request for a type not in the file is `404`.
 
 A bot is started with the type's `args` followed by `--bot-type`, `--bot-id`,
-`--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
+`--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds` (the type's
+`max_seconds` when `stay_when_empty` is `true`), `--max-seconds` and,
 when the request has them, `--options <JSON>`. A locally launched bot also
 finds its key in `BOT_DISPATCHER_BOT_KEY`.
 

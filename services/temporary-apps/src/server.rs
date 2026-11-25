@@ -161,10 +161,16 @@ async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incomin
             tracing::info!(%app_id, bot_type, error = "rate_limited", "bot request refused");
             return error_response(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
         }
-        match read_json::<Value, _>(body).await {
-            Some(body) => Some(body),
-            None => return error_response(StatusCode::BAD_REQUEST, "invalid_request"),
+        let Some(body) = read_json::<Value, _>(body).await else {
+            return error_response(StatusCode::BAD_REQUEST, "invalid_request");
+        };
+        // Anyone can create a temporary app, so none may keep a bot in an
+        // empty room until its longest run.
+        if body.get("stay_when_empty") == Some(&Value::Bool(true)) {
+            tracing::info!(%app_id, bot_type, error = "forbidden", "bot request refused");
+            return error_response(StatusCode::FORBIDDEN, "forbidden");
         }
+        Some(body)
     } else {
         None
     };
@@ -518,5 +524,36 @@ mod tests {
             (first, second),
             (StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS)
         );
+    }
+
+    #[tokio::test]
+    async fn a_page_cannot_keep_a_bot_in_an_empty_room() {
+        // Arrange
+        let (bot_dispatcher_url, calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 10)).await;
+        let (token, app_id) = page_token();
+        let start = |stay_when_empty: bool| {
+            reqwest::Client::new()
+                .post(format!("{}/bots/recorder", server.base_url))
+                .bearer_auth(&token)
+                .json(&json!({
+                    "namespace_prefix": format!("{app_id}/room"),
+                    "stay_when_empty": stay_when_empty,
+                }))
+                .send()
+        };
+
+        // Act
+        let staying = start(true).await.unwrap();
+        let staying_status = staying.status();
+        let staying_body: Value = staying.json().await.unwrap();
+        let calls_after_staying = calls.lock().unwrap().len();
+        let leaving = start(false).await.unwrap().status();
+
+        // Assert: refused without calling bot-dispatcher; false is forwarded
+        assert_eq!(staying_status, StatusCode::FORBIDDEN);
+        assert_eq!(staying_body, json!({ "error": "forbidden" }));
+        assert_eq!(calls_after_staying, 0);
+        assert_eq!(leaving, StatusCode::CREATED);
     }
 }

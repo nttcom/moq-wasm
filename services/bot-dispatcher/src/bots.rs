@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
-    bot_types::BotTypes,
+    bot_types::{BotType, BotTypes},
     signer::BotTokenSigner,
     store::{BotRecord, BotState, BotStore},
 };
@@ -70,6 +70,17 @@ pub(crate) struct BotView {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct StartRequest {
+    pub(crate) namespace_prefix: String,
+    #[serde(default)]
+    pub(crate) options: Option<Value>,
+    /// Keeps the bot in a room without human members until its longest run,
+    /// for an app server that ends the bot itself.
+    #[serde(default)]
+    pub(crate) stay_when_empty: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct Heartbeat {
     pub(crate) state: BotState,
     #[serde(default)]
@@ -108,15 +119,16 @@ impl Bots {
     }
 
     /// Takes the room for `bot_type` and launches the bot. The caller has
-    /// checked that the app's launch token covers `namespace_prefix`.
+    /// checked that the app's launch token covers the request's
+    /// `namespace_prefix`.
     pub(crate) async fn start(
         &self,
         app_id: &str,
         bot_type: &str,
-        namespace_prefix: &str,
-        options: Option<&Value>,
+        request: &StartRequest,
         now_ms: u64,
     ) -> Result<BotView, StartError> {
+        let namespace_prefix = request.namespace_prefix.as_str();
         let Some(kind) = self.types.get(bot_type) else {
             return Err(StartError::UnknownType);
         };
@@ -124,7 +136,7 @@ impl Bots {
         if elements.len() < 2 || elements.iter().any(|e| e.is_empty()) {
             return Err(StartError::InvalidRoom);
         }
-        if !kind.accepts(options) {
+        if !kind.accepts(request.options.as_ref()) {
             return Err(StartError::InvalidOptions);
         }
         let holder = self
@@ -176,24 +188,7 @@ impl Bots {
             .write(&record)
             .await
             .map_err(StartError::Internal)?;
-        let mut args = kind.args.clone();
-        args.extend([
-            "--bot-type".to_string(),
-            bot_type.to_string(),
-            "--bot-id".to_string(),
-            id.clone(),
-            "--bot-dispatcher-url".to_string(),
-            self.public_url.clone(),
-            "--namespace-prefix".to_string(),
-            namespace_prefix.to_string(),
-            "--grace-seconds".to_string(),
-            kind.grace.as_secs().to_string(),
-            "--max-seconds".to_string(),
-            kind.max_run.as_secs().to_string(),
-        ]);
-        if let Some(options) = options {
-            args.extend(["--options".to_string(), options.to_string()]);
-        }
+        let args = self.bot_args(kind, &record, request);
         let env = key
             .map(|key| vec![(BOT_KEY_ENV.to_string(), key)])
             .unwrap_or_default();
@@ -212,6 +207,35 @@ impl Bots {
         self.view(&record, now_ms)
             .await
             .map_err(StartError::Internal)
+    }
+
+    /// The type's arguments followed by the ones every bot takes. A bot that
+    /// stays when its room empties gets its longest run as its grace period.
+    fn bot_args(&self, kind: &BotType, record: &BotRecord, request: &StartRequest) -> Vec<String> {
+        let grace = if request.stay_when_empty {
+            kind.max_run
+        } else {
+            kind.grace
+        };
+        let mut args = kind.args.clone();
+        args.extend([
+            "--bot-type".to_string(),
+            record.bot_type.clone(),
+            "--bot-id".to_string(),
+            record.id.clone(),
+            "--bot-dispatcher-url".to_string(),
+            self.public_url.clone(),
+            "--namespace-prefix".to_string(),
+            record.namespace_prefix.clone(),
+            "--grace-seconds".to_string(),
+            grace.as_secs().to_string(),
+            "--max-seconds".to_string(),
+            kind.max_run.as_secs().to_string(),
+        ]);
+        if let Some(options) = &request.options {
+            args.extend(["--options".to_string(), options.to_string()]);
+        }
+        args
     }
 
     /// The room's latest bot of `bot_type`.
@@ -424,11 +448,19 @@ mod tests {
     const NOW: u64 = 1_800_000_000_000;
     const KEY: &str = "bot-key";
 
+    fn launch(room: &str) -> StartRequest {
+        StartRequest {
+            namespace_prefix: room.to_string(),
+            options: None,
+            stay_when_empty: false,
+        }
+    }
+
     /// Starts a recorder in `room` whose key is `KEY`.
     async fn started(test: &TestBots, room: &str) -> BotView {
         let bot = test
             .bots
-            .start("app", "recorder", room, None, NOW)
+            .start("app", "recorder", &launch(room), NOW)
             .await
             .unwrap();
         let mut record = test.store.read(&bot.id).await.unwrap().unwrap();
@@ -452,9 +484,15 @@ mod tests {
         started(&test, "app/a").await;
 
         // Act
-        let same_room = test.bots.start("app", "recorder", "app/a", None, NOW).await;
+        let same_room = test
+            .bots
+            .start("app", "recorder", &launch("app/a"), NOW)
+            .await;
         started(&test, "app/b").await;
-        let third = test.bots.start("app", "recorder", "app/c", None, NOW).await;
+        let third = test
+            .bots
+            .start("app", "recorder", &launch("app/c"), NOW)
+            .await;
 
         // Assert
         assert!(matches!(same_room, Err(StartError::Conflict)));
@@ -468,10 +506,10 @@ mod tests {
 
         // Act / Assert
         for room in ["app", "app//a"] {
-            let result = test.bots.start("app", "recorder", room, None, NOW).await;
+            let result = test.bots.start("app", "recorder", &launch(room), NOW).await;
             assert!(matches!(result, Err(StartError::InvalidRoom)), "{room}");
         }
-        let unknown = test.bots.start("app", "chat", "app/a", None, NOW).await;
+        let unknown = test.bots.start("app", "chat", &launch("app/a"), NOW).await;
         assert!(matches!(unknown, Err(StartError::UnknownType)));
     }
 
@@ -493,10 +531,18 @@ mod tests {
             .unwrap();
 
         // Act
-        let after_finish = test.bots.start("app", "recorder", "app/a", None, NOW).await;
+        let after_finish = test
+            .bots
+            .start("app", "recorder", &launch("app/a"), NOW)
+            .await;
         let after_silence = test
             .bots
-            .start("app", "recorder", "app/b", None, NOW + STARTUP_TIMEOUT_MS)
+            .start(
+                "app",
+                "recorder",
+                &launch("app/b"),
+                NOW + STARTUP_TIMEOUT_MS,
+            )
             .await;
 
         // Assert
@@ -739,7 +785,7 @@ mod tests {
         let recorder = started(&test, "app/a").await;
         let agent = test
             .bots
-            .start("app", "agent", "app/a", None, NOW)
+            .start("app", "agent", &launch("app/a"), NOW)
             .await
             .unwrap();
         started(&test, "app/b").await;
@@ -775,18 +821,24 @@ mod tests {
     async fn a_launch_with_options_its_type_refuses_takes_no_room() {
         // Arrange
         let test = test_bots();
-        let refused_options = json!({ "layout": "grid" });
-        let allowed_options = json!({ "layout": "per-track" });
+        let refused_options = StartRequest {
+            options: Some(json!({ "layout": "grid" })),
+            ..launch("app/a")
+        };
+        let allowed_options = StartRequest {
+            options: Some(json!({ "layout": "per-track" })),
+            ..launch("app/a")
+        };
 
         // Act
         let refused = test
             .bots
-            .start("app", "recorder", "app/a", Some(&refused_options), NOW)
+            .start("app", "recorder", &refused_options, NOW)
             .await;
         let holders = test.store.room_holders("recorder").await.unwrap();
         let allowed = test
             .bots
-            .start("app", "recorder", "app/a", Some(&allowed_options), NOW)
+            .start("app", "recorder", &allowed_options, NOW)
             .await;
 
         // Assert: the refusal left no room holder and so no record; the room is still free
@@ -799,16 +851,61 @@ mod tests {
     async fn a_type_without_an_options_table_forwards_any_options() {
         // Arrange
         let test = test_bots();
-        let options = json!({ "anything": [1, 2] });
+        let options = StartRequest {
+            options: Some(json!({ "anything": [1, 2] })),
+            ..launch("app/a")
+        };
 
         // Act
-        let started = test
-            .bots
-            .start("app", "agent", "app/a", Some(&options), NOW)
-            .await;
+        let started = test.bots.start("app", "agent", &options, NOW).await;
 
         // Assert
         assert!(started.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_bot_that_stays_when_empty_gets_its_longest_run_as_grace_period() {
+        // Arrange
+        let test = test_bots();
+        let staying = StartRequest {
+            stay_when_empty: true,
+            ..launch("app/a")
+        };
+        let default = launch("app/a");
+        let kind = test.bots.types.get("recorder").unwrap();
+        let record = test
+            .store
+            .read(&started(&test, "app/a").await.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let grace = |args: Vec<String>| {
+            let at = args
+                .iter()
+                .position(|arg| arg == "--grace-seconds")
+                .unwrap();
+            args[at + 1].clone()
+        };
+
+        // Act
+        let staying_grace = grace(test.bots.bot_args(kind, &record, &staying));
+        let default_grace = grace(test.bots.bot_args(kind, &record, &default));
+
+        // Assert: the type's max_seconds (60) instead of its grace_seconds (30)
+        assert_eq!(staying_grace, "60");
+        assert_eq!(default_grace, "30");
+    }
+
+    #[test]
+    fn a_launch_whose_stay_when_empty_is_not_a_boolean_is_malformed() {
+        // Act
+        let parsed = serde_json::from_value::<StartRequest>(json!({
+            "namespace_prefix": "app/a",
+            "stay_when_empty": "yes",
+        }));
+
+        // Assert
+        assert!(parsed.is_err());
     }
 
     #[test]

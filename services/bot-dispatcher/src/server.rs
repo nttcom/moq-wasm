@@ -8,13 +8,12 @@ use http_server::{
     json_response, query_params, read_json,
 };
 use hyper::{HeaderMap, Method, Request, StatusCode, body::Incoming};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
-    bots::{BotError, Bots, Heartbeat, StartError},
+    bots::{BotError, Bots, Heartbeat, StartError, StartRequest},
     launch_auth::{LaunchAuth, Rejection},
     store::BotRecord,
 };
@@ -26,13 +25,6 @@ pub(crate) struct BotDispatcherServer {
 struct ServerState {
     bots: Bots,
     launch_auth: LaunchAuth,
-}
-
-#[derive(Deserialize)]
-struct StartRequest {
-    namespace_prefix: String,
-    #[serde(default)]
-    options: Option<Value>,
 }
 
 impl BotDispatcherServer {
@@ -104,13 +96,7 @@ async fn start(
     };
     let result = state
         .bots
-        .start(
-            &app_id,
-            bot_type,
-            prefix,
-            request.options.as_ref(),
-            now_ms(),
-        )
+        .start(&app_id, bot_type, &request, now_ms())
         .await;
     let (status, error) = match result {
         Ok(bot) => {
@@ -519,5 +505,26 @@ mod tests {
         assert_eq!(refused_status, StatusCode::BAD_REQUEST);
         assert_eq!(refused_body, json!({ "error": "invalid_options" }));
         assert_eq!(null_options, StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn a_launch_whose_stay_when_empty_is_not_a_boolean_is_an_invalid_request() {
+        // Arrange
+        let (base, _server, _vts) = start_server().await;
+
+        // Act
+        let response = reqwest::Client::new()
+            .post(format!("{base}/bots/recorder"))
+            .bearer_auth("launch-token")
+            .json(&json!({ "namespace_prefix": "app/room", "stay_when_empty": "yes" }))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let body: Value = response.json().await.unwrap();
+
+        // Assert
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, json!({ "error": "invalid_request" }));
     }
 }
