@@ -1,9 +1,9 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
 import { connectOptions } from './access'
-import { RoomBotButton, botNamespace, sameNamespace } from './roomBots'
+import { RoomBotButton } from './roomBots'
 import { SystemOneStatusView } from './systemOneStatus'
 import { element, getErrorMessage, setStatus } from './page'
-import type { StatusState } from 'moq-wasm/media'
+import { type StatusState, botNamespace, botTypeOf } from 'moq-wasm/media'
 import { setUpRelayUrlControls } from './relayPicker'
 
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
@@ -70,7 +70,7 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
       const bots = await joined.watchNamespaces(ownBotNamespace)
       void (async () => {
         for await (const { kind, namespace } of bots) {
-          if (!sameNamespace(namespace, ownBotNamespace)) {
+          if (botTypeOf(options.room, namespace) !== options.botType) {
             continue
           }
           if (kind === 'withdrawn') {

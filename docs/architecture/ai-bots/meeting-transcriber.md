@@ -218,18 +218,20 @@ collide with it. The track is `transcript`, an MSF event timeline
   the MoQ Chat Moderation page does.
 
 ### The page
-- While the bot's namespace is announced, every page in the room shows `CC`
-  in the header, as it shows `REC` for a recording, since everyone's speech
-  is being transcribed.
-- Every page subscribes to `transcript` with the LargestObject
-  filter and sends a joining FETCH for the current group: the FETCH ends at
-  the largest object and the subscription starts after it, so together they
-  carry the whole group. A group's first object replaces the records and
-  later objects add to them, in whichever order the two deliver them.
+- While the bot's namespace is announced — detected with `botTypeOf` from
+  `moq-wasm/media` (or `watchBroadcasts`'s `onBotChange`) — every page in the
+  room shows `CC` in the header, as it shows `REC` for a recording, since
+  everyone's speech is being transcribed.
+- Every page reads `transcript` through `subscribeTranscript` (`moq-wasm/media`),
+  which subscribes with the LargestObject filter and sends a joining FETCH for
+  the current group: the FETCH ends at the largest object and the subscription
+  starts after it, so together they carry the whole group. A group's first
+  object replaces the records and later objects add to them, in whichever order
+  the two deliver them; malformed objects and records are skipped.
 - A speaker's live records from the last 5 s appear at the bottom of their
   tile, joined and cut to the last 60 characters, since a fast recognizer
   publishes fragments under a second apart. Records from the joining FETCH are history
-  and are not shown there, however late a live record arrives. The sidebar has a Transcript tab next
+  (`live: false`) and are not shown there, however late a live record arrives. The sidebar has a Transcript tab next
   to the chat that lists every record with speaker and time. The tab and the
   tile captions show on every page while the transcriber is in the room; the
   captions button hides or shows the tile captions on its own page only.

@@ -4,12 +4,14 @@ import {
   type LocalBroadcast,
   type LocalSource,
   type StatusState,
+  botNamespace,
+  botTypeOf,
   createBroadcast,
   watchBroadcasts
 } from 'moq-wasm/media'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
 import { pageRoomId } from '../../utils/roomId'
-import { RoomBotButton, botNamespace, sameNamespace } from '../../utils/roomBots'
+import { RoomBotButton } from '../../utils/roomBots'
 import { element, getErrorMessage, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { randomName } from '../../utils/randomName'
@@ -70,7 +72,7 @@ async function join(): Promise<void> {
     })
     room = await watchBroadcasts(joined, ROOM_NAMESPACE, {
       audioContext,
-      filter: (namespace) => sameNamespace(namespace, BOT_NAMESPACE),
+      filter: (namespace) => botTypeOf(ROOM_NAMESPACE, namespace) === BOT_TYPE,
       onAdd: (remote) => {
         setBotStatus(true)
         remote.listen({ onSourceAdd: (view) => botPlayer.append(view.element) })

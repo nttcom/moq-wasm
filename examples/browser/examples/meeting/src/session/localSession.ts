@@ -1,21 +1,16 @@
 import {
-  type MoqLocation,
   type MoqNamespaceWatch,
   MoqSession,
   type MoqSubscription,
   type ReceivedObject,
   type TrackWriter
 } from 'moq-wasm'
+import { type TranscriptRecord, type TranscriptSubscription, subscribeTranscript } from 'moq-wasm/media'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MediaPublisher } from '../media/mediaPublisher'
 import { RemotePlayers } from '../media/remotePlayers'
-import {
-  TranscriptTimeline,
-  parseTranscriberStatus,
-  type TranscriberStatus,
-  type TranscriptRecord
-} from '../media/transcript'
+import { parseTranscriberStatus, type TranscriberStatus } from '../media/transcript'
 import { connectOptions } from '../../../../utils/access'
 import {
   buildNamespacePrefix,
@@ -32,7 +27,6 @@ interface LocalSessionOptions {
 }
 
 const CHAT_TRACK_NAME = 'chat'
-const TRANSCRIPT_TRACK_NAME = 'transcript'
 const TRANSCRIBER_STATUS_TRACK_NAME = 'status'
 
 export enum LocalSessionState {
@@ -61,7 +55,7 @@ export class LocalSession {
   private publishNamespaceHandler: NamespaceHandler | null = null
   private publishNamespaceDoneHandler: NamespaceHandler | null = null
   /// Keyed by the id that `subscribeChat` and the transcriber subscriptions return.
-  private readonly subscriptions = new Map<bigint, MoqSubscription>()
+  private readonly subscriptions = new Map<bigint, MoqSubscription | TranscriptSubscription>()
   private nextSubscriptionId = 0n
 
   constructor({ roomName, userName, relayUrl }: LocalSessionOptions) {
@@ -230,14 +224,13 @@ export class LocalSession {
   /// The transcriber's event timeline, from the current group on.
   async subscribeTranscript(onRecords: (records: TranscriptRecord[]) => void, onEnded: () => void): Promise<bigint> {
     const session = this.connected('subscribe transcript')
-    const timeline = new TranscriptTimeline()
-    const handle = await session.subscribeCurrentGroup(buildTranscriberNamespace(this.roomName), TRANSCRIPT_TRACK_NAME)
-    const id = this.track(handle, onEnded)
-    this.read(id, handle, (object) => {
-      if (timeline.add(object.groupId, object.objectId, object.objectPayload, !isAtOrBefore(object, handle.largest))) {
-        onRecords(timeline.records())
+    let id: bigint | undefined
+    const handle = await subscribeTranscript(session, buildNamespacePrefix(this.roomName), (records) => {
+      if (id === undefined || this.subscriptions.has(id)) {
+        onRecords(records)
       }
     })
+    id = this.track(handle, onEnded)
     return id
   }
 
@@ -271,7 +264,7 @@ export class LocalSession {
 
   /// Keeps `handle` under a new id until it is unsubscribed or the publisher ends it
   /// with PUBLISH_DONE, when `onEnded` is called.
-  private track(handle: MoqSubscription, onEnded: () => void): bigint {
+  private track(handle: MoqSubscription | TranscriptSubscription, onEnded: () => void): bigint {
     const id = this.nextSubscriptionId++
     this.subscriptions.set(id, handle)
     void handle.done.then((done) => {
@@ -318,15 +311,6 @@ export class LocalSession {
     const writer = await this.chatTrack.writer(() => session.publishTrack(this.trackNamespace, CHAT_TRACK_NAME))
     await writer.writeGroup(new TextEncoder().encode(encodeChatPayload(message)))
   }
-}
-
-/// An object at or before `location` came from the joining FETCH, since the
-/// SUBSCRIBE starts after the largest object.
-function isAtOrBefore(object: ReceivedObject, location: MoqLocation | undefined): boolean {
-  return (
-    location !== undefined &&
-    (object.groupId < location.groupId || (object.groupId === location.groupId && object.objectId <= location.objectId))
-  )
 }
 
 type ChatEventRecord = {
