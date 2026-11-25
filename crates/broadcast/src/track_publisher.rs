@@ -65,7 +65,6 @@ impl SharedTiming {
 pub(crate) struct TrackPublisher {
     broadcast: Broadcast,
     tracks: SourceTracks,
-    announced: bool,
     /// The group the audio is being written into: the latest video keyframe
     /// group, so the audio tracks start a group when the video tracks do, or,
     /// while the source publishes no video, one the audio started itself.
@@ -87,7 +86,6 @@ impl TrackPublisher {
         Self {
             broadcast,
             tracks,
-            announced: false,
             audio_group_id: None,
             audio_only_group_start_us: None,
             video_published: false,
@@ -183,7 +181,6 @@ impl TrackPublisher {
     }
 
     async fn publish_video(&mut self, sample: &VideoSample) -> Result<()> {
-        self.announce().await?;
         tracing::debug!(
             target: DELIVERY_LOG_TARGET,
             stage = "ingest",
@@ -283,7 +280,6 @@ impl TrackPublisher {
         self.audio_config
             .as_ref()
             .context("audio sample received before its AudioConfig")?;
-        self.announce().await?;
         tracing::debug!(
             target: DELIVERY_LOG_TARGET,
             stage = "ingest",
@@ -358,14 +354,6 @@ impl TrackPublisher {
                 OutgoingObject::plain(group, fragment.data),
             )
             .await?;
-        Ok(())
-    }
-
-    async fn announce(&mut self) -> Result<()> {
-        if !self.announced {
-            self.broadcast.announce().await?;
-            self.announced = true;
-        }
         Ok(())
     }
 

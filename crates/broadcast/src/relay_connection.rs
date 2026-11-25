@@ -89,11 +89,6 @@ impl RelayState {
             .or_insert_with(|| watch::channel(false).0)
     }
 
-    fn publishes(&self, namespace_path: &str) -> bool {
-        self.catalogs.contains_key(namespace_path)
-            || self.declared_tracks.contains_key(namespace_path)
-    }
-
     /// The catalog once the announce has started, the declared tracks, and
     /// the CMAF tracks the catalog lists.
     fn subscribable(&self, namespace_path: &str, track_name: &str) -> bool {
@@ -480,15 +475,14 @@ impl ConnectedRelay {
     ) -> Option<SubscribeHandler> {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
-        let (publishes, subscribable, published) = {
+        let (subscribable, published) = {
             let state = state.lock().await;
             (
-                state.publishes(&namespace),
                 state.subscribable(&namespace, &track_name),
                 state.published(&namespace, &track_name),
             )
         };
-        if !publishes || !(subscribable || published) {
+        if !(subscribable || published) {
             return Some(handler);
         }
         if !subscribable {
