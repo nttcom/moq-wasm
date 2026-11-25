@@ -122,7 +122,7 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   await alice.page.page.waitForTimeout(5_000)
 
   // Assert: cancelling keeps the transcriber
-  expect(dialogMessages).toEqual(['Stopping transcription stops it for everyone in the room.'])
+  expect(dialogMessages).toEqual(['全員の文字起こしを停止しますか？'])
   await expect(alice.page.page.getByTestId('transcriber-badge')).toBeVisible()
   await expectCaptionsShown(carol.page, true)
 
