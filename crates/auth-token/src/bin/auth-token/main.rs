@@ -1,9 +1,9 @@
 mod lifetime;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::Context;
-use auth_token::{Claims, sign_token};
+use auth_token::{Claims, sign_token, unix_now};
 use clap::Parser;
 
 use crate::lifetime::parse_lifetime;
@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
         .ok()
         .filter(|secret| !secret.is_empty())
         .with_context(|| format!("set {SECRET_ENV} to the app's secret"))?;
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let now = unix_now();
     let claims = Claims {
         bots: args.bots,
         calls: args.calls,
