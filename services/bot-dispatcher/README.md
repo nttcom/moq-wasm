@@ -35,6 +35,8 @@ HS256 JWT signed with the UTF-8 bytes of your app's secret (same signing as [cli
 
 Omit `publish` and `subscribe` so a leaked launch token cannot join a room. Sign a fresh token per request.
 
+Python:
+
 ```python
 import base64, hashlib, hmac, json, time
 
@@ -47,6 +49,22 @@ def launch_token(app_id: str, secret: str, bots: str = "") -> str:
     signing_input = b64url(b'{"alg":"HS256"}') + "." + b64url(json.dumps(claims).encode())
     signature = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
     return signing_input + "." + b64url(signature)
+```
+
+Node.js:
+
+```js
+import { createHmac } from 'node:crypto'
+
+const b64url = (data) => Buffer.from(data).toString('base64url')
+
+function launchToken(appId, secret, bots = '') {
+  const now = Math.floor(Date.now() / 1000)
+  const claims = { appId, bots, iat: now, exp: now + 60 }
+  const signingInput = `${b64url('{"alg":"HS256"}')}.${b64url(JSON.stringify(claims))}`
+  const signature = createHmac('sha256', secret).update(signingInput).digest('base64url')
+  return `${signingInput}.${signature}`
+}
 ```
 
 ## API
