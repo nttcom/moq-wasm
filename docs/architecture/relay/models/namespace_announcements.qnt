@@ -18,9 +18,9 @@
 // SUBSCRIBE_NAMESPACE of namespaces, update its prefix and
 // UNSUBSCRIBE_NAMESPACE. Each session handles its requests one at a time,
 // and the sessions run concurrently. Each action is one step between two
-// awaits: a directory operation, a record in the session repository (under
-// its lock) or a send on the subscriber's session. A check of the directory
-// just before a record is taken in the same step. The namespace routes
+// awaits: a directory operation, or the decision, record and send of one
+// announcement or withdrawal on a subscriber's session, which
+// `ControlMessageForwarder` holds the session's announcement lock across. The namespace routes
 // (namespace.qnt) appear only as a reconcile that may fail. Publishers and
 // subscribers are separate sessions: the relay tells a session of its own
 // namespace like any other (`notify_local_subscribers`), so no subscriber is
@@ -50,7 +50,6 @@ module namespace_announcements {
   type MoqtSub = { state: MoqtState, prefix: str, held: Set[str], told: Set[str] }
 
   type Kind = Announcement | Withdrawal
-  type Send = { to: str, ns: str, kind: Kind }
 
   type PubPhase =
     | PIdle
@@ -63,11 +62,11 @@ module namespace_announcements {
     | PLeaving        // `cleanup_session`: namespaces left to withdraw
     | PLeaveNotifying // `notify_local_subscribers` of one of them
 
-  // `todo` holds the subscribers the loop has yet to tell, `pending` the send
-  // after the current record (at most one), `withdrawn` `withdrawn_from`.
+  // `todo` holds the subscribers the loop has yet to tell, `withdrawn`
+  // `withdrawn_from`.
   type PubTask = {
     phase: PubPhase, ns: str, slot: int,
-    todo: Set[str], pending: Set[Send], withdrawn: Set[str], leaving: Set[str],
+    todo: Set[str], withdrawn: Set[str], leaving: Set[str],
   }
 
   type SubPhase =
@@ -85,9 +84,7 @@ module namespace_announcements {
   // A namespace's progress in `forward_matching_publications`.
   type Stage =
     | FNone
-    | FSend         // PUBLISH_NAMESPACE recorded; send next
-    | FCheck        // `is_announced_to` again next
-    | FDoneSend     // PUBLISH_NAMESPACE_DONE recorded; send next
+    | FCheck        // `announces_namespace_to` again next
 
   type SubTask = {
     phase: SubPhase, prefix: str, target: str, todo: Set[str], cur: str, stage: Stage,
@@ -112,7 +109,7 @@ module namespace_announcements {
   var s: State
 
   pure val idlePub: PubTask = {
-    phase: PIdle, ns: "", slot: -1, todo: Set(), pending: Set(), withdrawn: Set(), leaving: Set(),
+    phase: PIdle, ns: "", slot: -1, todo: Set(), withdrawn: Set(), leaving: Set(),
   }
   pure val idleSub: SubTask = { phase: SIdle, prefix: "", target: "", todo: Set(), cur: "", stage: FNone }
   pure val noMoqtSub: MoqtSub = { state: MNone, prefix: "", held: Set(), told: Set() }
@@ -147,8 +144,8 @@ module namespace_announcements {
 
   // --- ControlMessageForwarder ------------------------------------------
 
-  // The record half of `publish_namespace` / `publish_namespace_done`: the
-  // send follows when `sent`.
+  // The record of `publish_namespace` / `publish_namespace_done`: the send
+  // follows when `sent`.
   pure def record(st: State, x: str, n: str, kind: Kind): { st: State, sent: bool } =
     val announced = st.rec.get(x).contains(n)
     match kind {
@@ -164,7 +161,7 @@ module namespace_announcements {
   // as `SessionEvent::PublishNamespace`.
   pure def toldTo(st: State, x: str): Set[str] = st.moqt.get(x).told.union(st.stray.get(x))
 
-  // The send half, as moqt's draft-18 session handles it: a NAMESPACE is
+  // The send, as moqt's draft-18 session handles it: a NAMESPACE is
   // held until REQUEST_OK, swallowed when advertised, and sent as a
   // PUBLISH_NAMESPACE request when no subscription covers it; a DONE ends
   // whichever of them told of it, or is dropped.
@@ -199,12 +196,9 @@ module namespace_announcements {
   // The step that ends a loop also runs what follows it up to the next await.
   pure def advancePub(st: State, p: str): State =
     val t = st.pubTasks.get(p)
-    if (loopPhases.contains(t.phase) and t.todo == Set() and t.pending == Set())
-      if (t.phase == PWithdrawing)
-        val stillPublishes = st.pubs.exists(q => q.pub == p and q.ns == t.ns)
-        if (stillPublishes and t.withdrawn != Set())
-          setPub(st, p, { ...t, phase: PReannouncing, todo: t.withdrawn })
-        else setPub(st, p, idlePub)
+    if (loopPhases.contains(t.phase) and t.todo == Set())
+      if (t.phase == PWithdrawing and t.withdrawn != Set())
+        setPub(st, p, { ...t, phase: PReannouncing, todo: t.withdrawn })
       else if (t.phase == PLeaveNotifying)
         if (t.leaving == Set()) setPub(st, p, idlePub) else setPub(st, p, { ...t, phase: PLeaving })
       else setPub(st, p, idlePub)
@@ -287,32 +281,28 @@ module namespace_announcements {
     },
   }
 
-  // One subscriber of the loop: `record` under the repository lock.
-  action pubRecord(p: str): bool = all {
+  // One subscriber of the loop: the decision, `record` and the send. An
+  // announcement goes out while the namespace is published, a late DONE's
+  // one while the session still publishes it, and a withdrawal while no
+  // other session publishes it.
+  action pubTell(p: str): bool = all {
     val t = s.pubTasks.get(p)
     all {
       loopPhases.contains(t.phase),
-      t.pending == Set(),
       t.todo != Set(),
       nondet x = oneOf(t.todo)
       val kind = if (Set(PNotifying, PReannouncing).contains(t.phase)) Announcement else Withdrawal
-      val r = record(s, x, t.ns, kind)
+      val wanted =
+        if (t.phase == PNotifying) published(s, t.ns)
+        else if (t.phase == PReannouncing) s.pubs.exists(q => q.pub == p and q.ns == t.ns)
+        else not(s.pubs.exists(q => q.ns == t.ns and q.pub != p))
+      val r = if (wanted) record(s, x, t.ns, kind) else { st: s, sent: false }
       val task = {
         ...t,
         todo: t.todo.exclude(Set(x)),
-        pending: if (r.sent) Set({ to: x, ns: t.ns, kind: kind }) else Set(),
-        withdrawn: if (kind == Withdrawal) t.withdrawn.union(Set(x)) else t.withdrawn,
+        withdrawn: if (kind == Withdrawal and r.sent) t.withdrawn.union(Set(x)) else t.withdrawn,
       }
-      s' = advancePub(setPub(r.st, p, task), p),
-    },
-  }
-
-  action pubSend(p: str): bool = all {
-    val t = s.pubTasks.get(p)
-    all {
-      t.pending != Set(),
-      nondet m = oneOf(t.pending)
-      s' = advancePub(setPub(deliver(s, m.to, m.ns, m.kind), p, { ...t, pending: Set() }), p),
+      s' = advancePub(setPub(if (r.sent) deliver(r.st, x, t.ns, kind) else r.st, p, task), p),
     },
   }
 
@@ -466,8 +456,8 @@ module namespace_announcements {
     },
   }
 
-  // `forward_matching_publications`: `is_announced_to`, then the record of
-  // its PUBLISH_NAMESPACE.
+  // `forward_matching_publications`: `announces_namespace_to`, then its
+  // PUBLISH_NAMESPACE.
   action offerRecord(x: str): bool = all {
     val t = s.subTasks.get(x)
     all {
@@ -479,15 +469,7 @@ module namespace_announcements {
       if (not(published(s, n))) s' = advanceSub(setSub(s, x, rest), x)
       else
         val r = record(s, x, n, Announcement)
-        s' = setSub(r.st, x, { ...rest, stage: if (r.sent) FSend else FCheck }),
-    },
-  }
-
-  action offerSend(x: str): bool = all {
-    val t = s.subTasks.get(x)
-    all {
-      t.stage == FSend,
-      s' = setSub(deliver(s, x, t.cur, Announcement), x, { ...t, stage: FCheck }),
+        s' = setSub(if (r.sent) deliver(r.st, x, n, Announcement) else r.st, x, { ...rest, stage: FCheck }),
     },
   }
 
@@ -499,15 +481,7 @@ module namespace_announcements {
       if (published(s, t.cur)) s' = advanceSub(setSub(s, x, { ...t, stage: FNone }), x)
       else
         val r = record(s, x, t.cur, Withdrawal)
-        s' = advanceSub(setSub(r.st, x, { ...t, stage: if (r.sent) FDoneSend else FNone }), x),
-    },
-  }
-
-  action offerDoneSend(x: str): bool = all {
-    val t = s.subTasks.get(x)
-    all {
-      t.stage == FDoneSend,
-      s' = advanceSub(setSub(deliver(s, x, t.cur, Withdrawal), x, { ...t, stage: FNone }), x),
+        s' = advanceSub(setSub(if (r.sent) deliver(r.st, x, t.cur, Withdrawal) else r.st, x, { ...t, stage: FNone }), x),
     },
   }
 
@@ -515,7 +489,7 @@ module namespace_announcements {
     nondet p = oneOf(PUBLISHERS)
     any {
       announce(p), publishRouted(p), publishRouteFailed(p), publishNamespaceDone(p),
-      withdrawalRead(p), disconnect(p), leaveNext(p), pubRecord(p), pubSend(p),
+      withdrawalRead(p), disconnect(p), leaveNext(p), pubTell(p),
     },
     nondet x = oneOf(SUBSCRIBERS)
     any {
@@ -523,7 +497,7 @@ module namespace_announcements {
       updatePrefix(x), updateRouted(x), updateRouteFailed(x), updateRefused(x),
       updateReleased(x), updateForgot(x),
       unsubscribeNamespace(x), unsubscribeReleased(x), unsubscribeForgot(x),
-      offerRecord(x), offerSend(x), offerCheck(x), offerDoneSend(x),
+      offerRecord(x), offerCheck(x),
     },
   }
 

@@ -374,26 +374,25 @@ impl SubscribeNameSpace {
                     );
                 }
                 MatchingPublication::Namespace(track_namespace)
-                    if subscription.interest.includes_namespaces()
-                        && is_announced_to(
-                            &downstream_publish.table,
-                            subscription.peer,
-                            &track_namespace,
-                        ) =>
+                    if subscription.interest.includes_namespaces() =>
                 {
+                    let table = &downstream_publish.table;
+                    let announced =
+                        || table.announces_namespace_to(subscription.peer, &track_namespace);
+                    if !announced() {
+                        continue;
+                    }
                     forwarder
-                        .publish_namespace(session_id, track_namespace.clone())
+                        .publish_namespace(session_id, track_namespace.clone(), announced)
                         .await;
                     // A withdrawal that ran while `publications` was being
                     // sent found the namespace not yet announced here and
                     // sent no PUBLISH_NAMESPACE_DONE.
-                    if !is_announced_to(
-                        &downstream_publish.table,
-                        subscription.peer,
-                        &track_namespace,
-                    ) {
+                    if !announced() {
                         forwarder
-                            .publish_namespace_done(session_id, track_namespace)
+                            .publish_namespace_done(session_id, track_namespace.clone(), || {
+                                !announced()
+                            })
                             .await;
                         continue;
                     }
@@ -459,17 +458,6 @@ impl SubscribeNameSpace {
 /// A client subscriber is told of a namespace while anyone publishes it, a
 /// relay subscriber while a client does (split horizon): the condition under
 /// which `PublishNamespaceDone::notify_local_subscribers` withdraws it.
-fn is_announced_to(
-    table: &InMemoryLocalPubSubDirectory,
-    subscriber_peer: SessionPeer,
-    track_namespace: &str,
-) -> bool {
-    match subscriber_peer {
-        SessionPeer::Client => table.has_namespace_publishers(track_namespace),
-        SessionPeer::Relay => table.has_client_namespace_publisher(track_namespace),
-    }
-}
-
 /// Forgets the namespaces announced on a subscription refused after it was
 /// registered: moqt drops them with the request. Call it once the error is
 /// sent, as moqt still holds what is announced before.
@@ -801,16 +789,22 @@ mod tests {
         // Act: the other namespace is withdrawn while the first PUBLISH_NAMESPACE is held
         ctx.table
             .unregister_publish_namespace(withdrawn_session, None, withdrawn);
-        PublishNamespaceDone::notify_local_subscribers(
-            withdrawn_session,
-            true,
-            withdrawn,
-            &ctx.table,
-            &ctx.forwarder,
-        )
-        .await;
+        let withdrawal = tokio::spawn({
+            let ctx = ctx.clone();
+            async move {
+                PublishNamespaceDone::notify_local_subscribers(
+                    withdrawn_session,
+                    true,
+                    withdrawn,
+                    &ctx.table,
+                    &ctx.forwarder,
+                )
+                .await;
+            }
+        });
         gate.add_permits(2);
         subscribe_namespace.await.unwrap();
+        withdrawal.await.unwrap();
 
         // Assert: every PUBLISH_NAMESPACE of the withdrawn namespace is matched by a PUBLISH_NAMESPACE_DONE
         let announced = ctx

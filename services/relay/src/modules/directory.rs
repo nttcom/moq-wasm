@@ -451,6 +451,19 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
+    /// Whether a namespace subscriber of `subscriber_peer` is told of the
+    /// namespace: another relay only of a client's (split horizon).
+    pub(crate) fn announces_namespace_to(
+        &self,
+        subscriber_peer: SessionPeer,
+        track_namespace: &str,
+    ) -> bool {
+        match subscriber_peer {
+            SessionPeer::Client => self.has_namespace_publishers(track_namespace),
+            SessionPeer::Relay => self.has_client_namespace_publisher(track_namespace),
+        }
+    }
+
     /// `Client` when a session other than `session_id` publishes the
     /// namespace as a client, else `Relay` when one does as a relay.
     pub(crate) fn other_namespace_publisher(
