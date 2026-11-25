@@ -1,6 +1,5 @@
 use crate::modules::{
-    cascading::route_registry::RelayRouteRegistry,
-    control_plane::sequences::publish::Publish,
+    cascading::namespace_routes::NamespaceRoutes,
     data_plane::cache::store::TrackCacheStore,
     directory::InMemoryLocalPubSubDirectory,
     domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
@@ -17,7 +16,7 @@ impl UpstreamPublishDone {
         end: PublishDoneReason,
         table: &InMemoryLocalPubSubDirectory,
         cache_store: &TrackCacheStore,
-        route_registry: &dyn RelayRouteRegistry,
+        namespace_routes: &NamespaceRoutes,
     ) {
         let Some(track_key) =
             table.end_upstream_subscription(publisher_session_id, upstream_request_id, end)
@@ -28,7 +27,7 @@ impl UpstreamPublishDone {
         if !table.has_track_publisher(&track_key) {
             cache_store.publisher_left(&track_key);
         }
-        Publish::withdraw_track_route(table, route_registry, &track_key).await;
+        namespace_routes.withdraw_track(&track_key, table).await;
     }
 }
 
@@ -38,7 +37,6 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
-        cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::ProducerOrigin,
         domain::session_peer::SessionPeer,
         test_support::directory_fixtures::{
@@ -58,7 +56,7 @@ mod tests {
                 PublishDoneReason::publisher_session_closed(),
                 &ctx.table,
                 &TrackCacheStore::new(),
-                &NoopRelayRouteRegistry,
+                &NamespaceRoutes::unregistered(),
             )
             .await;
     }

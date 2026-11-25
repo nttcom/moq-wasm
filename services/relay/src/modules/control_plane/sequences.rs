@@ -22,9 +22,7 @@ use crate::modules::{
         namespace_routes::NamespaceRoutes,
         route_registry::{RelayInfo, RelayRouteRegistry},
     },
-    control_plane::{
-        control_message_forwarder::ControlMessageForwarder, sequences::publish::Publish,
-    },
+    control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore},
         egress::{
@@ -115,7 +113,7 @@ pub(crate) async fn connect_relay(
 pub(crate) async fn remove_downstream_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
-    route_registry: &dyn RelayRouteRegistry,
+    namespace_routes: &NamespaceRoutes,
     subscriber_session_id: SessionId,
     request_id: u64,
 ) {
@@ -126,7 +124,7 @@ pub(crate) async fn remove_downstream_subscription(
     release_upstream_subscriptions(
         table,
         forwarder,
-        route_registry,
+        namespace_routes,
         &removed.track_key,
         &removed.released_upstream_subscriptions,
     )
@@ -136,7 +134,7 @@ pub(crate) async fn remove_downstream_subscription(
 pub(crate) async fn release_upstream_subscriptions(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
-    route_registry: &dyn RelayRouteRegistry,
+    namespace_routes: &NamespaceRoutes,
     track_key: &TrackKey,
     released: &[ReleasedUpstreamSubscription],
 ) {
@@ -148,7 +146,7 @@ pub(crate) async fn release_upstream_subscriptions(
         )
         .await;
     }
-    withdraw_released_track_route(table, route_registry, track_key, released).await;
+    withdraw_released_track_route(table, namespace_routes, track_key, released).await;
 }
 
 /// Withdraws the route of `track_key` when the directory released a PUBLISH
@@ -156,7 +154,7 @@ pub(crate) async fn release_upstream_subscriptions(
 /// PUBLISH, so its PUBLISH_DONE finds no producer to withdraw the route with.
 pub(crate) async fn withdraw_released_track_route(
     table: &InMemoryLocalPubSubDirectory,
-    route_registry: &dyn RelayRouteRegistry,
+    namespace_routes: &NamespaceRoutes,
     track_key: &TrackKey,
     released: &[ReleasedUpstreamSubscription],
 ) {
@@ -164,7 +162,7 @@ pub(crate) async fn withdraw_released_track_route(
         .iter()
         .any(|released| released.origin == ProducerOrigin::Publish)
     {
-        Publish::withdraw_track_route(table, route_registry, track_key).await;
+        namespace_routes.withdraw_track(track_key, table).await;
     }
 }
 
@@ -306,7 +304,7 @@ pub(crate) struct EgressRequest {
 pub(crate) async fn start_egress(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
-    route_registry: &dyn RelayRouteRegistry,
+    namespace_routes: &NamespaceRoutes,
     cache_store: &TrackCacheStore,
     request: EgressRequest,
 ) -> bool {
@@ -327,7 +325,7 @@ pub(crate) async fn start_egress(
         remove_downstream_subscription(
             table,
             forwarder,
-            route_registry,
+            namespace_routes,
             request.subscriber_session_id,
             request.request_id,
         )

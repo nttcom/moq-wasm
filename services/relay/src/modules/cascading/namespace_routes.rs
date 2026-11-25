@@ -4,6 +4,7 @@ use dashmap::DashMap;
 
 use crate::modules::{
     cascading::route_registry::RelayRouteRegistry, directory::InMemoryLocalPubSubDirectory,
+    domain::track_key::TrackKey,
 };
 
 /// One lock per route key, held across the route registry call; the value is
@@ -105,6 +106,13 @@ impl NamespaceRoutes {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn unregistered() -> Self {
+        Self::new(Arc::new(
+            crate::modules::cascading::route_registry::NoopRelayRouteRegistry,
+        ))
+    }
+
     /// Registers the namespace's publisher route while a client publishes the
     /// namespace and withdraws it once none does. Fails only when the route
     /// could not be registered; a failed withdrawal is logged. Returns whether
@@ -131,6 +139,34 @@ impl NamespaceRoutes {
             table,
         )
         .await
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        name = "relay.namespace_routes.withdraw_track",
+        skip_all,
+        fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
+    )]
+    pub(crate) async fn withdraw_track(
+        &self,
+        track_key: &TrackKey,
+        table: &InMemoryLocalPubSubDirectory,
+    ) {
+        if table.has_client_published_track(track_key) {
+            return;
+        }
+        if let Err(err) = self
+            .route_registry
+            .unregister_track_publisher(track_key)
+            .await
+        {
+            tracing::warn!(
+                error = ?err,
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                "failed to unregister track route"
+            );
+        }
     }
 
     async fn reconcile(

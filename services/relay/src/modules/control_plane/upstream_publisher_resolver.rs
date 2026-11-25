@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
+        namespace_routes::NamespaceRoutes,
         route_registry::{RelayInfo, RelayRouteRegistry},
         watched_namespace_routes::WatchedNamespaceRoutes,
     },
@@ -23,6 +24,9 @@ pub(crate) struct UpstreamPublisherResolver {
     route_registry: Arc<dyn RelayRouteRegistry>,
     inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
     pub(crate) watched_namespace_routes: Arc<WatchedNamespaceRoutes>,
+    /// The same instance as `WorkerDeps::namespace_routes`, so every route
+    /// change takes one per-route lock.
+    pub(crate) namespace_routes: Arc<NamespaceRoutes>,
 }
 
 impl UpstreamPublisherResolver {
@@ -32,13 +36,10 @@ impl UpstreamPublisherResolver {
     ) -> Self {
         Self {
             watched_namespace_routes: Arc::new(WatchedNamespaceRoutes::new(route_registry.clone())),
+            namespace_routes: Arc::new(NamespaceRoutes::new(route_registry.clone())),
             route_registry,
             inter_relay_connection_manager,
         }
-    }
-
-    pub(crate) fn route_registry(&self) -> &dyn RelayRouteRegistry {
-        self.route_registry.as_ref()
     }
 
     /// Every publisher of the track: the local client publishers newest first
