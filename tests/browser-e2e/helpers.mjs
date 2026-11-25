@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { createSocket } from "node:dgram";
 import { connect, createServer } from "node:net";
 import { resolve } from "node:path";
+import { setTimeout } from "node:timers/promises";
 
 import {
   certPath,
@@ -88,7 +89,7 @@ export async function waitForHttpOk(url, timeoutMs = 60_000) {
     } catch (error) {
       lastError = error;
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+    await setTimeout(500);
   }
   throw new Error(
     `Timed out waiting for ${url}: ${getErrorMessage(lastError)}`,
