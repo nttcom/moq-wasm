@@ -248,7 +248,7 @@ module track_follower {
 // expect: violation
 module track_follower_current {
   import track_follower(
-    CLEAR_ON_WITHDRAWAL = false,
+    CLEAR_ON_WITHDRAWAL = true,
     END_DROPS_HANDLERS = false,
     END_CLOSES_WATCHERS = true,
   ).*

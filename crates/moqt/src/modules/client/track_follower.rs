@@ -294,16 +294,18 @@ impl<S> Follower<S> {
     }
 
     /// Takes a PUBLISH_NAMESPACE (`active`) or PUBLISH_NAMESPACE_DONE of the
-    /// followed namespace; returns whether to subscribe now.
+    /// followed namespace; returns whether to subscribe now. A
+    /// PUBLISH_NAMESPACE_DONE drops a pending handover: the peer reports the
+    /// namespace as a whole, so no publisher is left to take over.
     fn announced(&mut self, active: bool) -> bool {
         match std::mem::replace(self, Self::Idle) {
             Self::Idle => active,
-            Self::Following(followed) | Self::FollowingWithHandover(followed) if active => {
-                *self = Self::FollowingWithHandover(followed);
-                false
-            }
-            withdrawn => {
-                *self = withdrawn;
+            Self::Following(followed) | Self::FollowingWithHandover(followed) => {
+                *self = if active {
+                    Self::FollowingWithHandover(followed)
+                } else {
+                    Self::Following(followed)
+                };
                 false
             }
         }
@@ -553,6 +555,22 @@ mod tests {
     }
 
     #[test]
+    fn a_publisher_that_withdraws_while_another_is_followed_is_not_subscribed_when_that_one_leaves()
+    {
+        // Arrange
+        let mut follower = Follower::Following(());
+        assert!(!follower.announced(true));
+
+        // Act
+        let subscribed_at_withdrawal = follower.announced(false);
+        let subscribed_at_leave = follower.left();
+
+        // Assert
+        assert!(!subscribed_at_withdrawal);
+        assert!(!subscribed_at_leave);
+    }
+
+    #[test]
     fn the_followed_publisher_leaving_without_a_waiting_publisher_subscribes_nothing() {
         // Arrange
         let mut follower = Follower::Idle;
@@ -726,7 +744,8 @@ mod tests {
                 (Model::Subscribing, _) | (_, Event::SubscribeAnswered(_)) => None,
                 (Model::Idle, Event::Announced(true)) => Some(Model::Subscribing),
                 (_, Event::Announced(true)) => Some(Model::FollowingWithHandover),
-                (_, Event::Announced(false)) => Some(model),
+                (Model::Idle, Event::Announced(false)) => Some(Model::Idle),
+                (_, Event::Announced(false)) => Some(Model::Following),
                 (Model::Idle, Event::Published(true)) => Some(Model::Following),
                 (_, Event::Published(_)) => Some(model),
                 (Model::Idle, Event::Left) => None,
