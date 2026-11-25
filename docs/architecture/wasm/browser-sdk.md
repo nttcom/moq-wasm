@@ -9,7 +9,7 @@ Web 開発者が npm パッケージ1つで、MoQ のメディア PubSub（接�
 | 項目 | API |
 | --- | --- |
 | 接続 | `MoqSession.connect(url, { token, versions })`（`versions` 省略時は `draft-18`, `draft-14` の順） |
-| 再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })` / `start(session, namespace)` |
+| 再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks? })` / `start(session, namespace)` |
 | 配信 | `moq-wasm/media` の `createBroadcast(session, namespace)` / `addSource(name, input)` |
 | track 単位 PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack`（handle と async iteration） |
 | パッケージ | `sdk/js/js` の `moq-wasm`（examples は `source` condition で TS を直接参照。`npm run build` が `dist`/`types` を生成し、CI が新規 Vite プロジェクトで `npm pack` tarball を検証） |
@@ -45,10 +45,7 @@ import { LivePlayer, PlayerControls } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
 const container = document.querySelector<HTMLElement>('#view')!
-const player = new LivePlayer({
-  container,
-  callbacks: { onStateChange: () => {}, onLiveFrame: () => {}, onLog: () => {} },
-})
+const player = new LivePlayer({ container })
 new PlayerControls(container, player, () => {})
 await player.start(session, ['room-1', 'alice'])
 

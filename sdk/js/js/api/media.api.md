@@ -236,16 +236,16 @@ export class LivePlayer {
 
 // @public (undocumented)
 export type LivePlayerCallbacks = {
-    onStateChange(): void;
-    onLiveFrame(): void;
-    onLog(level: LogLevel, message: string): void;
+    onStateChange?(): void;
+    onLiveFrame?(): void;
+    onLog?(level: LogLevel, message: string): void;
     onAudioLevel?(level: AudioLevel): void;
 };
 
 // @public (undocumented)
 export type LivePlayerOptions = {
     container: HTMLElement;
-    callbacks: LivePlayerCallbacks;
+    callbacks?: LivePlayerCallbacks;
     deliveryObserver?: DeliveryObserver;
     livePicture?: LivePictureKind;
     keepLiveWhileReviewing?: boolean;

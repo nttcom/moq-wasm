@@ -112,8 +112,7 @@ export class MoqPlayerElement extends HTMLElement {
         onLiveFrame: () => {
           this.controlsPart?.renderBuffer(player.stats())
           this.dispatchEvent(new Event('liveframe'))
-        },
-        onLog: () => {}
+        }
       }
     })
     let ownedSession: MoqSession | undefined

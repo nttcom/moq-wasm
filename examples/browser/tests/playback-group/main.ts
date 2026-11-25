@@ -53,8 +53,6 @@ async function start(url: string, namespaces: string[]): Promise<void> {
     const player = new LivePlayer({
       container,
       callbacks: {
-        onStateChange: () => {},
-        onLiveFrame: () => {},
         onLog: (level, message) => console[level](`[${namespace}] ${message}`)
       },
       deliveryObserver: noteShown(shown)
