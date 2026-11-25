@@ -6,6 +6,7 @@ import {
   relayUrlFromQuery,
   type RelayPreset
 } from './relayPresets'
+import { moveBetweenTabs, syncTabStops } from './tabs'
 
 type RelayTab = 'cloud' | 'local'
 
@@ -60,6 +61,7 @@ export function createRelayPicker(
     return { value, button }
   })
   tablist.append(...tabButtons.map(({ button }) => button))
+  tablist.addEventListener('keydown', moveBetweenTabs)
 
   const summary = document.createElement('span')
   summary.className = 'relay-picker-summary'
@@ -141,6 +143,7 @@ export function createRelayPicker(
     for (const { value, button } of tabButtons) {
       button.setAttribute('aria-selected', String(value === tab))
     }
+    syncTabStops(tablist)
     if (tab === 'local') {
       panel.replaceChildren(...localPresets.map((preset) => option(preset, 'plain')))
       return
