@@ -2,20 +2,18 @@
 
 Shared by all agents.
 
-- Write unit tests inside the target module using `#[cfg(test)] mod tests`.
-- Structure every test using the Arrange / Act / Assert pattern.
-- Extract Arrange-phase setup into shared utility files; do not duplicate setup across test files.
-- Label the phases with `// Arrange`, `// Act`, and `// Assert`.
-- Put an explanation of a phase on its label instead of a separate comment line: `// Assert: only session 1 state is removed; other publishers in the namespace survive`.
-- `// Act / Assert` is acceptable as one label when both are a single expression.
+- Colocate unit tests in `#[cfg(test)] mod tests`.
+- Structure every test with Arrange / Act / Assert, labeled `// Arrange`, `// Act`, and `// Assert` (`// Act / Assert` is fine for a single expression).
+- Put phase explanations on the label line (`// Assert: only session 1 state is removed; other publishers survive`), not on a separate comment line.
+- Share Arrange setup in test utility files; do not duplicate setup across test files.
 
-## Property-based tests
-- When a change adds or reworks one of the following, state what it guarantees as `proptest` properties in the same pull request:
-  - a parser fed in chunks, a codec, a muxer or a demuxer;
-  - a state machine;
-  - arithmetic on times or IDs that rounds, wraps or can overflow;
-  - logic a simple model can check, such as a brute-force search or a set.
-- Write the property as the module's specification, not as the reproduction of one bug: a round trip gives back its input, any chunking gives the same result, the result equals the model's, a sequence stays monotonic.
-- Make the generators favour the boundaries real input reaches: the edges of each encoded length, values near a wrap, 0 and the maximum, repeats and steps back. Uniform values almost never reach them. Do not bend a generator towards a bug you already know.
-- Before committing, break the code the property checks (flip a comparison, drop a rounding step) and confirm the property fails. A property that never reaches that code passes either way.
-- A fix for a bug found by reading the code gets an example test; add a property only when a general one fits the module.
+## Property-Based Tests
+- Add `proptest` properties in the same PR when adding or reworking:
+  - chunked parsers, codecs, muxers, or demuxers;
+  - state machines;
+  - time or ID arithmetic that rounds, wraps, or can overflow;
+  - logic checkable against a simple model (e.g. brute-force search or set).
+- Specify the module's invariants (round-trip, chunk-invariance, model equivalence, monotonicity)—not a single bug repro.
+- Bias generators toward real boundaries (encoded length edges, wrap points, `0`/max, repeats, backward steps); never hard-code toward a known bug.
+- Before committing, temporarily break the tested code (flip a comparison, drop a rounding step) and confirm the property fails.
+- Bug fixes found by reading code get an example test; add a property only when a general invariant fits the module.

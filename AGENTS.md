@@ -1,57 +1,63 @@
 # AGENTS.md
 
 ## 1. Language
-- Respond concisely and politely in the user's language.
-- Write all documentation and code comments in English unless a later section defines a specific exception.
+- Reply concisely and politely in the user's language.
+- Write documentation and code comments in English unless noted otherwise below.
 
 ## 2. Project Scope
-- This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
-- Every Rust crate lives under `services/`, `crates/` or `sdk/`. Architecture documents live under `docs/architecture/<package name>/`, where `<package name>` is the `name` in the crate's `Cargo.toml`.
-  - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `ingest-gateway`).
-  - `crates/` holds the code other crates, the SDKs or GStreamer link against: libraries and plugins (`moqt`, `broadcast`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
-  - `sdk/` holds the SDKs applications install, one directory per language: `sdk/js` (the crate `wasm` and the npm package under `js/`), `sdk/python` (the crate `python` and the Python package) and `sdk/rust` (the crate `moq-wasm`, named as the other two SDKs are installed, since a git dependency is named by its package).
-- Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
-  1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
-  2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
-  3. Otherwise → name the role in one or two kebab-case words (`relay`, `broadcast`, `ingest-gateway`, `egress-gateway`).
-  Use an abbreviation only when it is already the identifier in code, flags or environment variables (`msf`, `vts`); otherwise spell it out (`auth-token`). Binaries take the package name.
+This repository implements Media over QUIC Transport (MoQT), a low-latency QUIC-based transport protocol.
 
-Library components (draft-governed):
+### Workspace Layout
+- `services/` — standalone deployed processes (servers and bridges: `relay`, `vts`, `ingest-gateway`).
+- `crates/` — libraries and plugins linked by other crates, SDKs, or GStreamer (`moqt`, `broadcast`, `gst-plugin-moqt`), including libraries with an optional CLI (`auth-token`).
+- `sdk/` — installable language SDKs:
+  - `sdk/js`: crate `wasm`, npm package under `js/`.
+  - `sdk/python`: crate `python` and Python package.
+  - `sdk/rust`: crate `moq-wasm` (matches the other SDKs' install name for git dependencies).
+- `moqt` is the central crate; all other crates depend on it, so changes there affect the entire workspace.
+
+### Crate Naming
+- Omit any `moqt-` prefix (the workspace is the namespace). Binaries take the package name.
+- Pick a name in order:
+  1. Implements a spec → spec name (`moqt`, `msf`).
+  2. External ecosystem convention → follow it (`gst-plugin-moqt`).
+  3. Otherwise → 1–2 kebab-case role words (`relay`, `broadcast`, `ingest-gateway`, `egress-gateway`).
+- Abbreviate only if already used in code, flags, or env vars (`msf`, `vts`); otherwise spell out (`auth-token`).
+
+### Draft-Governed Components
 
 | Component | Description | Related Draft |
 | --- | --- | --- |
-| `moqt` | Core MoQT protocol implementation | `docs/spec/draft-ietf-moq-transport-14.txt`; `docs/spec/draft-ietf-moq-transport-18.txt` for `modules/moqt/version/draft18` |
-| `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
-| `crates/msf` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-02.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
-| `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC properties to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-04.txt` (`loc` module only) |
-| `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `ingest-gateway` and `gst-plugin-moqt`, and the reader that turns a broadcast back into media events for `egress-gateway` and `sip-gateway`, with the track selection `recorder` shares; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
-| `crates/robotics` | Robot teleoperation, cloud policies and data collection over MoQT: the records of the robot's `state`, `control` and `episode` tracks and the drivers' `action` tracks, their catalog entries and priorities, `Robot`, the robot's side: arbitration and the dead man (`Arbiter`) over the room's MoQT tracks, and `Driver`, a driver's `action` writer; extends `broadcast` and `moqt` | `docs/spec/draft-ietf-moq-msf-02.txt` (§8 Event Timeline) |
+| `moqt` | Core MoQT protocol | `docs/spec/draft-ietf-moq-transport-14.txt`; `docs/spec/draft-ietf-moq-transport-18.txt` (`modules/moqt/version/draft18`) |
+| `relay` | MoQT relay server extending `moqt` | `docs/spec/draft-ietf-moq-transport-14.txt` (relay sections) |
+| `crates/msf` | Object and catalog format over MoQT | `docs/spec/draft-ietf-moq-msf-02.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
+| `crates/mediapack` | Container mux/demux (MPEG-TS, FLV, fMP4, LOC), progressive MP4 index, H.264/AAC helpers; `moqt` feature maps LOC properties to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-04.txt` (`loc` module only) |
+| `crates/broadcast` | MSF broadcast writer/reader (`mediapack` ↔ catalog, LOC/CMAF tracks, media timeline, publish policy, track selection) for `ingest-gateway`, `gst-plugin-moqt`, `egress-gateway`, `sip-gateway`, and `recorder`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
+| `crates/robotics` | Robot teleoperation, cloud policies, and data collection (`state`, `control`, `episode`, `action` tracks; `Robot`/`Arbiter` dead-man arbitration; `Driver` writer); extends `broadcast` and `moqt` | `docs/spec/draft-ietf-moq-msf-02.txt` (§8 Event Timeline) |
 
-All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are application and integration components (see each crate's `Cargo.toml` `description` and `docs/architecture/<package name>/`); draft lookup is normally not required for them.
-
-- `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
+All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are application/integration components (see each crate's `Cargo.toml` `description` and `docs/architecture/<package_name>/`); draft lookup is normally not required.
 
 ### Architecture Documents
-- Architecture documents live under `docs/architecture/${package_name}/`. Most crates have `architecture.md`; the SDKs use `sdk.md`, and `wasm` uses `browser-sdk.md`. A directory that holds only ADRs has no architecture document.
-- Before making structural changes to a component (module layout, layering, task/channel topology), read its architecture document if it has one.
-- When a change alters the design intent, module boundaries, runtime flow, or key invariants described in an architecture document, update that document in the same change.
+- Located at `docs/architecture/<package_name>/` (`<package_name>` = `Cargo.toml` `name`). Main file: `architecture.md` (`sdk.md` for SDKs, `browser-sdk.md` for `wasm`). ADR-only directories have no main doc.
+- Read the architecture doc before structural changes (module layout, layering, task/channel topology).
+- Update it in the same change when altering design intent, module boundaries, runtime flow, or key invariants.
 
 ## 3. Specifications
-- For library components listed in the draft-governed table above, use only the draft listed in `Related Draft` as the authoritative specification. Do not consult other drafts unless the task explicitly requires them.
-- For application and integration components, draft lookup is not required unless the task explicitly asks for specification-level alignment.
-- Do not read the entire draft. Search for the relevant section heading or keyword to locate the needed content.
-- When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
-- When the draft uses MUST, SHOULD, or MAY (RFC 2119 keywords), ask the user how far to implement before proceeding.
-- If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
+- For draft-governed components, treat **only** the listed `Related Draft` as authoritative unless explicitly asked otherwise.
+- For other components, skip draft lookup unless spec alignment is explicitly requested.
+- Search drafts by section heading or keyword; do not read entire drafts.
+- Consult the draft before answering or coding when protocol details are unclear.
+- Ask the user how far to implement RFC 2119 requirements (`MUST`, `SHOULD`, `MAY`) before proceeding.
+- If still ambiguous after consulting the draft and this file, ask the user rather than guessing.
 
 ## 4. Coding Style
-- Coding style rules live in `.agents/rules/coding-style.md`, shared by all agents. If it is not already in your context, read it before your first code edit.
+Read `.agents/rules/coding-style.md` before your first code edit if not already in context.
 
 @.agents/rules/coding-style.md
 
 ## 5. Commands
 - Build: `cargo build`
-- Test: `cargo test`
+- Test: `cargo test` (run `cargo test -p <package_name>` after changes to verify no regressions)
 - Lint (Rust): `cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo fmt --all -- --check`
 - Lint (Rust, wasm32): `cargo clippy -p wasm -p moqt -p broadcast -p telemetry -p telemetry-report -p mediapack -p msf --target wasm32-unknown-unknown -- -D warnings`
 - Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "sdk/js/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore`
@@ -60,82 +66,83 @@ All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are appli
 - Wasm / JS SDK: `npm run wasm -w moq-wasm && npm run build -w moq-wasm`
 - Console web: `npm --prefix services/console/web run format:check && npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`
-- Mutation test (the lines a branch changes): `git diff origin/master... > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff -p <package_name>`
+- Mutation test (branch diff): `git diff origin/master... > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff -p <package_name>`
 - E2E tests: see `tests/README.md` (`./tests/<suite>/run.sh` for relay/service suites, `node tests/browser-e2e/run-*-e2e.mjs` for browser suites)
-- After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
-- Testing rules live in `.agents/rules/testing.md`, shared by all agents. Unit tests are colocated with the implementation, so read it before your first code edit as well.
+Read `.agents/rules/testing.md` before your first code edit if not already in context.
 
 @.agents/rules/testing.md
 
 ## 7. Logging
-Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::debug!`).
+Always use `tracing` (`tracing::info!`, `tracing::debug!`, etc.).
 
-| Level | Role | Example Events |
+| Level | Role | Examples |
 | --- | --- | --- |
-| TRACE | Raw network data. Disabled in normal operation. | · Raw bytes sent/received on a stream<br>· QUIC frame-level events |
-| DEBUG | Detailed state changes for debugging. | · MOQT message contents (parsed fields)<br>· Stream open/close events<br>· Session state transitions |
-| INFO | Key milestones to monitor in production. | · Connection established/closed<br>· Subscribe/Publish started or completed<br>· Session start and teardown |
-| WARN | Recoverable issues that require attention. | · Retrying after a transient connection error<br>· Received an unexpected but non-fatal message type<br>· Stream closed by peer earlier than expected |
-| ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
+| TRACE | Raw network data (disabled in normal operation) | Raw stream bytes, QUIC frame events |
+| DEBUG | Detailed state transitions for debugging | Parsed MoQT messages, stream open/close, state transitions |
+| INFO | Production milestones | Connection open/close, subscribe/publish start/end, session lifecycle |
+| WARN | Recoverable issues | Transient retry, unexpected non-fatal message, early peer stream close |
+| ERROR | Fatal failures | Connection failed after retries, malformed/unknown MoQT message, auth/TLS failure |
 
-Logs and spans are exported over OTLP, where a log does not inherit its span's fields. For each INFO or higher log:
-- One event gets one INFO line. Writing a request (SUBSCRIBE, FETCH, PUBLISH, …) is an event of its own, so a request that is never answered still shows. Writing its response (`*_OK`, `*_ERROR`) is one too, so the side that answers shows when and how it answered. Any other step inside a request, a cleanup or a `Drop` is DEBUG.
-- The message is a fixed string; every value is a field (`tracing::info!(%error, request_id, "SUBSCRIBE_ERROR received")`, not `"... {}"`).
-- It carries the fields that identify what it is about, so it can be found without its span.
+### OTLP Rules (`INFO` and above)
+Logs export over OTLP without inheriting span fields:
+- **One event = one `INFO` line**: writing a request (`SUBSCRIBE`, `FETCH`, `PUBLISH`, …) and writing its response (`*_OK`, `*_ERROR`) are separate events. Intermediate steps, cleanup, and `Drop` are `DEBUG`.
+- **Fixed message string**: pass every value as a structured field (`tracing::info!(%error, request_id, "SUBSCRIBE_ERROR received")`, never `"... {}"`).
+- **Self-contained fields**: include the fields identifying the entity so the log is searchable without its span.
 
-Name fields from this vocabulary and add a name to it before using a new one:
+### Spans
+- Long-lived spans (track, session) root their own trace and link to the starting request's span (child spans block parent trace export until closed).
+- Relay request spans continue the client's trace when the request carries `TRACE_CONTEXT`.
+
+### Field Vocabulary
+Use only field names from this table; add new names here before using them:
 
 | Field | Meaning |
 | --- | --- |
-| `session_id` | The session the event is about |
-| `publisher_session_id` / `subscriber_session_id` | The two sessions of a track, when both are involved |
+| `session_id` | Session the event is about |
+| `publisher_session_id` / `subscriber_session_id` | Both sessions of a track when both are involved |
 | `session_peer` | `client` or `relay` |
-| `app_id` | The application of the session's token |
-| `client_id` | A browser page load, generated by the page and sent with its telemetry |
-| `request_id` | The draft's Request ID (not `subscribe_id`) |
-| `message_type` | The control message a log is about, when the log cannot name it in its message |
-| `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
-| `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
-| `media_source` | The source of a broadcast a browser plays or publishes, named by its video track (`camera`, `screen`, …) |
-| `ready_state` | A `MediaStreamTrack`'s `readyState` (`live` or `ended`) when one of its events is logged |
-| `call_id` / `direction` / `call_end_reason` | A phone call the SIP gateway placed or answered, whether it is `outbound` or `inbound`, and why it ended (`hangup`, `timeout`, `limit`, `gateway` or the SIP status) |
-| `sip_call_id` / `sip_status` | The SIP Call-ID of a call's dialog, and the status of a SIP response |
-| `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
-| `track_alias` | The track alias on the session the log is about |
-| `group_id` / `subgroup_id` / `object_id` | The Group ID, Subgroup ID and Object ID of the object the event is about |
-| `forward` | The Forward State a message sets or a subscription is in |
-| `new_group_request` | The value of a NEW_GROUP_REQUEST: the largest Group ID its sender knows plus 1, or 0 |
-| `supported_versions` / `selected_version` | The MoQT versions a CLIENT_SETUP offers, and the one its SERVER_SETUP picks |
-| `error` | The failure, as `%error` or `?error` |
-| `is_relay` | Whether a token's app is a relay |
-| `outcome` | How a MoQT request ended (`ok`, `rejected`, `timeout` or `failed`), or how a call between services ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`; `vts.request`: `verified`, `malformed_token`, `unknown_app` or `invalid_signature`) |
-| `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
-| `url` | The URL a client connects to |
-| `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |
-| `transport` | The transport a connection opened: `QUIC`, `WebTransport` or `WebSocket` |
-| `remote_address` / `previous_remote_address` | The peer's address on a session's connection (or a SIP trunk's, on its TLS connection), and the one it replaced when the peer migrated |
+| `app_id` | Application of the session's token |
+| `client_id` | Browser page load ID sent with telemetry |
+| `request_id` | Draft Request ID (not `subscribe_id`) |
+| `message_type` | Control message type when not named in the message |
+| `track_namespace` / `track_name` | Track identifier (not `track_key` or `namespace`) |
+| `track_namespace_prefix` | `SUBSCRIBE_NAMESPACE` prefix |
+| `media_source` | Broadcast source in a browser, named by video track (`camera`, `screen`, …) |
+| `ready_state` | `MediaStreamTrack.readyState` (`live` or `ended`) |
+| `call_id` / `direction` / `call_end_reason` | SIP gateway call ID, `outbound`/`inbound`, and end reason (`hangup`, `timeout`, `limit`, `gateway`, or SIP status) |
+| `sip_call_id` / `sip_status` | SIP dialog Call-ID and response status |
+| `bot_id` / `bot_type` / `bot_state` | Bot ID, type (`recorder`, …), and reported state (`running`, `finished`, …) |
+| `track_alias` | Track alias on the session |
+| `group_id` / `subgroup_id` / `object_id` | Object Group ID, Subgroup ID, and Object ID |
+| `forward` | Forward State set by a message or held by a subscription |
+| `new_group_request` | `NEW_GROUP_REQUEST` value: largest known Group ID + 1, or `0` |
+| `supported_versions` / `selected_version` | Versions offered by `CLIENT_SETUP` and picked by `SERVER_SETUP` |
+| `error` | Failure, formatted as `%error` or `?error` |
+| `is_relay` | Whether the token's app is a relay |
+| `outcome` | Request result (`ok`, `rejected`, `timeout`, `failed`) or service call result (`relay.vts.verify`: `verified`/`unauthorized`/`unavailable`; `vts.request`: `verified`/`malformed_token`/`unknown_app`/`invalid_signature`) |
+| `relay_hostname` | Relay host on every root span (carried on each stdout line) |
+| `url` / `fallback_url` | Connection URL and `wss://` fallback URL |
+| `transport` | Opened transport: `QUIC`, `WebTransport`, or `WebSocket` |
+| `remote_address` / `previous_remote_address` | Peer address (or SIP trunk TLS address) and the address replaced on migration |
 | `duration_ms` | Milliseconds from writing a request to receiving its response |
-| `wasm_load_wait_ms` | Milliseconds a browser's `MoqSession.connect` waited for the wasm module to load |
-| `driver` | The namespace driving a robot, relative to its room (`operators/<id>`, `bots/policy`); absent while nobody drives |
-| `hold_reason` | Why a robot holds still: `stale` (no fresh action from its driver, or no driver) or `session` (its relay session ended) |
-| `control_reason` | The `reason` of a robot's `control` record: `action`, `left`, `stale` or `episode` |
-| `episode_id` | The id of a robot's open episode |
-| `loop_latency_ms` | `now − basis` of an action a robot applied: milliseconds from the observation it answers to its arrival, on the robot's clock |
-
-A span that lives longer than the request that starts it (a track, a session) roots its own trace and links to the request's span: a span closes only after its children, so a long-lived child would hold its parent's trace unexported. A relay's request span continues the client's trace when the request carries `TRACE_CONTEXT`.
+| `wasm_load_wait_ms` | Milliseconds `MoqSession.connect` waited for wasm to load |
+| `driver` | Namespace driving a robot relative to its room (`operators/<id>`, `bots/policy`); omitted when idle |
+| `hold_reason` | Why a robot holds still: `stale` (no driver or no fresh action) or `session` (relay session ended) |
+| `control_reason` | Robot `control` record reason: `action`, `left`, `stale`, or `episode` |
+| `episode_id` | Robot's open episode ID |
+| `loop_latency_ms` | `now − basis` of an applied robot action (ms from observation to arrival on robot clock) |
 
 ## 8. Git Conventions
-- Commit messages must be written in English.
-- A squash-merged commit on `master` takes the Japanese PR title as its subject; the English rule applies to the commits you write on a branch.
-- Follow Conventional Commits: `type(scope): description`
-  - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
-  - Scope: use the component or crate name (e.g. `moqt`, `relay`, `wasm`, `python`, `moq-wasm`, `broadcast`, `ingest-gateway`, `egress-gateway`, `msf`, `mediapack`)
-- One commit per logical change. If the description requires "and", split into multiple commits.
-- PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
-- This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.
-- When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
-- When releasing the browser SDK (`moq-wasm`), follow the skill in `.agents/skills/release-sdk/SKILL.md`.
-- When releasing the Python SDK (`moq-wasm` in `sdk/python`), follow the skill in `.agents/skills/release-python-sdk/SKILL.md`.
-- When releasing the Rust SDK (`moq-wasm` in `sdk/rust`), follow the skill in `.agents/skills/release-rust-sdk/SKILL.md`.
+- **Commits**: English, Conventional Commits `type(scope): description`.
+  - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`.
+  - Scope: crate or component name (`moqt`, `relay`, `wasm`, `python`, `moq-wasm`, `broadcast`, `ingest-gateway`, `egress-gateway`, `msf`, `mediapack`, etc.).
+  - One logical change per commit (if the message needs "and", split it).
+  - Squash-merged commits on `master` take the Japanese PR title; branch commits stay English.
+- **PRs**: Japanese title and body, following `.github/pull_request_template.md` and `.agents/skills/create-pull-request/SKILL.md`.
+- **Public repo**: never reference private repos or internal trackers (URLs, repo names, issue/PR numbers) in code, docs, commits, or PRs. Link only from private to public.
+- **SDK releases**:
+  - Browser (`moq-wasm`): `.agents/skills/release-sdk/SKILL.md`
+  - Python (`sdk/python`): `.agents/skills/release-python-sdk/SKILL.md`
+  - Rust (`sdk/rust`): `.agents/skills/release-rust-sdk/SKILL.md`

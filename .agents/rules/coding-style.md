@@ -3,82 +3,72 @@
 Shared by all agents.
 
 ## Implementation Principles
-- Follow YAGNI: implement only what the current requirement needs. Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs — add them when a second concrete use case appears.
-- Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
-- When you find a bug or design issue outside the current task's scope, record it with the `todo-add` skill instead of fixing it or only mentioning it.
-- Before fixing a bug, investigate the cause first: reproduce it and explain the mechanism. A retry, sleep, widened timeout, defensive check, or call-site special case without a stated mechanism is a symptom patch, not a fix.
-- Refactor, as part of the same task rather than leaving a TODO, when any of the following applies:
-  - A call site passes the same 3+ values into multiple functions, or the same tuple is returned across modules — introduce a struct.
-  - A fix needs the same edit in N places — reshape so it is one place first, then fix. Prefer extending an existing primitive over adding a parallel one-off, and generalizing a helper over copying it.
-  - The task can be solved either by patching around an awkward internal shape or by fixing the shape — fix the shape. Do not preserve an awkward shape just to avoid churn; this applies to internal code as well as public APIs.
-- When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
+- **YAGNI**: implement only what the current requirement needs. Add options, abstractions, generics, or extension points only on a second concrete use case.
+- **Minimal diff**: prefer the smallest change that meets the requirement unless refactoring is explicitly requested.
+- **Out-of-scope issues**: record unrelated bugs or design issues via the `todo-add` skill; do not fix them inline or only mention them.
+- **Root cause first**: reproduce a bug and explain its mechanism before fixing it. Retries, sleeps, wider timeouts, defensive checks, or call-site special cases without a stated mechanism are symptom patches, not fixes.
+- **Refactor in-task** (rather than leaving a TODO) when:
+  - 3+ identical values are passed into multiple functions or the same tuple crosses modules → introduce a struct.
+  - A fix repeats in N places → consolidate first, then fix; extend existing primitives or generalize helpers instead of copying.
+  - Fixing an awkward internal shape beats patching around it (applies to internal and public APIs).
+- **Stacked PRs**: when a fix needs a refactor, open the refactor PR first and stack the fix PR on top—never mix both in one PR.
 
 ## Lower Layers
-A lower layer is one of the crates other code builds on: `moqt`, `broadcast`, `msf`, `mediapack`, and the SDKs `sdk/js`, `sdk/python` and `sdk/rust`.
-- Fix a bug whose cause lies in a lower layer there, not in the caller. A workaround becomes load-bearing and hides the bug from the next caller.
-- When the cleanest design of the task needs something a lower layer does not offer, propose adding it there instead of bending the caller's design around the gap, such as picking a namespace layout only because an SDK fixes one, even when bending the caller would be the smaller change. State the API (signature and default behaviour) and what the caller gains, and wait for approval. An API the task needs is a current requirement under YAGNI; options beyond what the task uses still wait for a second use case.
-- Open the lower-layer change as its own PR first and stack the caller's change on top, as with a refactor and its fix.
+Lower layers are shared crates: `moqt`, `broadcast`, `msf`, `mediapack`, `sdk/js`, `sdk/python`, `sdk/rust`.
+- Fix lower-layer bugs in the lower layer, not with caller workarounds.
+- When a clean caller design needs a missing lower-layer capability, propose adding it (state signature, default behavior, and caller benefit) and wait for approval rather than bending the caller around the gap. What the task needs satisfies YAGNI; extra options still wait for a second use case.
+- Open the lower-layer PR first and stack the caller PR on top.
 
 ## Comments
-- Give an item exported outside the crate a doc comment when its signature does not tell the caller when it fails, the order its calls must follow, or the draft section it implements.
-- Write a comment for the invariant behind `panic!`/`unreachable!` and for the meaning of abbreviations in type declarations.
-- Change history, past implementations, migration notes, review discussion, TODO speculation, and plans for future work do not belong in the code body. Put them in the commit message, the pull request, or an architecture document.
-- Comments a change adds are reviewed for redundancy when the pull request is created (see `.agents/skills/create-pull-request/SKILL.md`).
+- Add doc comments to crate-exported items when the signature does not show failure conditions, required call order, or the implemented draft section.
+- Comment invariants behind `panic!`/`unreachable!` and abbreviation meanings in type declarations.
+- Keep change history, past implementations, migration notes, review discussion, TODO speculation, and future plans out of code (put them in commits, PRs, or architecture docs).
+- Added comments are checked for redundancy at PR time (`.agents/skills/create-pull-request/SKILL.md`).
 
 ## Naming
-- Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).
-- Names must represent the target concept clearly.
-- Abbreviations are allowed.
-- Channel-related variables must be named using the `xxx_sender` or `yyy_receiver` pattern.
-- Name MoQT protocol concepts with the draft's terms. A track started with PUBLISH is a subscription, like one started with SUBSCRIBE (draft-14 §5.1), and what a publisher serves is a track, so no MoQT state is a `Publication`. Application-facing public APIs (the wasm `publish()` result) may use `Publication`.
+- Follow language conventions (`snake_case` in Rust, `camelCase` in TypeScript); names must clearly reflect the concept. Abbreviations are allowed.
+- Channels: `*_sender` and `*_receiver`.
+- MoQT terms: use draft terminology. A track started via `PUBLISH` is a subscription (draft-14 §5.1) and a publisher serves a track, so never name MoQT state `Publication`. App-facing APIs (e.g. wasm `publish()`) may use `Publication`.
 
 ## Error Handling
-- Use `anyhow::Result` by default.
-- Define a typed error (a `thiserror` enum) when a caller branches on the failure kind, i.e. it would otherwise `downcast_ref` the error or match on its message. Mark it `#[non_exhaustive]` when it is exported outside the crate.
+- Default to `anyhow::Result`.
+- Use a `thiserror` enum when callers branch on failure kinds (instead of `downcast_ref` or string matching); mark crate-exported enums `#[non_exhaustive]`.
 - Use `std::io::Result` only when explicitly instructed.
-- For recoverable failures, do not use `panic!`/`unwrap`; return `Result` instead.
-- `panic!`/`unwrap` is allowed during initialization/startup only when the process cannot continue safely.
-- `panic!`/`unreachable!` is allowed for proven unreachable states only.
-- Choose `bool` / `Option` / `Result` in this order:
-  1. If the caller needs the failure reason or recovery action, use `Result`.
-  2. Otherwise, if a value may be absent as a normal case, use `Option`.
-  3. Otherwise, use `bool` for pure yes/no semantics.
-- If the return state may expand beyond true/false in the future, prefer a dedicated enum over `bool`.
+- Return `Result` for recoverable failures—no `panic!`/`unwrap`.
+- Allow `panic!`/`unwrap` only at startup when continuing is unsafe; allow `panic!`/`unreachable!` only for proven unreachable states.
+- Return type priority: `Result` (caller needs failure reason/recovery) → `Option` (absence is normal) → `bool` (pure yes/no; use an enum if states may grow).
 
 ## Async / Tasks
-- Background tasks must be encapsulated in a dedicated struct that owns the `JoinHandle`.
-- The struct's constructor `run()` spawns the task and returns `Self`.
-- If the task needs to receive commands, store an `mpsc::Sender` alongside the `JoinHandle` (actor pattern).
-- Place each task file in the directory whose responsibility the task fulfills, not necessarily where it is spawned.
-  - Example: `crates/moqt/src/modules/moqt/runtime/tasks/uni_stream_receive_task.rs`
+- Encapsulate background tasks in a struct owning `JoinHandle`; spawn via `run() -> Self`.
+- For command-driven tasks, store `mpsc::Sender` alongside `JoinHandle` (actor pattern).
+- Place task files in the directory matching their responsibility, not necessarily their spawn site (e.g. `crates/moqt/src/modules/moqt/runtime/tasks/uni_stream_receive_task.rs`).
 
 ## Async Primitives
-- In async code, use `tokio` equivalents over `std` for synchronization, file I/O, and time operations.
-- `std::sync::Mutex` is acceptable only when the lock is never held across an `.await` point.
+- Prefer `tokio` over `std` for async synchronization, file I/O, and time.
+- `std::sync::Mutex` is acceptable only when never held across `.await`.
 
 ## Imports
-- Use standard `use` declarations. Do not write full paths inline unless disambiguation is needed.
-- When the same type name exists in both `std` and `tokio` within one file, qualify with the module path (e.g. `std::sync::Mutex`) instead of creating aliases.
+- Use `use` declarations; avoid inline full paths unless needed for disambiguation.
+- When `std` and `tokio` share a type name in one file, qualify with the module path (e.g. `std::sync::Mutex`) instead of aliasing.
 
 ## Module Structure
-- Split modules and structs based on SOLID principles with functional cohesion.
-- When creating a directory module, use a same-name `.rs` file (e.g. `foo.rs` + `foo/`) instead of `foo/mod.rs`.
+- Split modules and structs by SOLID principles and functional cohesion.
+- Use `foo.rs` + `foo/` instead of `foo/mod.rs`.
 
 ## Visibility
-- `pub` — only for items exported outside the crate.
-- `pub(crate)` — for items shared within the crate.
-- `pub(super)` — for items accessed only from the parent module.
-- Private (no modifier) — everything else.
+- `pub` — exported outside the crate.
+- `pub(crate)` — shared within the crate.
+- `pub(super)` — parent module only.
+- Private — everything else.
 
 ## Dependencies
-- Minimize the number of external crates. Prefer existing dependencies over adding new ones.
-- When adding a new crate, create an Architecture Decision Record (ADR) at `docs/architecture/${package_name}/<crate>.md`, where `${package_name}` is the package's `name` in `Cargo.toml` (e.g. `docs/architecture/msf/tokio-util.md`). The ADR must cover:
-  1. What — the crate being added and its purpose.
-  2. Context — the problem or requirement that motivates the addition.
-  3. Alternatives — other crates or approaches considered, with trade-offs.
-  4. Decision — the final choice and rationale.
-- For ADR style, see `docs/architecture/example/000_jwt_authentication.md`.
+- Minimize external crates; prefer existing dependencies.
+- Adding a crate requires an ADR at `docs/architecture/<package_name>/<crate>.md` (e.g. `docs/architecture/msf/tokio-util.md`) covering:
+  1. **What** — crate and purpose.
+  2. **Context** — motivating problem or requirement.
+  3. **Alternatives** — other crates/approaches and trade-offs.
+  4. **Decision** — final choice and rationale.
+- Style reference: `docs/architecture/example/000_jwt_authentication.md`.
 
 ## Unsafe
-- `unsafe` is prohibited in principle.
-- Allowed only when the compiler explicitly requires it or when interfacing with FFI.
+- Prohibited unless required by the compiler or FFI.
