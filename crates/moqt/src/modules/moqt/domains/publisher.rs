@@ -138,7 +138,9 @@ impl Publisher {
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
-    /// defines no response message for PUBLISH_NAMESPACE_DONE.
+    /// defines no response message for PUBLISH_NAMESPACE_DONE. Call it only
+    /// after `begin_publish_namespace` for the namespace returned: a call
+    /// still sending records the namespace after this withdrawal.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
         self.session.withdraw_published_namespace(&namespace).await;
         let vec_namespace = namespace_tuple(&namespace);

@@ -328,7 +328,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::PublishNamespaceCancel(publish_namespace_cancel) => {
                 let track_namespace = publish_namespace_cancel.track_namespace.join("/");
-                session.forget_cancelled_namespace(track_namespace.clone());
+                session.forget_cancelled_namespace(connection.generation, track_namespace.clone());
                 // §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
                 let publish_namespace_cancel_handler = PublishNamespaceCancelHandler::new(
                     track_namespace,

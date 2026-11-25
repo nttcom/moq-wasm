@@ -1735,6 +1735,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_namespace_the_old_server_refuses_during_go_away_is_withdrawn_from_the_new_one() {
+        for version in DRAFTS {
+            // Arrange: the migration holds the carried lock while it announces the unanswered "room" on B
+            let Migration {
+                client,
+                server_a,
+                server_b,
+            } = Migration::connect("session-migration-refused-namespace", Hop::within(version))
+                .await;
+            let pending = within(client.publisher().begin_publish_namespace("room".into()))
+                .await
+                .unwrap();
+            let SessionEvent::PublishNamespace(refused) = next_event(&server_a).await else {
+                panic!("expected PUBLISH_NAMESPACE on A");
+            };
+            let server_b = server_b.named_by(&server_a).await;
+            let SessionEvent::PublishNamespace(announced) = next_event(&server_b).await else {
+                panic!("expected PUBLISH_NAMESPACE on B");
+            };
+
+            // Act: A refuses while the migration waits for B, then B accepts
+            let accepted = tokio::spawn(pending.accepted());
+            refused
+                .error(RequestErrorCode::Unauthorized, "not here".into())
+                .await
+                .unwrap();
+            within(async {
+                while client.publishes_namespace("room") {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+            announced.ok().await.unwrap();
+            let accepted = within(accepted).await.unwrap();
+            let event = next_event(&server_b).await;
+
+            // Assert
+            assert!(
+                matches!(accepted, Err(RequestFailure::Rejected { .. })),
+                "{version:?}: {accepted:?}"
+            );
+            let SessionEvent::PublishNamespaceDone(done) = event else {
+                panic!("{version:?}: expected PUBLISH_NAMESPACE_DONE on B, got {event:?}");
+            };
+            assert_eq!(done.track_namespace(), "room");
+        }
+    }
+
+    #[tokio::test]
     async fn requests_of_the_new_server_get_ids_apart_from_those_of_the_first() {
         for version in DRAFTS {
             // Arrange

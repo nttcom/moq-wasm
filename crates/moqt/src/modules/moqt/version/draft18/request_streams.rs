@@ -1406,7 +1406,9 @@ impl OutgoingRequestTask {
                 let namespace = namespace.join("/");
                 // After a GOAWAY, a migration announces the namespace again.
                 if !going_away {
-                    scope.session.forget_cancelled_namespace(namespace.clone());
+                    scope
+                        .session
+                        .forget_cancelled_namespace(scope.connection.generation, namespace.clone());
                 }
                 Some(SessionEvent::PublishNamespaceCancel(
                     PublishNamespaceCancelHandler::new(

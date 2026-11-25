@@ -9,7 +9,9 @@
 // - `PendingPublishNamespace::accepted` (domains/pending_publish_namespace.rs):
 //   moves the handle to `NamespaceRecord::Answered`; on Rejected / Timeout /
 //   ProtocolViolation, `PublishedNamespaceRecord::forget` removes the `published_namespaces` entry, then
-//   awaits the `carried` read lock and removes the carried entry. A lost
+//   awaits the `carried` read lock, removes the carried entry and, while
+//   still holding the lock, sends PUBLISH_NAMESPACE_DONE on the other live
+//   connections that announced it (`forget_carried_namespaces`). A lost
 //   connection keeps the record. Dropping the handle while `Recorded` drops
 //   the `PublishedNamespaceRecord`, whose `Drop` removes the
 //   `published_namespaces` entry and spawns the carried removal.
@@ -26,7 +28,8 @@
 //   `SessionEvent::PublishNamespaceCancel` to the application and
 //   `SessionContext::forget_cancelled_namespace` removes every
 //   `published_namespaces` entry of the namespace, then spawns the carried
-//   removal, which awaits the `carried` read lock.
+//   removal, which awaits the `carried` read lock and withdraws the namespace
+//   from the other live connections as `forget` does.
 // - `migrate` (domains/session/migration_task.rs): under the `carried` write
 //   lock, sends PUBLISH_NAMESPACE again on the new connection for every
 //   carried namespace and awaits its answer; then the new connection becomes
@@ -37,7 +40,9 @@
 // answers a PUBLISH_NAMESPACE when it receives it, and a control stream is
 // FIFO, so a message's effect at the peer is applied when it is sent.
 //
-// Switches (each `false` in `publish_namespace_current`):
+// Switches (`publish_namespace_current` turns on the fixes the code
+// implements; `DONE_DURING_BEGIN` is a misuse `publish_namespace_done`'s doc
+// rules out):
 // - FORGET_ON_DROP: dropping a `PendingPublishNamespace` unanswered forgets
 //   its record, as a rejection does.
 // - FORGET_ON_CANCEL: an incoming PUBLISH_NAMESPACE_CANCEL forgets the
@@ -313,12 +318,12 @@ module publish_namespace {
   }
 }
 
-// expect: violation
+// expect: ok
 module publish_namespace_current {
   import publish_namespace(
     FORGET_ON_DROP = true,
     FORGET_ON_CANCEL = true,
-    WITHDRAW_ELSEWHERE = false,
+    WITHDRAW_ELSEWHERE = true,
     DONE_DURING_BEGIN = false,
   ).*
 }
