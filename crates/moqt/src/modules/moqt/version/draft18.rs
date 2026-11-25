@@ -355,7 +355,7 @@ impl ControlChannel {
         ))
     }
 
-    /// Call once the request of `reservation` is written.
+    /// Call once the request of `reservation` is written or answered here.
     fn consume(&self, reservation: RequestIdReservation<'_>) {
         let RequestIdReservation(mut next_request_id) = reservation;
         *next_request_id += 2;
@@ -873,7 +873,12 @@ impl ControlChannel {
                 .advertise_namespace(request_id, track_namespace)
                 .await?
             {
-                Some(accepted) => return Ok(accepted),
+                Some(accepted) => {
+                    // §10.1: the PUBLISH_NAMESPACE went out as NAMESPACE, yet it
+                    // is a request of its own; the peer allows the gap this leaves.
+                    self.consume(reservation);
+                    return Ok(accepted);
+                }
                 None if subscribed_only => return Err(RequestFailure::NoNamespaceSubscription),
                 None => {}
             }
@@ -2907,6 +2912,34 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE_DONE, got {withdrawn:?}");
         };
         assert_eq!(withdrawn.request_id(), Some(announced[0]));
+    }
+
+    #[tokio::test]
+    async fn namespaces_announced_as_namespace_each_keep_their_own_request_id() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-local-namespace-request-ids", "moqt").await;
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("live".into(), NamespaceInterest::Namespaces)
+                .await
+        });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+        let publisher = server.publisher();
+
+        // Act
+        for namespace in ["live/room", "live/hall"] {
+            publisher.publish_namespace(namespace.into()).await.unwrap();
+        }
+
+        // Assert
+        assert!(publisher.session.publishes_namespace("live/room"));
+        assert!(publisher.session.publishes_namespace("live/hall"));
     }
 
     #[tokio::test]

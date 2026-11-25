@@ -10,7 +10,7 @@
 // - `announceSend(ns, local)`: `send_publish_namespace` under the Request
 //   ID reservation. When the peer has a SUBSCRIBE_NAMESPACE covering `ns`
 //   (`local`), `advertise_namespace` answers PUBLISH_NAMESPACE_OK itself and
-//   `send_request` returns without `consume` (unless CONSUME_LOCAL);
+//   `send_request` returns, consuming the ID only with CONSUME_LOCAL;
 //   otherwise the request is written and the ID consumed. The reservation
 //   serializes these, so one action is one whole `send_request`.
 // - `announceRecord(ns)`: `announce` inserts `published_namespaces[id] = ns`
@@ -59,9 +59,8 @@
 // With TAKE_ATOMIC off, a remover checks the entry under one lock hold and
 // removes it under another (`removerEnd`).
 //
-// `draft18_outgoing_request_current` is the implementation; it violates
-// `requestIdsDistinct`, `everyAnnouncedNamespaceRecorded`,
-// `abandonedAliasCancelled`, `noSessionClosedWhileLive` and
+// `draft18_outgoing_request_current` is the implementation (CONSUME_LOCAL
+// on); it violates `abandonedAliasCancelled`, `noSessionClosedWhileLive` and
 // `malformedResponseClosesSession`. `draft18_outgoing_request_fixed` turns on
 // CONSUME_LOCAL, CLEAN_ABANDONED_ALIAS and FIX_FIRST_MESSAGE and passes.
 // `draft18_outgoing_request_take_split` turns TAKE_ATOMIC off and fails
@@ -385,7 +384,7 @@ module draft18_outgoing_request {
 module draft18_outgoing_request_current {
   import draft18_outgoing_request(
     NAMESPACES = Set("a", "b"),
-    CONSUME_LOCAL = false,
+    CONSUME_LOCAL = true,
     CLEAN_ABANDONED_ALIAS = false,
     FIX_FIRST_MESSAGE = false,
     TAKE_ATOMIC = true,
