@@ -5,6 +5,7 @@ import { setSdkLogSink } from '../../core/log'
 import { noteOwnBroadcast } from '../ownBroadcasts'
 import { FakeTextTrackSession } from '../player/testing/fakeTextTrackSession'
 import { settle } from '../../testing/settle'
+import { collectReportedErrors } from './testing/reportedErrors'
 
 const ROOM = ['app', 'room']
 const TRANSCRIBER = ['app', 'room', 'bots', 'transcriber']
@@ -22,25 +23,7 @@ type Behaviour = {
   dispose?: (namespace: string[]) => Promise<void>
 }
 
-let reported: unknown[] = []
-let originalReportError: PropertyDescriptor | undefined
-
-// `reportError` is a browser global the unit tests' Node may not have.
-test.beforeEach(() => {
-  reported = []
-  originalReportError = Object.getOwnPropertyDescriptor(globalThis, 'reportError')
-  globalThis.reportError = (error: unknown) => reported.push(error)
-})
-
-test.afterEach(() => {
-  if (originalReportError) {
-    Object.defineProperty(globalThis, 'reportError', originalReportError)
-  } else {
-    Reflect.deleteProperty(globalThis, 'reportError')
-  }
-})
-
-/// Lets the reader of the watch take what was announced.
+const reported = collectReportedErrors()
 
 type Following = {
   /// Every callback in the order it was called, as `add app/room/alice`.

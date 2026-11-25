@@ -3,6 +3,7 @@ import type { MoqSession, PublishDone } from '../../core/session'
 import { forwardSdkLog, sdkLog } from '../../core/log'
 import { CATALOG_TRACK_NAME } from '../catalog'
 import { getErrorMessage } from '../internal/status'
+import { callPage } from '../internal/callPage'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { TextTracks } from './textTrack'
 import { CATALOG_PRIORITY } from './trackPriority'
@@ -13,10 +14,14 @@ const LOG_TARGET = 'moq-wasm::media::broadcast_catalog'
 
 export type BroadcastCatalogOptions = {
   deliveryObserver?: DeliveryObserver
-  /// Receives the catalog's logs instead of the console.
+  /// Receives the catalog's logs instead of the console. What it throws is
+  /// reported with `reportError`.
   onLog?: (level: LogLevel, message: string) => void
 }
 
+/// What a listener throws is reported with `reportError`, as an exception of an
+/// event listener is, and the other listeners, the broadcast's players among
+/// them, are still told.
 export type BroadcastCatalogListener = {
   /// The text of the newest catalog; a listener added after one arrived gets it at once.
   onCatalog(text: string): void
@@ -56,14 +61,15 @@ export class BroadcastCatalog {
     readonly namespace: string[],
     options: BroadcastCatalogOptions = {}
   ) {
+    const onLog = options.onLog
     this.context = {
       session,
       namespace,
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => {
-        if (options.onLog) {
+        if (onLog) {
           forwardSdkLog(session, level, LOG_TARGET, message)
-          options.onLog(level, message)
+          callPage(() => onLog(level, message))
         } else {
           sdkLog(session, level, LOG_TARGET, message)
         }
@@ -87,10 +93,8 @@ export class BroadcastCatalog {
   /// Returns the function that removes the listener.
   listen(listener: BroadcastCatalogListener): () => void {
     this.listeners.add(listener)
-    if (this.latest?.kind === 'catalog') {
-      listener.onCatalog(this.latest.text)
-    } else if (this.latest?.kind === 'absent') {
-      listener.onPublisherAbsent(this.latest.done)
+    if (this.latest) {
+      tell(listener, this.latest)
     }
     return () => this.listeners.delete(listener)
   }
@@ -173,11 +177,13 @@ export class BroadcastCatalog {
   private update(latest: Latest): void {
     this.latest = latest
     for (const listener of this.listeners) {
-      if (latest.kind === 'catalog') {
-        listener.onCatalog(latest.text)
-      } else {
-        listener.onPublisherAbsent(latest.done)
-      }
+      tell(listener, latest)
     }
   }
+}
+
+function tell(listener: BroadcastCatalogListener, latest: Latest): void {
+  callPage(() =>
+    latest.kind === 'catalog' ? listener.onCatalog(latest.text) : listener.onPublisherAbsent(latest.done)
+  )
 }

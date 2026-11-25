@@ -1,6 +1,7 @@
 import type { TrackWriter } from '../../pkg/moqt'
 import type { MoqSession } from '../core/session'
 import { CallStates, type CallStateUpdate, type PhoneCallState } from './callStates'
+import { callPage } from './internal/callPage'
 import { type LocalBroadcast, type TrackInput, createBroadcast } from './localBroadcast'
 import { RemoteBroadcast } from './remoteBroadcast'
 
@@ -12,6 +13,9 @@ const DTMF_DIGITS = /^[0-9*#A-D]+$/
 
 /// `reason` is set when `state` is `ended`: the trunk's final SIP status
 /// (`486`, `603`, …), `hangup`, `timeout`, `limit` or `gateway`.
+/// What the listener throws is reported with `reportError`, as an exception of an event
+/// listener is; the other listeners are still told and an ended call still
+/// stops the microphone and the phone's audio.
 export type PhoneCallListener = (state: PhoneCallState, reason: string | undefined) => void
 
 export type PhoneCallOptions = {
@@ -75,7 +79,8 @@ export class PhoneCall {
   listen(listener: PhoneCallListener): () => void {
     this.listeners.add(listener)
     if (this.current) {
-      listener(this.current.state, this.current.reason)
+      const { state, reason } = this.current
+      callPage(() => listener(state, reason))
     }
     return () => this.listeners.delete(listener)
   }
@@ -112,7 +117,7 @@ export class PhoneCall {
   private update(update: CallStateUpdate): void {
     this.current = update
     for (const listener of this.listeners) {
-      listener(update.state, update.reason)
+      callPage(() => listener(update.state, update.reason))
     }
     if (update.state === 'ended') {
       void this.finish()

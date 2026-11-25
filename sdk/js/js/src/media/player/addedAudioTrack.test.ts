@@ -5,10 +5,12 @@ import { AddedAudioTrack } from './addedAudioTrack'
 import { LivePlayout } from './livePlayout'
 import { FakeMediaEnvironment } from './testing/fakeMediaEnvironment'
 import { FakeSession, receivedObject } from './testing/fakeSession'
+import { collectReportedErrors } from '../internal/testing/reportedErrors'
 
 const ENGLISH: MediaCatalogTrack = { name: 'audio_en', label: 'en' }
 const ENDED = { code: 0, reason: 'time limit' } as unknown as PublishDone
 
+const reported = collectReportedErrors()
 let environment: FakeMediaEnvironment
 
 test.beforeEach(() => {
@@ -93,4 +95,22 @@ test('the PUBLISH_DONE of an added audio track reaches the listener only while i
 
   // Assert
   expect(ended).toEqual(['open'])
+})
+
+test('an onEnded that throws is reported', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const error = new Error('onEnded bug')
+  const onEnded = () => {
+    throw error
+  }
+  await AddedAudioTrack.open(session.context(), playout(), ENGLISH, { onEnded }, () => {})
+
+  // Act
+  session.publishDone('audio_en', ENDED)
+  await Promise.resolve()
+  await Promise.resolve()
+
+  // Assert
+  expect(reported).toEqual([error])
 })

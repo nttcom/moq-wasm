@@ -3,6 +3,7 @@ import { RequestError, RequestErrorCode } from '../../core/requestError'
 import { type PlayerStatsSample, registerPlayerStats } from '../../core/telemetry'
 import type { MoqSession, MoqSubscribeOptions, PublishDone, ReceivedObject } from '../../core/session'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
+import { callPage } from '../internal/callPage'
 import { monotonicUnixMicros } from '../internal/clock'
 import { type AudioLevel, readLocHeader } from '../internal/loc'
 import { AddedAudioTrack, type AddedAudioTrackListener } from './addedAudioTrack'
@@ -60,6 +61,8 @@ const PROGRESS_NOTIFY_INTERVAL_MS = 200
 
 export type { Packaging } from './trackContext'
 
+/// What a callback throws is reported with `reportError`, as an exception of
+/// an event listener is, and the player goes on as if it had returned.
 export type LivePlayerCallbacks = {
   onStateChange(): void
   onLiveFrame(): void
@@ -216,7 +219,7 @@ export class LivePlayer {
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => {
         forwardSdkLog(this.context.session, level, 'moq-wasm::media::live_player', message)
-        options.callbacks.onLog(level, message)
+        callPage(() => options.callbacks.onLog(level, message))
       }
     }
     this.textTracks = new TextTracks(this.context)
@@ -267,7 +270,7 @@ export class LivePlayer {
           if (ids && trackAlias !== undefined) {
             this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
           }
-          this.callbacks.onLiveFrame()
+          callPage(() => this.callbacks.onLiveFrame())
         },
         onKeyFrameNeeded: (groupId) => this.requestGroupAfterCut(groupId)
       },
@@ -941,7 +944,7 @@ export class LivePlayer {
 
   private changed(): void {
     this.applyPlaybackRate()
-    this.callbacks.onStateChange()
+    callPage(() => this.callbacks.onStateChange())
   }
 
   private setRewindStatus(text: string, state: StatusState): void {
@@ -1237,7 +1240,7 @@ export class LivePlayer {
       }
       const audioLevel = readLocHeader(object.locHeader).audioLevel
       if (audioLevel) {
-        this.callbacks.onAudioLevel?.(audioLevel)
+        callPage(() => this.callbacks.onAudioLevel?.(audioLevel))
       }
     }
     const codec = this.tracks[kind].find((track) => track.name === trackName)?.codec

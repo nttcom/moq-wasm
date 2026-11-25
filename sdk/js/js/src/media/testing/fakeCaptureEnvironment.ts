@@ -20,7 +20,19 @@ export class FakeTrack {
     return new FakeTrack(this.kind, this)
   }
 
-  addEventListener(): void {}
+  private readonly endedListeners: (() => void)[] = []
+
+  addEventListener(type: string, listener: () => void): void {
+    if (type === 'ended') {
+      this.endedListeners.push(listener)
+    }
+  }
+
+  end(): void {
+    for (const listener of this.endedListeners.splice(0)) {
+      listener()
+    }
+  }
 }
 
 class FakeMediaStream {

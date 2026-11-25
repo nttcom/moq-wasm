@@ -1,11 +1,14 @@
 import type { PublishDone } from '../../core/session'
 import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
 import { subscribeAddedTrack } from './addedTrack'
+import { callPage } from '../internal/callPage'
 import { AudioLane } from './audioLane'
 import type { LivePlayout } from './livePlayout'
 import type { TrackContext } from './trackContext'
 import { AUDIO_PRIORITY } from './trackPriority'
 
+/// What a listener throws is reported with `reportError`, as an exception of
+/// an event listener is, and the track plays on.
 export type AddedAudioTrackListener = {
   /// Once: the first chunk that arrived in time is scheduled for `dueMs` on
   /// the page clock (`performance.now()`). The track has caught up with the
@@ -33,7 +36,7 @@ export class AddedAudioTrack {
     onClosed: () => void,
     deliveryTimeoutMs?: number
   ): Promise<AddedAudioTrack> {
-    const lane = new AudioLane(track, playout, (dueMs) => listener.onFirstScheduled?.(dueMs))
+    const lane = new AudioLane(track, playout, (dueMs) => callPage(() => listener.onFirstScheduled?.(dueMs)))
     const added = new AddedAudioTrack(lane, onClosed)
     try {
       added.unsubscribe = await subscribeAddedTrack(
@@ -45,7 +48,7 @@ export class AddedAudioTrack {
           added.received += 1
           lane.push(groupId, object, cached)
         },
-        listener.onEnded
+        (done) => callPage(() => listener.onEnded?.(done))
       )
     } catch (error) {
       lane.close()

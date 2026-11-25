@@ -3,8 +3,10 @@ import { RequestError } from '../core/requestError'
 import { type TranscriptRecord, subscribeTranscript } from './transcript'
 import { FakeTextTrackSession } from './player/testing/fakeTextTrackSession'
 import { settle } from '../testing/settle'
+import { collectReportedErrors } from './internal/testing/reportedErrors'
 
 const ROOM = ['app', 'room']
+const reported = collectReportedErrors()
 
 const record = (t: number, speaker: string, text: string) => JSON.stringify([{ T: t, data: { speaker, text } }])
 
@@ -100,4 +102,25 @@ test('done resolves to undefined when the session ends without PUBLISH_DONE', as
 
   // Assert
   expect(await transcript.done).toBeUndefined()
+})
+
+test('an onRecords that throws is reported and the later records are still handed', async () => {
+  // Arrange
+  const fake = new FakeTextTrackSession()
+  const error = new Error('onRecords bug')
+  const heard: number[] = []
+  await subscribeTranscript(fake.session, ROOM, (records) => {
+    heard.push(records.length)
+    throw error
+  })
+  const [subscription] = fake.open('transcript')
+
+  // Act
+  subscription.deliver(10n, record(1_000, 'alice', 'こんにちは'), 0n)
+  subscription.deliver(10n, record(2_000, 'bob', 'どうも'), 1n)
+  await settle()
+
+  // Assert
+  expect(reported).toEqual([error, error])
+  expect(heard).toEqual([1, 2])
 })

@@ -172,3 +172,62 @@ test('a page that closes withdraws its broadcast at once', async ({ browser }) =
     await session.context.close()
   }
 })
+
+test("callbacks of the page that throw are reported and leave the broadcast's and the player's playback going", async ({
+  browser
+}) => {
+  // Arrange: the media publisher publishes its camera
+  const session = await arrangeMediaE2ESession(browser)
+  const page = await session.context.newPage()
+  await page.goto(PAGE_PATH)
+  await startPublishing(session.publisher)
+  const throwing = () => page.evaluate(() => window.remoteBroadcastE2E.throwing())
+
+  try {
+    // Act: the page plays the broadcast through callbacks that throw
+    await page.evaluate(({ url, namespace }) => window.remoteBroadcastE2E.startThrowing(url, namespace), {
+      url: mediaE2EConfig.moqtUrl,
+      namespace: mediaE2EConfig.namespace.split('/')
+    })
+
+    // Assert: the view plays, and the listener after the throwing one hears the source and its audio levels
+    await expect.poll(async () => (await camera(page))?.video, { timeout: 20_000 }).toBe('playing')
+    await expect.poll(async () => (await throwing()).heard.audioLevels, { timeout: 20_000 }).toBeGreaterThan(0)
+    const before = await throwing()
+    await page.waitForTimeout(DELIVERY_WAIT_MS)
+    const after = await throwing()
+
+    // Assert: the player goes on showing frames and reading audio
+    expect(after.heard.events).toEqual(['add camera'])
+    expect(after.heard.liveFrames).toBeGreaterThan(before.heard.liveFrames)
+    expect(after.heard.playerAudioLevels).toBeGreaterThan(before.heard.playerAudioLevels)
+    expect(after.heard.audioLevels).toBeGreaterThan(before.heard.audioLevels)
+    expect(after.playerVideoObjects).toBeGreaterThan(before.playerVideoObjects)
+
+    // Act / Assert: a shared screen is added and removed past the throwing listener
+    await session.publisher.shareScreenButton.click()
+    await expect
+      .poll(async () => (await throwing()).heard.events, { timeout: 20_000 })
+      .toEqual(['add camera', 'add screen'])
+    await session.publisher.shareScreenButton.click()
+    await expect
+      .poll(async () => (await throwing()).heard.events, { timeout: 20_000 })
+      .toEqual(['add camera', 'add screen', 'remove screen'])
+
+    // Assert: every callback that threw was reported
+    expect(Object.keys((await throwing()).reported).sort()).toEqual([
+      'LivePlayer.onAudioLevel',
+      'LivePlayer.onLiveFrame',
+      'LivePlayer.onLog',
+      'LivePlayer.onStateChange',
+      'RemoteBroadcastOptions.onLog',
+      'onAudioLevel',
+      'onChange',
+      'onPlayerChange',
+      'onSourceAdd',
+      'onSourceRemove'
+    ])
+  } finally {
+    await session.context.close()
+  }
+})

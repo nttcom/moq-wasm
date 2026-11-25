@@ -253,6 +253,7 @@ await call.hangUp()
 - **マルチコーデック `altGroup`**: 同一 `altGroup` に異コーデックの rendition を混在可能。player は `VideoDecoder.isConfigSupported` で再生可能 track を絞り同解像度は最低 bitrate を採用（切替時は先頭 keyframe で再 `configure`、level 差のみなら維持）。送信不可の rendition は `onError` 報告し除外。
 - **対応ブラウザ**: Chrome、Edge、Safari。
 - **UI**: `PlayerControls` の class 名と CSS 変数は公開範囲（DOM 構造は非公開）。
+- **ページのコールバックの例外**: `moq-wasm/media` はページの関数（listener、`on*`、`filter`）を1つずつ `callPage`（`media/internal/callPage.ts`）経由で呼び、例外は `reportError` で報告して、SDK の状態と他 listener への通知はコールバックが返ったときと同じに進める。
 
 ## 配布
 

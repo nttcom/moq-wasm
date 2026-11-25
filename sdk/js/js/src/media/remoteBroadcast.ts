@@ -3,6 +3,7 @@ import { sdkLog } from '../core/log'
 import { extractCatalogTracks } from './catalog'
 import { parseCatalog } from '../../pkg/moqt'
 import type { AudioLevel } from './internal/loc'
+import { callPage } from './internal/callPage'
 import { getErrorMessage } from './internal/status'
 import { BroadcastCatalog } from './player/broadcastCatalog'
 import { LivePlayer, type LivePlayerStats } from './player/livePlayer'
@@ -22,6 +23,9 @@ export type SourceViewState = {
   videoSize?: { width: number; height: number }
 }
 
+/// What a listener throws is reported with `reportError`, as an exception of an
+/// event listener is; the view goes on as if it had returned and the other
+/// listeners are still told.
 export type SourceViewListener = {
   onChange?(view: SourceView): void
   onPlayerChange?(view: SourceView): void
@@ -48,6 +52,9 @@ export interface SourceView {
   setVideoEnabled(enabled: boolean): Promise<void>
 }
 
+/// What a listener throws is reported with `reportError`, as an exception of an
+/// event listener is, and the broadcast goes on as if it had returned: the
+/// other sources are still created and removed, and the other listeners told.
 export type RemoteBroadcastListener = {
   onSourceAdd?(view: SourceView): void
   /// After the SDK disposed of the view's player and removed its element.
@@ -58,7 +65,8 @@ export type RemoteBroadcastListener = {
 }
 
 export type RemoteBroadcastOptions = {
-  /// Receives the logs of the broadcast's catalog and players instead of the console.
+  /// Receives the logs of the broadcast's catalog and players instead of the
+  /// console. What it throws is reported with `reportError`.
   onLog?: (level: LogLevel, message: string) => void
   /// Unsubscribes the video of a view whose element is off screen, detached
   /// or hidden, until it shows again; the audio plays on. On by default.
@@ -91,7 +99,10 @@ export class RemoteBroadcast {
     readonly namespace: string[],
     private readonly options: RemoteBroadcastOptions = {}
   ) {
-    this.log = options.onLog ?? ((level, message) => sdkLog(session, level, TARGET, message))
+    const onLog = options.onLog
+    this.log = onLog
+      ? (level, message) => callPage(() => onLog(level, message))
+      : (level, message) => sdkLog(session, level, TARGET, message)
     this.broadcastCatalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })
     this.unlistenCatalog = this.broadcastCatalog.listen({
       onCatalog: (text) => this.applyCatalog(text),
@@ -114,7 +125,7 @@ export class RemoteBroadcast {
   listen(listener: RemoteBroadcastListener): () => void {
     this.listeners.add(listener)
     for (const view of this.views.values()) {
-      listener.onSourceAdd?.(view)
+      callPage(() => listener.onSourceAdd?.(view))
     }
     return () => this.listeners.delete(listener)
   }
@@ -150,7 +161,7 @@ export class RemoteBroadcast {
         this.views.delete(name)
         void view.dispose().then(() => {
           for (const listener of this.listeners) {
-            listener.onSourceRemove?.(view)
+            callPage(() => listener.onSourceRemove?.(view))
           }
         })
       }
@@ -167,14 +178,14 @@ export class RemoteBroadcast {
         .start(this.session, this.namespace, this.catalog)
         .catch((error: unknown) => this.log('error', `source ${source.name}: ${getErrorMessage(error)}`))
       for (const listener of this.listeners) {
-        listener.onSourceAdd?.(view)
+        callPage(() => listener.onSourceAdd?.(view))
       }
     }
   }
 
   private audioLevel(view: View, level: AudioLevel): void {
     for (const listener of this.listeners) {
-      listener.onAudioLevel?.(view, level)
+      callPage(() => listener.onAudioLevel?.(view, level))
     }
   }
 }
@@ -214,7 +225,7 @@ class View implements SourceView {
       callbacks: {
         onStateChange: () => {
           for (const listener of this.listeners) {
-            listener.onPlayerChange?.(this)
+            callPage(() => listener.onPlayerChange?.(this))
           }
         },
         onLiveFrame: () => this.framePresented(),
@@ -315,7 +326,7 @@ class View implements SourceView {
     }
     this.showState()
     for (const listener of this.listeners) {
-      listener.onChange?.(this)
+      callPage(() => listener.onChange?.(this))
     }
   }
 
