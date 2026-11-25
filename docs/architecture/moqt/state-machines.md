@@ -40,7 +40,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Machine | Encoding | Explicit states | Model |
 | --- | --- | --- | --- |
-| Track-alias sink | `ObjectSinks.sinks[alias]` (absent = unknown/expired), `expiries`, `SinkReceiver.sender` open/closed | `Unknown`, `Buffering(age, n)`, `Receiving`, `ReceivingOrphaned`, `Cancelled(age)` | [`object_sinks.qnt`](models/object_sinks.qnt) |
+| Track-alias sink | explicit: `ObjectSink` (`Buffer` / `Receiver` / `Cancelled`) in `moqt/domains/connection.rs`; absent `ObjectSinks.sinks[alias]` = `Unknown`, closed `SinkReceiver.sender` = `ReceivingOrphaned`; `pending_objects` and `expiries` are private to `ObjectSinks` | `Unknown`, `Buffering(age, n)`, `Receiving`, `ReceivingOrphaned`, `Cancelled(age)` | [`object_sinks.qnt`](models/object_sinks.qnt) |
 | Subscription | version-layer request entry, sink, `receiver_map`, carried record, `PublishDoneExpiryTask.waiting` | `Reserving`, `AwaitingOk`, `OkUnregistered`, `ActiveUnclaimed`, `ActiveClaimed`, `DoneDraining`, `Cancelled`, `Rejected`, `Abandoned` | [`subscription.qnt`](models/subscription.qnt) |
 | PUBLISH_DONE countdown | `PublishDoneExpiryTask.waiting`, `SinkReceiver.arrived_streams` | `Idle`, `Counting(n)`, `GraceOnly`, `Expired` | [`subscription.qnt`](models/subscription.qnt) |
 | Subscriber Forward / update | `Subscription.forward`, `last_update`, carried `option.forward` | `Original(forward)`, `Updated(option)` | — |
