@@ -105,8 +105,8 @@ impl Session {
     }
 
     /// Whether this side sent PUBLISH_NAMESPACE for `namespace` (its
-    /// elements joined by `/`, matched whole) and has neither withdrawn it
-    /// nor had it refused. A relay echoes such a namespace to this side's own
+    /// elements joined by `/`, matched whole) and has neither withdrawn it,
+    /// dropped its `PendingPublishNamespace` unanswered, nor had it refused. A relay echoes such a namespace to this side's own
     /// SUBSCRIBE_NAMESPACE (draft-14 §6.1).
     pub fn publishes_namespace(&self, namespace: &str) -> bool {
         self.inner.publishes_namespace(namespace)

@@ -156,10 +156,13 @@ impl CarriedGuard<'_> {
 
 /// The entries one PUBLISH_NAMESPACE added to
 /// `SessionContext::published_namespaces` and
-/// `CarriedRequests::published_namespaces`, which `forget` removes.
+/// `CarriedRequests::published_namespaces`, which `forget` removes. Dropped
+/// before `keep` or `forget`, it forgets them too, in a spawned task.
 pub(crate) struct PublishedNamespaceRecord {
     session: Arc<SessionContext>,
     request_id: u64,
+    /// `keep` or `forget` settled the entries.
+    settled: bool,
 }
 
 impl PublishedNamespaceRecord {
@@ -179,14 +182,34 @@ impl PublishedNamespaceRecord {
         Self {
             session: session.clone(),
             request_id,
+            settled: false,
         }
     }
 
-    pub(crate) async fn forget(self) {
+    /// The entries stay: the namespace was accepted, or its connection was
+    /// lost and a migration announces it again.
+    pub(crate) fn keep(mut self) {
+        self.settled = true;
+    }
+
+    pub(crate) async fn forget(mut self) {
+        self.settled = true;
         lock(&self.session.published_namespaces).remove(&self.request_id);
-        if let Some(carried) = self.session.read_carried().await {
-            carried.update(|carried| carried.published_namespaces.remove(&self.request_id));
+        self.session.forget_carried_namespace(self.request_id).await;
+    }
+}
+
+impl Drop for PublishedNamespaceRecord {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
         }
+        lock(&self.session.published_namespaces).remove(&self.request_id);
+        let session = self.session.clone();
+        let request_id = self.request_id;
+        executor::try_spawn("forget a dropped PUBLISH_NAMESPACE", async move {
+            session.forget_carried_namespace(request_id).await;
+        });
     }
 }
 
@@ -296,6 +319,12 @@ impl SessionContext {
                     .published_namespaces
                     .retain(|_, carried| carried != namespace)
             });
+        }
+    }
+
+    async fn forget_carried_namespace(&self, request_id: u64) {
+        if let Some(carried) = self.read_carried().await {
+            carried.update(|carried| carried.published_namespaces.remove(&request_id));
         }
     }
 

@@ -22,7 +22,7 @@ pub(super) enum NamespaceRecord {
     /// application's before `announce` records it.
     Unrecorded,
     /// The application's PUBLISH_NAMESPACE, unanswered: the records stay until
-    /// the answer refuses it.
+    /// the answer refuses it, or until the handle is dropped unanswered.
     Recorded(PublishedNamespaceRecord),
     /// `accepted` took the answer and settled the records.
     Answered,
@@ -37,18 +37,17 @@ impl PendingPublishNamespace {
     pub async fn accepted(mut self) -> Result<(), RequestFailure> {
         let record = std::mem::replace(&mut self.record, NamespaceRecord::Answered);
         let result = self.answer().await;
-        // A lost connection (`SessionClosed`, `Send`) leaves the record: a
-        // migration sends it again.
-        if let (
-            Err(
-                RequestFailure::Rejected { .. }
-                | RequestFailure::Timeout
-                | RequestFailure::ProtocolViolation(_),
-            ),
-            NamespaceRecord::Recorded(record),
-        ) = (&result, record)
-        {
-            record.forget().await;
+        if let NamespaceRecord::Recorded(record) = record {
+            match &result {
+                Err(
+                    RequestFailure::Rejected { .. }
+                    | RequestFailure::Timeout
+                    | RequestFailure::ProtocolViolation(_),
+                ) => record.forget().await,
+                // A lost connection (`SessionClosed`, `Send`) leaves the
+                // record: a migration sends it again.
+                _ => record.keep(),
+            }
         }
         result
     }

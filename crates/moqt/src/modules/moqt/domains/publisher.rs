@@ -444,7 +444,10 @@ mod tests {
     use crate::{
         RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription, Version,
         modules::{
-            moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
+            moqt::{
+                domains::session_context::SessionContext,
+                runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
+            },
             test_support::{
                 DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, capture_telemetry, connected_sessions,
                 data_receiver, first_subgroup_stream, mandatory_track_properties, next_event,
@@ -702,6 +705,39 @@ mod tests {
             .update(|carried| carried.published_namespaces().clone());
         assert!(carried.is_empty(), "{carried:?}");
         assert!(!session.publishes_namespace("a"));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_unanswered_publish_namespace_is_neither_published_nor_carried() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_native_sessions_following_go_away("dropped-publish-namespace").await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let pending = within(publisher.begin_publish_namespace("a".into()))
+            .await
+            .unwrap();
+
+        // Act
+        drop(pending);
+
+        // Assert
+        assert!(!session.publishes_namespace("a"));
+        within(carried_namespaces_empty(&session)).await;
+    }
+
+    async fn carried_namespaces_empty(session: &SessionContext) {
+        loop {
+            let carried = session
+                .read_carried()
+                .await
+                .unwrap()
+                .update(|carried| carried.published_namespaces().is_empty());
+            if carried {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
     }
 
     #[tokio::test]

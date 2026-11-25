@@ -10,7 +10,9 @@
 //   moves the handle to `NamespaceRecord::Answered`; on Rejected / Timeout /
 //   ProtocolViolation, `PublishedNamespaceRecord::forget` removes the `published_namespaces` entry, then
 //   awaits the `carried` read lock and removes the carried entry. A lost
-//   connection keeps the record. The type has no `Drop`.
+//   connection keeps the record. Dropping the handle while `Recorded` drops
+//   the `PublishedNamespaceRecord`, whose `Drop` removes the
+//   `published_namespaces` entry and spawns the carried removal.
 // - The draft-14 late-response path (version/draft14.rs `handle_late_response`):
 //   a PUBLISH_NAMESPACE_OK for a dropped `PendingPublishNamespace` is answered
 //   with PUBLISH_NAMESPACE_DONE.
@@ -311,7 +313,7 @@ module publish_namespace {
 // expect: violation
 module publish_namespace_current {
   import publish_namespace(
-    FORGET_ON_DROP = false,
+    FORGET_ON_DROP = true,
     FORGET_ON_CANCEL = false,
     WITHDRAW_ELSEWHERE = false,
     DONE_DURING_BEGIN = false,
