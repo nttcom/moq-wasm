@@ -34,7 +34,7 @@ flowchart LR
 - **Panics**: A panic leaving an `extern "C"` callback aborts OBS and any recording in progress, so `start`, `stop`, `encoded_packet`, and `destroy` catch it and report failure instead.
 
 ## Service Selection
-The frontend picks the output by protocol: `moqt_service` returns `MoQT`, and `moqt_output` is the only output registered for it. The output reads `server`, `namespace`, `bearer_token`, and `insecure_skip_tls_verify` from the service's settings at each start, so the service holds no state. All but the last are required: the plugin has no tokenless (`anon/**`) mode.
+The frontend picks the output by protocol: `moqt_service` returns `MoQT`, and `moqt_output` is the only output registered for it. The output reads `server`, `namespace`, `bearer_token`, `bearer_token_file`, and `insecure_skip_tls_verify` from the service's settings at each start, so the service holds no state. The URL, the namespace, and exactly one of the token and the token file are required: the plugin has no tokenless (`anon/**`) mode.
 
 OBS's **Settings → Stream** page lists only its built-in services, so the service is set through the profile's `service.json` or obs-websocket's `SetStreamServiceSettings` (see the crate README). A settings dock or the frontend's own service list would replace that step without changing the output.
 
@@ -48,7 +48,7 @@ One tokio runtime per output instance runs the relay session.
 | `stop` | Joins the connect task, ends the data capture, and closes the session (waiting at most 2 s for the relay) |
 
 - **Stop during connect**: The connect task has no await point between storing the session and beginning the data capture, so after `stop` aborts and joins it, either both happened or neither.
-- **Token expiry**: The plugin sends the token once, in `CLIENT_SETUP`. The relay closes the session at the token's `exp`, and OBS's reconnects fail with the same token until the settings hold a new one.
+- **Token expiry**: The relay closes the session at the token's `exp`. A `bearer_token` is sent once, in `CLIENT_SETUP`, so OBS's reconnects fail until the settings hold a new one. A `bearer_token_file` is read at each `start` (a missing or empty file fails the start) and, while the session is up, by a `broadcast::TokenRefreshTask` that refreshes the session's token with the file's content whenever it changes.
 - **Relay loss**: `BroadcastWriter::push` fails only once the publish task stops, which follows the transport's idle timeout (about 30 s on QUIC); until then packets queue as for any `broadcast` publisher.
 
 ## Media Conversion

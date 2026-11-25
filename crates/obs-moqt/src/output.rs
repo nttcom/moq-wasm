@@ -10,7 +10,9 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use broadcast::{Broadcast, BroadcastWriter, PushOutcome, RelayConnection, SourceTracks};
+use broadcast::{
+    Broadcast, BroadcastWriter, PushOutcome, RelayConnection, SourceTracks, TokenRefreshTask,
+};
 use mediapack::MediaEvent;
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 
@@ -26,7 +28,7 @@ use crate::{
         obs_register_output_s, obs_service_get_settings,
     },
     media_input::{MediaInput, ticks_to_micros},
-    publish_settings::PublishSettings,
+    publish_settings::{PublishSettings, read_token_file},
 };
 
 /// The output protocol name that ties `moqt_service` to this output.
@@ -78,6 +80,28 @@ unsafe impl Sync for OutputHandle {}
 struct Publishing {
     writer: BroadcastWriter,
     media: MediaInput,
+    /// Re-reads the token file while the session is up.
+    _token_refresh: Option<TokenRefreshTask>,
+}
+
+impl Publishing {
+    /// Connects to the relay and announces the namespace.
+    async fn open(settings: PublishSettings) -> Result<Self> {
+        let connection = RelayConnection::new(Some(settings.target));
+        let broadcast = Broadcast::new(connection.clone(), settings.namespace);
+        broadcast.announce().await?;
+        let token_refresh = settings.token_file.map(|path| {
+            TokenRefreshTask::run(connection, move |_| {
+                let path = path.clone();
+                async move { read_token_file(&path).await }
+            })
+        });
+        Ok(Self {
+            writer: BroadcastWriter::run(broadcast, SourceTracks::default()),
+            media: MediaInput::default(),
+            _token_refresh: token_refresh,
+        })
+    }
 }
 
 struct Shared {
@@ -98,7 +122,7 @@ struct MoqtOutput {
 impl MoqtOutput {
     fn start(&self) -> bool {
         let output = self.shared.output.0;
-        let settings = match self.shared.read_settings() {
+        let settings = match self.read_settings() {
             Ok(settings) => settings,
             Err(error) => {
                 self.shared.set_last_error(&format!("{error:#}"));
@@ -118,6 +142,16 @@ impl MoqtOutput {
         let task = self.runtime.spawn(self.shared.clone().connect(settings));
         *self.connect_task.lock().expect("connect task lock") = Some(task);
         true
+    }
+
+    /// The service's settings, with the token of a token file read into the
+    /// target.
+    fn read_settings(&self) -> Result<PublishSettings> {
+        let mut settings = self.shared.read_settings()?;
+        if let Some(path) = &settings.token_file {
+            settings.target.auth_token = Some(self.runtime.block_on(read_token_file(path))?);
+        }
+        Ok(settings)
     }
 
     fn stop(&self) {
@@ -163,6 +197,7 @@ impl Shared {
                 &string_setting(settings, c"server"),
                 &string_setting(settings, c"namespace"),
                 &string_setting(settings, c"bearer_token"),
+                &string_setting(settings, c"bearer_token_file"),
                 obs_data_get_bool(settings, c"insecure_skip_tls_verify".as_ptr()),
             );
             obs_data_release(settings);
@@ -173,22 +208,17 @@ impl Shared {
     async fn connect(self: Arc<Self>, settings: PublishSettings) {
         let url = settings.target.url.clone();
         let track_namespace = settings.namespace.join("/");
-        let broadcast = Broadcast::new(
-            RelayConnection::new(Some(settings.target)),
-            settings.namespace,
-        );
-        if let Err(error) = broadcast.announce().await {
-            let error = format!("{error:#}");
-            tracing::error!(%error, %url, %track_namespace, "OBS output failed to connect");
-            self.signal_stop(OBS_OUTPUT_CONNECT_FAILED, &error);
-            return;
-        }
+        let publishing = match Publishing::open(settings).await {
+            Ok(publishing) => publishing,
+            Err(error) => {
+                let error = format!("{error:#}");
+                tracing::error!(%error, %url, %track_namespace, "OBS output failed to connect");
+                self.signal_stop(OBS_OUTPUT_CONNECT_FAILED, &error);
+                return;
+            }
+        };
         tracing::info!(%url, %track_namespace, "OBS output connected");
-        let writer = BroadcastWriter::run(broadcast, SourceTracks::default());
-        *self.publishing.lock().expect("publishing lock") = Some(Publishing {
-            writer,
-            media: MediaInput::default(),
-        });
+        *self.publishing.lock().expect("publishing lock") = Some(publishing);
         // SAFETY: `output` is live until `destroy`, which joins this task first.
         if !unsafe { obs_output_begin_data_capture(self.output.0, 0) } {
             self.take_publishing();

@@ -14,9 +14,10 @@ anyhow = { workspace = true }
 bytes = { workspace = true }
 broadcast = { path = "../broadcast" }
 mediapack = { path = "../mediapack" }
-tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, default-features = true, features = ["env-filter"] }
 
 [dev-dependencies]
 proptest = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros"] }
