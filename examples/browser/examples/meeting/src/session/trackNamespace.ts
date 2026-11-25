@@ -17,8 +17,8 @@ export function buildNamespacePrefix(roomName: string): string[] {
   return [MEETING_NAMESPACE_ROOT, roomName]
 }
 
-export function parseTrackNamespace(trackNamespace: string[] | undefined): ParsedTrackNamespace | null {
-  if (!trackNamespace || trackNamespace.length !== 3 || trackNamespace[0] !== MEETING_NAMESPACE_ROOT) {
+export function parseTrackNamespace(trackNamespace: string[]): ParsedTrackNamespace | null {
+  if (trackNamespace.length !== 3 || trackNamespace[0] !== MEETING_NAMESPACE_ROOT) {
     return null
   }
   return { roomName: trackNamespace[1], userName: trackNamespace[2] }
@@ -30,10 +30,8 @@ export function buildTranscriberNamespace(roomName: string): string[] {
   return botNamespace(buildNamespacePrefix(roomName), TRANSCRIBER_BOT_TYPE)
 }
 
-export function isTranscriberNamespace(trackNamespace: string[] | undefined, roomName: string): boolean {
-  return (
-    trackNamespace !== undefined && botTypeOf(buildNamespacePrefix(roomName), trackNamespace) === TRANSCRIBER_BOT_TYPE
-  )
+export function isTranscriberNamespace(trackNamespace: string[], roomName: string): boolean {
+  return botTypeOf(buildNamespacePrefix(roomName), trackNamespace) === TRANSCRIBER_BOT_TYPE
 }
 
 /// Only a temporary app's page can start the transcriber: it goes through the temporary-apps service
