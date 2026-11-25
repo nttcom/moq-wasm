@@ -1062,7 +1062,7 @@ fn a_namespace_published_again_while_its_route_is_withdrawn_keeps_its_route() {
         let second_publisher = relay.connect(2).await;
         first_publisher.publish_namespace("room");
         settle().await.unwrap();
-        let withdrawal = relay.route_registry.hold_next_namespace_call();
+        let withdrawal = relay.route_registry.hold_next_route_call();
         first_publisher.publish_namespace_done("room", None);
         settle().await.unwrap();
 
@@ -1129,7 +1129,7 @@ fn a_prefix_subscribed_while_its_last_subscriber_is_cleaned_up_is_accepted() {
         let subscriber = relay.connect(2).await;
         leaving_subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
         settle().await.unwrap();
-        let withdrawal = relay.route_registry.hold_next_namespace_call();
+        let withdrawal = relay.route_registry.hold_next_route_call();
         leaving_subscriber.disconnect();
         settle().await.unwrap();
 
@@ -1161,7 +1161,7 @@ fn a_prefix_subscriber_joining_a_failed_registration_registers_the_route() {
         let relay = Relay::start();
         let first_subscriber = relay.connect(1).await;
         let second_subscriber = relay.connect(2).await;
-        let registration = relay.route_registry.hold_next_namespace_call();
+        let registration = relay.route_registry.hold_next_route_call();
         relay.route_registry.fail_next_namespace_registration();
         first_subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
         settle().await.unwrap();
@@ -1201,7 +1201,7 @@ fn a_namespace_announced_while_its_route_fails_to_register_is_withdrawn() {
         let relay = Relay::start();
         let publisher = relay.connect(1).await;
         let subscriber = relay.connect(2).await;
-        let registration = relay.route_registry.hold_next_namespace_call();
+        let registration = relay.route_registry.hold_next_route_call();
         publisher.publish_namespace("room");
         settle().await.unwrap();
         subscriber.subscribe_namespace("room", NamespaceInterest::Namespaces);
@@ -1295,6 +1295,42 @@ fn an_unsubscribe_leaves_the_other_subscribers_waiting_for_the_publisher_still_a
                 .sent()
                 .iter()
                 .all(|sent| !matches!(sent, Sent::Unsubscribe { .. }))
+        );
+    });
+}
+
+#[test]
+fn a_track_published_while_its_last_publisher_withdraws_the_route_keeps_its_route() {
+    runtime().block_on(async {
+        // Arrange: the first publisher's withdrawal of the route is in flight
+        let relay = Relay::start();
+        let first_publisher = relay.connect(1).await;
+        let second_publisher = relay.connect(2).await;
+        let track_key = TrackKey::new("room", "video");
+        let publish = first_publisher.publish(&track_key);
+        settle().await.unwrap();
+        let withdrawal = relay.route_registry.hold_next_route_call();
+        first_publisher.publish_done(publish);
+        settle().await.unwrap();
+        let request_id = second_publisher.publish(&track_key);
+        settle().await.unwrap();
+
+        // Act
+        withdrawal.notify_one();
+        settle().await.unwrap();
+
+        // Assert
+        assert!(
+            second_publisher
+                .sent()
+                .contains(&Sent::PublishOk { request_id })
+        );
+        assert!(
+            relay
+                .route_registry
+                .routes()
+                .track_publishers
+                .contains(&track_key)
         );
     });
 }

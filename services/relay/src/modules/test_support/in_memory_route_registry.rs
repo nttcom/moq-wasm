@@ -35,9 +35,9 @@ impl InMemoryRouteRegistry {
         self.lock().clone()
     }
 
-    /// The next call that registers or unregisters a namespace route waits
-    /// for `notify_one` on the returned `Notify` before it takes effect.
-    pub(crate) fn hold_next_namespace_call(&self) -> Arc<Notify> {
+    /// The next route registration or withdrawal waits for `notify_one` on
+    /// the returned `Notify` before it takes effect.
+    pub(crate) fn hold_next_route_call(&self) -> Arc<Notify> {
         let released = Arc::new(Notify::new());
         *self.held_call.lock().unwrap() = Some(released.clone());
         released
@@ -106,11 +106,13 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
     }
 
     async fn register_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
+        self.pass_held_call().await;
         self.lock().track_publishers.insert(track_key.clone());
         Ok(())
     }
 
     async fn unregister_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
+        self.pass_held_call().await;
         self.lock().track_publishers.remove(track_key);
         Ok(())
     }

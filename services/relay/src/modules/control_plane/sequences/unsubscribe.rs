@@ -229,6 +229,10 @@ mod tests {
     async fn the_last_subscriber_of_a_draining_relay_withdraws_the_route_of_the_released_publish() {
         // Arrange
         let ctx = setup(ProducerOrigin::Publish, &[(100, 10)]).await;
+        ctx.namespace_routes
+            .reconcile_track(&track_key(), &ctx.upstream.table)
+            .await
+            .unwrap();
         ctx.upstream.table.begin_draining(1);
 
         // Act

@@ -89,9 +89,14 @@ mod tests {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Publish).await;
         let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::MustNotBeCalled));
+        let namespace_routes = NamespaceRoutes::new(route_registry.clone());
+        namespace_routes
+            .reconcile_track(&track_key(), &ctx.table)
+            .await
+            .unwrap();
 
         // Act
-        release_with(&ctx, &NamespaceRoutes::new(route_registry.clone())).await;
+        release_with(&ctx, &namespace_routes).await;
 
         // Assert
         assert!(!ctx.table.has_client_published_track(&track_key()));
