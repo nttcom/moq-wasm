@@ -22,8 +22,11 @@
 //   ones; then it sends PUBLISH_NAMESPACE_DONE on every live connection.
 // - An incoming PUBLISH_NAMESPACE_CANCEL (version/draft14/
 //   control_message_receive_task.rs, draft-18 `peer_ended` in
-//   version/draft18/request_streams.rs) only raises
-//   `SessionEvent::PublishNamespaceCancel` to the application.
+//   version/draft18/request_streams.rs, unless it follows a GOAWAY) raises
+//   `SessionEvent::PublishNamespaceCancel` to the application and
+//   `SessionContext::forget_cancelled_namespace` removes every
+//   `published_namespaces` entry of the namespace, then spawns the carried
+//   removal, which awaits the `carried` read lock.
 // - `migrate` (domains/session/migration_task.rs): under the `carried` write
 //   lock, sends PUBLISH_NAMESPACE again on the new connection for every
 //   carried namespace and awaits its answer; then the new connection becomes
@@ -314,7 +317,7 @@ module publish_namespace {
 module publish_namespace_current {
   import publish_namespace(
     FORGET_ON_DROP = true,
-    FORGET_ON_CANCEL = false,
+    FORGET_ON_CANCEL = true,
     WITHDRAW_ELSEWHERE = false,
     DONE_DURING_BEGIN = false,
   ).*

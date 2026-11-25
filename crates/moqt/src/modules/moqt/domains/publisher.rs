@@ -726,6 +726,70 @@ mod tests {
         within(carried_namespaces_empty(&session)).await;
     }
 
+    #[tokio::test]
+    async fn a_cancelled_namespace_is_not_published() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("cancelled-namespace", version).await;
+            let publisher = client.publisher();
+            let (announced, ()) = within(async {
+                tokio::join!(
+                    publisher.publish_namespace("live/room".into()),
+                    accept_namespace(&server)
+                )
+            })
+            .await;
+            announced.unwrap();
+
+            // Act
+            server
+                .publisher()
+                .publish_namespace_cancel(
+                    "live/room".into(),
+                    RequestErrorCode::Uninterested,
+                    "gone".into(),
+                )
+                .await
+                .unwrap();
+            let event = next_event(&client).await;
+
+            // Assert: the application still hears the cancel
+            assert!(
+                matches!(event, SessionEvent::PublishNamespaceCancel(_)),
+                "{version:?}: {event:?}"
+            );
+            assert!(!client.publishes_namespace("live/room"), "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-cancelled-namespace").await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let (announced, ()) = within(async {
+            tokio::join!(
+                publisher.publish_namespace("a".into()),
+                accept_namespace(&server)
+            )
+        })
+        .await;
+        announced.unwrap();
+
+        // Act
+        server
+            .publisher()
+            .publish_namespace_cancel("a".into(), RequestErrorCode::Uninterested, "gone".into())
+            .await
+            .unwrap();
+        next_event(&client).await;
+
+        // Assert
+        within(carried_namespaces_empty(&session)).await;
+    }
+
     async fn carried_namespaces_empty(session: &SessionContext) {
         loop {
             let carried = session

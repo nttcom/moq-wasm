@@ -1402,13 +1402,20 @@ impl OutgoingRequestTask {
                 &scope.connection,
                 Unsubscribe { request_id },
             ))),
-            RequestStreamKind::PublishNamespace(namespace) => Some(
-                SessionEvent::PublishNamespaceCancel(PublishNamespaceCancelHandler::new(
-                    namespace.join("/"),
-                    request_error_code,
-                    reason.to_string(),
-                )),
-            ),
+            RequestStreamKind::PublishNamespace(namespace) => {
+                let namespace = namespace.join("/");
+                // After a GOAWAY, a migration announces the namespace again.
+                if !going_away {
+                    scope.session.forget_cancelled_namespace(namespace.clone());
+                }
+                Some(SessionEvent::PublishNamespaceCancel(
+                    PublishNamespaceCancelHandler::new(
+                        namespace,
+                        request_error_code,
+                        reason.to_string(),
+                    ),
+                ))
+            }
             _ => None,
         };
         if let Some(event) = event {

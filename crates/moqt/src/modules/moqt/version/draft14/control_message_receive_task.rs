@@ -327,9 +327,11 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::FetchCancel(fetch_cancel_handler))
             }
             ReceivedMessage::PublishNamespaceCancel(publish_namespace_cancel) => {
+                let track_namespace = publish_namespace_cancel.track_namespace.join("/");
+                session.forget_cancelled_namespace(track_namespace.clone());
                 // §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
                 let publish_namespace_cancel_handler = PublishNamespaceCancelHandler::new(
-                    publish_namespace_cancel.track_namespace.join("/"),
+                    track_namespace,
                     error_codes::request_error_code_from_wire(
                         publish_namespace_cancel.error_code,
                         RequestKind::PublishNamespace,

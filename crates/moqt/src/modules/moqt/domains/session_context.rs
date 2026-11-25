@@ -313,6 +313,21 @@ impl SessionContext {
     /// `carried` read lock between the two.
     pub(crate) async fn withdraw_published_namespace(&self, namespace: &str) {
         lock(&self.published_namespaces).retain(|_, published| published != namespace);
+        self.forget_carried_namespaces(namespace).await;
+    }
+
+    /// The peer cancelled `namespace`: removes every record of it, the
+    /// carried ones in a spawned task, so the control stream that read the
+    /// cancel does not wait for a migration, which awaits answers on it.
+    pub(crate) fn forget_cancelled_namespace(self: &Arc<Self>, namespace: String) {
+        lock(&self.published_namespaces).retain(|_, published| *published != namespace);
+        let session = self.clone();
+        executor::try_spawn("forget a cancelled PUBLISH_NAMESPACE", async move {
+            session.forget_carried_namespaces(&namespace).await;
+        });
+    }
+
+    async fn forget_carried_namespaces(&self, namespace: &str) {
         if let Some(carried) = self.read_carried().await {
             carried.update(|carried| {
                 carried
