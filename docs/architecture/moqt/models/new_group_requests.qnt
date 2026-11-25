@@ -1,12 +1,13 @@
 // A model of the NEW_GROUP_REQUEST throttle of one Origin track
 // (draft-18 §10.2.13): `NewGroupRequests`
-// (crates/moqt/src/modules/moqt/domains/origin/new_group_requests.rs :19-94),
+// (crates/moqt/src/modules/moqt/domains/origin/new_group_requests.rs :16-97),
 // its `NewGroupDelayTask` (origin/new_group_delay_task.rs), and the Origin
-// calls that drive it (origin.rs): `accept_new_group_requests` (:431-441)
-// replaces the track's `NewGroupRequests`; `OriginTrack::request_new_group`
-// (:320-328), reached from `accept_subscribe`, `publish` and `apply_update`,
-// calls `request`; `OriginTrack::store` (:340-367), reached from every
-// write, calls `object_placed`.
+// calls that drive it (origin.rs): `accept_new_group_requests` (:447-480)
+// creates the track's `NewGroupRequests` or swaps its Notify;
+// `OriginTrack::request_new_group` (:321-331), reached from
+// `accept_subscribe`, `publish` and `apply_update`, calls `request`;
+// `OriginTrack::store` (:342-370), reached from every write, calls
+// `object_placed`.
 //
 // Each action is one critical section under the Origin's `state` lock, or
 // one run of the delay task, or a tick of the clock. Time counts in units
@@ -277,12 +278,12 @@ module new_group_requests {
   val requestedGroupsFollowLongGroups: bool = not(earlyRequestedGroup)
 }
 
-// expect: violation
+// expect: ok
 module new_group_requests_current {
   import new_group_requests(
     MIN_DURATION = 2, MIN_OBJECTS = 2, MAX_TIME = 4,
     ENABLE_AFTER_WRITES = true, REENABLE = true, THROTTLE = true,
-    KEEP_ON_REENABLE = true, SEED_OPEN_GROUP = false,
+    KEEP_ON_REENABLE = true, SEED_OPEN_GROUP = true,
   ).*
 }
 

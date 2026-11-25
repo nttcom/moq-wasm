@@ -2,6 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use tokio::sync::Notify;
 
+use crate::object::Location;
+
 use super::{new_group_delay_task::NewGroupDelayTask, object_numbering::Placement};
 
 /// A group this old is long enough to be ended on request
@@ -35,10 +37,15 @@ enum Outstanding {
 }
 
 impl NewGroupRequests {
-    pub(super) fn new(requested: Arc<Notify>) -> Self {
+    /// `largest` is the track's largest object at `now` (`executor::now`):
+    /// its group is taken to begin now, so it is throttled like any other.
+    pub(super) fn new(requested: Arc<Notify>, largest: Option<Location>, now: Duration) -> Self {
         Self {
             requested,
-            open_group: None,
+            open_group: largest.map(|largest| OpenGroup {
+                began_at: now,
+                objects: largest.object_id + 1,
+            }),
             outstanding: None,
         }
     }
@@ -119,7 +126,7 @@ mod tests {
     /// holds `objects` objects, and what they notify.
     fn requests_in_group_of(objects: u64) -> (NewGroupRequests, Arc<Notify>) {
         let requested = Arc::new(Notify::new());
-        let mut requests = NewGroupRequests::new(requested.clone());
+        let mut requests = NewGroupRequests::new(requested.clone(), None, BEGAN_AT);
         for object_id in 0..objects {
             requests.object_placed(placed(GROUP_ID, object_id), BEGAN_AT);
         }
