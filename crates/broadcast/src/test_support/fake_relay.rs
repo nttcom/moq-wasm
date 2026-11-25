@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use moqt::{
     AuthorizationToken, Endpoint, NATIVE, RequestErrorCode, Session, SessionEvent, Subscription,
     TrackObject, TrackProperties, TrackReader, Version,
@@ -20,7 +21,14 @@ use crate::{
     relay_connection::{MoqtTarget, RelayConnection},
 };
 
+/// The name of the token `FakeRelay` refuses as a refresh.
 pub(crate) const REFUSED_TOKEN: &str = "refused";
+
+/// A JWT of the app `app`; `name`, its signature segment, tells tokens apart.
+pub(crate) fn token(name: &str) -> String {
+    let payload = URL_SAFE_NO_PAD.encode(br#"{"appId":"app"}"#);
+    format!("e30.{payload}.{name}")
+}
 
 /// A relay that accepts one publisher session and answers its
 /// PUBLISH_NAMESPACE, PUBLISH, and token refreshes (TRACK_STATUS).
@@ -163,12 +171,13 @@ impl FakeRelay {
                                 _ => None,
                             })
                             .unwrap_or_default();
+                        let name = token.rsplit('.').next().unwrap_or_default();
                         let _ = request_sender.send(format!(
-                            "TRACK_STATUS {}/{} {token}",
+                            "TRACK_STATUS {}/{} {name}",
                             handler.track_namespace(),
                             handler.track_name()
                         ));
-                        if token == REFUSED_TOKEN {
+                        if name == REFUSED_TOKEN {
                             handler
                                 .error(RequestErrorCode::Unauthorized, "refused".to_string())
                                 .await

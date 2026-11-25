@@ -17,10 +17,10 @@ pub struct TokenRefreshTask {
 
 impl TokenRefreshTask {
     /// Every 10 s calls `renew` with the token in force. A different token is
-    /// passed to `RelayConnection::refresh_auth_token` with `app_id`; returning
+    /// passed to `RelayConnection::refresh_auth_token`; returning
     /// the same token keeps it. A failed `renew` or refresh is tried again at
     /// the next poll. Does nothing for a connection that was given no token.
-    pub fn run<F, Fut>(connection: RelayConnection, app_id: String, renew: F) -> Self
+    pub fn run<F, Fut>(connection: RelayConnection, renew: F) -> Self
     where
         F: Fn(String) -> Fut + MaybeSend + 'static,
         Fut: Future<Output = Result<String>> + MaybeSend + 'static,
@@ -36,14 +36,14 @@ impl TokenRefreshTask {
                     Ok(token) if token != in_force => token,
                     Ok(_) => continue,
                     Err(error) => {
-                        tracing::warn!(error = %format!("{error:#}"), app_id, "cannot renew the authorization token");
+                        tracing::warn!(error = %format!("{error:#}"), "cannot renew the authorization token");
                         continue;
                     }
                 };
-                match connection.refresh_auth_token(app_id.clone(), token).await {
-                    Ok(()) => tracing::info!(app_id, "authorization token refreshed"),
+                match connection.refresh_auth_token(token).await {
+                    Ok(()) => tracing::info!("authorization token refreshed"),
                     Err(error) => {
-                        tracing::warn!(error = %format!("{error:#}"), app_id, "authorization token refresh failed");
+                        tracing::warn!(error = %format!("{error:#}"), "authorization token refresh failed");
                     }
                 }
             }
@@ -68,7 +68,7 @@ mod tests {
     use crate::{
         broadcast::Broadcast,
         relay_connection::MoqtTarget,
-        test_support::{FakeRelay, REFUSED_TOKEN, TEST_TIMEOUT},
+        test_support::{FakeRelay, REFUSED_TOKEN, TEST_TIMEOUT, token},
     };
 
     const REFRESH_REQUEST: &str = "TRACK_STATUS app/update_auth_token renewed";
@@ -96,7 +96,7 @@ mod tests {
     {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let recorded = calls.clone();
-        let task = TokenRefreshTask::run(connection, "app".to_string(), move |current| {
+        let task = TokenRefreshTask::run(connection, move |current| {
             let call = {
                 let mut calls = recorded.lock().unwrap();
                 calls.push(current.clone());
@@ -129,13 +129,13 @@ mod tests {
         let connection = open_connection(&relay).await;
 
         // Act
-        let (_task, calls) = run_recording(connection, |_, _| Ok("renewed".to_string()));
+        let (_task, calls) = run_recording(connection, |_, _| Ok(token("renewed")));
         relay.wait_for_request(REFRESH_REQUEST).await;
         let calls = wait_for_calls(&calls, 4).await;
 
         // Assert: once in force, the renewed token is not sent again
         assert_eq!(calls[0], "secret");
-        assert_eq!(calls[3], "renewed");
+        assert_eq!(calls[3], token("renewed"));
         assert!(
             !relay
                 .received_requests()
@@ -173,7 +173,7 @@ mod tests {
             if call == 1 {
                 bail!("the issuer is unreachable");
             }
-            Ok("renewed".to_string())
+            Ok(token("renewed"))
         });
 
         // Assert
@@ -188,7 +188,7 @@ mod tests {
         let refused = format!("TRACK_STATUS app/update_auth_token {REFUSED_TOKEN}");
 
         // Act
-        let (_task, _calls) = run_recording(connection, |_, _| Ok(REFUSED_TOKEN.to_string()));
+        let (_task, _calls) = run_recording(connection, |_, _| Ok(token(REFUSED_TOKEN)));
 
         // Assert
         relay.wait_for_request(&refused).await;
@@ -201,7 +201,7 @@ mod tests {
         let relay = FakeRelay::spawn("task-without-token");
 
         // Act
-        let (_task, calls) = run_recording(relay.connection(), |_, _| Ok("renewed".to_string()));
+        let (_task, calls) = run_recording(relay.connection(), |_, _| Ok(token("renewed")));
         tokio::time::sleep(POLL_INTERVAL * 10).await;
 
         // Assert

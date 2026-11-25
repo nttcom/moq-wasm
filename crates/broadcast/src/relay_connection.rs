@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use moqt::{
     AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, RequestErrorCode,
@@ -244,13 +245,14 @@ impl RelayConnection {
     }
 
     /// Sends `token` to the relay on an open session and uses it for every
-    /// later CLIENT_SETUP. `app_id` is the token's `appId`.
-    /// Fails, keeping the previous token, when the relay refuses `token`,
-    /// the session has ended, or the connection was given no token.
-    pub async fn refresh_auth_token(&self, app_id: String, token: String) -> Result<()> {
+    /// later CLIENT_SETUP. Fails, keeping the previous token, when `token` is
+    /// not a JWT with an `appId` claim, the relay refuses it, the session has
+    /// ended, or the connection was given no token.
+    pub async fn refresh_auth_token(&self, token: String) -> Result<()> {
         let Some(current) = &self.auth_token else {
             bail!("the relay connection has no token to refresh");
         };
+        let app_id = token_app_id(&token)?;
         let connected = self.connected.lock().await;
         if let Some(relay) = connected.clone() {
             // Sends wait for this lock, so the relay's answer is awaited without it.
@@ -291,6 +293,21 @@ impl RelayConnection {
         *connected = Some(relay.clone());
         Ok(Some(relay))
     }
+}
+
+/// The `appId` claim of a JWT, read without verifying the token: the relay
+/// verifies it. Fails when `token` is not a JWT or has no `appId` claim.
+pub fn token_app_id(token: &str) -> Result<String> {
+    let claims = token
+        .split('.')
+        .nth(1)
+        .and_then(|payload| URL_SAFE_NO_PAD.decode(payload).ok())
+        .and_then(|payload| serde_json::from_slice::<serde_json::Value>(&payload).ok())
+        .context("the token is not a JWT")?;
+    claims["appId"]
+        .as_str()
+        .map(str::to_owned)
+        .context("the token has no appId claim")
 }
 
 impl ConnectedRelay {
@@ -754,7 +771,7 @@ mod tests {
     use mediapack::{AudioConfig, VideoConfig, vp8::Vp8Config};
 
     use crate::broadcast::{AudioTrackInfo, Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
-    use crate::test_support::{FakeRelay, REFUSED_TOKEN, TEST_TIMEOUT};
+    use crate::test_support::{FakeRelay, REFUSED_TOKEN, TEST_TIMEOUT, token};
 
     fn video_track_info() -> VideoTrackInfo {
         VideoTrackInfo {
@@ -1741,7 +1758,7 @@ mod tests {
 
         // Act
         connection
-            .refresh_auth_token("app".to_string(), "renewed".to_string())
+            .refresh_auth_token(token("renewed"))
             .await
             .unwrap();
 
@@ -1759,7 +1776,7 @@ mod tests {
 
         // Act
         connection
-            .refresh_auth_token("app".to_string(), "renewed".to_string())
+            .refresh_auth_token(token("renewed"))
             .await
             .unwrap();
         live_cam(connection).announce().await.unwrap();
@@ -1769,11 +1786,12 @@ mod tests {
             .unwrap();
 
         // Assert
+        let renewed = token("renewed");
         assert!(
-            tokens.iter().any(|token| matches!(
-                token,
+            tokens.iter().any(|sent| matches!(
+                sent,
                 AuthorizationToken::UseValue { token_value, .. }
-                    if token_value.as_ref() == b"renewed"
+                    if token_value.as_ref() == renewed.as_bytes()
             )),
             "{tokens:?}"
         );
@@ -1787,12 +1805,31 @@ mod tests {
         live_cam(connection.clone()).announce().await.unwrap();
 
         // Act
-        let refreshed = connection
-            .refresh_auth_token("app".to_string(), REFUSED_TOKEN.to_string())
-            .await;
+        let refreshed = connection.refresh_auth_token(token(REFUSED_TOKEN)).await;
 
         // Assert
         assert!(refreshed.is_err());
+        assert_eq!(
+            *connection.auth_token.as_ref().unwrap().lock().await,
+            "secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn refreshing_fails_for_a_token_without_an_app_id() {
+        // Arrange
+        let relay = FakeRelay::spawn("refresh-without-app-id");
+        let connection = connection_with_token(&relay, "secret");
+        let without_app_id = format!("e30.{}.signature", URL_SAFE_NO_PAD.encode("{}"));
+
+        // Act / Assert
+        assert!(
+            connection
+                .refresh_auth_token("opaque".to_string())
+                .await
+                .is_err()
+        );
+        assert!(connection.refresh_auth_token(without_app_id).await.is_err());
         assert_eq!(
             *connection.auth_token.as_ref().unwrap().lock().await,
             "secret"
@@ -1806,9 +1843,7 @@ mod tests {
         let connection = relay.connection();
 
         // Act
-        let refreshed = connection
-            .refresh_auth_token("app".to_string(), "renewed".to_string())
-            .await;
+        let refreshed = connection.refresh_auth_token(token("renewed")).await;
 
         // Assert
         assert!(refreshed.is_err());
