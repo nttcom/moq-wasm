@@ -45,7 +45,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | PUBLISH_DONE countdown | `Countdown` (`Counting{arrived, needed}` / `GraceOnly`) in `moqt/runtime/tasks/publish_done_expiry_task.rs`, owned by its future in `expiries`; `waiting` membership = counting down | `Idle`, `Counting(n)`, `GraceOnly`, `Expired` | [`subscription.qnt`](models/subscription.qnt) |
 | Subscriber Forward / update | `Subscription.forward`, `last_update`, carried `option.forward` | `Original(forward)`, `Updated(option)` | — |
 | Pending FETCH | `fetch_notification_map`, `fetch_receiver_map`, `PendingFetch.kept` | `Registered`, `StreamDelivered`, `Kept`, `Accepted`, `Removed`, `ConnectionClosed` | — |
-| PUBLISH_NAMESPACE record | `published_namespaces`, carried `published_namespaces`, `PendingPublishNamespace.record` | `Pending`, `Accepted`, `Rejected`, `Withdrawn`, `Cancelled` | [`publish_namespace.qnt`](models/publish_namespace.qnt) |
+| PUBLISH_NAMESPACE record | `NamespaceRecord` (`Unrecorded` / `Recorded` / `Answered`) as `PendingPublishNamespace.record` in `moqt/domains/pending_publish_namespace.rs`; `published_namespaces` and carried `published_namespaces` changed only together by `PublishedNamespaceRecord` (`insert` / `forget`) and `SessionContext::withdraw_published_namespace` in `moqt/domains/session_context.rs` | `Pending`, `Accepted`, `Rejected`, `Withdrawn`, `Cancelled` | [`publish_namespace.qnt`](models/publish_namespace.qnt) |
 | SUBSCRIBE_NAMESPACE (carried) | carried `namespaces[id]` | `InFlight`, `Carried`, `Removed` | — |
 | `NamespaceWatchers` entry | `Vec<(prefix, Sender)>` | `Active`, `Dropped` (pruned lazily) | — |
 

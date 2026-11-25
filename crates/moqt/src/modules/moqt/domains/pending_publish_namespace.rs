@@ -12,14 +12,30 @@ pub struct PendingPublishNamespace {
     pub(super) request_id: RequestId,
     pub(super) track_namespace: String,
     pub(super) pending: PendingResponse,
-    /// `None` for a migration's own PUBLISH_NAMESPACE: the migration holds the
-    /// write lock that `forget` would wait for.
-    pub(super) record: Option<PublishedNamespaceRecord>,
+    pub(super) record: NamespaceRecord,
+}
+
+/// What a `PendingPublishNamespace` holds of its namespace's records.
+pub(super) enum NamespaceRecord {
+    /// Nothing to forget: a migration's own PUBLISH_NAMESPACE (the migration
+    /// holds the write lock that `forget` would wait for), or the
+    /// application's before `announce` records it.
+    Unrecorded,
+    /// The application's PUBLISH_NAMESPACE, unanswered: the records stay until
+    /// the answer refuses it.
+    Recorded(PublishedNamespaceRecord),
+    /// `accepted` took the answer and settled the records.
+    Answered,
 }
 
 impl PendingPublishNamespace {
+    /// `Unrecorded` → `Recorded`, once `announce` inserted the records.
+    pub(super) fn recorded(&mut self, record: PublishedNamespaceRecord) {
+        self.record = NamespaceRecord::Recorded(record);
+    }
+
     pub async fn accepted(mut self) -> Result<(), RequestFailure> {
-        let record = self.record.take();
+        let record = std::mem::replace(&mut self.record, NamespaceRecord::Answered);
         let result = self.answer().await;
         // A lost connection (`SessionClosed`, `Send`) leaves the record: a
         // migration sends it again.
@@ -29,7 +45,7 @@ impl PendingPublishNamespace {
                 | RequestFailure::Timeout
                 | RequestFailure::ProtocolViolation(_),
             ),
-            Some(record),
+            NamespaceRecord::Recorded(record),
         ) = (&result, record)
         {
             record.forget().await;
