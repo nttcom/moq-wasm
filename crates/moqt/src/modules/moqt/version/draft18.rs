@@ -148,6 +148,9 @@ struct RequestStream {
     /// out for on it. No PUBLISH for them follows while the stream lives
     /// (§6.1), whatever prefix it moves to (§10.9.2).
     blocked_tracks: HashSet<(Vec<String>, String)>,
+    /// For a SUBSCRIBE_TRACKS the peer sent: whether its REQUEST_OK went
+    /// out. No PUBLISH_BLOCKED precedes it (§6.1).
+    accepted: bool,
 }
 
 impl RequestStream {
@@ -162,6 +165,7 @@ impl RequestStream {
             held_namespaces: None,
             update_waiters: Arc::default(),
             blocked_tracks: HashSet::new(),
+            accepted: false,
         }
     }
 }
@@ -424,7 +428,10 @@ impl ControlChannel {
             .requests()
             .incoming
             .get_mut(&request_id)
-            .and_then(|stream| Some((stream.held_namespaces.take()?, stream.clone())));
+            .and_then(|stream| {
+                stream.accepted = true;
+                Some((stream.held_namespaces.take()?, stream.clone()))
+            });
         let Some((held_namespaces, stream)) = held else {
             return Ok(());
         };
@@ -698,8 +705,8 @@ impl ControlChannel {
             .any(|stream| stream.blocked_tracks.contains(&track))
     }
 
-    /// The PUBLISH_BLOCKED for a track the peer's SUBSCRIBE_TRACKS covers,
-    /// with the Request ID and stream of that SUBSCRIBE_TRACKS.
+    /// The PUBLISH_BLOCKED for a track the peer's accepted SUBSCRIBE_TRACKS
+    /// covers, with the Request ID and stream of that SUBSCRIBE_TRACKS.
     fn publish_blocked_for(
         &self,
         track_namespace: &[String],
@@ -711,7 +718,7 @@ impl ControlChannel {
             .iter()
             .filter_map(|(request_id, stream)| match &stream.kind {
                 RequestStreamKind::SubscribeTracks(prefix)
-                    if track_namespace.starts_with(prefix) =>
+                    if stream.accepted && track_namespace.starts_with(prefix) =>
                 {
                     Some((*request_id, stream.sender.clone(), prefix.len()))
                 }
@@ -4595,6 +4602,37 @@ mod tests {
         assert_eq!(
             announced,
             Some(messages::Message::Namespace(vec!["alice".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publish_under_an_unanswered_subscribe_tracks_waits_for_a_stream_instead_of_blocking()
+    {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-blocked-before-ok", "moqt").await;
+        let (_sender, mut receiver, handler) =
+            raw_namespace_subscription_requested(&client, &server, true).await;
+        let _streams = use_up_bidi_streams(&server).await;
+
+        // Act
+        let published = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            server.publisher().publish(
+                "live/room".into(),
+                "video".into(),
+                PublishOption::default(),
+            ),
+        )
+        .await;
+        handler.ok().await.unwrap();
+        let first = within(receiver.receive()).await.unwrap();
+
+        // Assert: §6.1, the first message of the response is REQUEST_OK
+        assert!(published.is_err(), "{published:?}");
+        assert!(
+            matches!(first, Some(messages::Message::RequestOk(_))),
+            "{first:?}"
         );
     }
 
