@@ -245,11 +245,11 @@ module track_follower {
   }
 }
 
-// expect: violation
+// expect: ok
 module track_follower_current {
   import track_follower(
     CLEAR_ON_WITHDRAWAL = true,
-    END_DROPS_HANDLERS = false,
+    END_DROPS_HANDLERS = true,
     END_CLOSES_WATCHERS = true,
   ).*
 }
@@ -283,7 +283,7 @@ module track_follower_without_end_fix {
 }
 
 // The follower relies on `Routes::end` closing the namespace watchers: without
-// it (and with the handlers kept, as today) it never ends.
+// it (and with the handlers kept) it never ends.
 // expect: violation
 module track_follower_without_watcher_close {
   import track_follower(

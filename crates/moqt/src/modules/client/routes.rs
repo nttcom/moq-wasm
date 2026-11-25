@@ -127,8 +127,11 @@ impl Routes {
         self.end();
     }
 
+    /// Drops the handlers too, so a `TrackWatch` or `TrackFollower` whose
+    /// handler holds its event sender sees the end.
     pub(super) fn end(&self) {
         self.watchers.close();
+        lock(&self.handlers).clear();
         lock(&self.publish_done).clear();
         for (_, subscribers) in lock(&self.subscriber_watchers).drain() {
             subscribers.close();
