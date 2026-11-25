@@ -2586,7 +2586,7 @@ mod tests {
             .unwrap();
         let next = next_event(&client).await;
 
-        // Assert: §10.18; the first namespace the client hears is the marker
+        // Assert: §10.18; the marker is the first namespace the client hears, so `live/room` was never sent
         assert!(
             matches!(sent, Err(RequestFailure::NoNamespaceSubscription)),
             "{:?}",

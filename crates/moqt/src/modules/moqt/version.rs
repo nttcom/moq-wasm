@@ -515,7 +515,8 @@ pub(crate) enum OutgoingRequest {
     Publish(Publish),
     PublishNamespace(PublishNamespace),
     /// A PUBLISH_NAMESPACE meant for the peer's namespace subscriptions:
-    /// draft-18 sends it only as NAMESPACE on one covering it.
+    /// draft-18 sends it only as NAMESPACE on a SUBSCRIBE_NAMESPACE covering
+    /// it, else fails with `NoNamespaceSubscription`.
     SubscribedNamespace(PublishNamespace),
     SubscribeNamespace(SubscribeNamespace),
     /// draft-18's SUBSCRIBE_TRACKS; draft-14 sends it as SUBSCRIBE_NAMESPACE,

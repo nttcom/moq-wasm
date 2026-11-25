@@ -38,6 +38,12 @@ pub struct Publisher {
     pub(crate) session: Arc<SessionContext>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NamespaceAnnouncement {
+    Publication,
+    ToSubscriptions,
+}
+
 impl Publisher {
     #[tracing::instrument(
         level = "info",
@@ -57,7 +63,7 @@ impl Publisher {
 
     async fn publish_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
         let (connection, pending) = self
-            .announce(namespace, OutgoingRequest::PublishNamespace)
+            .announce(namespace, NamespaceAnnouncement::Publication)
             .await?;
         tracing::Span::current().record("request_id", pending.request_id);
         match pending.accepted().await {
@@ -73,22 +79,25 @@ impl Publisher {
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
         let (_, pending) = self
-            .announce(namespace, OutgoingRequest::PublishNamespace)
+            .announce(namespace, NamespaceAnnouncement::Publication)
             .await?;
         Ok(pending)
     }
 
-    /// `begin_publish_namespace` for a namespace the peer subscribed to: on
-    /// draft-18 it goes as NAMESPACE on the peer's SUBSCRIBE_NAMESPACE
-    /// covering it, held until that is answered (§10.18), and fails with
-    /// `RequestFailure::NoNamespaceSubscription`, sending nothing, when none
-    /// covers it. draft-14 sends PUBLISH_NAMESPACE.
+    /// Announces `namespace` only to the peer's namespace subscriptions.
+    /// - draft-18: sends NAMESPACE on the peer's SUBSCRIBE_NAMESPACE covering
+    ///   it (§10.18), held until that subscription is answered.
+    /// - draft-14: sends PUBLISH_NAMESPACE.
+    ///
+    /// Fails with `RequestFailure::NoNamespaceSubscription`, sending nothing,
+    /// when no subscription covers it (draft-18 only). A later connection of
+    /// the session does not announce it again.
     pub async fn begin_publish_subscribed_namespace(
         &self,
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
         let (_, pending) = self
-            .announce(namespace, OutgoingRequest::SubscribedNamespace)
+            .announce(namespace, NamespaceAnnouncement::ToSubscriptions)
             .await?;
         Ok(pending)
     }
@@ -96,8 +105,12 @@ impl Publisher {
     async fn announce(
         &self,
         namespace: String,
-        request: fn(PublishNamespace) -> OutgoingRequest,
+        announcement: NamespaceAnnouncement,
     ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
+        let request = match announcement {
+            NamespaceAnnouncement::Publication => OutgoingRequest::PublishNamespace,
+            NamespaceAnnouncement::ToSubscriptions => OutgoingRequest::SubscribedNamespace,
+        };
         let (carried, connection, mut pending) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
@@ -112,7 +125,11 @@ impl Publisher {
         };
         let request_id = logical_id(connection.generation, pending.request_id);
         lock(&self.session.published_namespaces).insert(request_id, namespace.clone());
-        if let Some(carried) = &carried {
+        // Announced on a subscription of this connection, the namespace is
+        // not resent as PUBLISH_NAMESPACE on the next one.
+        if announcement == NamespaceAnnouncement::Publication
+            && let Some(carried) = &carried
+        {
             carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
         }
         pending.record = Some(PublishedNamespaceRecord {
@@ -620,6 +637,43 @@ mod tests {
             "{result:?}"
         );
         let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.published_namespaces.clone());
+        assert!(carried.is_empty(), "{carried:?}");
+    }
+
+    #[tokio::test]
+    async fn a_subscribed_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-subscribed-namespace").await;
+        let subscriber = server.subscriber();
+        let subscribed = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace(
+                    "live".into(),
+                    crate::namespace::NamespaceInterest::Namespaces,
+                )
+                .await
+        });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&client).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE from the server");
+        };
+        handler.ok().await.unwrap();
+        within(subscribed).await.unwrap().unwrap();
+        let publisher = client.publisher();
+
+        // Act
+        let sent = publisher
+            .begin_publish_subscribed_namespace("live/room".into())
+            .await;
+
+        // Assert
+        assert!(sent.is_ok());
+        let carried = publisher
+            .session
             .read_carried()
             .await
             .unwrap()
