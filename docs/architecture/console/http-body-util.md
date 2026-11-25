@@ -1,29 +1,16 @@
-# http-body-util for response bodies
+# `http-body-util` for `console` Response Bodies
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-10-20
+Accepted (2026-10-20)
 
 ## What
-
-Add `http-body-util` as a direct dependency of the `console` crate for `Full`,
-the complete JSON body of every console response.
+Direct dependency of `console` providing `Full` for complete JSON HTTP responses.
 
 ## Context
-
-`hyper` 1.x exposes bodies only through the `http_body::Body` trait and ships
-no body types of its own. The console answers every request with a complete
-JSON body.
+`hyper` 1.x exposes only the `http_body::Body` trait without concrete body types; `console` returns complete JSON bodies on every route.
 
 ## Alternatives
-
-- Implement `http_body::Body` for a local bytes wrapper. Reimplements `Full`.
+- **Custom `http_body::Body` wrapper**: Reimplements `Full`.
 
 ## Decision
-
-Use `http-body-util`, the body companion crate maintained alongside `hyper`.
-It is already in the workspace lock, so nothing new is compiled.
+Use `http-body-util` (`hyper`'s companion crate), already in the workspace lock.

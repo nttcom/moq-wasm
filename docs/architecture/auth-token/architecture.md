@@ -1,66 +1,55 @@
 # `auth-token` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the design intent,
-module boundaries, runtime flow, or invariants described here change.
+Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
-`auth-token` is the client JWT: the one payload shape used across the workspace,
-its HS256 signing and verification, the checks a service applies to a token the
-VTS verified, the client that asks the VTS to verify one, and a CLI that signs
-one.
+`auth-token` defines the workspace's client JWT payload, HS256 signing/verification, post-VTS claim checks, a VTS verification client, and a signing CLI.
 
-| Module | Responsibility |
-| --- | --- |
-| `lib.rs` | `Claims`, `Claims::issued`, which sets `iat` and an `exp` a lifetime later, `unix_now`, the current time in the unit of `iat` and `exp`, and `TEMPORARY_APP_ID_PREFIX`, the `appId` prefix of a temporary app (see the VTS architecture). |
-| `temporary_app.rs` | `temporary_app_id`: the `appId` of an unexpired temporary app token, read without checking the signature, failing with a `TemporaryAppTokenError`. `temporary-apps` checks the signature first; `live-translate` leaves it to the relay. |
-| `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `aws-lc-rs`. |
-| `signed_token.rs` | `SignedToken`, the VTS `/verify` answer (`appId`, `isRelay`, `claims`). `check` applies a `ClaimPolicy` (default: client tokens live at most 24 hours, clocks may differ by 60 seconds) and requires `iat`, `exp` and well-formed namespace paths, failing with a `ClaimError`; `covers` tells whether the `publish`, `subscribe`, `bots` or `calls` claim covers a full namespace, element by element. |
-| `vts_client.rs` | `VtsClient`, the caller of the VTS's `POST /verify`, built only with the `vts-client` feature: it sends a token with a 3 s timeout and the current W3C trace context, and answers `SignedToken` or a `VtsVerifyError` (`Unauthorized` with the VTS's reason, or `Unavailable`). It checks only the signature, as the VTS does. |
-| `bin/auth-token/` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--calls`, `--ttl` (`15s` / `30m` / `12h` / `365d`, parsed in `lifetime.rs`) and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |
+```mermaid
+flowchart LR
+    CLI["auth-token CLI / console"] -->|sign_token| JWT["HS256 JWT"]
+    JWT -->|POST /verify| VTS["services/vts"]
+    VTS -->|"SignedToken"| Caller["relay / recorder / bot-dispatcher / observability"]
+    Caller -->|"SignedToken::check(ClaimPolicy)"| AuthZ["Authorized request"]
+```
 
-The payload claims:
+## Modules
+
+| Module | Key types / items | Responsibility |
+| --- | --- | --- |
+| `lib.rs` | `Claims`, `Claims::issued`, `unix_now`, `TEMPORARY_APP_ID_PREFIX` | Claim schema, lifetime helper (`iat`/`exp` in Unix seconds), and temporary app `appId` prefix (see [`vts/architecture.md`](../vts/architecture.md)). |
+| `temporary_app.rs` | `temporary_app_id`, `TemporaryAppTokenError` | Reads `appId` from an unexpired temporary app token without verifying its signature (`temporary-apps` verifies first; `live-translate` leaves verification to the relay). |
+| `jwt.rs` | `sign_token`, `decode_unverified_payload`, `verify_signature`, `SignatureError` | Compact JWS over `aws-lc-rs` HMAC-SHA256. Header is fixed to `{"alg":"HS256"}`. |
+| `signed_token.rs` | `SignedToken`, `ClaimPolicy`, `ClaimError` | VTS `/verify` response (`appId`, `isRelay`, `claims`). `check` enforces `ClaimPolicy` (default: 24 h max client TTL, 60 s clock leeway), `iat`/`exp`, and namespace format; `covers` checks element-by-element namespace coverage. |
+| `vts_client.rs` | `VtsClient`, `VtsVerifyError` | Optional (`vts-client` feature). Calls VTS `POST /verify` with a 3 s timeout and W3C trace context; returns `SignedToken` or `Unauthorized` / `Unavailable`. |
+| `bin/auth-token/` | `auth-token` CLI (`lifetime.rs`) | Optional (`cli` feature). Signs tokens using `AUTH_TOKEN_SECRET`. Flags: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--calls`, `--ttl` (`15s`/`30m`/`12h`/`365d`), `--relay-id`. |
+
+## Payload Claims
 
 | Claim | Meaning |
 | --- | --- |
-| `appId` | The registered app whose secret signed the token; also the namespace root |
-| `publish` / `subscribe` | Relative namespace path the token may publish / subscribe under; `""` is the whole app root; absent means not allowed |
-| `bots` | Relative namespace path under which the token may start, stop and list bots on the bot service (docs/architecture/bot-dispatcher/architecture.md); `""` is the whole app root; absent on client tokens |
-| `calls` | Relative namespace path under which the token may place, answer and end phone calls on the SIP gateway (docs/architecture/sip-gateway/architecture.md); `""` is the whole app root; absent on client tokens |
-| `iat` / `exp` | Unix seconds; judged by `SignedToken::check` with the reader's `ClaimPolicy`, never by the VTS |
-| `relayId` | The `RELAY_ID` of the relay presenting a relay app's token; the accepting relay records it as `peer_relay_id`. Absent on client tokens |
+| `appId` | Registered app whose secret signed the token; also the namespace root. |
+| `publish` / `subscribe` | Relative namespace path allowed for publishing/subscribing (`""` = whole app root; absent = denied). |
+| `bots` | Relative namespace path for starting/stopping/listing bots ([`bot-dispatcher`](../bot-dispatcher/architecture.md)); `""` = app root; absent on client tokens. |
+| `calls` | Relative namespace path for phone calls ([`sip-gateway`](../sip-gateway/architecture.md)); `""` = app root; absent on client tokens. |
+| `iat` / `exp` | Unix seconds. Checked by `SignedToken::check` under the caller's `ClaimPolicy`, never by VTS. |
+| `relayId` | `RELAY_ID` of a relay peer (recorded as `peer_relay_id` by the accepting relay). Absent on client tokens. |
 
-Producers and consumers:
+## Producers and Consumers
 
-- `services/vts` (`verify.rs`) reads the payload with `decode_unverified_payload` and checks
-  it with `verify_signature`.
-- `services/console` (`apps.rs`) signs `Claims::issued` with `sign_token`; so does the CLI.
-- `services/relay` (`modules/auth/vts_token_verifier.rs`),
-  `services/recorder` (`api_auth.rs`), `services/bot-dispatcher`
-  (`launch_auth.rs`) and `services/observability` (`app_verifier.rs`) ask
-  `VtsClient` for the `SignedToken` and `check` it, each with its own
-  `ClaimPolicy` and authorization rules; the recorder also asks whether a claim
-  `covers` the room. They hold no secret and never sign or verify.
+- **Signers**: `services/console` (`apps.rs`) and `auth-token` CLI build `Claims::issued` and sign via `sign_token`.
+- **Signature verifier**: `services/vts` (`verify.rs`) calls `decode_unverified_payload` then `verify_signature`.
+- **Token consumers**: `services/relay` (`modules/auth/vts_token_verifier.rs`), `services/recorder` (`api_auth.rs`), `services/bot-dispatcher` (`launch_auth.rs`), and `services/observability` (`app_verifier.rs`) call `VtsClient` and run `SignedToken::check` with their own `ClaimPolicy` and authorization rules (`recorder` also checks `covers`). They hold no secret and never sign or verify locally.
 
 ## Invariants
 
-- `decode_unverified_payload` never checks the signature. It may not be used as an
-  authorisation decision; only a successful `verify_signature` with the app's
-  secret is.
-- A header whose `alg` is anything other than `HS256` is `InvalidSignature`.
-- The CLI takes the secret only from `AUTH_TOKEN_SECRET`, never from an argument,
-  which shell history and the process list would keep, and reads no registry,
-  so the crate depends on neither `app-registry` nor its storage clients.
-- `clap` is an optional dependency behind `cli`; crates that use the library,
-  the relay among them, never build it.
-- `reqwest` and `telemetry-otlp` are optional dependencies behind
-  `vts-client`, so the crates that only sign or check tokens (`vts`, `console`,
-  `temporary-apps`) build neither.
-- Unknown claims are ignored on read and never produced on write, so the VTS
-  can pass the signed payload through unchanged while its readers read only
-  the fields above.
-- Every reader of a VTS answer judges token times and namespace paths with
-  `SignedToken::check`, so a token one service accepts is not refused by
-  another for its times.
-- The crate holds no secret. Callers pass the secret of the app that signs or
-  verifies.
+**Security**
+- **Signature before trust**: `decode_unverified_payload` does not verify the signature; authorization requires `verify_signature` with the app's secret.
+- **HS256 only**: Any header `alg` other than `HS256` fails with `InvalidSignature`.
+- **Secret isolation**: The crate stores no secrets; callers supply them. The CLI reads `AUTH_TOKEN_SECRET` from the environment only (never CLI args) and does not depend on `app-registry` or storage clients.
+
+**Compatibility & packaging**
+- **Feature-gated dependencies**: `clap` is behind `cli`; `reqwest` and `telemetry-otlp` behind `vts-client`. Library-only consumers never build unused dependencies.
+- **Forward-compatible claims**: Unknown claims are ignored on read and omitted on write, so VTS passes signed payloads through unchanged while readers inspect only known fields.
+- **Consistent time/path checks**: Every VTS consumer validates timestamps and namespace paths through `SignedToken::check`.

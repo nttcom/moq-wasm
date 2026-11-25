@@ -1,39 +1,18 @@
-# reqwest for calling the token verification service
+# `reqwest` for Calling the Verify Token Service
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-09-09
+Accepted (2026-09-09)
 
 ## What
-
-`reqwest` (with the `json` and `rustls` features, no default features) is an
-optional dependency of `auth-token`, enabled by its `vts-client` feature.
-`VtsClient` (`vts_client.rs`) uses it to `POST` a client's authorization token
-to the Verify Token Service (VTS) and read back the verified claims. The
-relay, `bot-dispatcher`, `observability` and `recorder` call the VTS through
-it.
+Optional dependency of `auth-token` (`json`, `rustls`, `default-features = false`, gated behind `vts-client`). `VtsClient` (`vts_client.rs`) POSTs client JWTs to VTS and parses verified claims for `relay`, `bot-dispatcher`, `observability`, and `recorder`.
 
 ## Context
-
-Clients present a JWT in the CLIENT_SETUP AUTHORIZATION TOKEN parameter. The
-relay does not hold signing secrets; it forwards the token to VTS over HTTP
-once per session and trusts the returned claims.
+Relays and services do not hold app signing secrets; they verify client JWTs via a single HTTP call to VTS per session.
 
 ## Alternatives
-
-- Verify the JWT locally with `jsonwebtoken`. Requires distributing every
-  appId's secret to every relay and rotating them in lockstep; rejected in the
-  auth design in favour of a single verification point.
-- `hyper` directly. Lower level than needed for one JSON round trip; TLS,
-  connection pooling and timeouts would be hand-written.
-- `ureq` (blocking). Would need `spawn_blocking` inside the async accept path.
+- **Local `jsonwebtoken` verification**: Requires distributing and rotating every app's secret across all relays.
+- **`hyper` directly**: Requires hand-writing TLS, pooling, and timeouts for one JSON POST.
+- **`ureq` (blocking)**: Requires `spawn_blocking` on the async accept path.
 
 ## Decision
-
-Use `reqwest`. The `rustls` feature matches the TLS stack the relay already
-links for QUIC. The dependency is optional so that a crate that only signs or
-checks tokens does not link an HTTP client.
+Use `reqwest` (`rustls` matches the relay's QUIC TLS stack) behind `vts-client`, so sign-only/check-only crates do not link an HTTP client.

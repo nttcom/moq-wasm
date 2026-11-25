@@ -1,35 +1,20 @@
-# hyper for the temporary-apps service HTTP server
+# `hyper` for the HTTP Server (`temporary-apps`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-05
+**Status:** Accepted (2026-11-05)
 
 ## What
 
-Add `hyper` 1.x (features `http1`, `server`) as a direct dependency of the
-`temporary-apps` crate. `server.rs` serves `POST /tokens`,
-`POST /tokens/refresh`, the `/bots` routes and `GET /healthz` over HTTP/1
-with it, on `http-server`'s accept loop.
+Add `hyper` 1.x (`http1`, `server`) as a direct dependency of `temporary-apps`. `server.rs` serves `POST /tokens`, `POST /tokens/refresh`, `/bots` routes, and `GET /healthz` over HTTP/1 using `http-server`'s accept loop.
 
 ## Context
 
-The temporary-apps service needs an HTTP/1 server for three routes, a CORS preflight, a
-16 KiB body limit and JSON bodies: the same shape as the VTS server.
+`temporary-apps` needs an HTTP/1 server with a small flat route set, CORS preflight handling, a 16 KiB body cap, and JSON payloads—the same profile as VTS.
 
 ## Alternatives
 
-- `axum`. Shorter route declarations, but adds `axum`, `axum-core`, `tower`,
-  `tower-layer`, `tower-service` and `matchit` to the dependency tree for three
-  routes with no middleware.
-- Hand-written HTTP/1 on `tokio::net::TcpStream`. Would reimplement request
-  parsing, keep-alive and framing that `hyper` already gets right.
+- **`axum`:** Shorter route syntax, but pulls in `axum`, `axum-core`, `tower`, `tower-layer`, `tower-service`, and `matchit` for a handful of routes with no middleware.
+- **Hand-written HTTP/1 on `tokio::net::TcpStream`:** Reimplements request parsing, keep-alive, and framing.
 
 ## Decision
 
-Use `hyper` directly, as the VTS and the console do. It is already compiled in
-the workspace, so no new crate enters the dependency tree, and a `match` on
-method and path is enough routing.
+Use `hyper` directly with a method/path `match`, matching VTS and `console`. It is already compiled in the workspace, adding no new crate to the dependency tree.

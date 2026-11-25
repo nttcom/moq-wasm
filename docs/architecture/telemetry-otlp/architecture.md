@@ -1,109 +1,65 @@
 # `telemetry-otlp` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the design
-intent, module boundaries, runtime flow, or invariants described here change.
+Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
-One `init` that installs the global `tracing` subscriber for a binary of the
-workspace, so every binary writes the same readable log and exports the same
-OTLP traces and logs. What to put in a span or metric stays with each crate.
+Single `init` entry point that installs the global `tracing` subscriber and OpenTelemetry exporters for workspace binaries. Each crate decides what to record in spans and metrics.
 
-## Outputs
+```mermaid
+flowchart LR
+    Tracing["tracing events & spans"] --> Fmt["stdout / stderr (fmt)"]
+    Tracing --> Traces["OTLP Traces (tracing-opentelemetry)"]
+    Tracing --> Logs["OTLP Logs (opentelemetry-appender-tracing)"]
+    EventLogger["EventLogger (data records)"] --> Logs
+    Meter["Meter (10 s interval)"] --> Metrics["OTLP Metrics"]
+```
 
-| Output | Filter variable | Content |
+## Outputs & Filtering
+
+| Output | Filter env var | Content |
 | --- | --- | --- |
-| stdout, or stderr with `LogOutput::Stderr` | `<SERVICE>_STDOUT_FILTER` | `tracing_subscriber::fmt` text with line numbers |
-| OTLP traces | `<SERVICE>_OTEL_FILTER` | spans only, through `tracing-opentelemetry` |
-| OTLP logs | `<SERVICE>_LOG_FILTER` | events, through `opentelemetry-appender-tracing` |
+| stdout (or stderr via `LogOutput::Stderr`) | `<SERVICE>_STDOUT_FILTER` | `tracing_subscriber::fmt` text with line numbers |
+| OTLP traces | `<SERVICE>_OTEL_FILTER` | Spans only (`tracing-opentelemetry`) |
+| OTLP logs | `<SERVICE>_LOG_FILTER` | Events (`opentelemetry-appender-tracing`) |
 
-`<SERVICE>` is `TelemetryConfig::service_name` in upper case with `-` as `_`
-(`relay` → `RELAY_STDOUT_FILTER`). Each filter falls back to `RUST_LOG`, and
-each `default_directives` entry, and `telemetry_otlp=info` for the startup line,
-is added unless the filter already names its target, so
-`RUST_LOG=quinn=debug` still logs `relay=info`.
+- **`<SERVICE>` naming**: Uppercase `TelemetryConfig::service_name` with `-` → `_` (e.g., `relay` → `RELAY_STDOUT_FILTER`).
+- **Filter fallback**: Each filter falls back to `RUST_LOG`. Missing targets from `default_directives` and `telemetry_otlp=info` are appended automatically, so `RUST_LOG=quinn=debug` still logs `relay=info`.
+- **Log-span correlation**: `tracing-opentelemetry` activates each span's OTel context on enter, so inner logs automatically carry its trace and span IDs.
 
-The OTLP exporters run only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and
-`OTEL_SDK_DISABLED` is not. This departs from the OpenTelemetry default, which
-exports to `localhost:4317` when no endpoint is given: a binary deployed
-without a collector would keep sending to nothing. The other standard
-variables apply as usual: `OTEL_EXPORTER_OTLP_PROTOCOL` picks `grpc`
-(default) or `http/protobuf`, `OTEL_EXPORTER_OTLP_HEADERS` is read by
-`opentelemetry-otlp`, and `OTEL_SERVICE_NAME` overrides `service.name`. The resource carries
-`service.name`, `service.version` and the caller's `resource_attributes`.
+### OTLP Activation & Env Vars
+OTLP exporters start **only** when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and `OTEL_SDK_DISABLED` is not (avoiding OTel's default `localhost:4317` export when no collector exists).
 
-A log emitted inside an exported span carries that span's trace and span id:
-`tracing-opentelemetry` activates the span's OpenTelemetry context on enter,
-and the log bridge reads the active context.
+- `OTEL_EXPORTER_OTLP_PROTOCOL`: `grpc` (default) or `http/protobuf`
+- `OTEL_EXPORTER_OTLP_HEADERS`: passed through by `opentelemetry-otlp`
+- `OTEL_SERVICE_NAME`: overrides `service.name` (resource carries `service.name`, `service.version`, and caller `resource_attributes`)
+- When OTLP is active, `init` also installs the global W3C Trace Context propagator.
 
-When OTLP is on, `init` also installs the W3C Trace Context propagator as the
-global propagator.
+## Event Records (`EventLogger`)
+`TelemetryGuard::event_logger` returns `Some(EventLogger)` when OTLP is enabled, for structured high-frequency data (such as 1 Hz relay snapshots):
+- Sent straight to the OTLP log exporter, bypassing `tracing` filters and stdout.
+- Sets `EventName` and body to the event name, severity to `INFO`, and payload as one string attribute (keeping JSON out of the body prevents ClickStack from splitting every JSON key into duplicate attributes).
 
-## Event records
+## Metrics (`Meter`)
+`TelemetryGuard::meter` returns `Some(Meter)` when OTLP is enabled. Export interval defaults to `OTEL_METRIC_EXPORT_INTERVAL` = **10 s** (instead of OTel's 60 s) so 1-hour HyperDX charts have sufficient resolution. The relay exports process gauges through `ProcessGauges` ([`observability/architecture.md`](../observability/architecture.md)).
 
-`TelemetryGuard::event_logger` returns an `EventLogger` (`None` while OTLP is
-off) for records that carry data rather than a message: they go to the OTLP
-log exporter only, past the `tracing` filters and stdout, so a payload sent
-every second neither floods the readable log nor depends on a filter. Each
-record has an `EventName`, that name as its body, INFO severity and the data
-as one string attribute. The data is not the body because the ClickStack
-collector parses any body containing a JSON object into one attribute per
-field, which would store it twice.
+## Trace Context
 
-## Metrics
+| Helper | Carrier | Role |
+| --- | --- | --- |
+| `inject_trace_context` / `current_trace_headers` | `http::HeaderMap` | Injects W3C `traceparent` **and** `x-original-traceparent` on outgoing HTTP calls (including `auth_token::VtsClient`). |
+| `continue_trace_from` | `http::HeaderMap` | Attaches a server span to `x-original-traceparent`, falling back to `traceparent`. |
+| `current_traceparent` / `continue_trace_from_traceparent` | `String` | Non-HTTP propagation (e.g., relay ↔ `moqt` `TRACE_CONTEXT`). |
 
-`TelemetryGuard::meter` returns a `Meter` (`None` while OTLP is off) whose
-instruments the OTLP metric exporter sends every
-`OTEL_METRIC_EXPORT_INTERVAL` ms, 10 s by default rather than the
-OpenTelemetry 60 s, so a HyperDX chart of the last hour has enough points.
-The relay records the relay-wide values of its stats snapshot through its own
-`ProcessGauges` (see the observability architecture).
-
-## Trace context
-
-A span's context crosses a process boundary as a W3C `traceparent`.
-`inject_trace_context` writes it into an `http::HeaderMap`,
-`current_trace_headers` returns it as the headers of a request to another
-service, and `continue_trace_from` makes a server's span a child of the context
-a request carries. Every service that calls another puts
-`current_trace_headers` on the request, and the caller's VTS verification goes
-through `auth_token::VtsClient`, so one trace covers both processes.
-
-Cloud Run's front end rewrites `traceparent` on the way to the VTS: it
-keeps the trace ID but makes the parent a span of its own that only Cloud
-Trace receives, so in HyperDX the VTS's span would have a parent that does
-not exist. `inject_trace_context` therefore writes the same value again as
-`x-original-traceparent`, which the front end leaves alone, and
-`continue_trace_from` reads that header first, falling back to
-`traceparent`.
-
-`current_traceparent` returns the current span's `traceparent` as a string
-and `continue_trace_from_traceparent` continues one, for carriers other than
-HTTP headers: the relay gives `current_traceparent` to `moqt` as its trace
-context provider, so a request it forwards upstream carries it in
-TRACE_CONTEXT, and continues the TRACE_CONTEXT a client's request carries.
-All of them are no-ops while OTLP is off, because the global propagator is then
-a no-op.
+- **Why `x-original-traceparent`**: Cloud Run's front end rewrites `traceparent` to a Cloud-Trace-only parent span, breaking parent links in HyperDX. `x-original-traceparent` passes through untouched.
+- **No-op when disabled**: With OTLP off, the global propagator is a no-op and all trace-context helpers do nothing.
 
 ## Lifecycle
+`init` fails if a subscriber is already installed or the OTLP protocol is unknown. Hold the returned `TelemetryGuard` for the lifetime of `main`: dropping it shuts down providers and flushes queued batches.
 
-`init` fails when a subscriber is already installed or the OTLP protocol is
-unknown. It returns a `TelemetryGuard` whose drop shuts the providers down,
-flushing the batches still queued, so a binary holds it for the life of
-`main`.
-
-## Test subscribers
-
-The `testing` feature exports `testing::set_default`, which every test that
-captures spans or events calls instead of `tracing::subscriber::set_default`.
-While only one dispatcher exists, `tracing-core` caches a callsite's interest
-from the default of the thread that registers it first, so a concurrent test
-without a subscriber would cache `never` for a callsite the capturing test
-needs. `set_default` first keeps a second, idle dispatcher alive, so interest
-is combined over all dispatchers. `moqt` keeps its own small copy in
-`test_support` so `cargo test -p moqt` does not build OpenTelemetry.
+## Test Subscribers (`testing` feature)
+Tests capturing spans/events call `testing::set_default` instead of `tracing::subscriber::set_default`. With a single dispatcher, `tracing-core` caches callsite interest from whichever thread runs first, so concurrent non-capturing tests can cache `never`. `testing::set_default` keeps a second idle dispatcher alive so interest is combined across dispatchers. (`moqt` keeps a local copy in `test_support` to avoid compiling OpenTelemetry in `cargo test -p moqt`.)
 
 ## Dependencies
-
-`opentelemetry.md` records why the OpenTelemetry crates are used, and
-`http.md` why the trace context helpers take an `http::HeaderMap`.
+- OpenTelemetry crates: [opentelemetry.md](opentelemetry.md)
+- `http` (`HeaderMap`): [http.md](http.md)

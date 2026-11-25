@@ -1,35 +1,17 @@
-# object_store for bot-dispatcher's state
+# `object_store` for `bot-dispatcher` State
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-11-18
+Accepted (2026-11-18)
 
 ## What
-
-Add `object_store` (`gcp`, `fs`) and `url` as direct dependencies of `bot-dispatcher`.
-`store.rs` keeps the bot records, stop requests and room holders in a
-Cloud Storage bucket or a local directory.
+Direct dependencies `object_store` (`gcp`, `fs`) and `url` in `bot-dispatcher`. `store.rs` stores bot records, stop flags, and per-room holders in GCS or a local directory.
 
 ## Context
-
-`bot-dispatcher` scales to zero and runs any number of instances, so its state lives
-outside the process. One room runs at most one bot of each type, which needs
-a create-if-absent and a replace-if-unchanged write.
+`bot-dispatcher` scales to zero and runs multiple instances, so state lives outside memory. Enforcing at most one active bot per `(type, room)` requires atomic create-if-absent and conditional replace writes.
 
 ## Alternatives
-
-- A database (Firestore, Cloud SQL). Transactions, but a new service to run
-  for a handful of small objects.
-- The Cloud Storage JSON API on `reqwest`. The preconditions are reachable,
-  but authentication, retries and the local directory would be the crate's
-  own.
+- **Database (Firestore / Cloud SQL)**: Operational overhead of another service for a handful of small JSON objects.
+- **GCS JSON API over `reqwest`**: Requires maintaining auth, retries, and a local-filesystem backend manually.
 
 ## Decision
-
-Use `object_store`, as `recorder` does for the same kind of state:
-`PutMode::Create` and `PutMode::Update` map onto Cloud Storage's generation
-preconditions, and a `file://` directory serves development.
+Use `object_store` (matching `recorder`): `PutMode::Create` / `PutMode::Update` map directly to GCS generation preconditions, and `file://` supports local development.

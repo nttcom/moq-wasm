@@ -1,50 +1,25 @@
-# object_store for uploading recordings
+# `object_store` for Uploading Recordings (`recorder`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-16
+**Status:** Accepted (2026-10-16)
 
 ## What
 
-Add `object_store` (Apache Arrow project, `gcp` and `fs` features) to
-`services/recorder` to upload closed recording files to Google Cloud Storage, or to
-a local directory, and `url` to pass it the upload location, which
-`object_store::parse_url_opts` takes as a `url::Url`.
+Add `object_store` (`default-features = false`, features: `fs`, `gcp`) and `url` to `services/recorder` to upload closed recording files to Google Cloud Storage or a local directory (`object_store::parse_url_opts` takes a `url::Url`).
 
 ## Context
 
-Recordings have to land in a bucket instead of the recorder's local disk: GCS
-first, S3 later. The upload has to authenticate the way the recorder is deployed
-(a service account on a VM or Cloud Run, or the developer's ADC), refresh its
-token, retry transient failures and stream files of tens of megabytes without
-holding them in memory.
+Recordings must upload to object storage (GCS first, S3 later) rather than staying on local disk. Uploads must authenticate via VM/Cloud Run service accounts or developer ADC, refresh tokens, retry transient errors, and stream tens-of-megabyte files without buffering them in RAM.
 
 ## Alternatives
 
-- **An own `Uploader` trait with a GCS client on `reqwest`.** No new crate, but
-  the recorder would own the OAuth token flow, the retry policy and the
-  resumable or multipart upload protocol, and S3 would add SigV4 signing on
-  top. That reimplements what `object_store` already maintains.
-- **The vendor SDKs (`google-cloud-storage`, then `aws-sdk-s3`).** Each is a
-  large dependency tree with its own client and error types, so S3 support
-  would still need a trait of our own to hide the two of them.
-- **Local files synced by gcsfuse or rclone.** No code, but one more process
-  to run beside every recorder, and the recorder could not tell when a file
-  reached the bucket.
+- **Custom `Uploader` trait + GCS client over `reqwest`:** Reimplements OAuth token refresh, retries, resumable/multipart uploads, and eventually S3 SigV4 signing.
+- **Vendor SDKs (`google-cloud-storage`, `aws-sdk-s3`):** Large dependency trees with distinct client/error types that still need a custom abstraction layer.
+- **Sidecar sync (`gcsfuse` / `rclone`):** Adds an extra process per recorder and prevents the recorder from knowing when uploads finish.
 
 ## Decision
 
-Use `object_store` with `default-features = false, features = ["fs", "gcp"]`.
-`fs` adds `LocalFileSystem` for `file://` URLs, so a recorder run locally keeps
-the same object layout in a directory without a bucket; it adds `walkdir` and
-`nix` to the lock file. Its
-`ObjectStore` trait is the seam: the recorder holds an `Arc<dyn ObjectStore>`
-built from the `--upload` URL, so S3 needs the `aws` feature and an `s3://`
-URL, and no recorder code of its own. Credentials are read from the
-environment: a service account file, the ADC file, or the GCE metadata server
-when neither is present. The crate uses `reqwest` 0.13 and `aws-lc-rs`, both
-already in the workspace's lock file.
+Use `object_store` with `fs` and `gcp`:
+
+- **`fs` (`LocalFileSystem`):** Supports `file://` URLs for local runs with identical object layout (adds `walkdir` and `nix` to the lock).
+- **`Arc<dyn ObjectStore>` seam:** Built from `--upload`, so adding S3 later only requires enabling the `aws` feature and passing an `s3://` URL.
+- **Auth & shared deps:** Reads service-account files, ADC, or the GCE metadata server automatically, and reuses `reqwest` 0.13 and `aws-lc-rs` already in the workspace lock.

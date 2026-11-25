@@ -1,22 +1,21 @@
-# SHA-256 for archive chunks
+# `aws-lc-rs` SHA-256 for Archive Chunk Integrity (`recorder`)
 
-## Status
+**Status:** Accepted
 
-Accepted.
+## What
 
-## What and context
+Use `aws_lc_rs::digest` (SHA-256) in `archive_chunks.rs` to hash archive payload and index chunks and store each digest in the archive manifest.
 
-Use `aws-lc-rs` to identify corruption in saved archive payload and index
-chunks (`archive_chunks.rs`). The archive reader must detect a damaged object
-before replaying it.
+## Context
+
+The archive reader must detect corrupted payload or index chunks before replaying them.
 
 ## Alternatives
 
-Storage ETags are provider-dependent and do not consistently identify the
-contents. A custom implementation would add cryptographic code to maintain.
-`sha2` would add a second SHA-256 next to the one the workspace already links.
+- **Storage ETags:** Provider-dependent and not guaranteed to match raw content hashes.
+- **Custom SHA-256 implementation:** Adds hand-maintained cryptographic code.
+- **`sha2`:** Adds a second SHA-256 implementation alongside the crypto library the workspace already links.
 
 ## Decision
 
-Use SHA-256 through `aws_lc_rs::digest`, the crypto library the workspace
-already uses. Store the digest beside each chunk in the archive manifest.
+Compute SHA-256 digests with `aws_lc_rs::digest`—already linked across the workspace—and record each digest beside its chunk in the archive manifest.

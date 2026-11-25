@@ -1,95 +1,42 @@
-# proptest for property-based codec tests in moqt
+# `proptest` for Codec and Protocol Property Tests (`moqt`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-19
+**Status:** Accepted (2026-11-19)
 
 ## What
 
-Add `proptest` as a dev-dependency of the `moqt` crate, with default features
-off and only `std` on. The tests use it to state properties of the wire
-codecs over generated messages and objects instead of a few hand-picked ones:
+Add `proptest` (`default-features = false`, feature: `std`) as a dev-dependency of `moqt` to verify wire codecs and protocol state machines over generated inputs instead of only hand-picked examples.
 
-- decoding an encoded draft-14 control message gives back the same message
-  and reads every byte of it;
-- a variable-length integer of either draft reads back however its bytes are
-  split across chunks;
-- framed control messages decode to the same messages however the stream is
-  cut into chunks;
-- the objects written to a subgroup stream or a FETCH response of either
-  draft read back the same however the stream is cut into chunks;
-- received draft-18 Track Properties, in any encoding that holds each
-  integer, go out byte-identical, and after any setters only the properties
-  a setter changed are encoded afresh;
-- a draft-18 SUBSCRIBE, SUBSCRIBE_NAMESPACE, PUBLISH, FETCH or PUBLISH_DONE
-  decodes to the message encoded, up to what draft-18 cannot carry (FETCH
-  reads the publisher's group order as Ascending, a reason phrase is cut
-  at 1,024 bytes), and encoding fails only for a DELETE authorization
-  token or a range ending before its start;
-- a sequence of model SUBSCRIBE_UPDATEs sent as draft-18 REQUEST_UPDATEs
-  and applied to the receiver's baseline leaves the model's state, and a
-  received Subscription Filter holds the same groups once applied;
-- a SUBSCRIBE, TRACK_STATUS, SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE,
-  PUBLISH, PUBLISH_DONE or FETCH a peer of one draft sends, forwarded by a
-  relay to a peer of the other, keeps its meaning on each hop or fails to
-  encode: a draft's encoder fails exactly when the message holds what the
-  draft cannot express (for draft-14, a namespace of no fields or an
-  integer of 2^62 or more; for draft-18, an empty namespace field, a DELETE
-  token or a range ending before its start), and otherwise the receiver
-  reads the message less only what the draft does not carry (a reason
-  phrase cut at 1,024 bytes on a character, the fields draft-14 PUBLISH
-  has no place for, the PUBLISH_DONE codes draft-14 does not define);
-- during a session migration, `GroupCutover` takes each group from at most
-  one subscription, every object of it or none, and from the current one
-  only from its start while the previous one may still deliver it;
-- `ObjectLedger` rejects a copy of an object exactly when it conflicts with
-  a copy the ledger accepted earlier, so an object is malformed when any two
-  of its copies conflict, whatever order they arrive in.
+### Properties Tested
 
-The strategies live in `modules/test_support/control_message_strategies.rs`
-and `modules/test_support/object_strategies.rs`, shared by the tests of each
-codec. They favour the values where an encoding changes: the edges of each
-integer length, and object and group gaps of 0 to 3, where a codec omits or
-shortens a delta. Uniform values almost never reach them.
+**Wire framing and varints**
+- Draft-14 control messages round-trip identically and consume every encoded byte.
+- Varints of either draft decode identically across arbitrary byte-chunk splits.
+- Framed control streams, subgroup streams, and FETCH responses of either draft decode identically across arbitrary chunk splits.
+
+**Draft-18 and cross-version relaying**
+- Received draft-18 Track Properties re-encode byte-identically regardless of integer encoding width; calling setters re-encodes only modified properties.
+- Draft-18 `SUBSCRIBE`, `SUBSCRIBE_NAMESPACE`, `PUBLISH`, `FETCH`, and `PUBLISH_DONE` round-trip up to draft-18 limits (`FETCH` reads publisher group order as `Ascending`; reason phrases truncate at 1,024 bytes) and fail to encode only for a `DELETE` auth token or an inverted range.
+- Sequences of model `SUBSCRIBE_UPDATE`s encoded as draft-18 `REQUEST_UPDATE`s match the receiver baseline state; received Subscription Filters cover the same groups.
+- Cross-draft forwarding (`SUBSCRIBE`, `TRACK_STATUS`, `SUBSCRIBE_NAMESPACE`, `PUBLISH_NAMESPACE`, `PUBLISH`, `PUBLISH_DONE`, `FETCH`) preserves meaning up to draft-omitted fields (reason phrases truncated at 1,024 bytes on a UTF-8 boundary, fields absent in draft-14 `PUBLISH`, `PUBLISH_DONE` codes undefined in draft-14), failing to encode only at exact draft limits (draft-14: empty namespaces or integers `>= 2^62`; draft-18: empty namespace fields, `DELETE` tokens, or inverted ranges).
+
+**Session state**
+- During session migration, `GroupCutover` delivers each group from at most one subscription (all objects or none) and starts from the current subscription only at group start while the previous subscription may still deliver it.
+- `ObjectLedger` rejects an object copy if and only if it conflicts with an accepted copy, making malformation detection independent of arrival order.
+
+Shared strategies live in `modules/test_support/control_message_strategies.rs` and `modules/test_support/object_strategies.rs`. They bias toward encoding boundaries (varint width edges, object/group gaps of `0..=3` where deltas are omitted or shortened) that uniform random generation rarely hits.
 
 ## Context
 
-Many of the `moqt` codec fixes were for inputs no example-based test had
-picked: values at the edge of a varint length, names and reason phrases at
-their draft limits, lengths above 32 bits on wasm32, non-UTF-8 fields. Each
-example test checks the values its author thought of. A property over
-generated messages also covers the combinations of fields and values nobody
-listed, and when it fails it shrinks the input to a minimal case.
-
-`wire_noise()` already feeds fixed byte strings to every decoder to check
-that malformed input never panics or stalls. It says nothing about whether a
-well-formed message decodes to what was encoded, which is what the
-properties above check.
+Past `moqt` codec bugs occurred on inputs no example test listed: varint width edges, names/reason phrases at draft length limits, lengths exceeding 32 bits on `wasm32`, and non-UTF-8 fields. `wire_noise()` checks panic/stall safety on malformed bytes, not round-trip fidelity on valid messages. Property testing explores field combinations automatically and shrinks failures to minimal counterexamples.
 
 ## Alternatives
 
-- `quickcheck`: smaller, but generation is tied to one `Arbitrary` impl per
-  type, so a draft constraint (1 to 32 namespace fields, a 4,096-byte Full
-  Track Name) needs a newtype per constraint, each with a hand-written
-  `shrink` that keeps the constraint.
-- `bolero` or `cargo-fuzz`: coverage-guided fuzzing finds crashes in decoders
-  better than random generation, but needs nightly and runs outside
-  `cargo test`. It fits the "never panics on any bytes" property, not
-  round-trip properties, and can be added for that later.
-- More example tests: each one covers only the values written in it.
+- **`quickcheck`:** Ties generation to one `Arbitrary` impl per type, requiring newtypes and manual constraint-preserving `shrink` impls for draft bounds (1–32 namespace fields, 4,096-byte Full Track Name).
+- **`bolero` / `cargo-fuzz`:** Better for crash-finding fuzzing, but needs nightly Rust and runs outside `cargo test`; not a replacement for round-trip tests (can be added separately later).
+- **More example tests:** Only checks values explicitly anticipated by the author.
 
 ## Decision
 
-Use `proptest`. Strategies compose from combinators, so a draft constraint is
-written once in the strategy and shrinking keeps it. The tests run in
-`cargo test` on stable like the rest of the suite (256 cases per property by
-default, set by `PROPTEST_CASES`). With default features off, it adds four
-crates to the lock (`proptest`, `rand_xorshift`, `unarray`, `core_detect`)
-and, as a dev-dependency, none to crates that depend on `moqt`.
+Use `proptest`. Combinator strategies encode draft constraints once and preserve them during shrinking. Tests run under `cargo test` on stable (256 cases per property by default; override via `PROPTEST_CASES`). With default features off, it adds four crates to the lock (`proptest`, `rand_xorshift`, `unarray`, `core_detect`) and never propagates to downstream crates.
 
-A failing case is written to `crates/moqt/proptest-regressions/` and replayed
-first on the next run; commit that file with the fix of the failure it found.
+Failing cases are written to `crates/moqt/proptest-regressions/` and replayed first on the next run; commit regression files alongside their fixes.

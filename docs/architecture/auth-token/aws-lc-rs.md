@@ -1,44 +1,19 @@
-# aws-lc-rs for HMAC-SHA256
+# `aws-lc-rs` for HMAC-SHA256
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-11-10
+Accepted (2026-11-10)
 
 ## What
-
-Add `aws-lc-rs` as a direct dependency of the `auth-token` crate. `jwt.rs` signs
-and verifies HS256 JWTs with `aws_lc_rs::hmac` (`HMAC_SHA256`, constant-time
-`verify`).
+Direct dependency of `auth-token`. `jwt.rs` signs and verifies HS256 JWTs with `aws_lc_rs::hmac` (`HMAC_SHA256`, constant-time `verify`), pairing with `base64` for header/payload encoding.
 
 ## Context
-
-Client tokens are HS256 JWTs. The VTS verifies them, and both the `auth-token` CLI and
-the console sign them, so signing and verification live next to the claims
-they carry instead of inside the VTS. The crate needs one HMAC-SHA256
-primitive plus base64url; the relay decides everything else about the claims.
+Both `auth-token` CLI and `console` sign HS256 JWTs and VTS verifies them, so signing/verification lives beside `Claims` rather than inside VTS. Only HMAC-SHA256 + base64url is needed; the relay owns all claim policy.
 
 ## Alternatives
-
-- `jsonwebtoken`. Full JWT library whose `Validation` checks `exp` by default
-  and requires an explicit opt-out; the VTS must pass time claims through
-  untouched. New crate in the tree.
-- `hmac` + `sha2` (RustCrypto). Only `sha2` 0.9 and `hmac` 0.10 / 0.12 are in
-  the lock through other paths; the current `sha2` 0.10 would be a new
-  compile unit, and two crates instead of one.
-- `josekit`, `jwt-simple`. Larger surface and new dependencies for one
-  algorithm.
-- `ring`, used here until 2026-11-10. Same API, but the workspace's TLS
-  moved to `aws-lc-rs` (see `docs/architecture/moqt/aws-lc-rs.md`), and
-  keeping `ring` for HMAC alone would compile a second crypto library.
+- **`jsonwebtoken`**: Validates `exp` by default (requiring opt-out because VTS passes time claims untouched); adds a new crate.
+- **`hmac` + `sha2` (RustCrypto)**: Lock only holds older `sha2` 0.9 / `hmac` 0.10–0.12; adds a new compile unit and two crates.
+- **`josekit` / `jwt-simple`**: Oversized new dependencies for a single algorithm.
+- **`ring`** (used until 2026-11-10): Would compile a second crypto library now that workspace TLS uses `aws-lc-rs` ([`moqt/aws-lc-rs.md`](../moqt/aws-lc-rs.md)).
 
 ## Decision
-
-Use `aws-lc-rs`. It is already compiled in the workspace as the crypto
-provider under `rustls` and `quinn`, so the relay, which depends on `auth-token` only
-for `Claims`, gains no new crate. Its HMAC API is a dozen lines for sign and
-verify, and `verify` is constant-time. Header and payload encoding use the
-`base64` crate, which `auth-token` already depends on.
+Use `aws-lc-rs`: already compiled under `rustls` and `quinn` (zero new crates for `relay`), constant-time `verify`, and ~12 lines of code.

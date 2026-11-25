@@ -1,412 +1,100 @@
 # `broadcast` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the track
-layout, the publishing flow or the invariants described here change.
+Living document. Update alongside any change to track layout, publishing flow, or invariants.
 
 ## Scope
-`crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
-unit draft-ietf-moq-msf-02 initiates and ends (§11.3, §11.4): a catalog, LOC and
-CMAF media tracks, a media timeline and a publisher-side FETCH cache. It also
-reads such a broadcast back into media events for `services/egress-gateway` and
-`services/sip-gateway` (see "Reading a broadcast").
-`services/ingest-gateway`, `crates/gst-plugin-moqt`, `moq-cli` and the
-Live Viewer's MP4 publisher, through `sdk/js`, build on it. The track
-layout is summarised in [its README](../../../crates/broadcast/README.md).
+`crates/broadcast` converts `mediapack::MediaEvent`s into an MSF broadcast (draft-ietf-moq-msf-02 §11.3, §11.4)—catalog, LOC and CMAF tracks, media timeline, and 60 s FETCH cache—and reads broadcasts back into `MediaEvent`s for `egress-gateway` and `sip-gateway`.
 
-Three types carry the three multiplicities. `RelayConnection` is one session
-to the relay, opened on first use and shared by every broadcast on it: RTMP
-publishes every stream key of one connection through the same session, and
-the ingest-gateway stats panel reads its transport statistics and stream ledger.
-`Broadcast` binds that connection to one namespace: it announces the
-namespace, holds the catalog metadata and sends the objects of its tracks.
-`BroadcastWriter` turns `mediapack::MediaEvent`s into those objects behind a
-queue that never blocks the media source; `BroadcastWriter::push` returns
-`PushOutcome::Dropped` for what that queue drops while the relay does not
-keep up (see "Group alignment"). A `RenditionTrack` writes one
-rendition of a writer's source video into a track of its own; `ingest-gateway`
-adds its transcoded renditions this way. A writer writes into `video` and
-`audio` by default; `ingest-gateway pull` runs one writer per camera profile in one
-broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
-The chat describes the default `video` and `audio`, so the catalog lists it,
-and the `audio` placeholder sent before the AAC config arrives, only while a
-default track exists. `Broadcast::offer_chat` lists the chat without one, for a
-broadcast whose publisher writes the chat while it sends no media.
-`Broadcast::offer_event_timeline` lists any event timeline of the publisher's
-(draft-ietf-moq-msf-02 §8), such as the records of a robot, as the publisher
-describes it, and has its subgroups carry a Publisher Priority of their own;
-the publisher writes its objects with `Broadcast::send_object`. An offered
-chat is one of these event timelines, under the Publisher Priority of the
-catalog and the media. `CatalogMetadata` keeps them by name, so offering a
-name again replaces its entry.
+Used by `ingest-gateway`, `gst-plugin-moqt`, `moq-cli`, and `sdk/js` (Live Viewer MP4 publisher & browser SDK). Runs on native (`NATIVE`) and `wasm32` (`BROWSER`) by routing all tasks, timers, and clocks through `moqt::executor`. Track layout summary: [`crates/broadcast/README.md`](../../../crates/broadcast/README.md).
 
-Tasks are spawned, timers run and clocks read only through `moqt::executor`, so the crate
-also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
-the relay through moqt's `BROWSER` transport (WebTransport) instead of `NATIVE`.
+## Core Types & Pipeline
 
-## Publishing without subscribers
-Every track the catalog lists except the CMAF tracks is published with PUBLISH
-(draft-ietf-moq-transport-14 §9.13) before the catalog that lists it is sent, so
-the relay ingests and caches each of them from its first object, and a viewer
-subscribing to a track it read in the catalog is served by the relay. The CMAF
-tracks are sent only while the relay holds a SUBSCRIBE for them, so the uplink
-does not carry both packagings of every rendition while nobody watches CMAF;
-the relay caches a CMAF track from its first subscriber on. PUBLISH_NAMESPACE
-is still sent so that the relay can forward those SUBSCRIBEs here, and so that
-relays in a cascade can route a SUBSCRIBE to the relay the publisher is
-connected to. A SUBSCRIBE for the catalog is accepted from the announce on,
-before the source has produced one, and the catalog flows on it once it is
-sent; `Broadcast::wait_for_subscriber` resolves on the first SUBSCRIBE accepted
-in the namespace, so a source such as an ONVIF camera can be started only when
-a viewer arrives. `Broadcast::declare_tracks` extends the same to tracks a
-subscriber knows by name before any catalog lists them, such as the camera
-video a tracking bot subscribes to directly. A SUBSCRIBE for another track
-this crate has published, such as one `remove_track` dropped, is rejected with
-TRACK_DOES_NOT_EXIST; one for any other track is handled like a SUBSCRIBE in a
-namespace no broadcast publishes (see "Sharing a session").
+```mermaid
+flowchart LR
+    Events["mediapack::MediaEvent"] --> Writer["BroadcastWriter (non-blocking queue)"]
+    Rend["RenditionTrack (transcoded renditions)"] --> B["Broadcast (1 namespace + catalog)"]
+    Writer --> B
+    B --> Origin["moqt::Origin (60 s FETCH cache + numbering)"]
+    Origin --> Conn["RelayConnection (1 shared moqt::Session)"]
+    Conn --> Relay["MoQT Relay"]
+```
 
-A source that stops, such as a muted microphone or an ended screen share,
-leaves with `Broadcast::remove_track`: the catalog without the track is sent
-first, then every track that catalog no longer lists, the CMAF sibling, the
-media timeline of a writer left without tracks and, with the last default
-track, the audio placeholder and the chat unless it was offered, ends with
-PUBLISH_DONE through `Origin::end_track`. The numbering stays in `Origin`, so a track whose
-catalog is updated again is published again from the next group, without
-reusing a location.
-`BroadcastWriter::remove_track` takes the removal after the media pushed
-before it, so a configuration still in the queue does not publish the track
-again.
+- **`RelayConnection`**: One relay session opened lazily and shared across all broadcasts on it (e.g., all RTMP stream keys; exposes transport stats and stream ledger for ingest-gateway).
+- **`Broadcast`**: Binds a `RelayConnection` to one namespace, announces it, owns catalog metadata, and sends track objects.
+- **`BroadcastWriter`**: Consumes `MediaEvent`s behind a bounded queue that never blocks the media source (returns `PushOutcome::Dropped` when the relay lags). Default tracks are `video` and `audio`; `ingest-gateway pull` runs one writer per profile via `SourceTracks` (`video/profile_N`, `audio/profile_N`).
+- **`RenditionTrack`**: Publishes one transcoded rendition aligned to its writer's source video groups.
+- **Event timelines & chat**: `Broadcast::offer_event_timeline` registers arbitrary MSF §8 timelines (e.g., robotics) with custom Publisher Priority (re-offering replaces by name in `CatalogMetadata`), written via `Broadcast::send_object`. Chat is an offered timeline at media/catalog priority; default broadcasts list chat (and the pre-AAC `audio` placeholder) only while a default track exists unless `Broadcast::offer_chat` is called explicitly.
 
-A broadcast that ends ends its sources first and its catalog last, with
-PUBLISH_DONE for every track (draft-ietf-moq-msf-02 §11.4); the `isComplete`
-catalog update §11.4 also lists is not sent. `MediaSource::end` removes the
-video, each rendition and the audio as `remove_track` does, each after the
-media queued before it, and stops the rendition tasks so that a later frame
-fails as `Stopped`. A writer or rendition whose task has already stopped takes
-no removal, so its track is removed from the `Broadcast` directly.
-`Broadcast::end_catalog` then forgets the namespace's catalog and ends the
-catalog track with PUBLISH_DONE: the `CatalogRefreshTask`, which serves every
-broadcast of the connection, no longer resends it, and a refresh that took the
-namespace before sends nothing. A catalog update after it publishes the
-catalog again.
+## Publishing, Removal & Teardown
 
-## Track format
-Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the
-codec bitstream, H.264 or H.265 in Annex-B, VP8 or VP9 frames, AV1 temporal units and
-raw AAC, G.711 A-law, Opus or MP3 frames, and the capture timestamp travels as the Timestamp property, MoQT extension
-header 0x10, with no Timescale, so it reads as Unix µs. An audio sample whose
-source measured its level carries it as the Audio Level property, extension
-header 0x0C (§2.3.3.2), which a meeting reads to find the speaker. The capture
-timestamp is the wall clock at which `BroadcastWriter::push` received the first
-sample, advanced by each later sample's presentation time offset from that
-sample, so the time the publish task spends connecting to the relay does not
-move it into the future. A track's
-initialization data is a Base64-encoded entry of the catalog `initDataList` that
-the track's `initRef` names (draft-ietf-moq-msf-02 §5.1.7, §5.2.14); each entry
-takes the name of its track as its id, which keeps the ids unique. An AAC audio
-track's AudioSpecificConfig is published this way; A-law, Opus and MP3 need none
-beyond the codec, sample rate and channel count the catalog lists, and an H.264
-video track carries its parameter sets in band. The catalog's video `codec` is
-the WebCodecs codec string read from the bitstream; a VP9 stream carries no
-level, so its string takes the lowest level whose picture size fits, the same
-estimate the CMAF track's vpcC box gives.
+- **Eager `PUBLISH` vs. on-demand CMAF**: Every cataloged track **except** CMAF is published via `PUBLISH` (draft-14 §9.13) before the catalog naming it is sent, so the relay caches it from object 0. CMAF tracks transmit only while subscribed so uplinks do not carry duplicate packagings when nobody watches CMAF.
+- **Lazy startup (`PUBLISH_NAMESPACE`)**: Sent so relays can route cascaded `SUBSCRIBE`s and accept catalog `SUBSCRIBE`s immediately. `Broadcast::wait_for_subscriber` resolves on the first accepted `SUBSCRIBE` (e.g., lazy ONVIF camera pull); `Broadcast::declare_tracks` allows pre-catalog direct `SUBSCRIBE`s (e.g., tracking bots). Removed/known-absent tracks answer `TRACK_DOES_NOT_EXIST`.
+- **Track removal (`remove_track`)**: Sends the updated catalog *first*, then ends removed tracks (including CMAF siblings, orphaned timelines, and—on the last default track—audio placeholder and unoffered chat) with `PUBLISH_DONE` via `Origin::end_track`. `Origin` retains group numbering so re-added tracks never reuse locations. `BroadcastWriter::remove_track` queues after prior media so pending configs cannot resurrect the track.
+- **Broadcast teardown (§11.4)**: Ends sources first (`MediaSource::end` removes video, renditions, audio in queue order and stops rendition tasks so further pushes return `Stopped`; stopped tasks remove directly from `Broadcast`), then `Broadcast::end_catalog` clears the catalog from `CatalogRefreshTask` and ends the catalog track with `PUBLISH_DONE`. (`isComplete` catalog update is not sent.)
 
-Every LOC audio and video track lists the fields draft-ietf-moq-msf-02
-§5.2.4.1 requires of it, including a `bitrate` and, for video, a
-`framerate`, which a writer that relays a stream without encoding it does not
-know. The catalog then lists estimates: a video's bitrate scales the bitrate
-of the largest video of its switching set whose bitrate is known by pixel
-count, which keeps a player's ladder ordered the way the renditions are, or
-without one comes from its codec, size and frame rate; a video's frame rate
-is 30 unless the source caps it; an audio track's bitrate comes from its codec
-and channel count. The audio placeholder lists AAC-LC stereo at 48 kHz.
+## Track Formats (LOC & CMAF)
 
-## CMAF tracks
-A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:
-the catalog lists no CMAF sibling for them, nothing is muxed into fMP4, and the
-media timeline covers the LOC tracks only. Otherwise every media track
-has a CMAF sibling named with a `_cmaf` suffix, except A-law,
-Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
-`video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
-(draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
-and every object is one `moof` + `mdat` fragment holding one sample (§3.3).
-A fragment's decode and presentation times are the sample's time plus the
-writer's capture origin, so a CMAF sample decodes within one tick of its LOC
-sibling's Timestamp (Unix µs). A player can therefore pair LOC video with CMAF
-audio of the same `renderGroup`.
-A fragment starts the group its sample started on the LOC track, rather than
-one looked up by the fragment's presentation time, which the muxer moves one
-tick later when a sample repeats the previous decode time. The LOC and CMAF
-versions of a rendition are therefore interchangeable; each format forms its
-own switching set. The video tracks of
-one source and its renditions are alternates; a source of another picture,
-such as a shared screen, names its own `SourceTracks::switching_set`. Each
-switching set with more than one track takes an odd `altGroup` for LOC and the
-next one for CMAF. Every switching set also takes a `renderGroup` (msf-02
-§5.2.12) shared by its video, its CMAF siblings and the audio of the same
-`SourceTracks`, so a player that shows several sources of one broadcast pairs
-each picture with its sound. The numbers carry no meaning beyond the grouping:
-a player picks a source by its video track's name.
+### LOC Tracks (draft-ietf-moq-loc-04)
+- **Payloads**: Raw codec bitstreams—H.264/H.265 (Annex-B, in-band parameter sets), VP8/VP9 frames, AV1 temporal units, raw AAC, G.711 A-law, Opus, MP3.
+- **Extension headers**: Capture timestamp in `0x10` (Unix µs, no Timescale), anchored at wall clock on first `BroadcastWriter::push` + PTS delta (so connect latency never shifts timestamps forward). Audio level (if measured) in `0x0C` (§2.3.3.2).
 
-## FETCH cache
-Every object is numbered and kept for 60 seconds from the moment it is
-produced, whether or not anything is subscribed, and a standalone FETCH for a
-cached range is answered from that cache (draft-ietf-moq-transport-14 §9.16).
-The relay forwards a FETCH upstream when its own cache cannot cover the range,
-so a viewer can rewind a CMAF track into the part that predates the relay's
-first subscriber to it. A track published or subscribed while a group is open
-starts sending at the next group so the live and cached object ids agree.
+**Catalog metadata (`msf-02` §5.1.7, §5.2.4.1, §5.2.14)**
+- **Init data**: Base64-encoded in `initDataList` keyed by track name (`initRef`) for AAC `AudioSpecificConfig`; A-law/Opus/MP3 need only codec, sample rate, and channels.
+- **Video codec**: WebCodecs string from bitstream (VP9 infers lowest fitting level, matching `vpcC`).
+- **Estimates**: Missing `bitrate`/`framerate` are estimated (video scales known switching-set bitrate by pixel count or codec/size/fps, default 30 fps; audio from codec/channels; audio placeholder = AAC-LC 48 kHz stereo).
 
-The mechanism is `moqt::Origin` (see the `moqt` architecture document): it
-numbers and caches the objects, writes them to the relay, and answers FETCH,
-FETCH_CANCEL and TRACK_STATUS for the tracks registered with it through
-`Origin::handle`. The crate answers SUBSCRIBE and UNSUBSCRIBE itself, since
-they also update the subscriber signal and the stream ledger.
-This crate decides the policy: which tracks exist, the 60 second retention,
-that the catalog keeps only its newest object, which tracks are published
-eagerly and which wait for a SUBSCRIBE, and that a SUBSCRIBE for anything
-else is rejected. The stream ledger behind the ingest-gateway stats panel is
-updated from the write outcomes `Origin` reports.
+### CMAF Siblings (draft-ietf-moq-cmsf-01)
+Disabled when `SourceTracks::cmaf` is off. Otherwise every media track except A-law, Opus, and MP3 gets a `_cmaf` sibling (`packaging: cmaf`):
+- Init segment in `initDataList` (§3.1); each object is one `moof` + `mdat` single-sample fragment (§3.3).
+- Decode/presentation times offset by the writer's capture origin (within 1 tick of LOC Unix µs), allowing mixed LOC video + CMAF audio in the same `renderGroup`.
+- Group boundaries mirror the LOC track directly (not looked up by muxer-adjusted PTS).
+- **Grouping**: Each `SourceTracks::switching_set` with >1 track gets an odd `altGroup` (LOC) and next even `altGroup` (CMAF). Video, CMAF siblings, and audio of one `SourceTracks` share one `renderGroup` (msf-02 §5.2.12); numbers are grouping-only (players identify sources by video track name).
 
-The catalog is the exception to the 60 seconds: its newest object is kept for
-as long as the publisher runs. It is sent when it changes, and a
-`CatalogRefreshTask` of the connection sends it again so that two sends are at
-most 30 seconds apart, half the relay's default cache retention
-(draft-ietf-moq-msf-02 §5). The task runs on its own timer, so a broadcast
-that sends no media, such as a meeting member with camera and microphone off,
-keeps its catalog fresh too. The relay can still drop it before the next send,
-since a track that has sent nothing since the relay subscribed does not count
-as live there. A viewer that joins a subscription the relay
-already holds does not wait for the next one on the SUBSCRIBE, which starts
-after the largest object: it fetches the current catalog, and the relay
-completes that FETCH from here when its own cache has dropped it.
+## FETCH Cache & Session Sharing
 
-## Sharing a session
-`RelayConnection::new` opens its own session to the relay on first use, reads
-its events and closes it in `close`. `RelayConnection::with_session` publishes
-on a session someone else opened instead, such as a page that publishes and
-plays on one WebTransport session: the owner keeps reading the session's
-events and passes each to `RelayConnection::handle`, which answers SUBSCRIBE,
-UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS for the broadcasts and
-returns the rest, `Disconnected` included after it ended the broadcasts'
-sends. The broadcasts write into the `Origin` the owner passes, so the owner
-can publish tracks of its own on the same session. These go back to the owner:
-a SUBSCRIBE in a namespace no broadcast here publishes or for a track no
-broadcast here has published, such as a page's prompt track next to its
-camera, and an UNSUBSCRIBE that `Origin` does not know. FETCH and TRACK_STATUS
-are answered from the shared `Origin`. The stream ledger and catalog state belong to the connection; the
-session's lifetime belongs to its owner, so `close` leaves it open. A
-connection that opened its own session rejects the SUBSCRIBEs no broadcast
-takes with TRACK_DOES_NOT_EXIST.
+### FETCH Cache (`moqt::Origin`)
+- All produced objects are numbered and retained for **60 s** regardless of subscribers, answering standalone `FETCH` (draft-14 §9.16) so viewers can rewind CMAF before the relay's first subscriber. Tracks joining mid-group start live delivery at the next group so live and cached IDs match.
+- `Origin::handle` serves `FETCH`, `FETCH_CANCEL`, and `TRACK_STATUS`; `broadcast` handles `SUBSCRIBE`/`UNSUBSCRIBE` itself to drive subscriber signals and the stream ledger.
+- **Catalog exception**: Newest catalog object stays cached for publisher lifetime and is refreshed by `CatalogRefreshTask` at least every **30 s** (half default relay cache TTL, msf-02 §5), even when no media flows.
 
-On a `moqt::client::Session`, which reads its own events,
-`RelayConnection::with_client_session` takes the session's connection and
-`Origin`, and the owner adds the connection with `add_handler`:
-`RelayConnection` implements `client::EventHandler` with `handle`, so the
-session passes it each event before its `Origin`, and what it returns goes on
-to the `Origin` and the session's own answers. Registration stays with the
-owner, which keeps the `HandlerId` to remove the connection when its
-broadcasts end.
+### Sharing a Session
+- **`RelayConnection::new`**: Owns its session, reads events, rejects unknown `SUBSCRIBE`s with `TRACK_DOES_NOT_EXIST`, and closes session on `close`.
+- **`RelayConnection::with_session`**: Publishes onto a caller-owned session and `Origin` (e.g., browser sharing publish + play). Caller forwards events to `RelayConnection::handle`, which handles broadcast tracks and returns unhandled events (`Disconnected` after stopping sends; foreign `SUBSCRIBE`s/unknown `UNSUBSCRIBE`s). `close` leaves the session open.
+- **`RelayConnection::with_client_session`**: Implements `moqt::client::EventHandler` so callers register it via `Session::add_handler` ahead of `Origin` and remove it via `HandlerId` when broadcasts end.
 
-## Media sources of the SDKs
-`MediaSource` is the shape the browser and Python SDKs publish encoded
-media in: one `BroadcastWriter` behind `configure_video`, `push_video`,
-`configure_audio`, `push_audio`, renditions and `remove_track`. Each frame
-goes through a `loc::Demuxer`, as if it had been received as a LOC object, so
-an H.264 or H.265 keyframe sets the track's configuration from its parameter
-sets. `push_video` and `push_audio` pass on the writer's `PushOutcome`; the
-`push_video` of the source and of a rendition returns `PushOutcome::NoPicture`
-for a frame from which the demuxer reads no picture, such as an H.264 access
-unit without a slice. Each `MediaRendition` writes its `RenditionTrack` on a
-task of its own, which `remove_track` reaches through the same channel, so a
-removal follows the frames sent before it. That channel holds 300 commands, ten
-seconds of 30 fps video, so a relay that stops taking a rendition's objects does
-not grow the page's or process's memory without bound. Frames leave 4 slots free
-for configurations, which are never dropped since the frames after one cannot be
-decoded without it. A frame that finds no room is dropped
-(`PushOutcome::Dropped`), and so is every frame after it up to a keyframe that
-finds room, as in the `BroadcastWriter` queue; the source's keyframe requests
-are notified when the dropping starts and again for every dropped keyframe. A
-configuration that finds even the free slots taken is held, the latest replacing
-an earlier one, and queued just before that keyframe. The bindings keep only
-their callbacks and their error types: `MediaSourceError` tells media the caller
-got wrong (`InvalidMedia`) from a source that stopped publishing.
+## Media Sources of the SDKs
+`MediaSource` wraps `BroadcastWriter` (`configure_video`, `push_video`, `configure_audio`, `push_audio`, renditions, `remove_track`) for the browser, Python, and Rust SDKs:
+- Runs frames through `loc::Demuxer` so H.264/H.265 keyframes auto-configure parameter sets; returns `PushOutcome::NoPicture` for non-picture access units.
+- Each `MediaRendition` runs its own task behind a **300-command** bounded channel (~10 s @ 30 fps), reserving **4 slots** for configs (never dropped; if even reserved slots fill, latest config replaces pending and queues before the next accepted keyframe).
+- Excess frames return `PushOutcome::Dropped` and drop until a keyframe fits, triggering `keyframe_requests` at drop start and on each dropped keyframe.
+- `MediaSourceError` separates invalid caller media (`InvalidMedia`) from a stopped source.
 
-## Relay switchover
-A relay that is shutting down sends GOAWAY with the URI of another relay, or
-an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).
-`RelayConnection` publishes through a `moqt::Session` that follows GOAWAY
-(`ClientConfig::follow_go_away`), which performs the publisher switchover of
-§8.4.2 (see the `moqt` architecture document): it announces every namespace
-and publishes every published track on the new relay while sends keep going
-to the current one, then writes every object to both, as
-draft-ietf-moq-transport-22 §7.6.1 describes. Viewers still on the
-old relay keep receiving the track, and the new relay gets each track from
-its next group (an object within a group is dropped where no group is open).
-The previous session is closed with NO_ERROR once its relay no longer
-subscribes to any track, which a draining relay of this repository signals
-by unsubscribing when the subscribers it sent GOAWAY to have left, or when
-that relay closes it. The `Origin` and the session stay the same, so the
-numbering and the FETCH cache carry over. The catalog is sent again as soon as
-the session moves (`Session::moved_past`), so the new relay holds it whether
-or not media flows. If the named relay cannot be reached within 10 s, the connection keeps
-publishing to the old session until that relay closes it.
+## Relay Switchover, Group Alignment & Media Timeline
 
-## Group alignment
-The source video track and its transcoded renditions form a CMSF switching set
-(draft-ietf-moq-cmsf-01 §3.2): the transcoder is asked for a keyframe at every
-source keyframe and each `RenditionTrack` group takes the group id the source
-assigned to that presentation time, so the same group id names the same
-instant on every track. `BroadcastWriter::push` assigns a source keyframe its
-id before queueing the sample, not when the publish task reaches it: that task
-waits for the relay to take the samples queued before, and a rendition encoded
-in the meantime would find no id and leave the group out of its track while the
-media timeline lists it. A caller therefore pushes a sample to the writer
-before handing it to the transcoder. A rendition that misses a source keyframe
-keeps writing into its current group and announces the skipped ids with the Prior Group ID Gap header when it
-catches up.
-A browser encodes every rendition from the same frames and keyframes them
-together, so its renditions use `RenditionKeyframes::SameFrames`: a rendition
-keyframe that arrives before the source's takes the id for that presentation
-time itself, and the source's keyframe finds the same id.
+### Relay Switchover
+`RelayConnection` enables `ClientConfig::follow_go_away` (draft-14 §3.5 / §8.4.2, draft-22 §7.6.1): announces/publishes on the new relay while fanning objects out to both relays (new relay starts at next group; old relay continues until `UNSUBSCRIBE` or close), preserving `Origin` numbering and cache. Re-sends the catalog immediately on `Session::moved_past`. If the target relay is unreachable within 10 s, keeps publishing on the old session until closed.
 
-Each video track starts a group only with an id after the last one it started
-(`StartedGroups`). A keyframe that repeats the presentation time of the
-track's previous keyframe finds that keyframe's id again and continues its
-group, since `Origin` refuses a group that precedes the track's next one.
+### Group Alignment
+- **Switching-set alignment (cmsf-01 §3.2)**: `BroadcastWriter::push` assigns a source keyframe's group ID *before* queueing (so callers push source before transcoding, ensuring renditions find the ID). Missed source keyframes keep writing to the current group and emit Prior Group ID Gap on catch-up. Browser simultaneous encoding uses `RenditionKeyframes::SameFrames` (whichever rendition arrives first assigns the PTS's group ID).
+- **Monotonicity (`StartedGroups`)**: Duplicate-PTS keyframes stay in their existing group so IDs never regress. Group IDs are **seeded from the wall clock** so restarted publishers never collide with cached relay locations.
+- **Dynamic keyframes (`SourceTracks::keyframe_requests`)**: Registered via `Broadcast::prepare_encoded_video` before catalog update (shared across source, renditions, and CMAF siblings). Sets `DYNAMIC_GROUPS` (draft-18 §12.6) and triggers on `NEW_GROUP_REQUEST` (§10.2.13) once the open group is ≥ 2 s old or ≥ 60 objects, plus on queue drops. Enabled by browser (`onKeyframeRequest`); unset by `ingest-gateway`/`gst-plugin-moqt`.
+- **On-demand encoding (`SourceTracks::demand_sender`)**: Registered via `Broadcast::publish_on_demand` so tracks publish in Forward State 0 (draft-18 §10.10) and notify when subscribed (including CMAF siblings). Catalog, media timeline, chat, and offered timelines stay Forward State 1. `MediaSource` coalesces transitions into `DemandChanges` (at most 1 unread state per track).
+- **Audio alignment**: Follows the latest video keyframe's group ID (dropping pre-first-keyframe audio). Without video, audio opens a 1 s group using the same ID sequence. If a browser rendition numbers a keyframe before video config arrives, audio drops earlier samples until entering that group so IDs never run backwards.
 
-A source that encodes a keyframe when asked sets
-`SourceTracks::keyframe_requests`. `TrackPublisher` and each `RenditionTrack`
-then register that `Notify` for their video track with
-`Broadcast::prepare_encoded_video` before the catalog update that
-publishes the track, so `Origin` sends the track with DYNAMIC_GROUPS
-(draft-ietf-moq-transport-18 §12.6) and notifies it when a subscriber sends
-NEW_GROUP_REQUEST (§10.2.13), once the track's open group is 2 seconds old
-or holds 60 objects. One `Notify` serves the source and all its
-renditions: the source keyframes them together, so a request on any of the
-tracks starts a new group on each. The `BroadcastWriter` queue also
-notifies it when it starts dropping media because the relay is not keeping up,
-and again whenever it drops a keyframe, so video resumes once the queue drains
-rather than at the source's next periodic keyframe. The browser sets it (`MediaBroadcast`'s
-`onKeyframeRequest`); `ingest-gateway` and `gst-plugin-moqt`
-cannot ask their encoders for a keyframe and leave it unset. The same
-`Notify` is registered for a video's CMAF sibling, so it has dynamic groups
-exactly when its LOC track does.
+### Media Timeline (draft-ietf-moq-msf-02 §7)
+Every writer publishes `<video>_timeline` (default `video_timeline`), even without video, covering its cataloged video/renditions/audio and CMAF siblings (`depends` = `renderGroup` if exclusive per §7.2, else track names).
+- At each group start (driven by video when active, else audio), appends `[pts, [group_id, 0], encode_wallclock]` (both times = capture timestamp) and publishes the accumulated list in a new timeline group.
+- Evicts entries older than relay cache retention; a restarted writer starts an empty timeline.
 
-A source that can stop encoding a track sets `SourceTracks::demand_sender`.
-`TrackPublisher` (for the video and the audio) and each `RenditionTrack` then
-call `Broadcast::publish_on_demand` before the catalog update that publishes
-the track, so `Origin` sends its PUBLISH in Forward State 0 and reports on
-that channel whether a subscriber takes the track (draft-ietf-moq-transport-18
-§10.10). A video's CMAF sibling, which is never PUBLISHed, is registered too:
-its SUBSCRIBEs are reported under the sibling's name, and the browser
-encodes the video while either track is taken. The catalog, the media timeline, the chat and the offered event timelines stay in Forward State 1:
-they hold a state a late subscriber needs, which a relay could not hand it
-had it never received it. The browser sets the sender (`MediaBroadcast`'s
-`onDemandChange`); the other sources encode whether or not anyone watches and
-leave it unset, so their tracks are sent as before.
-`MediaSource` reads the channel on a task of its own into `DemandChanges`,
-which keeps one unread change per track: a change replaces its track's unread
-one, in the place of the first, so a Python or Rust caller that awaits the
-changes late, or never, holds one change per track rather than every
-transition, and reads the latest state of each track.
+## Reading a Broadcast
 
-The audio tracks follow the same boundaries: an audio sample belongs to the
-group of the latest video keyframe at or before it, so audio groups start at
-the same keyframes with the same ids as the video groups. Audio before the
-first keyframe is dropped as the video before it is. A viewer therefore replays
-the audio of a video group range by fetching the same range on the audio
-track, and a subscriber joining late starts both tracks at the same keyframe.
-A source that publishes no video, because it has none or removed it, has no
-keyframes to follow: its audio starts a group of its own every second, taking
-the ids from the same alignment so they keep increasing when video starts.
-A browser rendition can number a keyframe before the writer takes the video's
-configuration. The audio starts no group of its own until it has entered the
-newest group, so it drops what precedes that keyframe and starts the
-keyframe's group: a group it numbered for an earlier time would have a later
-id, and the track's group ids would run backwards.
+`BroadcastReader` (used by `egress-gateway`, `sip-gateway`) subscribes to a broadcast and yields `mediapack::MediaEvent`s on one channel via per-track `TrackReceiveTask`s (aborted on drop):
 
-Group ids are seeded from the wall clock rather than counted from zero. The
-relay keeps a track's cache when its publisher is replaced and treats a track
-that reuses a known location as malformed, so a restarted publisher must never
-produce a location an earlier run already used.
+- **Selection**: Uses `selection::select_tracks` (shared with `recorder`, see [`recorder/architecture.md`](../recorder/architecture.md) "Sources"). Default: main source's tallest video + highest-bitrate audio (`VideoChoice::Off`/`AudioChoice::Off` disable). Ignores CMAF and timelines; skips unsupported codecs; waits for next catalog if AAC lacks `initRef` yet.
+- **A/V sync & timing**: Audio arriving before (or captured before) the first video object is dropped (untimed audio passes once video starts). Each `loc::Demuxer` measures PTS relative to a shared capture origin (first video object's LOC timestamp, or first audio object if audio-only).
 
-## Media timeline
-Every writer publishes a media timeline track (draft-ietf-moq-msf-02 §7) named
-after its video track, `<video>_timeline` (`video_timeline` for the default
-names), even a writer that never publishes video. It covers the writer's
-tracks the catalog lists: the video, the renditions and the audio, with their
-CMAF siblings. Its `depends` names their `renderGroup` when they are all of
-it, as §7.2 requires, and the tracks by name when writers share a switching
-set and so a `renderGroup`. One timeline covers them all because they share
-the writer's group ids (see Group alignment), so its records also hold across
-rendition changes. The timeline is listed while the catalog lists any of those
-tracks.
-
-At the start of every group of the writer, the writer adds the record
-`[presentation time, [group id, 0], encode wallclock]` of the group's first
-sample. Both times are the sample's capture timestamp: msf-02 §7.1.1 makes the
-presentation time the media time of the object the record points at, and the
-LOC Timestamp and the CMAF presentation time are that timestamp. The writer then
-sends the records accumulated so far as one object in a new group of the
-timeline. The video starts the groups while it is published; while it
-is muted or absent the audio does, so a mute leaves no group without a record.
-Records older than the relay's cache retention are dropped and the others are
-kept for as long as the writer publishes; a restarted publisher starts a new
-writer, and with it an empty timeline. Viewers use the timeline to place
-groups on a seek axis.
-
-## Reading a broadcast
-`BroadcastReader` is the subscriber side of the same broadcast, used by
-`egress-gateway` and `sip-gateway`: it subscribes to one and yields its media as `mediapack` media
-events on one channel. Each track is read by a `TrackReceiveTask` spawned
-through `moqt::executor`, aborted when the reader is dropped.
-
-### Track selection
-`selection::select_tracks` picks the tracks from a `TrackChoice`, the same
-choice `recorder` makes; how it finds a source and ranks its renditions is
-recorded in the [`recorder` architecture document](../recorder/architecture.md)
-under "Sources". By default the reader takes the main source's tallest video,
-which is the source rendition in a `broadcast` catalog, and its audio with the
-highest `bitrate`; `VideoChoice::Off` and `AudioChoice::Off` leave a kind out.
-The video codec comes from the catalog's `codec`, and a track whose codec
-`mediapack` cannot demux is not taken. An AAC track's AudioSpecificConfig comes
-from the `initDataList` entry its `initRef` names (draft-ietf-moq-msf-02
-§5.1.7, §5.2.14). `broadcast` lists AAC audio before the first audio frame
-delivers that entry, so while the catalog lists nothing the choice can read,
-the reader waits for the next catalog object. A-law, Opus and MP3 tracks carry
-no initialization data, so their `codec`, `samplerate` and `channelConfig`
-(§5.2.19, §5.2.29, §5.2.30) make up the configuration. CMAF tracks and the
-timelines are ignored.
-
-### Joining
-The catalog is read with `Subscriber::subscribe_current_group`, the SUBSCRIBE
-and joining FETCH MSF §5 asks of a late joiner, so the reader does not wait
-for the next catalog.
-Media tracks are subscribed rather than fetched: FETCH would deliver past
-groups as a burst, which a real-time output like RTP would send on as a
-burst. The video is subscribed from the next group start, so it begins at a
-keyframe. The audio is subscribed from the largest object
-(draft-ietf-moq-transport-14 §9.7) and continues the group in flight: an
-audio object decodes alone, and a publisher that sends its audio as one
-endless group, as a meeting member does, never starts the next group that
-NextGroupStart waits for. Every media track is subscribed before any is
-read, so the audio usually starts before the video. Both carry a 2 s
-DELIVERY TIMEOUT, as a browser player does: on a congested link the relay
-drops what would arrive late instead of sending it on.
-
-Group ids cannot line the audio up with the video: `broadcast` gives the
-audio groups the ids of the video groups they start with, but a meeting
-member numbers its one audio group apart from the video's. The reader instead
-holds the audio to the capture time of the first
-video object: it drops audio that arrives before that object or was captured
-before it, as `broadcast` drops the audio before its first keyframe. Audio
-without a capture timestamp passes once the video has started.
-
-### Timing
-Each track is demuxed by its own `loc::Demuxer`, measuring presentation time
-from a capture origin the tracks share: the capture timestamp of the first
-video object, or of the first audio object when the broadcast has no video.
-LOC capture timestamps are on one wall clock across the tracks of a
-broadcast, so the shared origin keeps video and audio aligned in the media
-events, which an output that muxes both into one container needs.
+**Joining subscriptions**
+- **Catalog**: `Subscriber::subscribe_current_group` (joining FETCH, MSF §5).
+- **Video**: `NextGroupStart` (starts on keyframe, 2 s `DELIVERY TIMEOUT`).
+- **Audio**: `LargestObject` (draft-14 §9.7, 2 s `DELIVERY TIMEOUT`) because audio decodes standalone and meeting audio may use one endless group. No FETCH for media (avoids burst output on RTP).

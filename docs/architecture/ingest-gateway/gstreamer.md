@@ -1,61 +1,34 @@
-# GStreamer for the RTSP input of the ONVIF bridge
+# GStreamer for ONVIF RTSP Input (`ingest-gateway`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-09
+**Status:** Accepted (2026-10-09)
 
 ## What
 
-Replace `ffmpeg-next` with the `gstreamer` and `gstreamer-app` crates in
-`ingest-gateway pull`. A pipeline of `rtspsrc`, the RTP depayloaders, `h264parse` and
-`appsink` receives the camera's RTSP stream and hands H.264 access units and
-audio frames to the bridge.
+Replace `ffmpeg-next` with `gstreamer` and `gstreamer-app` in `ingest-gateway pull`. A pipeline of `rtspsrc`, RTP depayloaders, `h264parse`, and `appsink` receives the camera's RTSP stream and delivers H.264 access units and audio frames to the bridge.
 
 ## Context
 
-Cameras differ in where they put the H.264 parameter sets: some repeat SPS/PPS
-in front of every IDR, some announce them only in the SDP
-(`sprop-parameter-sets`), and some do both. The FFmpeg input passed the
-camera's Annex-B packets through as received and attached its own avcC as the
-LOC Video Config extension. With a Tapo C2xx camera, which carries SPS/PPS in
-band, that combination meant every browser decoder failed on every keyframe: a
-WebCodecs `description` makes the decoder read length prefixes
-(draft-ietf-moq-loc-04 §2.1). Without the extension, a camera that sends the
-parameter sets only in the SDP produces groups no late joiner can decode.
+IP cameras place H.264 parameter sets differently: in-band before every IDR, out-of-band in SDP `sprop-parameter-sets`, or both.
 
-Every other LOC publisher in the repository (browser, `ingest-gateway`,
-`gst-plugin-moqt`) sends Annex-B with the parameter sets in band and no Video
-Config, and `gst-plugin-moqt` and `transcode` already depend on GStreamer.
+The previous FFmpeg input passed Annex-B packets through unchanged while attaching its own `avcC` as the LOC Video Config extension. On cameras sending in-band SPS/PPS (such as Tapo C2xx), browser WebCodecs decoders failed on every keyframe because a `description` makes the decoder expect length prefixes (`draft-ietf-moq-loc-04` §2.1). Dropping the extension without injecting SDP parameter sets breaks late joiners on SDP-only cameras.
+
+Every other LOC publisher in this workspace (browser, `ingest-gateway`, `gst-plugin-moqt`) sends Annex-B with in-band parameter sets and no Video Config, and `gst-plugin-moqt` and `transcode` already depend on GStreamer.
 
 ## Alternatives
 
-- Keep FFmpeg, drop the Video Config in Annex-B mode, and run the packets
-  through `mediapack::h264::ParameterSetTracker` seeded from the SDP extradata.
-  Smaller diff, but the tracker needs a new seeding entry point, and FFmpeg's
-  extradata arrives in Annex-B form even though the old code parsed it as an
-  avcC.
-- Keep FFmpeg and fix the player to convert Annex-B to length prefixes when a
-  description is present. Correct per LOC, but it only fixes this player, and
-  the bridge would still be the one LOC publisher that differs from the rest.
+- **Keep FFmpeg, drop Video Config in Annex-B mode, and seed `mediapack::h264::ParameterSetTracker` from SDP extradata:** Smaller diff, but requires a new seeding entry point, and FFmpeg delivers extradata in Annex-B rather than the `avcC` format the old code parsed.
+- **Keep FFmpeg and convert Annex-B to length prefixes in the player when `description` is present:** Valid per LOC, but fixes only this player and leaves `ingest-gateway pull` inconsistent with every other publisher.
 
 ## Decision
 
-Use GStreamer. `h264parse config-interval=-1` inserts SPS/PPS before every IDR,
-including those taken from the SDP, so every group starts decodable whatever
-the camera does, and the byte-stream output carries no avcC. `rtspsrc` handles
-RTSP over TCP, authentication and the RTP jitter buffer. The bridge still runs
-`ParameterSetTracker` on the access units for the codec string.
+Use GStreamer:
+
+- `h264parse config-interval=-1` injects SPS/PPS (including those from SDP) before every IDR, producing byte-stream Annex-B with no `avcC` so every group is decodable by late joiners.
+- `rtspsrc` handles RTSP over TCP, authentication, and the RTP jitter buffer.
+- The bridge still runs `ParameterSetTracker` on access units to derive the codec string.
 
 ## Consequences
 
-- `ingest-gateway pull` needs GStreamer at run time with the good (`rtspsrc`, RTP
-  depayloaders) and bad (`h264parse`) plugins, instead of the FFmpeg libraries.
-- `ffmpeg-next` is no longer used anywhere in the workspace, so CI installs
-  neither the FFmpeg development packages nor libclang.
-- When a camera also sends SPS/PPS in band, keyframes carry them twice
-  (h264parse's copy, then the camera's). H.264 allows repeated parameter sets,
-  so decoders are unaffected.
+- `ingest-gateway pull` requires the GStreamer runtime with `gst-plugins-good` (`rtspsrc`, RTP depayloaders) and `gst-plugins-bad` (`h264parse`) instead of FFmpeg.
+- `ffmpeg-next` is removed from the workspace; CI no longer installs FFmpeg dev packages or `libclang`.
+- When a camera also sends in-band SPS/PPS, keyframes carry parameter sets twice (`h264parse`'s copy, then the camera's). H.264 allows repeated parameter sets, so decoders handle this cleanly.

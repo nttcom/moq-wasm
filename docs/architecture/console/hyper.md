@@ -1,33 +1,17 @@
-# hyper for the console HTTP server
+# `hyper` for the `console` HTTP Server
 
 ## Status
-
-Accepted
-
-## Date
-
-2026-10-20
+Accepted (2026-10-20)
 
 ## What
-
-Add `hyper` 1.x (features `http1`, `server`) as a direct dependency of the
-`console` crate. `server.rs` serves the console API over HTTP/1 with it.
+Direct dependency of `console` (`hyper` 1.x: `http1`, `server`). `server.rs` serves the console HTTP/1 API.
 
 ## Context
-
-The console answers a handful of JSON routes behind IAP on Cloud Run. The VTS
-already serves its routes with `hyper` and the same `service_fn` and `match`
-on method and path ([vts/hyper.md](../vts/hyper.md)).
+`console` exposes a handful of JSON routes behind IAP on Cloud Run, using the same `service_fn` + method/path `match` pattern as VTS ([`vts/hyper.md`](../vts/hyper.md)).
 
 ## Alternatives
-
-- `axum`. Shorter route declarations and extractors, but adds `axum`,
-  `axum-core`, `tower`, `tower-layer`, `tower-service` and `matchit` to the
-  dependency tree for a few routes with no middleware.
-- Hand-written HTTP/1 on `tokio::net::TcpStream`. Would reimplement request
-  parsing, keep-alive and framing.
+- **`axum`**: Adds `axum`, `axum-core`, `tower*`, and `matchit` for a few middleware-free routes.
+- **Raw HTTP/1 over `TcpStream`**: Reimplements parsing, keep-alive, and framing.
 
 ## Decision
-
-Use `hyper` directly, as the VTS does. It is already in the workspace lock, so
-no new crate enters the dependency tree.
+Use `hyper` directly (already in the workspace lock, matching VTS).

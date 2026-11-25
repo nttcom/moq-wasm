@@ -1,51 +1,26 @@
-# rustrtc for the phone leg's SDES-SRTP
+# `rustrtc` for SDES-SRTP Media (`sip-gateway`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-20
+**Status:** Accepted (2026-11-20)
 
 ## What
 
-Add `rustrtc` 0.6 as a dependency of `sip-gateway`, with `std` and without
-its default `srtp-ring` (AES-GCM then comes from RustCrypto's `aes-gcm`).
-`media/rtp_leg.rs` builds one `PeerConnection` per call in its SIP mode
-(`RtcConfiguration::sip()` with `Keying::Sdes`): it binds the media socket,
-writes the SDP offer (`RTP/SAVP`, PCMU, PCMA, `telephone-event`, `a=crypto`),
-applies the trunk's answer, protects the RTP the gateway sends and unprotects
-what the trunk sends.
+Add `rustrtc` 0.6 (`default-features = false`, feature: `std`; omits `srtp-ring` so AES-GCM uses RustCrypto's `aes-gcm`) to `sip-gateway`. `media/rtp_leg.rs` creates one `PeerConnection` per call in SIP mode (`RtcConfiguration::sip()`, `Keying::Sdes`) to bind the media socket, write the SDP offer (`RTP/SAVP`, PCMU, PCMA, `telephone-event`, `a=crypto`), apply the trunk's answer, and protect/unprotect SRTP packets.
 
 ## Context
 
-Secure Trunking sends SRTP keyed with SDES (RFC 4568) and refuses calls
-without it. The gateway needs an SDP offer and answer for an `RTP/SAVP`
-audio stream, SRTP with the suite the answer picks, and an RTP socket that
-follows the trunk's address (symmetric RTP behind NAT). It does not need ICE
-or DTLS.
+Secure Trunking requires SDES-keyed SRTP (RFC 4568) and rejects unencrypted calls. The gateway needs `RTP/SAVP` SDP offer/answer negotiation, SRTP for the negotiated cipher suite, and symmetric RTP (following the trunk's address behind NAT), without ICE or DTLS.
 
 ## Alternatives
 
-- `mediapack::rtp`. Already in the workspace and parses RTP and SDP, but has
-  no SRTP, no `a=crypto` and no RFC 4733; all three would be written here.
-- `webrtc-srtp` (webrtc-rs) with a hand-written SDP. Only the cipher; the
-  offer, answer and key handling would still be the gateway's.
-- `rvoip`'s media crates. Tied to its own session layer.
+- **`mediapack::rtp`:** Already in the workspace for plain RTP/SDP, but lacks SRTP, `a=crypto`, and RFC 4733 DTMF.
+- **`webrtc-srtp` (`webrtc-rs`) + manual SDP:** Provides only the cipher, leaving SDP offer/answer and key management to hand-written code.
+- **`rvoip` media crates:** Tightly coupled to `rvoip`'s session layer.
 
 ## Decision
 
-Use `rustrtc`: it is the media stack written alongside `rsipstack`, its SIP
-mode writes and reads SDES offers without ICE or DTLS attributes, and its
-SRTP covers AES_CM_128_HMAC_SHA1_80 and _32 and AEAD_AES_128_GCM. ICE, DTLS
-and SCTP still compile in (the crate has no feature to leave them out),
-which adds about 50 crates to the lockfile but nothing to a call. G.711
-transcoding and RFC 4733 events are not in it: transcoding uses GStreamer,
-and the gateway sends its own RTP packets through
-`PeerConnection::send_raw_rtp`.
+Use `rustrtc`: built alongside `rsipstack`, its SIP mode generates/parses SDES offers without ICE/DTLS attributes and supports `AES_CM_128_HMAC_SHA1_80`, `AES_CM_128_HMAC_SHA1_32`, and `AEAD_AES_128_GCM`. Transcoding uses GStreamer, and RFC 4733 DTMF packets are sent via `PeerConnection::send_raw_rtp`.
 
-Two of those crates carry advisories `cargo audit` reports: crypto-bigint
-0.5 through `p256` (DTLS) and h2 0.3 through `igd` (UPnP port mapping).
-Neither runs in the gateway, which keys SRTP with SDES and turns UPnP off, so
-`.cargo/audit.toml` ignores both until rustrtc moves to newer releases.
+## Consequences
+
+- ICE, DTLS, and SCTP still compile in (no feature flags exclude them), adding ~50 crates to `Cargo.lock` without running during calls.
+- Two transitive crates trigger `cargo audit` advisories: `crypto-bigint` 0.5 (via `p256`/DTLS) and `h2` 0.3 (via `igd`/UPnP). Neither code path executes (SDES keying, UPnP disabled), so `.cargo/audit.toml` ignores both until `rustrtc` updates.

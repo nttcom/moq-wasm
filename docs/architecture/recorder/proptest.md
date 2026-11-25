@@ -1,50 +1,26 @@
-# proptest for property-based FETCH range tests in recorder
+# `proptest` for FETCH Range Property Tests (`recorder`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-19
+**Status:** Accepted (2026-11-19)
 
 ## What
 
-Add `proptest` as a dev-dependency of the `recorder` crate, with default
-features off and only `std` on. The tests use it to state one property of the
-replay's FETCH handling:
+Add `proptest` (`default-features = false`, feature: `std`) as a dev-dependency of `recorder` to verify replay FETCH range matching:
 
-- `in_fetch_range` holds exactly the locations a FETCH of `[start, end)`
-  names under the draft text: from Start Location through the object before
-  End Location, or through the whole group when End Location's Object is 0
-  (draft-14 §9.16.1, §9.16.3).
+- `in_fetch_range` includes exactly the locations specified by `[start, end)` in `draft-14` §9.16.1 and §9.16.3: from Start Location through the object before End Location, or through the entire group when End Location's Object ID is `0`.
 
-The generator favours the boundaries a request reaches: an end in the group
-before, of or after the start, at object 0, 1 or one off the start's, and
-group and object IDs of 0 and `u64::MAX`. The property checks every location
-next to the start and the end, where the answer can change.
+The generator biases toward edge cases—`end` in the group before, equal to, or after `start`, at object `0`, `1`, or adjacent to `start`, plus group/object IDs `0` and `u64::MAX`—and checks every location adjacent to `start` and `end`.
 
 ## Context
 
-The replay picks the archived objects a FETCH returns with its own range
-check instead of `moqt`'s, because it reads them from storage rather than
-from a track's cache. Its example tests check a few hand-picked ranges. A
-range check fails at a single boundary (an inclusive end, the whole-group
-rule, the same group as the start), which a property over generated ranges
-compared with a model written from the draft reaches every run.
+Replay reads archived objects from storage rather than a track cache, so it uses its own range check instead of `moqt`'s. Range bugs typically appear at single boundary conditions (inclusive ends, the whole-group `object == 0` rule, same-group bounds) that fixed examples miss; comparing generated ranges against a spec-derived model catches them every run.
 
 ## Alternatives
 
-- More example tests: each one covers only the ranges written in it.
-- Loop over a fixed grid of starts and ends: covers small IDs exhaustively but
-  not `u64::MAX` or IDs far apart, and does not shrink a failure.
+- **More example tests:** Only checks ranges explicitly listed by the author.
+- **Exhaustive grid over small IDs:** Misses `u64::MAX` and widely separated IDs, and provides no shrinking on failure.
 
 ## Decision
 
-Use `proptest`, as `moqt` and `mediapack` do. It runs in `cargo test` on
-stable (256 cases per property by default, set by `PROPTEST_CASES`), and as a
-dev-dependency it reaches no crate that depends on `recorder`.
+Use `proptest`, matching `moqt` and `mediapack`. It runs in `cargo test` on stable (256 cases per property by default; override via `PROPTEST_CASES`) and stays out of the `recorder` binary.
 
-A failing case is written to `services/recorder/proptest-regressions/` and
-replayed first on the next run; commit that file with the fix of the failure
-it found.
+Failing cases are saved under `services/recorder/proptest-regressions/` and replayed first on the next run; commit regression files alongside their fixes.

@@ -1,11 +1,11 @@
-# mediapack architecture
+# `mediapack` Architecture
 
-`crates/mediapack/README.md` describes the formats, the `MediaEvent` model
-and the modules.
+See [`crates/mediapack/README.md`](../../../crates/mediapack/README.md) for supported formats, the `MediaEvent` model, and module layout.
 
-## Muxers kept ahead of their callers
+## Muxers Kept Ahead of Their Callers
 
-`flv::Muxer`, `mpegts::Muxer` and `Transmuxer` have no caller in the
-workspace's services yet: the ingest bridges only demux FLV and MPEG-TS, and
-the recorder only writes fragmented MP4. They stay because FLV and MPEG-TS
-output is planned.
+`flv::Muxer`, `mpegts::Muxer`, and `Transmuxer` currently have no callers in workspace services:
+- Ingest bridges only demux FLV and MPEG-TS.
+- `recorder` only writes fragmented MP4.
+
+These muxers remain in the crate because FLV and MPEG-TS output is planned.

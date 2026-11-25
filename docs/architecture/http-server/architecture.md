@@ -1,42 +1,46 @@
 # `http-server` Architecture
 
 ## Status
-
-Living document. Update this file in the same change whenever the design intent,
-module boundaries, runtime flow, or invariants described here change.
+Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
+Shared HTTP/1 server primitives used by every HTTP service (`console`, `vts`, `temporary-apps`, `observability`, `live-translate`, `recorder`, `bot-dispatcher`, `sip-gateway`). Services own routing and state; this crate handles connection acceptance, request parsing, and response helpers.
 
-`http-server` is the HTTP/1 server part every HTTP service shares: `console`,
-`vts`, `temporary-apps`, `observability`, `live-translate`, `recorder`,
-`bot-dispatcher` and `sip-gateway`. Each
-service keeps its own routing and state; this crate accepts connections,
-reads JSON bodies, bearer tokens and query strings, and builds responses.
+## API
 
+### Server & Lifecycle
 | Item | Responsibility |
 | --- | --- |
-| `HttpServer::run(listener, handler)` | Spawns the accept loop and owns its `JoinHandle`. Each connection runs hyper HTTP/1 on its own task and calls `handler(request, peer)` for every request. |
-| `JsonResponse` | `Response<Full<Bytes>>` alias for JSON services. |
-| `json_response(status, body)` | `body` serialized as JSON with `Content-Type: application/json`. |
-| `raw_json_response(status, body)` | Pre-serialized JSON bytes with `Content-Type: application/json`. |
-| `healthz_response()` | `200 {"status":"ok"}` through `json_response`. |
-| `error_response(status, error)` | `{"error": error}` through `json_response`. |
-| `empty_response(status)` | `status` with an empty body and no headers. |
-| `allow_any_origin(response, methods, headers)` | `response` with `Access-Control-Allow-Origin: *` and the given allowed methods and request headers, for the services whose pages are served from any origin (`temporary-apps`, `live-translate`, `observability`). |
-| `bearer_token(headers)` | The token of `Authorization: Bearer <token>`, or `None` without one or with an empty token. |
-| `client_ip(headers, peer, trusted_proxy_hops)` | Extracts the client IP from `X-Forwarded-For` across all header lines `trusted_proxy_hops` from the end, falling back to `peer`. |
-| `shutdown_signal()` | Waits for `SIGINT` or (on Unix) `SIGTERM`, so containerized services exit cleanly and flush telemetry. |
-| `query_params(query)` | The decoded pairs of a URI's query as a map; of a name given twice, the last value. |
-| `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
-| `testing::StubServer` | Loopback test HTTP server recording received requests; behind the `testing` feature. |
+| `HttpServer::run(listener, handler)` | Spawns the accept loop and owns its `JoinHandle`. Runs hyper HTTP/1 per connection on its own task, invoking `handler(request, peer)` per request. |
+| `shutdown_signal()` | Waits for `SIGINT` or (on Unix) `SIGTERM` so services exit cleanly and flush telemetry. |
+| `testing::StubServer` | Loopback test HTTP server recording requests (behind the `testing` feature). |
 
-## Runtime flow
+### Request Parsing
+| Item | Responsibility |
+| --- | --- |
+| `read_json(body)` | Parses JSON up to `MAX_JSON_BODY_BYTES` (16 KiB); returns `None` on oversize, read error, or invalid JSON. |
+| `bearer_token(headers)` | Extracts `<token>` from `Authorization: Bearer <token>`, or `None` if missing/empty. |
+| `client_ip(headers, peer, trusted_proxy_hops)` | Reads the client IP from `X-Forwarded-For` (`trusted_proxy_hops` from the right across all header lines), falling back to `peer`. |
+| `query_params(query)` | Decodes URI query pairs into a map (duplicate keys keep the last value). |
+
+### Response Builders
+| Item | Responsibility |
+| --- | --- |
+| `JsonResponse` | `Response<Full<Bytes>>` alias. |
+| `json_response(status, body)` | Serializes `body` as `application/json`. |
+| `raw_json_response(status, body)` | Wraps pre-serialized JSON bytes with `application/json`. |
+| `healthz_response()` | `200 {"status":"ok"}`. |
+| `error_response(status, error)` | `{"error": error}` as JSON. |
+| `empty_response(status)` | Empty body with no extra headers. |
+| `allow_any_origin(response, methods, headers)` | Adds `Access-Control-Allow-Origin: *` plus allowed methods/headers (used by `temporary-apps`, `live-translate`, `observability`). |
+
+## Runtime Flow
 
 ```mermaid
 sequenceDiagram
-    participant L as accept loop
-    participant C as connection task
-    participant H as service handler
+    participant L as Accept loop
+    participant C as Connection task
+    participant H as Service handler
     L->>L: listener.accept()
     L->>C: tokio::spawn per connection
     C->>H: handler(request, peer)
@@ -45,21 +49,12 @@ sequenceDiagram
 
 ## Invariants
 
-- A failed `accept` is logged at WARN (`accept failed`) and the loop goes on;
-  a connection that ends with an error is logged at DEBUG with the peer.
-- The handler cannot fail: it returns a response for every request, so the
-  service decides the status of each failure.
-- The response body type is the service's: `Full<Bytes>` for JSON, a boxed
-  body for server-sent events (`live-translate`), `Either` for a streamed
-  replay (`recorder`). The JSON helpers return `Full<Bytes>`; a service with
-  another body type maps it.
-- Dropping `HttpServer` aborts the accept loop. Open connections are not
-  tracked and run to their end.
-- Headers that only some services send (`Cache-Control: no-store` in
-  `console`, the allowed-origin CORS of `recorder`, `Access-Control-Max-Age`
-  in `observability`) are added by the service, not here.
+- **Error logging**: Failed `accept` logs at `WARN` (`accept failed`) and continues; connection errors log at `DEBUG` with the peer address.
+- **Infallible handlers**: `handler` always returns a response so each service controls error statuses.
+- **Service-owned body types**: Services choose their body type (`Full<Bytes>` for JSON, boxed body for SSE in `live-translate`, `Either` for streamed replay in `recorder`). Services using non-`Full<Bytes>` bodies map the JSON helpers.
+- **Drop stops accept only**: Dropping `HttpServer` aborts the accept loop; open connections are not tracked and run to completion.
+- **Service-specific headers stay out**: Headers such as `Cache-Control: no-store` (`console`), allow-listed CORS (`recorder`), and `Access-Control-Max-Age` (`observability`) are set by each service.
 
 ## Dependencies
-
-`hyper`, `hyper-util` and `http-body-util`: see [hyper.md](hyper.md).
-`url` for `query_params`: see [url.md](url.md).
+- `hyper`, `hyper-util`, `http-body-util`: [hyper.md](hyper.md)
+- `url` (for `query_params`): [url.md](url.md)

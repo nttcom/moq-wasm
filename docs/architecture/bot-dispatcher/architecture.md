@@ -1,248 +1,105 @@
-# Design: a bot service that launches bots into rooms
+# Design: `bot-dispatcher` Service for Launching Room Bots
 
 ## Status
-Accepted
-
-## Date
-2026-11-18
+Accepted (2026-11-18)
 
 ## Scope
-A new service `services/bot-dispatcher` that starts, stops and reports the bots of a
-room, and the changes it brings to:
-
-- `services/recorder`: `recorder record` becomes a bot; `recorder serve` keeps
-  the recordings' read API (lists, files, replay, VOD) and loses start and stop.
-- The Python bots (`examples/python/moq-*`) and `moq-bot-rooms`, which this
-  replaces as the way a bot is started.
-- `services/temporary-apps`, which becomes the app server of temporary apps.
-- `crates/auth-token`, which gains the claim a launch request carries.
+`services/bot-dispatcher` starts, stops, and tracks room bots, affecting:
+- `services/recorder`: `recorder record` runs as a bot; `recorder serve` keeps read/replay APIs and drops start/stop.
+- `examples/python/moq-*`: replaces `moq-bot-rooms`.
+- `services/temporary-apps`: acts as app server for temporary apps.
+- `crates/auth-token`: adds the `bots` launch claim.
 
 ## Context
-Two services start a bot for a room today, each in its own way:
-
-- `recorder serve` takes `POST /recordings` with the page's client JWT as
-  `Authorization: Bearer`, checks through the VTS that its `publish` claim
-  covers the room, and launches `recorder record` as a Cloud Run Job with the
-  token in its arguments (`--token`). The recording presents that token to the
-  relay (docs/architecture/recorder/architecture.md "Recording API").
-- `moq-bot-rooms` runs a bot per room while a page holds `GET /rooms/{room}`
-  open, and validates a temporary app's token by refreshing it on the token
-  mint (docs/architecture/ai-bots/on-demand-rooms.md).
-
-The shape has four problems:
-
-1. **The end user decides.** Any page whose token covers the room can start a
-   recording or a bot. Whether a room is recorded, and whether a job that
-   costs money runs, is the app operator's call, and a page can be edited.
-2. **The bot holds the user's credential.** The recording presents the page's
-   token, `publish` included, although it only subscribes. The token sits in
-   the Cloud Run execution's overrides, readable by anyone who can view the
-   project, and in the process list of a local launch.
-3. **The bot's lifetime is the token's.** Only a temporary app's token can be
-   renewed (on the temporary-apps service). A registered app's token comes from its own
-   backend, which the recorder cannot ask, so a recording ends at the token's
-   `exp`.
-4. **The relay cannot tell the bot from the user.** Both present the same
-   token.
+Previously, `recorder serve` (`POST /recordings` with page JWT passed in `--token`) and `moq-bot-rooms` (`GET /rooms/{room}`) let pages start bots directly, causing four issues:
+1. **End-user control**: Any page holding a room token could launch billable jobs.
+2. **Credential leak**: Bots held the user's `publish`-capable token inside Cloud Run job overrides / process args.
+3. **Token-bound lifetime**: Registered-app tokens could not be renewed by the bot, cutting off recordings at `exp`.
+4. **No bot identity**: The relay saw identical tokens for users and bots.
 
 ## Decision
-A launch is a server-to-server call. The browser asks its app's server; the
-app's server decides and calls the bot service with a short-lived *launch
-token* signed with the app's secret. The bot service launches the bot, and
-the bot joins the room with a *bot token* the bot service signs for it,
-scoped to what that bot needs. For temporary apps, which have no server of
-their own, the temporary-apps service plays the app server.
+
+### Launch Flow & Roles
+Bot launches are server-to-server: the app server decides and sends a short-lived **launch token**; `bot-dispatcher` launches the job and signs a scoped **bot token** when the bot calls back.
 
 ```mermaid
 sequenceDiagram
     participant P as Page
-    participant A as App server (temporary-apps service for a temporary app)
+    participant A as App Server (or temporary-apps)
     participant B as bot-dispatcher
     participant V as VTS
     participant J as Bot (Cloud Run Job)
     participant R as Relay
-    P->>A: start the recorder in room X (the app's own API)
-    Note over A: decides; signs a launch token for X with the app secret
+    P->>A: Request recorder for room X
     A->>B: POST /bots/recorder {namespace_prefix: X} + launch token
     B->>V: POST /verify
     V-->>B: appId, claims
-    B->>B: take the (type, room) lock, write the bot as starting
-    B->>J: launch (bot id only)
-    J->>B: POST /bots/recorder/{id}/token (job identity)
-    B-->>J: bot token for X, signed with the app secret
+    B->>B: Acquire (type, room) holder, mark starting
+    B->>J: Launch job (bot id only)
+    J->>B: POST /bots/recorder/{id}/token (Google ID token / local key)
+    B-->>J: Scoped 1 h bot token for X
     J->>R: connect, SUBSCRIBE_NAMESPACE X, PUBLISH_NAMESPACE X/bots/recorder
-    R->>P: PUBLISH_NAMESPACE X/bots/recorder (the page shows REC)
-    loop every few seconds
+    R->>P: PUBLISH_NAMESPACE X/bots/recorder (UI shows REC)
+    loop heartbeat
         J->>B: POST /bots/recorder/{id}/heartbeat
         B-->>J: {stop: false}
     end
-    Note over J: no human member for the grace period
+    Note over J: No human member for grace period
     J->>R: close session
     J->>B: POST /bots/recorder/{id}/heartbeat {state: finished}
 ```
 
-### Roles
-
-| Party | Holds | Does |
+| Party | Holds | Responsibility |
 | --- | --- | --- |
-| App server | its app's secret | decides who may start a bot, signs launch tokens |
-| Temporary-apps service | the temporary app secret | the app server of every temporary app (below) |
-| `bot-dispatcher` | read access to the registry, the temporary app secret | verifies launch tokens through the VTS, launches bots, signs bot tokens, keeps bot state |
-| Bot | its bot id and the job's own identity | joins the room with its bot token, reports its state, ends itself |
+| App server | App secret | Authorizes bot launches; signs launch tokens |
+| `temporary-apps` | Temporary app secret | Acts as app server for all temporary apps |
+| `bot-dispatcher` | Registry read access + temp secret | Verifies launch tokens via VTS, launches jobs, signs bot tokens, tracks state |
+| Bot | Bot ID + job identity | Joins room with bot token, sends heartbeats, exits on idle/stop |
 
-A bot never sees an app secret, a launch token or a user's token.
+Bots never see app secrets, launch tokens, or user tokens.
 
-### The launch token
-A JWT of the existing shape (`auth_token::Claims`) signed with the app's
-secret, with one new claim:
+### Tokens & Bot Authentication
+- **Launch token**: `auth_token::Claims` signed with app secret carrying `bots` (relative namespace prefix; `""` = app root; absent = denied). Carries no `publish`/`subscribe` (unusable on relay), lives ≤ 5 min, and cannot be a relay token (`isRelay`).
+- **Bot token**: Signed by `bot-dispatcher` (`Claims::issued`) reading the app's current secret from `app-registry` on every sign (or temp secret) so rotations/deletions take effect at next renewal. Lives 1 hour; bots renew 5 min before expiry via relay in-session refresh (`TokenRefreshTask` / `moq_wasm.connect`). Refused once the bot is no longer running.
+  - `recorder`: `subscribe: <room>`, `publish: <room>/bots/recorder`
+  - AI bots: `subscribe: <room>`, `publish: <room>/bots/<type>`
+- **Bot authentication**: Jobs start with only their bot ID (no secrets in args) and call `/token` and `/heartbeat` with a Google ID token (`aud` = `BOT_DISPATCHER_PUBLIC_URL`, RS256 against Google JWKS, `email` in `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT`). Under `--launcher local`, a random per-bot key is passed via `BOT_DISPATCHER_BOT_KEY` env var instead. JWKS URL is configurable for unit tests.
 
-| Claim | Meaning |
-| --- | --- |
-| `bots` | Relative namespace path under which the token may start, stop and read bots; `""` is the whole app root; absent means not allowed |
-
-A launch token carries no `publish` or `subscribe`, so the relay grants it
-nothing, and a client token carries no `bots` claim, so a page's token cannot start
-a bot even if a page sends one. `bot-dispatcher` judges `iat` and `exp` with its own
-`ClaimPolicy`: a launch token lives at most 5 minutes. A relay app
-(`isRelay`) cannot start bots.
-
-### The bot token
-`bot-dispatcher` signs a client token for the room's app (`Claims::issued`) with the
-app's secret, read from the registry through `app-registry` on every
-signature, as the VTS reads it on every verification, so a rotated secret or a
-deleted app takes effect at the next renewal. A temporary app's token is
-signed with the temporary app secret. The claims are the bot type's:
-
-| Type | `subscribe` | `publish` |
-| --- | --- | --- |
-| recorder | the room | `<room>/bots/recorder` (its presence) |
-| AI bots | the room | `<room>/bots/<type>` |
-
-A bot token lives 1 hour. Five minutes before it expires the bot asks for the
-next one and sends it to the relay with the relay's in-session refresh, as
-`TokenRefreshTask` and `moq_wasm.connect`'s `refresh_token` already do. `bot-dispatcher`
-refuses to sign for a bot that is no longer running.
-
-### How a bot proves it is the bot
-The job is launched with its bot id and nothing secret. It calls
-`POST /bots/{type}/{id}/token` and `POST /bots/{type}/{id}/heartbeat` with a Google ID token
-for the bot service's URL, from the metadata server of the job's service
-account. `bot-dispatcher` verifies the ID token (RS256 against Google's published keys,
-`aud`, `exp`, and `email` one of the configured job service accounts) and
-answers only for a bot that is running. With `--launcher local`, `bot-dispatcher`
-passes the child process a random per-bot key in its environment instead,
-never in its arguments, so the whole flow runs on one machine without Google
-credentials. The URL of Google's keys is a setting, so the unit tests verify
-ID tokens signed with a test key against that key's JWKS.
-
-### Bots in the room
-A bot publishes its presence as `<room>/bots/<type>`, the namespace the
-Meeting transcriber already uses. Under a two-element room prefix
-(`<app>/<room>`) that is four elements, which the Meeting's member logic never
-reads as a member and no user name collides with. A page learns that a bot
-joined from its PUBLISH_NAMESPACE and that it left from its
-PUBLISH_NAMESPACE_DONE, so the Meeting shows REC from the room itself rather
-than from polling `recorder serve`. In the browser SDK (`moq-wasm/media`),
-`botNamespace` and `botTypeOf` build and recognise this namespace, and
-`watchBroadcasts`'s `onBotChange` reports bots joining and leaving the watched
-room.
-
-A **human member** is a namespace under the room that is not under one of the
-reserved elements `bots` and `recordings` (the recorder's replays).
-
-### When a bot ends
-By default, a bot ends by itself once the room has had no human member for its
-type's grace period, counted from its start too. The grace period differs by type
-because a room that empties for a reload or a break should not split a
-recording:
+### Bots in the Room
+- **Presence namespace**: `<room>/bots/<type>` (4 elements under `<app>/<room>`), so 3-element participant logic ignores bots and usernames cannot collide. Pages detect bots directly from `PUBLISH_NAMESPACE` / `PUBLISH_NAMESPACE_DONE` instead of polling (`botNamespace`, `botTypeOf`, and `watchBroadcasts`'s `onBotChange` in `moq-wasm/media`).
+- **Human member**: Any namespace under `<room>` not under reserved segments `bots` or `recordings`.
+- **Auto-stop**: By default, bots exit after no human publisher is present for the grace period (including from startup), on `DELETE /bots/{type}/{id}` (next heartbeat returns `{stop: true}`), at longest run, or on `SIGTERM`. Listeners who do not publish do not keep a room alive. A registered app server may opt out per launch with `stay_when_empty: true` (default `false`; not stored or returned on the bot record), passing `max_seconds` as `--grace-seconds` (`services/temporary-apps` refuses `stay_when_empty: true` with `403 forbidden`).
 
 | Type | Grace period | Longest run |
 | --- | --- | --- |
-| recorder | 300 s | 2 h |
-| AI bots | 30 s | 1 h |
+| `recorder` | `300 s` | `2 h` |
+| AI bots | `30 s` | `1 h` |
 
-A bot also ends on `DELETE /bots/{type}/{id}` (the next heartbeat answers
-`{stop: true}`), at its longest run, and on SIGTERM. Since only publishers are
-visible to a bot, a room of listeners who publish nothing counts as empty. A
-registered app's server that knows when its room ends may opt out per launch
-with `stay_when_empty: true` (default `false`; not stored or returned on the
-bot record): `bot-dispatcher` then passes the type's `max_seconds` as
-`--grace-seconds`, so an empty room does not end the bot before its longest run.
-`services/temporary-apps` refuses `stay_when_empty: true` with `403 forbidden`.
+### Launchers, State & API
+- **Launchers**: Uses shared `crates/job-launcher` (`CloudRun` job execution with overridden args, or `Local` child process; also used by `recorder composite`). Alternative faster launchers can be added per bot type without changing the API.
+- **Stateless service**: All state lives in an object store (`gs://` or `file://`): one JSON record per bot plus one holder per `(type, room)` pointing to the latest bot. Holders use `PutMode::Create` / conditional replace only after the prior bot is inactive and are never deleted, guaranteeing at most one active bot per `(type, room)` across any number of instances.
+- **Heartbeat & output**: States (`starting`, `running`, `stopping`, `finished`, `failed`) and an optional type-specific JSON object `output` are written only by `bot-dispatcher` from heartbeats (omitting `output` or sending `null` clears it, so bots include it on every heartbeat; non-objects return `400 invalid_request`; `recorder` reports `{"recording_id": "<id>"}`). A bot silent for **90 s** (or **5 min** before its first heartbeat, allowing ~2 min first-run image import) is marked `failed` and replaceable. `recorder` keeps its own recording/file metadata separately for `recorder serve`.
 
-### Launchers
-Each bot type names its launcher. The first and only one is a Cloud Run Job
-execution with overridden arguments, with a local child-process variant for
-development. The recorder's composite job launches through the same code,
-which lives in a crate both use. A type that needs to start faster than a
-job (an AI bot joining a live meeting) can get another launcher later without
-changing the API.
-
-### State
-`bot-dispatcher` keeps no state in memory. As `recorder serve` does, it keeps one small
-JSON object per bot in a store (`gs://` or `file://`), and a holder per
-`(type, room)` naming the room's latest bot of that type. It is created with
-`PutMode::Create`, replaced only at the version that was read once its bot
-is no longer active, and never deleted, so one room runs at most one bot of
-each type and any number of
-instances answer alike. The object is written by `bot-dispatcher` alone, from the
-launch request and from the bot's heartbeats (`starting`, `running`,
-`stopping`, `finished`, `failed`, and an optional type-specific JSON object
-`output` held until the next heartbeat). A bot that has not sent a heartbeat for
-90 s, or 5 min before its first one, is reported `failed` and the next start
-may replace it as the room's holder: the first execution of a job after its image changed imports the
-image before the bot starts, which took almost 2 min for the AI bots' image. The recorder keeps its own recording state (members, files,
-composite) in its store for `recorder serve`'s read API.
-
-### API
-
-| Route | Caller | Answer |
+| Route | Caller | Response |
 | --- | --- | --- |
-| `POST /bots/{type}` `{namespace_prefix, options?, stay_when_empty?}` | app server | `201` the bot; `400 invalid_options` if the type's options table refuses `options`; `409` if the room runs that type; `503` at a limit |
-| `GET /bots?namespace_prefix=` | app server | `{"bots": […]}` the room's latest bot of each configured type that had one, in type-name order |
-| `GET /bots/{type}?namespace_prefix=` | app server | the room's latest bot of that type |
-| `GET /bots/{type}/{id}` | app server | the bot |
-| `DELETE /bots/{type}/{id}` | app server | `202`; the bot stops at its next heartbeat |
-| `POST /bots/{type}/{id}/token` | bot | a bot token |
-| `POST /bots/{type}/{id}/heartbeat` `{state, error?, output?}` | bot | `{stop}` |
+| `POST /bots/{type}` `{namespace_prefix, options?, stay_when_empty?}` | App server | `201` bot; `400 invalid_options`; `409` already running in room; `503` at limit |
+| `GET /bots?namespace_prefix=` | App server | `{"bots": […]}` latest bot per configured type in room (type-name order) |
+| `GET /bots/{type}?namespace_prefix=` | App server | Room's latest bot of `{type}` |
+| `GET /bots/{type}/{id}` | App server | Bot record |
+| `DELETE /bots/{type}/{id}` | App server | `202` (stops on next heartbeat) |
+| `POST /bots/{type}/{id}/token` | Bot | Fresh bot token |
+| `POST /bots/{type}/{id}/heartbeat` `{state, error?, output?}` | Bot | `{stop}` |
 
-The type is in the path because each type takes options of its own; a type
-not in the types file, or an id of another type, is `404`. The app comes
-from the launch token's `appId`, not the path. The app server's routes
-require a launch token whose `bots` claim covers the prefix, judged with
-`SignedToken::covers`. `options` are the type's own
-(the recorder's `layout`, `composite`, `format`); the relay URL, the store and
-the type's limits are server settings, so a request cannot point a bot at
-another relay or bucket. Likewise, a bot may report a type-specific JSON object
-as `output` in its heartbeat (omitted or `null` clears the stored value, so a
-bot that wants it shown sends it with every heartbeat; a non-object is
-`400 invalid_request`), which `GET` returns while present — the recorder sends
-`{"recording_id": "<id>"}` once its recording exists. Nothing is called from a browser, so the service
-answers no CORS.
+Unknown types or type/ID mismatches return `404`. App comes from the launch token's `appId`; `SignedToken::covers` checks `bots` covers `namespace_prefix`. Relay URL, store, and limits are server-configured; no CORS headers are sent (server-to-server only).
 
 ### Temporary apps
-A temporary app has no operator and no server: whoever holds one of its
-tokens is the app. The temporary-apps service, which holds the temporary app secret,
-becomes the app server of all of them, so `bot-dispatcher` handles a temporary app the
-same way as a registered one:
+`temporary-apps` holds the temporary app secret and serves as app server for all temporary apps:
+- Exposes the app-server `/bots/{type}` routes to pages authenticated with their own `Authorization: Bearer` token.
+- Verifies the page token (as in `POST /tokens/refresh`), mints a launch token (`bots` = page's `publish` claim), and forwards to `bot-dispatcher`.
+- Enforces allowed types (`TEMPORARY_APPS_BOT_TYPES`), per-IP fixed-window rate limits, and refuses `stay_when_empty: true` with `403 forbidden`.
 
-- The temporary-apps service serves the same `/bots/{type}` routes,
-  which a page calls with its own token as `Authorization: Bearer`. The mint
-  verifies the token as `POST /tokens/refresh` does (signed by it, temporary,
-  not expired), signs a launch token whose `bots` claim is the page's
-  `publish` claim, and forwards the request.
-- What a temporary app may start is the temporary-apps service's policy: the bot types it
-  allows (`TEMPORARY_APPS_BOT_TYPES`), a rate limit per client address (the
-  same fixed windows as `POST /tokens`), and refusing `stay_when_empty: true`
-  with `403 forbidden` so an anonymous page cannot keep a bot running in an
-  empty room until its longest run.
-- Anyone can create a temporary app, so anyone can still start a bot in one.
-  What changes is that the decision and its limits sit in a server.
-
-### Configuration
-Bot types are a JSON object `bot-dispatcher` reads at startup from `BOT_DISPATCHER_TYPES`,
-from type name to entry:
-
+### Configuration & Modules
+`BOT_DISPATCHER_TYPES` maps type names to JSON configs:
 ```json
 {
   "recorder": {
@@ -259,105 +116,43 @@ from type name to entry:
   }
 }
 ```
+- **Local launcher**: Use `{"kind": "local", "program": "<path>"}` for local dev.
+- **Option allow-list (`options`)**: Optional map from option key to non-empty array of allowed JSON scalars (malformed tables fail startup). `POST /bots/{type}` returns `400 invalid_options` before taking the room on non-objects, unknown keys, or unlisted values (cross-option checks like `composite: true` + `format: "moq"` stay in the bot; types without a table forward unchecked).
+- **CLI args & spend bounds**: Bots receive `args` + `--bot-type`, `--bot-id`, `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds` (`max_seconds` when `stay_when_empty: true`), `--max-seconds`, and optional `--options <JSON>`. No per-app limits or opening hours: `max_running`, idle grace (unless `stay_when_empty: true`), `max_seconds`, and the deployment's daily cost cap bound spend.
 
-`launcher` is `{"kind": "local", "program": <path>}` for development.
-`options` is an optional table from option name to a non-empty array of allowed
-JSON scalars (string, boolean, number); a malformed table fails startup. For a
-type with a table, `POST /bots/{type}` answers `400 invalid_options` before
-taking the room when `options` is not an object, names an unlisted key, or gives
-an option another value (absent/`null` or a subset passes; cross-option
-constraints such as `composite: true` with `format: "moq"` are still judged by
-the bot). A type without a table forwards `options` unchecked.
-Every bot gets the same token claims (above), so they are not configured.
-There are no limits per app and no opening hours: by default a bot runs only
-while its room has a publishing member (a registered app's server may opt out
-per launch with `stay_when_empty: true`), every bot runs for its type's longest
-run at most, a type runs at most `max_running` bots, and the deployment's daily
-cost limit, which stops every paid workload once reached, bounds what bots spend
-around the clock. A request for a type not in the file is `404`.
-
-A bot is started with the type's `args` followed by `--bot-type`, `--bot-id`,
-`--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds` (the type's
-`max_seconds` when `stay_when_empty` is `true`), `--max-seconds` and,
-when the request has them, `--options <JSON>`. A locally launched bot also
-finds its key in `BOT_DISPATCHER_BOT_KEY`.
-
-The service reads `PORT` (8098), `BOT_DISPATCHER_PUBLIC_URL` (the URL bots call back,
-and the audience of their ID tokens), `BOT_DISPATCHER_VTS_URL`, `BOT_DISPATCHER_STORE_URL`,
-`BOT_DISPATCHER_REGISTRY_FILE` or `BOT_DISPATCHER_REGISTRY_BUCKET` (with
-`BOT_DISPATCHER_REGISTRY_OBJECT`), `BOT_DISPATCHER_TEMPORARY_APP_SECRET`,
-`BOT_DISPATCHER_JOB_SERVICE_ACCOUNT`, the comma-separated service accounts the bot
-types' jobs run as, without which only locally launched bots can
-authenticate, and `BOT_DISPATCHER_GOOGLE_CERTS_URL`, the JWKS their ID tokens
-are checked against (Google's by default). `BOT_DISPATCHER_INSECURE_SKIP_AUTH=true`, for a relay without
-authorization only (local development and the E2E tests), accepts every
-request for the app its room starts with, reads no registry, and answers a
-bot's token call with `null`, so the bot joins with no token.
-
-At startup, outside that mode, the service reads the registry once and fails
-rather than listening with one it cannot read; a rotated registry is read again
-on each token signature.
-
-## Modules
-
-| Module | Responsibility |
+| Env var | Purpose |
 | --- | --- |
-| `bot_types.rs` | `BotTypes`: the types file, each type's `JobLauncher`, arguments, grace period, longest run, `max_running` and optional `options` table. |
-| `launch_auth.rs` | `LaunchAuth`: verifies the bearer token through `auth_token::VtsClient` and requires a launch token of at most 5 minutes, not a relay's, whose `bots` claim covers the room. |
-| `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
-| `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |
-| `bots.rs` | `Bots`: start (room holder, `max_running`, launch), the room's latest bots (all types or one type), stop, and the bot's own token and heartbeat calls, authenticated by its key or its Google ID token (`google_cloud::IdTokenVerifier`). |
-| `server.rs` | `BotDispatcherServer`: the HTTP routes on `http_server::HttpServer`, each in a `bot_dispatcher.request` span that continues the caller's trace. |
+| `PORT` | Listen port (default `8098`) |
+| `BOT_DISPATCHER_PUBLIC_URL` | Callback URL for bots and ID token `aud` |
+| `BOT_DISPATCHER_VTS_URL` | VTS endpoint for launch tokens |
+| `BOT_DISPATCHER_STORE_URL` | Bot state store (`gs://` or `file://`) |
+| `BOT_DISPATCHER_REGISTRY_FILE` / `BOT_DISPATCHER_REGISTRY_BUCKET` + `BOT_DISPATCHER_REGISTRY_OBJECT` | App registry (validated once at startup; re-read per bot-token sign) |
+| `BOT_DISPATCHER_TEMPORARY_APP_SECRET` | Secret for temporary app bot tokens |
+| `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT` | Comma-separated allowed Cloud Run Job service accounts |
+| `BOT_DISPATCHER_GOOGLE_CERTS_URL` | JWKS URL for ID tokens (default Google) |
+| `BOT_DISPATCHER_INSECURE_SKIP_AUTH` | `true` skips auth/registry and returns `null` bot token (local/E2E unauthenticated relay only) |
 
-## Consequences
+| Module | Key type | Responsibility |
+| --- | --- | --- |
+| `bot_types.rs` | `BotTypes` | Parses `BOT_DISPATCHER_TYPES`, launchers, limits, and optional `options` table |
+| `launch_auth.rs` | `LaunchAuth` | Verifies launch tokens via `VtsClient` (≤ 5 min, non-relay, `bots` covers room) |
+| `signer.rs` | `BotTokenSigner` | Signs bot tokens from registry or temp secret |
+| `store.rs` | `BotStore` | Persists bot records, stop flags, room holders |
+| `bots.rs` | `Bots` | Start/list (all types or one)/stop, bot token/heartbeat auth (`IdTokenVerifier` or local key) |
+| `server.rs` | `BotDispatcherServer` | HTTP routes on `HttpServer` under `bot_dispatcher.request` span |
 
-### Positive
-- The app operator decides when a room is recorded or gets a bot, and every
-  launch is authorised the same way.
-- A bot holds only a token scoped to its job, renewed for as long as it runs,
-  for a registered app as for a temporary one. No token is in a job's
-  arguments.
-- Bots are visible as bots, to the relay through their own token and to the
-  room through `bots/<type>`.
-- Limits and usage are counted in one place.
+## Consequences, Alternatives & Open Questions
 
-### Negative
-- Bots run at night and on weekends too. A day whose spending reaches the
-  daily cost limit stops the bots, the recordings and the GPU models together
-  until the next day.
-- A registered app needs a server to start bots. A page alone cannot.
-- `bot-dispatcher` reads every app's secret, as the VTS does, and signs with them, as
-  the console does. It becomes the third service trusted with them.
-- Verifying Google ID tokens is new code (JWK parsing and RS256 with
-  `aws-lc-rs`, already a dependency of `auth-token`).
-- An AI bot started as a Cloud Run Job waits for the execution to start,
-  about 12 s for the recorder, longer than a request to a warm service.
+### Consequences
+- **Positive**: Operators control launches; bots get scoped renewable tokens with zero secrets in args; bots are distinguishable by token and `bots/<type>` namespace; centralized limits.
+- **Negative**: 24/7 operation relies on daily spend cap; registered apps need a server; `bot-dispatcher` becomes the third service holding app secrets (after VTS and console); adds RS256 JWKS verification; Cloud Run Job cold start (~12 s for recorder) is slower than warm services.
 
-## Alternatives Considered
+### Alternatives Considered
+- **Forward page tokens**: Retains all four Context problems.
+- **Join relay with launch token**: Prevents renewal without long-lived dual-purpose tokens.
+- **Jobs read registry directly**: Exposes every app secret to every bot job and duplicates signing in Python.
+- **Pass renewal key in args/store**: Leaks key in execution overrides or grants jobs store access.
+- **Browser calls `bot-dispatcher` directly for temp apps**: Duplicates CORS and temp-token handling inside `bot-dispatcher`.
 
-### Keep forwarding the page's token
-It needs no app server, but leaves all four problems
-above.
-
-### Let the bot join with the launch token
-The bot would need no token from `bot-dispatcher`, but it cannot renew a token it did
-not sign, so the app server would sign long-lived tokens, and one token would
-both authorise a launch and admit to the relay.
-
-### Let the job read the registry and sign its own token
-It needs no renewal endpoint, but every job's service account reads every
-app's secret, and the bot types written in Python would carry the signing
-code too.
-
-### Hand the job a renewal key in its arguments or in the store
-It avoids verifying Google ID tokens, but the key sits where the token sits
-today (the execution's overrides) or needs the job to read `bot-dispatcher`'s store.
-
-### Call `bot-dispatcher` from the page for temporary apps
-It leaves the temporary-apps service unchanged, but `bot-dispatcher` would keep a second,
-browser-facing way in, with CORS and token refreshes at the temporary-apps service, for one kind of
-app.
-
-## Open Questions
-- Whether a registered app may also opt in to starting bots from its pages'
-  own tokens, for apps without a server. Left out until an app asks.
+### Open Questions
+- Opt-in page-token bot launches for serverless registered apps (deferred until requested).

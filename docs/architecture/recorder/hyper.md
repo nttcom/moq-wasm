@@ -1,38 +1,20 @@
-# hyper for the recording API
+# `hyper` for the Recording API (`recorder`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-16
+**Status:** Accepted (2026-10-16)
 
 ## What
 
-Add `hyper` (`http1`, `server`) and `http-body-util` to `services/recorder`;
-the accept loop is `http-server`'s. `src/api_server.rs` serves the API of
-`recorder serve`, which lists room recordings, signs the URLs of their files
-and publishes their replays.
+Add `hyper` (`http1`, `server`) and `http-body-util` to `services/recorder` (using `http-server`'s accept loop). `src/api_server.rs` serves `recorder serve`'s API for listing room recordings, signing file URLs, and publishing replays.
 
 ## Context
 
-A browser page has to list and replay recordings, so the recorder needs an
-HTTP server: a few JSON endpoints, a small request body, and the CORS answers
-a browser asks for. `observability` already serves its API with the same
-crates (see `docs/architecture/observability/hyper.md`), so they are in the
-workspace's lock file.
+Browser pages need to list and replay recordings over a handful of JSON endpoints with small request bodies and CORS headers. `observability` already serves its API on these crates (see [observability/hyper.md](../observability/hyper.md)), so they are already in the workspace lock.
 
 ## Alternatives
 
-- `axum`. Routing and extractors would shorten the handlers, but it brings
-  `axum` and `tower` for four routes the match in `handle` covers.
-- Starting `recorder` processes from a separate service. The recorder would
-  stay a CLI, but the service would duplicate the room tracking and parse the
-  recorder's logs to report progress.
+- **`axum`:** Shorter handlers, but adds `axum` and `tower` for four routes already handled by a single `match` in `handle`.
+- **Spawn `recorder` CLI subprocesses from a separate service:** Duplicates room tracking and forces log parsing to report progress.
 
 ## Decision
 
-Use `hyper` directly, the same way `observability` does. JSON is read and
-written with `serde_json`, which the recorder already depends on, so no
-`serde` derive is added.
+Use `hyper` directly, matching `observability`. JSON is handled with `serde_json` (already a dependency of `recorder`), avoiding `serde` derive.

@@ -1,22 +1,19 @@
-# ADR: serde_json in the python crate
+# `serde_json` for Passing Telemetry Records to Python (`python`)
 
-## Status
-Accepted
-
-## Date
-2026-11-16
+**Status:** Accepted (2026-11-16)
 
 ## What
-`sdk/python` depends on `serde_json` (1, already in the workspace).
+
+Add `serde_json` 1.x (already in the workspace) as a dependency of `sdk/python`.
 
 ## Context
-`telemetry_report::log_record` and `SpanRecordLayer` build the records, which `wait_log_records`
-hands to Python as JSON text.
+
+`telemetry_report::log_record` and `SpanRecordLayer` construct JSON telemetry records that `wait_log_records` hands to Python as JSON strings.
 
 ## Alternatives
-- **`pythonize`**: converts a `Value` to Python objects without the text in between, but is a new
-  crate for records the sink thread parses a few at a time.
+
+- **`pythonize`:** Converts `serde_json::Value` directly into Python objects without intermediate JSON text, but adds a new crate for low-volume records parsed a few at a time on a background sink thread.
 
 ## Decision
-`wait_log_records` returns each record as its JSON text, which the sink thread parses with
-`json.loads`. The lock file gains no package; each record is serialized and parsed once more.
+
+Return each record from `wait_log_records` as JSON text and parse it on Python's sink thread with `json.loads`. No new crate enters the lock file, at the minor cost of one serialize/parse round trip per record.

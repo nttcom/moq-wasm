@@ -1,61 +1,30 @@
 # `telemetry` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the design
-intent, module boundaries, runtime flow, or invariants described here change.
+Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
-The records the observability server reads, as types its producers write
-and it decodes, so both sides share one definition. The crate depends only on
-Serde, JSON and `anyhow`, so it builds on wasm32: how a record is sent
-(`telemetry-otlp` for the workspace binaries, `telemetry-report` for the
-clients) stays with the producer.
+Shared schema types exchanged between telemetry producers and `services/observability`. Depends only on `serde`, `serde_json`, and `anyhow`, so it builds on `wasm32`. Transport stays with producers (`telemetry-otlp` for workspace binaries, `telemetry-report` for clients).
 
-## Client reports
+## Client Reports (`telemetry::client_report`)
+Defines the JSON payload posted to `observability`'s `/api/client-telemetry`:
+- **Types**: `ClientReport` containing `ClientLog`, `ClientSpan`, `PlayerStats`, `PublisherStats`, capped at `MAX_RECORDS` per category.
+- **Producers**: `telemetry-report` builds `ClientLog`/`ClientSpan` from `tracing` (forwarded as JSON by wasm/Python, posted directly by `moq-cli`). The browser SDK builds the same JSON in TypeScript and adds `PlayerStats`.
+- **Consumer**: `services/observability` parses `ClientReport`, enforces collector/metric limits, and forwards as OTLP.
+- **Compatibility**: New fields must be optional so older clients remain readable. Absent trace/span IDs are omitted rather than serialized as `null`.
 
-`telemetry::client_report` defines the body a client posts to the
-observability server's `/api/client-telemetry`: `ClientReport` with its
-`ClientLog`s, `ClientSpan`s, `PlayerStats` and `PublisherStats`, and `MAX_RECORDS`, the most of
-each one report carries.
+## Relay Snapshots (`telemetry::relay_stats`)
+Defines the 1 Hz snapshot emitted by each relay as an OTLP log record:
+- **Wire shape**: `EventName` and body = `EVENT_NAME` (`relay.stats.snapshot`); `EVENT_ATTRIBUTE` (`snapshot`) = `RelaySnapshot::to_json`.
+- **Producer**: `services/relay` (`modules/observability`) emits `RelaySnapshot` via `telemetry-otlp`'s `EventLogger`.
+- **Consumer**: `services/observability` queries `otel.otel_logs` by `EVENT_NAME`/`EVENT_ATTRIBUTE` and decodes via `RelaySnapshot::from_json`.
 
-- `telemetry-report` builds `ClientLog` and `ClientSpan` from `tracing`; the
-  wasm module and the Python module hand them on as JSON, and `moq-cli`
-  posts them in a `ClientReport`. The browser SDK builds the same JSON in
-  TypeScript, with `PlayerStats` added.
-- `services/observability` parses a `ClientReport`, checks the limits the
-  collector and the metric attributes need, and forwards it as OTLP.
-
-A field added to a record is optional, so the server reads the reports of
-clients that predate it. An absent trace or span id is left out of the JSON
-rather than written as `null`.
-
-## Relay snapshots
-
-`telemetry::relay_stats` defines the snapshot a relay sends once per second
-as an OTLP log record (`EVENT_NAME` `relay.stats.snapshot` as the record's
-`EventName` and body, `RelaySnapshot::to_json` in its `EVENT_ATTRIBUTE`
-`snapshot`), so the producer and its consumers share one type:
-
-- `services/relay` (`modules/observability`) builds `RelaySnapshot` and
-  emits it through `telemetry-otlp`'s `EventLogger`.
-- `services/observability` fills its tables from the records in
-  `otel.otel_logs`, selected by the same `EVENT_NAME` and `EVENT_ATTRIBUTE`,
-  and decodes a stored snapshot with `RelaySnapshot::from_json`.
-
-The [observability architecture](../observability/architecture.md) describes
-the fields and what each direction of a session can observe.
+See [`observability/architecture.md`](../observability/architecture.md) for field definitions and per-direction visibility.
 
 ### Invariants
-
-- Counters are cumulative since the session, track cache or subscription
-  started; consumers derive rates from consecutive snapshots and treat a
-  decrease as a restart. Fields named `…_since_last_snapshot_…` and `lag_…`
-  are gauges, as are `ProcessStats::client_sessions` and
-  `ProcessStats::draining_since_ms`.
-- A field added to the snapshot has `#[serde(default)]`, so a consumer reads
-  the snapshots of relays that predate it.
-- Durations are microseconds, sizes bytes, timestamps Unix milliseconds.
+- **Counters vs. gauges**: Counters are cumulative since session/cache/subscription start; consumers derive rates from deltas and treat a decrease as a restart. Fields named `…_since_last_snapshot_…`, `lag_…`, `ProcessStats::client_sessions`, and `ProcessStats::draining_since_ms` are gauges.
+- **Schema evolution**: Every new snapshot field carries `#[serde(default)]` so snapshots from older relays still decode.
+- **Units**: Durations in microseconds, sizes in bytes, timestamps in Unix milliseconds.
 
 ## Dependencies
-
-`serde.md` records why the records use Serde and JSON.
+- `serde` / `serde_json`: [serde.md](serde.md)

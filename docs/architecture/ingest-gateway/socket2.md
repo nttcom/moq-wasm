@@ -1,40 +1,21 @@
-# socket2 for the UDP receive buffer of the RTP input
+# `socket2` for RTP UDP Receive Buffers (`ingest-gateway`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-13
+**Status:** Accepted (2026-10-13)
 
 ## What
 
-Add `socket2` as a dependency of `ingest-gateway`. The RTP listener builds its
-UDP sockets with it to set a 4 MiB receive buffer and join a multicast group
-before handing the socket to tokio.
+Add `socket2` as a dependency of `ingest-gateway`. The RTP listener uses it to configure a 4 MiB UDP receive buffer and join multicast groups before converting the socket to Tokio.
 
 ## Context
 
-A keyframe arrives as a burst of several hundred kilobytes within a few
-milliseconds. The SRT input hit this with srt-tokio's 64 KiB default buffer:
-whenever the reader was not scheduled at once the kernel dropped datagrams,
-and the losses were rarely recovered before their delivery time (see
-[architecture](architecture.md)). RTP has no retransmission at all, so a
-dropped datagram is a lost frame. srt-tokio exposes the buffer size as an
-option; `tokio::net::UdpSocket` does not, and neither does `std::net::UdpSocket`.
+Video keyframes arrive as bursts of several hundred kilobytes within milliseconds. The SRT input suffered kernel datagram drops with `srt-tokio`'s 64 KiB default buffer whenever the reader was briefly unscheduled (see [architecture.md](architecture.md)). RTP has no retransmission, so every dropped datagram loses a frame. Unlike `srt-tokio`, neither `tokio::net::UdpSocket` nor `std::net::UdpSocket` exposes receive-buffer sizing.
 
 ## Alternatives
 
-- Call `setsockopt` through `libc`. Works, but is `unsafe` for a one-line
-  option and needs a Windows branch.
-- Rely on the kernel default and raise it system-wide (`net.core.rmem_max`).
-  Moves a requirement of the bridge into deployment instructions.
-- Keep draining the socket from a dedicated thread. Does not help: the
-  datagrams are dropped by the kernel before any reader sees them.
+- **`setsockopt` via `libc`:** Requires `unsafe` and a separate Windows branch for a single socket option.
+- **System-wide kernel tuning (`net.core.rmem_max`):** Pushes an application requirement into deployment configuration.
+- **Dedicated socket-draining thread:** Does not prevent drops that happen in the kernel before user space reads.
 
 ## Decision
 
-Depend on `socket2`, the crate tokio and quinn themselves use for socket
-options; it is already in the workspace lock, so no new crate enters the
-dependency tree.
+Depend on `socket2`—the same crate `tokio` and `quinn` use for socket options. It is already in the workspace lock, adding no new crate to the dependency tree.

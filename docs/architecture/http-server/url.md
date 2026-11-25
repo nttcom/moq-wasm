@@ -1,31 +1,20 @@
-# url for the shared query string parser
+# `url` for Shared Query-String Parsing (`http-server`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-19
+**Status:** Accepted (2026-11-19)
 
 ## What
 
-Add `url` 2.x as a direct dependency of the `http-server` crate. Its
-`form_urlencoded::parse` decodes a request URI's query in `query_params`.
+Add `url` 2.x as a direct dependency of `http-server`. `query_params` uses `url::form_urlencoded::parse` to decode request URI queries.
 
 ## Context
 
-`recorder`, `observability` and `console` each parsed a query by wrapping it in
-a fake `http://query/?…` URL and reading its `query_pairs`, and `bot-dispatcher` called
-`url::form_urlencoded` itself. One parser in `http-server` replaces the four.
+`recorder`, `observability`, and `console` each parsed queries by wrapping them in a synthetic `http://query/?…` URL and reading `query_pairs`, while `bot-dispatcher` called `url::form_urlencoded` directly. One shared parser in `http-server` replaces all four.
 
 ## Alternatives
 
-- `form_urlencoded` directly. It is the crate `url` re-exports, but no crate in
-  the workspace names it, so it would be one more direct dependency to track.
-- Keep the fake-URL trick in each service. Every service repeats it.
+- **`form_urlencoded` directly:** Re-exported by `url`, but no workspace crate depends on it directly, adding another dependency to track.
+- **Keep the synthetic-URL helper in each service:** Duplicates parsing logic across services.
 
 ## Decision
 
-Use `url`, which `bot-dispatcher` and `recorder` already depend on and `reqwest` already
-compiles, so no new crate enters the dependency tree.
+Use `url`. `bot-dispatcher` and `recorder` already depend on it and `reqwest` already compiles it, adding no new crate to the dependency tree.

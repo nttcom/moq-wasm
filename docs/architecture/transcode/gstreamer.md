@@ -1,43 +1,21 @@
-# GStreamer for multi-rendition transcoding
+# GStreamer for Multi-Rendition Transcoding (`transcode`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-09-08
+**Status:** Accepted (2026-09-08)
 
 ## What
 
-Add the `gstreamer` and `gstreamer-app` crates to the new `transcode` crate.
-They decode the incoming H.264 access units and re-encode them into several
-resolutions and bitrates in-process.
+Add `gstreamer` and `gstreamer-app` to `crates/transcode` to decode incoming H.264 access units and re-encode them into multiple resolutions and bitrates in-process.
 
 ## Context
 
-The ingest-gateway bridge publishes the source rendition as received. Viewers on
-constrained links need lower renditions, which requires decoding and
-re-encoding video. `mediapack` deliberately stays codec-free (containers and
-bitstream syntax only, pure Rust), so the encoder dependency needs its own
-crate with a `MediaEvent`-in / `MediaEvent`-out boundary.
+`ingest-gateway` publishes the source rendition as received. Viewers on constrained links need lower-bitrate renditions, which requires decoding and re-encoding video. `mediapack` intentionally stays codec-free (pure-Rust containers and bitstream syntax only), so transcoding lives in its own crate with a `MediaEvent`-in / `MediaEvent`-out boundary.
 
 ## Alternatives
 
-- Pure Rust codecs. `openh264` offers decoding and baseline-only encoding
-  through bindings, `rav1e` is far from real time; neither gives a hardware
-  path.
-- `ffmpeg-next`. Decoding, scaling and
-  encoding N outputs must be driven by hand or through a libavfilter graph;
-  hardware encoders need per-platform code.
-- An external ffmpeg/gst-launch process feeding the bridge with several SRT
-  streams. Zero new Rust dependencies, but adds a process to manage and an
-  extra SRT hop per rendition.
+- **Pure-Rust / lightweight codecs:** `openh264` supports only baseline H.264 encoding via C bindings, `rav1e` is too slow for real time, and neither provides hardware acceleration.
+- **`ffmpeg-next`:** Requires manually driving decode, scale, and N encode pipelines (or a `libavfilter` graph) plus per-platform hardware encoder glue.
+- **External `ffmpeg`/`gst-launch` processes feeding multiple SRT streams:** Avoids Rust dependencies, but adds process management and an extra SRT hop per rendition.
 
 ## Decision
 
-Use the GStreamer Rust bindings. `tee` fan-out to N `videoscale ! x264enc`
-branches is a pipeline primitive, back-pressure is built in, and the same
-description can swap `x264enc` for `vtenc_h264`/`nvh264enc` later. The
-dependency is confined to `crates/transcode`; `mediapack` and the bridges
-compile without GStreamer unless they opt in.
+Use GStreamer Rust bindings: `tee` fan-out to N `videoscale ! x264enc` branches is built in with native back-pressure, and swapping `x264enc` for `vtenc_h264`/`nvh264enc` later requires only changing the pipeline description. The dependency stays isolated in `crates/transcode`, so `mediapack` and bridges compile without GStreamer unless they opt in.

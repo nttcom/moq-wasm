@@ -1,46 +1,27 @@
-# web-sys for the browser transport
+# `web-sys` for the Browser Transport (`moqt`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-10-05
+**Status:** Accepted (2026-10-05)
 
 ## What
 
-Add `web-sys` as a `wasm32`-only dependency of the `moqt` crate, with the
-`WebTransport*`, `ReadableStream*`, `WritableStream*` and `Url` features, and
-`WebSocket`, `BinaryType`, `CloseEvent`, `Event`, `MessageEvent` and
-`Performance` for QMux over WebSocket and the clock.
-`modules/transport/browser` implements the transport traits on top of the
-browser's `WebTransport` object, so `Endpoint::<BROWSER>` runs the same
-session stack as the native markers.
+Add `web-sys` as a `wasm32`-only dependency of `moqt` with features:
+
+- **WebTransport & streams:** `WebTransport*`, `ReadableStream*`, `WritableStream*`, `Url`
+- **QMux over WebSocket & clock:** `WebSocket`, `BinaryType`, `CloseEvent`, `Event`, `MessageEvent`, `Performance`
+
+`modules/transport/browser` implements the transport traits over browser `WebTransport` so `Endpoint::<BROWSER>` shares the exact session stack as native markers.
 
 ## Context
 
-The browser offers exactly one QUIC transport, `WebTransport`, and only
-through its JavaScript API. The session stack is written against
-`TransportConnection`, `TransportSendStream` and `TransportReceiveStream`; a
-browser implementation of those three needs typed access to `WebTransport`,
-its bidirectional and unidirectional streams, datagrams, close info and
-`WebTransportError`.
+Browsers expose QUIC exclusively via the JavaScript `WebTransport` API. Implementing `TransportConnection`, `TransportSendStream`, and `TransportReceiveStream` requires typed bindings for `WebTransport`, its bidirectional/unidirectional streams, datagrams, close info, and `WebTransportError`.
 
 ## Alternatives
 
-- `web-transport-wasm` (same author as `web-transport-quinn`). Wraps the same
-  `web-sys` calls behind a `Session` / `SendStream` / `RecvStream` API. The
-  transport traits here already are that abstraction, so the extra layer
-  would only add a second error type to map.
-- `js-sys::Reflect` for everything. Avoids the feature list but turns every
-  method call into a string lookup and loses the generated types.
+- **`web-transport-wasm`:** Wraps `web-sys` behind `Session`/`SendStream`/`RecvStream`, duplicating `moqt`'s existing transport traits and adding an extra error mapping layer.
+- **`js_sys::Reflect` for everything:** Avoids feature flags but converts every call into an untyped string lookup.
 
 ## Decision
 
-Use `web-sys` directly, limited to the listed features. The `WebTransport` types are still behind `--cfg web_sys_unstable_apis`
-in `web-sys` 0.3; the root `.cargo/config.toml` sets that cfg for every build
-in the workspace, replacing the copy that lived in `sdk/js/.cargo`.
-`streamErrorCode` and `sendOrder` are read and written through
-`js_sys::Reflect` because `web-sys` types the former as `u8` and does not
-expose the latter.
+Use `web-sys` directly, scoped to the listed features. Because `web-sys` 0.3 gates `WebTransport` behind `--cfg web_sys_unstable_apis`, the workspace root `.cargo/config.toml` sets it globally (replacing the old `sdk/js/.cargo` copy).
+
+`streamErrorCode` and `sendOrder` still use `js_sys::Reflect`, because `web-sys` types `streamErrorCode` as `u8` and omits `sendOrder`.

@@ -1,28 +1,19 @@
-# reqwest for calling bot-dispatcher
+# `reqwest` for Calling `bot-dispatcher` (`temporary-apps`)
 
-## Status
-
-Accepted
-
-## Date
-
-2026-11-18
+**Status:** Accepted (2026-11-18)
 
 ## What
 
-Add `reqwest` (`json`, `rustls`) as a direct dependency of `temporary-apps`;
-it was a dev-dependency of the tests.
+Promote `reqwest` (`json`, `rustls`) from a dev-dependency to a direct dependency of `temporary-apps`.
 
 ## Context
 
-The service is the app server of temporary apps and calls `bot-dispatcher` over HTTPS
-for them.
+`temporary-apps` acts as the app server for temporary apps and calls `bot-dispatcher` over HTTPS on their behalf.
 
 ## Alternatives
 
-- `hyper`'s client. Lower level, with TLS wired by hand.
+- **`hyper` client:** Lower level; requires wiring TLS manually.
 
 ## Decision
 
-Use `reqwest`, already the workspace's HTTP client (`recorder`, `bot-dispatcher`,
-`google-cloud`).
+Use `reqwest`, already the workspace's standard HTTP client (`recorder`, `bot-dispatcher`, `google-cloud`).

@@ -1,63 +1,39 @@
 # `egress-gateway` Architecture
 
 ## Status
-Living document. Update this file in the same change whenever the reading
-flow, the outputs or the invariants described here change.
+Living document. Update alongside any change to the reading flow, outputs, or invariants.
 
 ## Scope
-`services/egress-gateway` is the reverse of `ingest-gateway`: it subscribes to an MSF
-broadcast on a relay and hands its media to a protocol outside MoQT. Plain
-RTP is the one output. The broadcast is the one `crates/broadcast`
-publishes, so the tracks are the ones its
-[architecture document](../broadcast/architecture.md) describes.
+`services/egress-gateway` is the reverse of `ingest-gateway`: it subscribes to an MSF broadcast on a relay (layout defined in [`broadcast/architecture.md`](../broadcast/architecture.md)) and emits its media to an external protocol. Plain RTP is currently the sole output.
 
 ## Layers
+
+```mermaid
+flowchart LR
+    Relay["MoQT Relay"] --> Reader["broadcast::BroadcastReader"]
+    Reader -->|"mediapack::MediaEvent"| Muxer["mediapack::rtp::Muxer"]
+    Muxer --> Output["RTP Output (UDP)"]
 ```
-relay ──► BroadcastReader ──► mediapack::MediaEvent ──► output (rtp)
-```
 
-`broadcast::BroadcastReader` knows MoQT and MSF and nothing of the outputs: it
-reads the catalog, picks the tracks, and turns their LOC objects into media
-events on one channel. How it picks, joins and times the tracks is recorded in
-the [`broadcast` architecture document](../broadcast/architecture.md) under
-"Reading a broadcast". An output knows its protocol and nothing of MoQT: it
-consumes the media events. Further outputs, such as fMP4 or WebRTC, are further consumers
-of the same channel; the packetization they need belongs in `mediapack`, as
-`rtp::Muxer` does for RTP, so it stays free of sockets and reusable.
+- **`broadcast::BroadcastReader`**: Owns MoQT and MSF—reads the catalog, selects tracks, and emits `MediaEvent`s on one channel (details in [`broadcast/architecture.md`](../broadcast/architecture.md) under "Reading a broadcast").
+- **Output (`rtp`)**: Protocol-only consumer of `MediaEvent`s; knows nothing of MoQT.
+- **Packetization in `mediapack`**: Socket-free muxers (`rtp::Muxer`, and future fMP4/WebRTC outputs) live in `mediapack` for reuse.
 
-## RTP timing
-The reader times every track from one shared capture origin. The RTP output
-hands this alignment to the receiver through RTCP sender reports. Each stream keeps its own timestamp offset, as RTP requires. A
-report pairs the time it is sent with the stream's RTP time at that instant
-(RFC 3550 §6.4.1), extrapolated from the latest sample, whose wall-clock
-time is the shared capture origin plus its presentation time; the same
-capture timeline on every stream is what keeps them aligned. Both streams
-carry one CNAME, so a receiver that reads the reports aligns them; one that
-does not falls back to arrival times. A stream's first report goes out with
-its first packet and the next every five seconds, the minimum interval RFC
-3550 §6.2 recommends.
+## RTP Timing & Lip-Sync
 
-## RTP output
-The packets are sent from one unconnected UDP socket. A connected socket
-reports a receiver that is not listening yet as an error on the next send,
-which would end the output; RTP is fire-and-forget, so the receiver may start
-at any time. The SDP is written once the muxer has the configuration of every
-stream the reader announced, and names the parameter sets, so a receiver can
-decode from the first keyframe it gets. It also names each stream's SSRC with
-the shared CNAME.
+`BroadcastReader` aligns every track to one shared capture origin. The RTP output propagates this alignment via RTCP Sender Reports (SR):
+- Each stream keeps an independent RTP timestamp offset (per RTP).
+- Every SR pairs wall-clock send time with the stream's extrapolated RTP timestamp (RFC 3550 §6.4.1), where wall-clock time is `shared_capture_origin + presentation_time`.
+- Both streams share one CNAME so SR-aware receivers synchronize them; receivers ignoring SRs fall back to arrival times.
+- SRs are sent with each stream's first packet, then every 5 seconds (RFC 3550 §6.2 minimum interval).
 
-The payload types and SSRCs can be fixed on the command line, for a receiver
-configured in advance rather than told by an SDP, as mediasoup's
-PlainTransport is. Payload types are limited to the dynamic range, which also
-keeps them out of the range RTCP multiplexing reserves (RFC 5761 §4). RTCP
-goes to the port above each RTP port (RFC 3550 §11), or with `--rtcp-mux` to
-the RTP port itself.
+## RTP Output Details
 
-Keyframe requests (RTCP PLI / FIR) are not answered: the encoder sits behind
-the relay, out of reach, so a receiver that starts late waits for the next
-group the publisher opens.
+- **Unconnected UDP socket**: Packets go out on one unconnected socket. A connected socket surfaces ICMP errors when a receiver is not listening yet and would abort output; RTP stays fire-and-forget.
+- **SDP generation**: Written once the muxer has configuration for every announced stream, including parameter sets (so receivers decode from the first keyframe), each stream's SSRC, and the shared CNAME.
+- **Static overrides**: Payload types and SSRCs can be pinned via CLI flags for pre-configured receivers without SDP negotiation (e.g., mediasoup `PlainTransport`). Payload types are restricted to the dynamic range, avoiding values reserved by RTCP multiplexing (RFC 5761 §4).
+- **RTCP port**: Sent to `rtp_port + 1` (RFC 3550 §11), or multiplexed onto the RTP port with `--rtcp-mux`.
+- **No keyframe requests**: RTCP PLI/FIR are ignored because the encoder sits behind the relay; late receivers wait for the publisher's next group.
 
-## End of stream
-The output runs until every track has ended or the relay session closes.
-A publisher that leaves resets the stream of the group in flight, which the
-reader skips; the subscriptions stay open.
+## End of Stream
+Output runs until all tracks end or the relay session closes. If a publisher disconnects and resets an in-flight group stream, the reader skips that stream while keeping subscriptions open.
