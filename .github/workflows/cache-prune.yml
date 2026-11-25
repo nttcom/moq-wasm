@@ -1,0 +1,34 @@
+name: Cache Prune
+
+# Swatinem/rust-cache keys end in "<env hash>-<Cargo.lock/Cargo.toml hash>", so every
+# toolchain or manifest change on master saves a new generation and the old one stays
+# until the 10 GB quota evicts caches by LRU.
+on:
+  workflow_run:
+    workflows: [E2E, Lint, Python bindings]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: cache-prune
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete superseded rust-cache generations on master
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh cache list --ref refs/heads/master --key v0-rust- --limit 1000 --json id,key,createdAt \
+            | jq -r 'group_by(.key | sub("-[0-9a-f]+-[0-9a-f]+$"; "")) | .[] | sort_by(.createdAt) | reverse | .[1:][] | "\(.id) \(.key)"' \
+            | while read -r id key; do
+                echo "delete ${key}"
+                gh cache delete "$id"
+              done
