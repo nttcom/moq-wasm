@@ -20,7 +20,9 @@ use crate::modules::{
     },
 };
 
-/// Whom `announce_namespace` tells of a namespace.
+/// `Subscriber` gets the namespace only on a namespace subscription covering
+/// it; `Relay`, listed in the route registry, gets a standalone
+/// PUBLISH_NAMESPACE.
 #[derive(Clone, Copy)]
 enum NamespaceAudience {
     Subscriber,
@@ -43,11 +45,11 @@ impl ControlMessageForwarder {
         subscriber.ok_or_else(|| anyhow::anyhow!("No subscriber"))
     }
 
-    /// Tells a namespace subscriber of the namespace while `wanted` holds,
-    /// checked under the session's announcement lock just before the record,
-    /// so the decision and the send are not overtaken by another announcement
-    /// or withdrawal of the namespace on the session. Records it only when a
-    /// namespace subscription of the session still covers it.
+    /// Sends PUBLISH_NAMESPACE to a namespace subscriber if `wanted()` is true.
+    /// `wanted` runs under the session's announcement lock, so no other
+    /// announcement or withdrawal on the session lands between the decision
+    /// and the send. Records nothing when no namespace subscription of the
+    /// session covers the namespace.
     #[tracing::instrument(
         level = "info",
         name = "relay.control_message_forwarder.publish_namespace",
@@ -69,9 +71,9 @@ impl ControlMessageForwarder {
         .await;
     }
 
-    /// `publish_namespace` for a relay the route registry lists as a
-    /// namespace subscriber, which needs no subscription on this session: it
-    /// gets PUBLISH_NAMESPACE.
+    /// `publish_namespace` for a relay listed in the route registry: it has no
+    /// namespace subscription on this session, so it gets a standalone
+    /// PUBLISH_NAMESPACE.
     #[tracing::instrument(
         level = "info",
         name = "relay.control_message_forwarder.publish_namespace_to_relay",
@@ -161,8 +163,8 @@ impl ControlMessageForwarder {
         );
     }
 
-    /// `publish_namespace` for PUBLISH_NAMESPACE_DONE; returns whether it was
-    /// sent.
+    /// `publish_namespace` for PUBLISH_NAMESPACE_DONE. Returns whether the
+    /// withdrawal was recorded, true even when the send then fails.
     #[tracing::instrument(
         level = "info",
         name = "relay.control_message_forwarder.publish_namespace_done",
@@ -546,7 +548,7 @@ mod tests {
             .publish_namespace(SUBSCRIBER, NAMESPACE.to_string(), || true)
             .await;
 
-        // Assert: no PUBLISH_NAMESPACE_DONE, and the namespace is not announced twice
+        // Assert
         assert!(!sent);
         assert!(recorded.publish_namespace_dones().is_empty());
         assert_eq!(recorded.publish_namespaces(), vec![NAMESPACE.to_string()]);

@@ -257,7 +257,8 @@ pub(crate) struct MockUpstreamSession {
     answer_publish: Option<PublishAnswer>,
     /// Each PUBLISH_NAMESPACE, once recorded, takes a permit before it is sent.
     publish_namespace_gate: Option<Arc<tokio::sync::Semaphore>>,
-    /// Each PUBLISH_NAMESPACE takes a permit before it reaches the peer.
+    /// Each PUBLISH_NAMESPACE takes a permit before it is recorded, unlike
+    /// `publish_namespace_gate`.
     publish_namespace_delay: Option<Arc<tokio::sync::Semaphore>>,
 }
 

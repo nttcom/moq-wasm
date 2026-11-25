@@ -41,9 +41,9 @@ struct SessionEntry {
     /// Namespaces this relay sent PUBLISH_NAMESPACE for on the session and
     /// has not withdrawn yet.
     announced_namespaces: HashSet<String>,
-    /// Held across the record and the send of each PUBLISH_NAMESPACE and
-    /// PUBLISH_NAMESPACE_DONE on the session, so the session gets them in
-    /// the order they were recorded.
+    /// Held across the decision, the record and the send of each
+    /// PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE on the session, so the
+    /// session gets them in the order they were recorded.
     announcement_lock: Arc<tokio::sync::Mutex<()>>,
 }
 

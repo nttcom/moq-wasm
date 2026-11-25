@@ -96,8 +96,8 @@ impl PublishNamespaceDone {
     /// subscribers told. The publisher session is one of them when it
     /// subscribes to the namespace, since its own namespace was announced to
     /// it (draft-14 §9.28, draft-18 §10.18). Each subscriber's withdrawal is
-    /// decided as it is sent, so one crossing another session's
-    /// PUBLISH_NAMESPACE of the namespace leaves the subscriber told of it.
+    /// decided when it is sent: if another session publishes the namespace
+    /// meanwhile, the subscriber keeps it announced.
     pub(crate) async fn notify_local_subscribers(
         publisher_session_id: SessionId,
         publisher_is_client: bool,

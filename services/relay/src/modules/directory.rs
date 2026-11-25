@@ -451,8 +451,10 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
-    /// Whether a namespace subscriber of `subscriber_peer` is told of the
-    /// namespace: another relay only of a client's (split horizon).
+    /// A client subscriber is told of a namespace while anyone publishes it, a
+    /// relay subscriber while a client does (split horizon).
+    /// `PublishNamespaceDone::notify_local_subscribers` withdraws it under the
+    /// same condition.
     pub(crate) fn announces_namespace_to(
         &self,
         subscriber_peer: SessionPeer,

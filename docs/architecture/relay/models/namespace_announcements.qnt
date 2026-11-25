@@ -82,14 +82,7 @@ module namespace_announcements {
     | UnReleasing   // UNSUBSCRIBE_NAMESPACE: leaves the directory next
     | UnForgetting  // `forget_announced_namespaces` next
 
-  // A namespace's progress in `forward_matching_publications`.
-  type Stage =
-    | FNone
-    | FCheck        // `announces_namespace_to` again next
-
-  type SubTask = {
-    phase: SubPhase, prefix: str, target: str, todo: Set[str], cur: str, stage: Stage,
-  }
+  type SubTask = { phase: SubPhase, prefix: str, target: str, todo: Set[str] }
 
   type State = {
     pubs: Set[Publication],
@@ -112,7 +105,7 @@ module namespace_announcements {
   pure val idlePub: PubTask = {
     phase: PIdle, ns: "", slot: -1, todo: Set(), withdrawn: Set(), leaving: Set(),
   }
-  pure val idleSub: SubTask = { phase: SIdle, prefix: "", target: "", todo: Set(), cur: "", stage: FNone }
+  pure val idleSub: SubTask = { phase: SIdle, prefix: "", target: "", todo: Set() }
   pure val noMoqtSub: MoqtSub = { state: MNone, prefix: "", held: Set(), told: Set() }
 
   action init = s' = {
@@ -317,7 +310,7 @@ module namespace_announcements {
 
   pure def advanceSub(st: State, x: str): State =
     val t = st.subTasks.get(x)
-    if (t.phase == SOffering and t.stage == FNone and t.todo == Set()) setSub(st, x, idleSub) else st
+    if (t.phase == SOffering and t.todo == Set()) setSub(st, x, idleSub) else st
 
   // A reconcile of the prefix fails only while no settled subscription of
   // it holds its route.
@@ -461,32 +454,17 @@ module namespace_announcements {
     },
   }
 
-  // `forward_matching_publications`: `announces_namespace_to`, then its
-  // PUBLISH_NAMESPACE.
+  // `forward_matching_publications`: one PUBLISH_NAMESPACE, sent while
+  // `announces_namespace_to` holds.
   action offerRecord(x: str): bool = all {
     val t = s.subTasks.get(x)
     all {
       t.phase == SOffering,
-      t.stage == FNone,
       t.todo != Set(),
       nondet n = oneOf(t.todo)
-      val rest = { ...t, todo: t.todo.exclude(Set(n)), cur: n }
-      if (not(published(s, n))) s' = advanceSub(setSub(s, x, rest), x)
-      else
-        val r = record(s, x, n, Announcement)
-        s' = setSub(if (r.sent) deliver(r.st, x, n, Announcement) else r.st, x, { ...rest, stage: FCheck }),
-    },
-  }
-
-  // A namespace withdrawn meanwhile is withdrawn here too.
-  action offerCheck(x: str): bool = all {
-    val t = s.subTasks.get(x)
-    all {
-      t.stage == FCheck,
-      if (published(s, t.cur)) s' = advanceSub(setSub(s, x, { ...t, stage: FNone }), x)
-      else
-        val r = record(s, x, t.cur, Withdrawal)
-        s' = advanceSub(setSub(if (r.sent) deliver(r.st, x, t.cur, Withdrawal) else r.st, x, { ...t, stage: FNone }), x),
+      val rest = { ...t, todo: t.todo.exclude(Set(n)) }
+      val r = if (published(s, n)) record(s, x, n, Announcement) else { st: s, sent: false }
+      s' = advanceSub(setSub(if (r.sent) deliver(r.st, x, n, Announcement) else r.st, x, rest), x),
     },
   }
 
@@ -502,7 +480,7 @@ module namespace_announcements {
       updatePrefix(x), updateRouted(x), updateRouteFailed(x), updateRefused(x),
       updateReleased(x), updateForgot(x),
       unsubscribeNamespace(x), unsubscribeReleased(x), unsubscribeForgot(x),
-      offerRecord(x), offerCheck(x),
+      offerRecord(x),
     },
   }
 

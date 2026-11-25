@@ -20,9 +20,9 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         namespaces: String,
     ) -> anyhow::Result<PublishNamespaceResponse>;
-    /// `send_publish_namespace` for a namespace the peer subscribed to: `None`,
-    /// sending nothing, once no namespace subscription of the peer covers it
-    /// (draft-18 §10.18).
+    /// `send_publish_namespace` restricted to the peer's namespace
+    /// subscriptions: returns `None`, sending nothing, when none covers the
+    /// namespace (draft-18 §10.18).
     async fn send_subscribed_namespace(
         &self,
         namespace: String,

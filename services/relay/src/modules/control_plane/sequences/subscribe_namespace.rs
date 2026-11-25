@@ -379,24 +379,12 @@ impl SubscribeNameSpace {
                     let table = &downstream_publish.table;
                     let announced =
                         || table.announces_namespace_to(subscription.peer, &track_namespace);
-                    if !announced() {
-                        continue;
-                    }
                     forwarder
                         .publish_namespace(session_id, track_namespace.clone(), announced)
                         .await;
-                    // A withdrawal that ran while `publications` was being
-                    // sent found the namespace not yet announced here and
-                    // sent no PUBLISH_NAMESPACE_DONE.
-                    if !announced() {
-                        forwarder
-                            .publish_namespace_done(session_id, track_namespace.clone(), || {
-                                !announced()
-                            })
-                            .await;
-                        continue;
+                    if announced() {
+                        namespaces.insert(track_namespace);
                     }
-                    namespaces.insert(track_namespace);
                 }
                 MatchingPublication::Track(_) | MatchingPublication::Namespace(_) => {}
             }
@@ -455,12 +443,9 @@ impl SubscribeNameSpace {
     }
 }
 
-/// A client subscriber is told of a namespace while anyone publishes it, a
-/// relay subscriber while a client does (split horizon): the condition under
-/// which `PublishNamespaceDone::notify_local_subscribers` withdraws it.
-/// Forgets the namespaces announced on a subscription refused after it was
-/// registered: moqt drops them with the request. Call it once the error is
-/// sent, as moqt still holds what is announced before.
+/// Forgets the namespaces recorded as announced on a refused subscription,
+/// since moqt drops them with the request. Call it after sending the error:
+/// until then moqt still holds them.
 async fn forget_refused_announcements(
     forwarder: &ControlMessageForwarder,
     session_id: SessionId,
