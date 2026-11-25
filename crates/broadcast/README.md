@@ -46,7 +46,7 @@ let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
 // let outcome = writer.push(event)?;
 ```
 
-To let `RelayConnection` dial its own session lazily instead of sharing an existing `Session`, pass `RelayConnection::new(Some(MoqtTarget { url, auth_token, verify_certificate }))` (set `verify_certificate: false` only for local self-signed relays).
+To let `RelayConnection` dial its own session lazily instead of sharing an existing `Session`, pass `RelayConnection::new(Some(MoqtTarget { url, auth_token, verify_certificate }))` (set `verify_certificate: false` only for local self-signed relays). The relay closes a session when its token expires, so a publisher that outlives its token passes each new one to `RelayConnection::refresh_auth_token(app_id, token)` before then.
 
 ## Quickstart: Read a broadcast
 
