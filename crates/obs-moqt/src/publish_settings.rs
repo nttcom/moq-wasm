@@ -9,8 +9,8 @@ pub(crate) struct PublishSettings {
 }
 
 impl PublishSettings {
-    /// Fails when the relay URL or the namespace is empty. libobs gives an
-    /// unset string setting as an empty string.
+    /// Fails when the relay URL, the namespace, or the token is empty. libobs
+    /// gives an unset string setting as an empty string.
     pub(crate) fn new(
         server: &str,
         namespace: &str,
@@ -28,10 +28,13 @@ impl PublishSettings {
         if namespace.is_empty() {
             bail!("the MoQT service has no track namespace (`namespace`)");
         }
+        if bearer_token.is_empty() {
+            bail!("the MoQT service has no token (`bearer_token`)");
+        }
         Ok(Self {
             target: MoqtTarget {
                 url: server.to_owned(),
-                auth_token: (!bearer_token.is_empty()).then(|| bearer_token.to_owned()),
+                auth_token: Some(bearer_token.to_owned()),
                 verify_certificate: !insecure_skip_tls_verify,
             },
             namespace,
@@ -48,34 +51,37 @@ mod tests {
         // Arrange / Act
         let settings = PublishSettings::new(
             "moqt://relay.example.com:4433",
-            "/anon/obs/live/",
-            "",
+            "/site1/obs/live/",
+            "jwt",
             false,
         )
         .unwrap();
 
         // Assert
-        assert_eq!(settings.namespace, ["anon", "obs", "live"]);
+        assert_eq!(settings.namespace, ["site1", "obs", "live"]);
         assert_eq!(settings.target.url, "moqt://relay.example.com:4433");
-        assert_eq!(settings.target.auth_token, None);
+        assert_eq!(settings.target.auth_token.as_deref(), Some("jwt"));
         assert!(settings.target.verify_certificate);
     }
 
     #[test]
-    fn carries_the_token_and_the_request_to_skip_certificate_verification() {
+    fn skips_certificate_verification_on_request() {
         // Arrange / Act
         let settings =
             PublishSettings::new("https://127.0.0.1:4433", "room/camera", "jwt", true).unwrap();
 
         // Assert
-        assert_eq!(settings.target.auth_token.as_deref(), Some("jwt"));
         assert!(!settings.target.verify_certificate);
     }
 
     #[test]
-    fn rejects_a_missing_relay_url_or_namespace() {
+    fn rejects_a_missing_relay_url_namespace_or_token() {
+        // Arrange
+        let server = "moqt://relay.example.com:4433";
+
         // Act / Assert
-        assert!(PublishSettings::new("", "anon/obs", "", false).is_err());
-        assert!(PublishSettings::new("moqt://relay.example.com:4433", "//", "", false).is_err());
+        assert!(PublishSettings::new("", "site1/obs", "jwt", false).is_err());
+        assert!(PublishSettings::new(server, "//", "jwt", false).is_err());
+        assert!(PublishSettings::new(server, "site1/obs", "", false).is_err());
     }
 }

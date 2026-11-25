@@ -24,7 +24,8 @@ OBS does not yet list services that plugins register under **Settings → Stream
     "type": "moqt_service",
     "settings": {
       "server": "moqt://127.0.0.1:4433",
-      "namespace": "anon/obs/live",
+      "namespace": "<app-id>/obs/live",
+      "bearer_token": "<JWT>",
       "insecure_skip_tls_verify": true
     }
   }
@@ -39,14 +40,15 @@ Then press **Start Streaming** and watch the namespace in **Live Viewer**. The *
 | Setting | Required | Default | Description |
 | --- | --- | --- | --- |
 | `server` | Yes | — | `moqt://host:port` (QUIC) or `https://host:port` (WebTransport) |
-| `namespace` | Yes | — | `/`-separated MoQT namespace (e.g. `anon/obs/live`) |
-| `bearer_token` | No | — | JWT sent in `CLIENT_SETUP` (required outside `anon/**`) |
+| `namespace` | Yes | — | `/`-separated MoQT namespace under the token's app (e.g. `<app-id>/obs/live`) |
+| `bearer_token` | Yes | — | JWT sent in `CLIENT_SETUP`, with a `publish` claim that covers the namespace (mint one with [`auth-token`](../auth-token/README.md)) |
 | `insecure_skip_tls_verify` | No | `false` | Skip TLS certificate verification (local self-signed relays only) |
 
 ## Behavior & caveats
 
 - **Codecs**: H.264 and AAC only; choose an H.264 video encoder and AAC audio under **Settings → Output**. When the encoder settings leave the keyframe interval at 0 (always the case in simple output mode), it is set to 2 s so that viewers join quickly.
-- **Connection lifecycle**: **Start Streaming** connects and announces the namespace; a missing setting or an unreachable relay ends the attempt, and OBS reports the reason (also in its log). A relay lost mid-stream is reported as a disconnect once the transport times out (about 30 s on QUIC), which OBS answers with its reconnect settings (**Settings → Advanced → Automatically Reconnect**).
+- **Connection lifecycle**: **Start Streaming** connects and announces the namespace; a missing setting, an unreachable relay, or a token that does not cover the namespace ends the attempt, and OBS reports the reason (also in its log). A relay lost mid-stream is reported as a disconnect once the transport times out (about 30 s on QUIC), which OBS answers with its reconnect settings (**Settings → Advanced → Automatically Reconnect**).
+- **Token expiry**: The relay closes the session when the token expires (relays accept at most 24 h by default), and OBS's reconnects fail until the profile holds a new token. Mint a token that outlasts the stream. OBS keeps it in the profile's `service.json` as plain text, like a stream key.
 - **Timestamps**: Video and audio share one clock that starts at the first video packet's decode time, so B-frames keep their presentation order. Audio that precedes the first video packet is left out.
 - **Queue & backpressure**: Same publish queue as the other `broadcast` publishers (~30 s; when full, frames are dropped until the next keyframe fits). Dropped video frames show up as OBS's dropped frames.
 - **Logging**: `tracing` logs go to stderr at `info` by default (override with `RUST_LOG`); start OBS from a terminal to see them.
