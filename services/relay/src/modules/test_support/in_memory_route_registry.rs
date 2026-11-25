@@ -35,9 +35,8 @@ impl InMemoryRouteRegistry {
         self.lock().clone()
     }
 
-    /// The next call that registers or unregisters a namespace or track
-    /// route waits for `notify_one` on the returned `Notify` before it takes
-    /// effect.
+    /// The next route registration or withdrawal waits for `notify_one` on
+    /// the returned `Notify` before it takes effect.
     pub(crate) fn hold_next_route_call(&self) -> Arc<Notify> {
         let released = Arc::new(Notify::new());
         *self.held_call.lock().unwrap() = Some(released.clone());

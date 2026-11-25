@@ -1,4 +1,4 @@
-use std::{hash::Hash, sync::Arc};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 
@@ -9,17 +9,12 @@ use crate::modules::{
 
 /// One lock per route key, held across the route registry call; the value is
 /// whether this relay holds the route.
-struct HeldRoutes<K>(DashMap<K, Arc<tokio::sync::Mutex<bool>>>);
+#[derive(Default)]
+struct HeldRoutes(DashMap<Route, Arc<tokio::sync::Mutex<bool>>>);
 
-impl<K: Eq + Hash> Default for HeldRoutes<K> {
-    fn default() -> Self {
-        Self(DashMap::new())
-    }
-}
-
-impl<K: Eq + Hash + Clone> HeldRoutes<K> {
-    async fn lock(&self, key: &K) -> tokio::sync::OwnedMutexGuard<bool> {
-        let route = self.0.entry(key.clone()).or_default().clone();
+impl HeldRoutes {
+    async fn lock(&self, route: &Route) -> tokio::sync::OwnedMutexGuard<bool> {
+        let route = self.0.entry(route.clone()).or_default().clone();
         route.lock_owned().await
     }
 
@@ -27,23 +22,22 @@ impl<K: Eq + Hash + Clone> HeldRoutes<K> {
     /// waits for it. A caller clones the lock only under the map's shard
     /// lock, which `remove_if` holds, so no caller is left with a lock the
     /// map forgot.
-    fn forget_unheld(&self, key: &K) {
-        self.0.remove_if(key, |_, route| {
+    fn forget_unheld(&self, route: &Route) {
+        self.0.remove_if(route, |_, route| {
             Arc::strong_count(route) == 1 && route.try_lock().is_ok_and(|held| !*held)
         });
     }
 }
 
-#[derive(Clone, Copy)]
-enum Route<'a> {
-    Publisher(&'a str),
-    Subscriber(&'a str),
-    /// A track clients publish here with PUBLISH.
-    Track(&'a TrackKey),
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Route {
+    Publisher(String),
+    Subscriber(String),
+    Track(TrackKey),
 }
 
-impl Route<'_> {
-    fn is_wanted(self, table: &InMemoryLocalPubSubDirectory) -> bool {
+impl Route {
+    fn is_wanted(&self, table: &InMemoryLocalPubSubDirectory) -> bool {
         match self {
             Self::Publisher(track_namespace) => {
                 table.has_client_namespace_publisher(track_namespace)
@@ -55,7 +49,7 @@ impl Route<'_> {
         }
     }
 
-    async fn register(self, route_registry: &dyn RelayRouteRegistry) -> anyhow::Result<()> {
+    async fn register(&self, route_registry: &dyn RelayRouteRegistry) -> anyhow::Result<()> {
         match self {
             Self::Publisher(track_namespace) => {
                 route_registry
@@ -73,7 +67,7 @@ impl Route<'_> {
 
     /// Logs a failure: the route expires as the heartbeat no longer
     /// refreshes it.
-    async fn unregister(self, route_registry: &dyn RelayRouteRegistry) {
+    async fn unregister(&self, route_registry: &dyn RelayRouteRegistry) {
         match self {
             Self::Publisher(track_namespace) => {
                 if let Err(error) = route_registry
@@ -106,25 +100,20 @@ impl Route<'_> {
 }
 
 /// The namespace and track routes this relay holds in the route registry.
-/// After each change of a namespace's client publishers, a prefix's client
-/// subscribers or a track's client PUBLISHes in the directory, a reconcile
-/// reads them again under the route's lock and registers or withdraws the
-/// route to match, so two changes crossing each other leave the route the
-/// directory asks for.
+/// A reconcile follows each directory change to a route's clients: it
+/// rereads them under the route's lock and registers or withdraws the route
+/// to match. Two crossing changes therefore leave the route the directory
+/// asks for.
 pub(crate) struct NamespaceRoutes {
     route_registry: Arc<dyn RelayRouteRegistry>,
-    publishers: HeldRoutes<String>,
-    subscribers: HeldRoutes<String>,
-    tracks: HeldRoutes<TrackKey>,
+    held: HeldRoutes,
 }
 
 impl NamespaceRoutes {
     pub(crate) fn new(route_registry: Arc<dyn RelayRouteRegistry>) -> Self {
         Self {
             route_registry,
-            publishers: HeldRoutes::default(),
-            subscribers: HeldRoutes::default(),
-            tracks: HeldRoutes::default(),
+            held: HeldRoutes::default(),
         }
     }
 
@@ -144,13 +133,8 @@ impl NamespaceRoutes {
         track_namespace: &str,
         table: &InMemoryLocalPubSubDirectory,
     ) -> anyhow::Result<bool> {
-        self.reconcile(
-            &self.publishers,
-            &track_namespace.to_string(),
-            Route::Publisher(track_namespace),
-            table,
-        )
-        .await
+        self.reconcile(Route::Publisher(track_namespace.to_string()), table)
+            .await
     }
 
     /// `reconcile_publisher` for the prefix's subscriber route, held while a
@@ -160,13 +144,8 @@ impl NamespaceRoutes {
         track_namespace_prefix: &str,
         table: &InMemoryLocalPubSubDirectory,
     ) -> anyhow::Result<bool> {
-        self.reconcile(
-            &self.subscribers,
-            &track_namespace_prefix.to_string(),
-            Route::Subscriber(track_namespace_prefix),
-            table,
-        )
-        .await
+        self.reconcile(Route::Subscriber(track_namespace_prefix.to_string()), table)
+            .await
     }
 
     /// `reconcile_publisher` for the track's publisher route, held while a
@@ -176,13 +155,13 @@ impl NamespaceRoutes {
         track_key: &TrackKey,
         table: &InMemoryLocalPubSubDirectory,
     ) -> anyhow::Result<bool> {
-        self.reconcile(&self.tracks, track_key, Route::Track(track_key), table)
-            .await
+        self.reconcile(Route::Track(track_key.clone()), table).await
     }
 
-    /// `reconcile_track` after a client's PUBLISH of the track left the
-    /// directory; a failed registration, of a route an earlier failure
-    /// left unheld, is logged.
+    /// `reconcile_track` for a caller that removed a client's PUBLISH from the
+    /// directory. It logs a failure instead of returning it: a registration
+    /// here is for another client's PUBLISH, whose own `reconcile_track`
+    /// registers the route or rejects that PUBLISH.
     pub(crate) async fn withdraw_track(
         &self,
         track_key: &TrackKey,
@@ -198,14 +177,12 @@ impl NamespaceRoutes {
         }
     }
 
-    async fn reconcile<K: Eq + Hash + Clone>(
+    async fn reconcile(
         &self,
-        held_routes: &HeldRoutes<K>,
-        key: &K,
-        route: Route<'_>,
+        route: Route,
         table: &InMemoryLocalPubSubDirectory,
     ) -> anyhow::Result<bool> {
-        let mut held = held_routes.lock(key).await;
+        let mut held = self.held.lock(&route).await;
         let wanted = route.is_wanted(table);
         let withdrawn = match (wanted, *held) {
             (true, false) => route
@@ -222,7 +199,7 @@ impl NamespaceRoutes {
             *held = wanted;
         }
         drop(held);
-        held_routes.forget_unheld(key);
+        self.held.forget_unheld(&route);
         withdrawn
     }
 }
@@ -256,7 +233,7 @@ mod tests {
         assert!(registered.contains("ns"));
         assert_eq!([one_left, none_left], [false, true]);
         assert!(registry.routes().namespace_publishers.is_empty());
-        assert!(routes.publishers.0.is_empty());
+        assert!(routes.held.0.is_empty());
     }
 
     #[tokio::test]
