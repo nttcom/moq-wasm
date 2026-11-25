@@ -47,15 +47,7 @@ mod tests {
     use mediapack::{Timestamp, vp8::Vp8Config};
 
     use super::*;
-
-    fn sample(dts_us: u64, is_keyframe: bool) -> VideoSample {
-        VideoSample {
-            data: Bytes::from_static(b"frame"),
-            is_keyframe,
-            pts: Timestamp::from_micros(dts_us),
-            dts: Timestamp::from_micros(dts_us),
-        }
-    }
+    use crate::test_support::video_sample;
 
     #[test]
     fn a_fragment_starts_the_group_its_sample_was_pushed_with_though_its_decode_time_repeats() {
@@ -64,16 +56,24 @@ mod tests {
             width: 64,
             height: 48,
         }));
-        cmaf.push(&sample(0, false), GroupBoundary::Within, Timestamp::ZERO)
-            .unwrap();
+        cmaf.push(
+            &video_sample(0, false),
+            GroupBoundary::Within,
+            Timestamp::ZERO,
+        )
+        .unwrap();
 
         // Act
         let delta = cmaf
-            .push(&sample(0, true), GroupBoundary::At(7), Timestamp::ZERO)
+            .push(
+                &video_sample(0, true),
+                GroupBoundary::At(7),
+                Timestamp::ZERO,
+            )
             .unwrap();
         let keyframe = cmaf
             .push(
-                &sample(40_000, false),
+                &video_sample(40_000, false),
                 GroupBoundary::Within,
                 Timestamp::ZERO,
             )
@@ -127,7 +127,7 @@ mod tests {
                 let fragments: Vec<Bytes> = dts_us
                     .iter()
                     .filter_map(|&dts| {
-                        cmaf.push(&sample(dts, true), GroupBoundary::Within, origin)
+                        cmaf.push(&video_sample(dts, true), GroupBoundary::Within, origin)
                             .unwrap()
                     })
                     .map(|object| object.payload)
