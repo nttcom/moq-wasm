@@ -7,13 +7,13 @@ import subprocess
 import time
 import urllib.request
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from moq_wasm import _token
+from moq_wasm import _native, _token
 from moq_wasm.media import _remote_broadcast
 
 from tests.virtual_time import VirtualTimeLoop
@@ -25,6 +25,7 @@ RELAY_APP_ID = "11111111-2222-3333-4444-555555555555"
 # The VTS verifies every `temp-` app with this secret, the one the temporary-apps service signs with.
 TEMPORARY_APP_SECRET = "python-binding-temporary-app-secret"
 READY_TIMEOUT_SECONDS = 120
+CLOSE_TIMEOUT_SECONDS = 5
 
 
 # The relay binds on every address: QUIC and WebTransport on UDP `RELAY_PORT`, WebSocket on TCP
@@ -195,10 +196,35 @@ def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = N
         stop(process)
 
 
+@pytest.fixture
+async def closes_sessions(monkeypatch):
+    """Closes the native sessions a test left open. One left open on a session-scoped relay makes
+    its drain outlast `stop()`."""
+    opened = []
+    connect = _native.connect
+
+    async def connect_and_keep(*args, **kwargs):
+        session = await connect(*args, **kwargs)
+        opened.append(session)
+        return session
+
+    monkeypatch.setattr(_native, "connect", connect_and_keep)
+    yield
+    for session in opened:
+        # A session that ended or cannot reach the relay leaves nothing on it.
+        with suppress(Exception):
+            await asyncio.wait_for(session.close(), CLOSE_TIMEOUT_SECONDS)
+
+
 @pytest.fixture(scope="session")
-def relay_url(relay_auth) -> str:
+def shared_relay_url(relay_auth) -> str:
     with started_relay(relay_auth, "relay") as relay:
         yield relay.url
+
+
+@pytest.fixture
+def relay_url(shared_relay_url, closes_sessions) -> str:
+    return shared_relay_url
 
 
 def redis_image() -> str:
@@ -225,7 +251,7 @@ def started_redis(logs: Path):
 
 
 @pytest.fixture
-def relays_sharing_redis(relay_auth):
+def relays_sharing_redis(relay_auth, closes_sessions):
     """Relay A and relay B registered in one Redis, so draining A sends its clients a GOAWAY naming B."""
     with started_redis(relay_auth.logs) as redis_url:
         env = {"REDIS_URL": redis_url}
@@ -235,7 +261,12 @@ def relays_sharing_redis(relay_auth):
 
 
 @pytest.fixture(scope="session")
-def draft18_relay_url(relay_auth) -> str:
+def shared_draft18_relay_url(relay_auth) -> str:
     """A relay that accepts draft-18 only."""
     with started_relay(relay_auth, "relay-draft18", {"RELAY_MOQT_VERSIONS": "draft-18"}) as relay:
         yield relay.url
+
+
+@pytest.fixture
+def draft18_relay_url(shared_draft18_relay_url, closes_sessions) -> str:
+    return shared_draft18_relay_url

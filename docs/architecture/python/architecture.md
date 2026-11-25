@@ -84,7 +84,7 @@ The native `Session` wraps `moqt::client::Session` ([`moqt/architecture.md`](../
 
 ### Build, CI, and Bot Usage
 - **Extension linking**: `[lib] test = false` (extension modules cannot link as Rust test binaries; tested via pytest). `.cargo/config.toml` sets `PYO3_NO_PYTHON` and `PYO3_BUILD_EXTENSION_MODULE` so workspace `cargo build`/`clippy` need no Python interpreter.
-- **CI**: `python.yml` runs pytest against a workspace relay + VTS on ephemeral ports (`tests/conftest.py`).
+- **CI**: `python.yml` runs pytest against a workspace relay + VTS on ephemeral ports (`tests/conftest.py`). `closes_sessions` closes the sessions a test left open on a relay at its teardown, so a failed test does not hold the shared relay's drain past `stop()`.
 - **Bot builds**: Bots depend on `sdk/python` by path (`[tool.uv.sources]`); `uv` builds via maturin (requires Rust toolchain; `examples/python/Dockerfile` uses a builder stage).
 - **Bot API**: Bots use the SDK's media layer ([sdk.md](sdk.md) "Media"): `watch_broadcasts`, `RemoteBroadcast.catalogs`/`follow`, `create_broadcast`, and `moq_wasm.codecs` (mid-group video joins wait for the next keyframe group).
 
