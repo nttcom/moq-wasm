@@ -13,7 +13,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | `Publication {Subscribed, Published, Released}` | `moqt/domains/origin.rs` |
 | `ObjectSink {Buffer, Receiver, Cancelled}` | `moqt/domains/connection.rs` |
 | `Cutover {Waiting, At}` | `moqt/domains/group_cutover.rs` |
-| `InflightRequest {Waiting, Abandoned}`, `LateResponseAction` | `moqt/version/draft14.rs` |
+| `Entry {Waiting, Abandoned}` (draft-14 inflight request), `LateResponseAction` | `moqt/version/draft14.rs` |
 | `AnswerSlot {Waiting, Answered, TimedOut}` | `moqt/control_plane/handler/update_answer.rs` |
 | `Outstanding {PassedOn, Delayed}` | `moqt/domains/origin/new_group_requests.rs` |
 | `Carried {Moved, Ends, Stays, Gone}` (outcome, not stored) | `moqt/domains/session/migration_task.rs` |
@@ -53,8 +53,8 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Machine | Encoding | Explicit states | Model |
 | --- | --- | --- | --- |
-| Outgoing request | `inflight_requests[id]`, `control_stream_closed`, `RegisteredSender` / `ReceivedResponse` drop guards | `Unregistered`, `Waiting`, `Abandoned`, `Delivered`, `Accepted`, `Withdrawing`, `Failed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
-| Outbound Request ID credit | `OutgoingRequestIds{next, blocked_on}`, `peer_request_id_limit`, reservation guard | `Free`, `WaitingForCredit`, `BlockedNotified`, `Reserved`, `Consumed`, `Closed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
+| Outgoing request | `InflightRequests` (`Open(id → Entry)` / `Closed`) and `Entry` (`Waiting` / `Abandoned`) in `version/draft14.rs`, `RegisteredSender` / `ReceivedResponse` drop guards | `Unregistered`, `Waiting`, `Abandoned`, `Delivered`, `Accepted`, `Withdrawing`, `Failed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
+| Outbound Request ID credit | `OutgoingRequestIds{next, blocked: RequestsBlockedSent}` in `version/draft14.rs`, `peer_request_id_limit`, reservation guard | `Free`, `WaitingForCredit`, `BlockedNotified`, `Reserved`, `Consumed`, `Closed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
 | Inbound Request ID window | `next_peer_request_id`, `request_id_limit` | `InWindow`, `NeedsRaise`, `Violation` | — |
 | GOAWAY received | `Connection.go_away_received` | `NotReceived`, `Received`, `Violation` | — |
 

@@ -81,7 +81,7 @@ enum LateResponseAction {
 /// stops waiting, so a late response is answered with a withdrawal instead
 /// of being mistaken for an unknown Request ID (which must close the
 /// session, §9.1).
-enum InflightRequest {
+enum Entry {
     Waiting {
         sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
@@ -89,16 +89,90 @@ enum InflightRequest {
     Abandoned(LateResponseAction),
 }
 
-#[derive(Default)]
-struct InflightRequests {
-    requests: HashMap<RequestId, InflightRequest>,
-    control_stream_closed: bool,
+/// This side's requests awaiting a response.
+enum InflightRequests {
+    Open(HashMap<RequestId, Entry>),
+    /// The control stream ended: no response can arrive, so no entry is kept.
+    Closed,
 }
 
+impl Default for InflightRequests {
+    fn default() -> Self {
+        Self::Open(HashMap::new())
+    }
+}
+
+impl InflightRequests {
+    /// Replaces any entry of `request_id`. Once `Closed`, `entry` is dropped,
+    /// so a waiting caller fails at once.
+    fn register(&mut self, request_id: RequestId, entry: Entry) {
+        if let Self::Open(requests) = self {
+            requests.insert(request_id, entry);
+        }
+    }
+
+    fn take(&mut self, request_id: RequestId) -> Option<Entry> {
+        match self {
+            Self::Open(requests) => requests.remove(&request_id),
+            Self::Closed => None,
+        }
+    }
+
+    /// Turns a `Waiting` entry `Abandoned`; other entries stay as they are.
+    /// Returns whether this takes the `Abandoned` entries past
+    /// `MAX_ABANDONED_REQUESTS`.
+    fn abandon(&mut self, request_id: RequestId) -> bool {
+        let Self::Open(requests) = self else {
+            return false;
+        };
+        let Some(entry) = requests.get_mut(&request_id) else {
+            return false;
+        };
+        let Entry::Waiting {
+            on_late_response, ..
+        } = entry
+        else {
+            return false;
+        };
+        let action = std::mem::replace(on_late_response, LateResponseAction::Discard);
+        *entry = Entry::Abandoned(action);
+        let abandoned = requests
+            .values()
+            .filter(|entry| matches!(entry, Entry::Abandoned(_)))
+            .count();
+        abandoned > MAX_ABANDONED_REQUESTS
+    }
+
+    fn close(&mut self) {
+        *self = Self::Closed;
+    }
+}
+
+/// This side's next Request ID, held by the `request_ids` mutex while a
+/// request reserves, waits for, and writes it.
 struct OutgoingRequestIds {
     next: RequestId,
-    /// The peer's Maximum Request ID this side last sent REQUESTS_BLOCKED for.
-    blocked_on: Option<RequestId>,
+    blocked: RequestsBlockedSent,
+}
+
+/// The REQUESTS_BLOCKED this side last sent (§9.6).
+#[derive(Debug, PartialEq)]
+enum RequestsBlockedSent {
+    None,
+    For { limit: RequestId },
+}
+
+impl OutgoingRequestIds {
+    /// Records that the peer's Maximum Request ID `limit` blocks `next`.
+    /// Returns whether REQUESTS_BLOCKED is still to be sent for `limit`.
+    fn block_on(&mut self, limit: RequestId) -> bool {
+        let blocked = RequestsBlockedSent::For { limit };
+        if self.blocked == blocked {
+            return false;
+        }
+        self.blocked = blocked;
+        true
+    }
 }
 
 pub(super) struct RequestIdViolation {
@@ -138,7 +212,7 @@ impl ControlChannel {
             send_stream,
             request_ids: tokio::sync::Mutex::new(OutgoingRequestIds {
                 next: first_request_id,
-                blocked_on: None,
+                blocked: RequestsBlockedSent::None,
             }),
             peer_request_id_limit: tokio::sync::watch::Sender::new(peer_request_id_limit),
             next_peer_request_id: AtomicU64::new(first_request_id ^ 1),
@@ -194,8 +268,7 @@ impl ControlChannel {
             if request_ids.next < limit {
                 break;
             }
-            if request_ids.blocked_on != Some(limit) {
-                request_ids.blocked_on = Some(limit);
+            if request_ids.block_on(limit) {
                 tracing::debug!(
                     maximum_request_id = limit,
                     "requests blocked by the peer's Maximum Request ID"
@@ -468,19 +541,16 @@ impl ControlChannel {
         sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
     ) -> RegisteredSender {
-        let mut inflight = self
-            .inflight_requests
+        self.inflight_requests
             .lock()
-            .expect("inflight_requests poisoned");
-        if !inflight.control_stream_closed {
-            inflight.requests.insert(
+            .expect("inflight_requests poisoned")
+            .register(
                 request_id,
-                InflightRequest::Waiting {
+                Entry::Waiting {
                     sender,
                     on_late_response,
                 },
             );
-        }
         RegisteredSender {
             inflight_requests: self.inflight_requests.clone(),
             connection: Arc::downgrade(connection),
@@ -488,22 +558,18 @@ impl ControlChannel {
         }
     }
 
-    fn take_inflight_request(&self, request_id: RequestId) -> Option<InflightRequest> {
+    fn take_inflight_request(&self, request_id: RequestId) -> Option<Entry> {
         self.inflight_requests
             .lock()
             .expect("inflight_requests poisoned")
-            .requests
-            .remove(&request_id)
+            .take(request_id)
     }
 
     fn fail_inflight_requests(&self) {
-        let mut inflight = self
-            .inflight_requests
+        self.inflight_requests
             .lock()
-            .expect("inflight_requests poisoned");
-        inflight.control_stream_closed = true;
-        inflight.requests.clear();
-        drop(inflight);
+            .expect("inflight_requests poisoned")
+            .close();
         // No MAX_REQUEST_ID can arrive anymore: release blocked requests so
         // they fail like any request on a closed control stream.
         self.peer_request_id_limit.send_replace(RequestId::MAX);
@@ -542,23 +608,7 @@ impl Drop for RegisteredSender {
         let Ok(mut inflight) = self.inflight_requests.lock() else {
             return;
         };
-        let Some(entry) = inflight.requests.get_mut(&self.request_id) else {
-            return;
-        };
-        let InflightRequest::Waiting {
-            on_late_response, ..
-        } = entry
-        else {
-            return;
-        };
-        let action = std::mem::replace(on_late_response, LateResponseAction::Discard);
-        *entry = InflightRequest::Abandoned(action);
-        let abandoned = inflight
-            .requests
-            .values()
-            .filter(|request| matches!(request, InflightRequest::Abandoned(_)))
-            .count();
-        let too_many = abandoned > MAX_ABANDONED_REQUESTS;
+        let too_many = inflight.abandon(self.request_id);
         drop(inflight);
         if too_many && let Some(connection) = self.connection.upgrade() {
             tracing::error!(
@@ -811,8 +861,9 @@ mod tests {
     use futures::FutureExt;
 
     use super::{
-        ControlChannel, LateResponseAction, MAX_ABANDONED_REQUESTS, Notification, OutgoingRequest,
-        OutgoingResponse, REQUEST_ID_WINDOW, RequestIdReservation, handle_late_response,
+        ControlChannel, InflightRequests, LateResponseAction, MAX_ABANDONED_REQUESTS, Notification,
+        OutgoingRequest, OutgoingResponse, REQUEST_ID_WINDOW, RequestIdReservation,
+        RequestsBlockedSent, handle_late_response,
     };
     use crate::{
         RequestFailure, Session, SessionEvent, TransportSendError,
@@ -1241,7 +1292,10 @@ mod tests {
         // Act: dropping the handler answers the first request late
         drop(receive_track_status(&server).await);
         within(async {
-            while inflight_requests.lock().unwrap().requests.len() == MAX_ABANDONED_REQUESTS {
+            while matches!(
+                &*inflight_requests.lock().unwrap(),
+                InflightRequests::Open(requests) if requests.len() == MAX_ABANDONED_REQUESTS
+            ) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -1570,7 +1624,10 @@ mod tests {
         let reservation = within(reservation).await.unwrap();
         assert_eq!(reservation.request_id(), 0);
         drop(reservation);
-        assert_eq!(client_channel.request_ids.lock().await.blocked_on, Some(0));
+        assert_eq!(
+            client_channel.request_ids.lock().await.blocked,
+            RequestsBlockedSent::For { limit: 0 }
+        );
     }
 
     #[tokio::test]
@@ -1647,5 +1704,166 @@ mod tests {
         // held, so twice the limit at most
         assert!(unread <= 2 * MAX_UNREAD_EVENTS, "{unread} events unread");
         assert_eq!(read, MESSAGES);
+    }
+
+    mod properties {
+        use std::collections::HashMap;
+
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::{
+            Entry, InflightRequests, LateResponseAction, MAX_ABANDONED_REQUESTS,
+            OutgoingRequestIds, RequestsBlockedSent,
+        };
+        use crate::modules::moqt::control_plane::enums::RequestId;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            Register(RequestId),
+            Take(RequestId),
+            Abandon(RequestId),
+            Close,
+        }
+
+        /// The model's `Entry`, without the response channel.
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        enum Kind {
+            Waiting,
+            Abandoned,
+        }
+
+        fn kind(entry: &Entry) -> Kind {
+            match entry {
+                Entry::Waiting { .. } => Kind::Waiting,
+                Entry::Abandoned(_) => Kind::Abandoned,
+            }
+        }
+
+        fn waiting() -> Entry {
+            let (sender, _) = tokio::sync::oneshot::channel();
+            Entry::Waiting {
+                sender,
+                on_late_response: LateResponseAction::Discard,
+            }
+        }
+
+        /// `prefilled` Request IDs start abandoned, around the limit, and the
+        /// operations act on the few IDs at its edge, so they cross
+        /// MAX_ABANDONED_REQUESTS.
+        fn registry_ops() -> impl Strategy<Value = (RequestId, Vec<Op>)> {
+            let max = MAX_ABANDONED_REQUESTS as RequestId;
+            prop_oneof![Just(0), Just(max - 1), Just(max), Just(max + 1)].prop_flat_map(
+                |prefilled| {
+                    let id = prefilled.saturating_sub(3)..prefilled + 3;
+                    let op = prop_oneof![
+                        4 => id.clone().prop_map(Op::Register),
+                        2 => id.clone().prop_map(Op::Take),
+                        4 => id.prop_map(Op::Abandon),
+                        1 => Just(Op::Close),
+                    ];
+                    (Just(prefilled), vec(op, 0..32))
+                },
+            )
+        }
+
+        proptest! {
+            /// `InflightRequests` matches the model's `inflight` map and
+            /// `streamClosed` flag (`register`, `abandoned`, `receive`,
+            /// `streamEnd`), and `abandon` reports exactly the step that
+            /// passes MAX_ABANDONED_REQUESTS.
+            #[test]
+            fn inflight_requests_match_the_model((prefilled, ops) in registry_ops()) {
+                // Arrange
+                let mut registry = InflightRequests::default();
+                let mut model: Option<HashMap<RequestId, Kind>> = Some(HashMap::new());
+                let abandoned = |model: &HashMap<RequestId, Kind>| {
+                    model.values().filter(|kind| **kind == Kind::Abandoned).count()
+                };
+                for id in 0..prefilled {
+                    registry.register(id, waiting());
+                    registry.abandon(id);
+                    model.as_mut().unwrap().insert(id, Kind::Abandoned);
+                }
+
+                for op in ops {
+                    match op {
+                        Op::Register(id) => {
+                            // Act
+                            registry.register(id, waiting());
+
+                            // Assert
+                            if let Some(model) = &mut model {
+                                model.insert(id, Kind::Waiting);
+                            }
+                        }
+                        Op::Take(id) => {
+                            // Act
+                            let taken = registry.take(id);
+
+                            // Assert
+                            let expected = model.as_mut().and_then(|model| model.remove(&id));
+                            prop_assert_eq!(taken.as_ref().map(kind), expected);
+                        }
+                        Op::Abandon(id) => {
+                            // Act
+                            let too_many = registry.abandon(id);
+
+                            // Assert
+                            let expected = match &mut model {
+                                Some(model) if model.get(&id) == Some(&Kind::Waiting) => {
+                                    model.insert(id, Kind::Abandoned);
+                                    abandoned(model) > MAX_ABANDONED_REQUESTS
+                                }
+                                _ => false,
+                            };
+                            prop_assert_eq!(too_many, expected);
+                        }
+                        Op::Close => {
+                            // Act
+                            registry.close();
+
+                            // Assert
+                            model = None;
+                        }
+                    }
+                    let entries = match &registry {
+                        InflightRequests::Open(requests) => Some(
+                            requests.iter().map(|(id, entry)| (*id, kind(entry))).collect(),
+                        ),
+                        InflightRequests::Closed => None,
+                    };
+                    prop_assert_eq!(entries, model.clone());
+                }
+            }
+
+            /// §9.6: one REQUESTS_BLOCKED per Maximum Request ID. The limit
+            /// a blocked reservation sees only rises, and repeats while it
+            /// waits or after a timed-out waiter.
+            #[test]
+            fn requests_blocked_is_sent_once_per_limit(
+                mut limits in vec(0..6 as RequestId, 0..16),
+            ) {
+                // Arrange
+                limits.sort_unstable();
+                let mut request_ids = OutgoingRequestIds {
+                    next: 0,
+                    blocked: RequestsBlockedSent::None,
+                };
+
+                // Act
+                let sent: Vec<bool> = limits
+                    .iter()
+                    .map(|limit| request_ids.block_on(*limit))
+                    .collect();
+
+                // Assert
+                let first_of_each: Vec<bool> = limits
+                    .iter()
+                    .enumerate()
+                    .map(|(i, limit)| i == 0 || limits[i - 1] != *limit)
+                    .collect();
+                prop_assert_eq!(sent, first_of_each);
+            }
+        }
     }
 }
