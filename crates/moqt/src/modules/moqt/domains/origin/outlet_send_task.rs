@@ -47,8 +47,12 @@ enum OutletCommand {
     /// Leaves the open group because one of its objects is not sent, as in
     /// Forward State 0 (draft-18 §5.1).
     LeaveGroup,
-    /// Finishes the open group, sends PUBLISH_DONE (TRACK_ENDED) and exits.
-    End { done: oneshot::Sender<Result<()>> },
+    /// Finishes the open group, sends PUBLISH_DONE and exits.
+    End {
+        code: PublishDoneCode,
+        reason: &'static str,
+        done: oneshot::Sender<Result<()>>,
+    },
 }
 
 impl OutletSendTask {
@@ -105,9 +109,13 @@ impl OutletSendTask {
 
     /// Resolves once PUBLISH_DONE is sent; the task takes no command after
     /// this one.
-    pub(super) fn end(&self) -> impl Future<Output = Result<()>> + use<> {
+    pub(super) fn end(
+        &self,
+        code: PublishDoneCode,
+        reason: &'static str,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let (done, ended) = oneshot::channel();
-        self.queue(OutletCommand::End { done });
+        self.queue(OutletCommand::End { code, reason, done });
         async move { ended.await.unwrap_or(Ok(())) }
     }
 
@@ -143,8 +151,8 @@ async fn serve(
                 let _ = reply.send(result);
             }
             OutletCommand::LeaveGroup => writer.abandon_group(),
-            OutletCommand::End { done } => {
-                let _ = done.send(end(writer, &publisher, &subscription).await);
+            OutletCommand::End { code, reason, done } => {
+                let _ = done.send(end(writer, &publisher, &subscription, code, reason).await);
                 return;
             }
         }
@@ -209,17 +217,14 @@ async fn end(
     writer: TrackWriter,
     publisher: &Publisher,
     subscription: &Subscription,
+    code: PublishDoneCode,
+    reason: &'static str,
 ) -> Result<()> {
     let opened_streams = writer.opened_streams();
     if let Err(error) = writer.finish().await {
         tracing::debug!(?error, "open group could not be finished");
     }
     publisher
-        .publish_done(
-            subscription,
-            PublishDoneCode::TrackEnded,
-            opened_streams,
-            "track ended".to_string(),
-        )
+        .publish_done(subscription, code, opened_streams, reason.to_string())
         .await
 }

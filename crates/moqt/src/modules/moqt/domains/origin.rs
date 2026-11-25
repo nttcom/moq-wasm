@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 use tokio::sync::{Mutex, MutexGuard, Notify, mpsc};
 
-use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
 use crate::{
     Publisher, Session, SessionEvent, Subscription, TrackProperties, TrackWriter,
@@ -56,6 +56,9 @@ use outlet_send_task::{OutletSendTask, Payload};
 /// 0.4.5) reject a non-zero one.
 const SUBSCRIBE_NEVER_EXPIRES: u64 = 0;
 const FETCH_SUBGROUP_ID: u64 = 0;
+/// The PUBLISH_DONE reason of a PUBLISH ended because its session also
+/// SUBSCRIBEd to the track, which is then served on that subscription only.
+const SUBSCRIBED_INSTEAD: &str = "the track is served on a SUBSCRIBE of this session";
 
 type TrackKey = (String, String);
 /// The address of a session's `SessionContext`. An outlet or a FETCH task
@@ -381,6 +384,28 @@ impl Outlet {
         }
     }
 
+    /// Ends a serving PUBLISH with PUBLISH_DONE (SUBSCRIPTION_ENDED) once its
+    /// queued sends are done, and keeps it as released; returns whether it
+    /// was one.
+    fn end_publish(&mut self) -> bool {
+        let OutletState::Serving(serving) = &self.state else {
+            return false;
+        };
+        if serving.publication != Publication::Published {
+            return false;
+        }
+        // The send task sends PUBLISH_DONE without this future being awaited.
+        drop(
+            serving
+                .send_task
+                .end(PublishDoneCode::SubscriptionEnded, SUBSCRIBED_INSTEAD),
+        );
+        self.state = OutletState::Released {
+            _session: serving.publisher.session.clone(),
+        };
+        true
+    }
+
     /// Stops sending; returns whether the outlet is kept, as a released
     /// PUBLISH.
     fn release(&mut self) -> bool {
@@ -509,9 +534,12 @@ impl Origin {
     }
 
     /// Sends PUBLISH on `session`. A no-op while the peer of `session` takes
-    /// the track, and once that peer unsubscribed from a PUBLISH of it. A
-    /// track released after a SUBSCRIBE is published again. A session that
-    /// follows GOAWAY sends the track to every connection it is published on.
+    /// the track, and once that peer unsubscribed from a PUBLISH of it. When
+    /// the peer SUBSCRIBEs to the track while the PUBLISH awaits PUBLISH_OK,
+    /// the PUBLISH is ended with PUBLISH_DONE (SUBSCRIPTION_ENDED) once
+    /// accepted, and `Ok` is returned. A track released after a SUBSCRIBE is
+    /// published again. A session that follows GOAWAY sends the track to
+    /// every connection it is published on.
     pub async fn publish(
         &self,
         session: &Session,
@@ -557,6 +585,28 @@ impl Origin {
         };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
+        if track
+            .outlets
+            .iter()
+            .any(|outlet| outlet.request.0 == key_of_session)
+        {
+            drop(state);
+            tracing::debug!(
+                track_namespace = namespace,
+                track_name,
+                request_id = subscription.request_id(),
+                "PUBLISH accepted after a SUBSCRIBE of the track; ending it"
+            );
+            return publisher
+                .publish_done(
+                    &subscription,
+                    PublishDoneCode::SubscriptionEnded,
+                    0,
+                    SUBSCRIBED_INSTEAD.to_string(),
+                )
+                .await
+                .with_context(|| format!("end PUBLISH of {namespace}/{track_name}"));
+        }
         track.lifecycle = Lifecycle::Live;
         let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         track.outlets.push(Outlet {
@@ -735,7 +785,9 @@ impl Origin {
 
     /// Serves the SUBSCRIBE on the session it arrived on. Returns the handler
     /// unanswered when the track is unregistered or ended, for the caller to
-    /// answer.
+    /// answer. A PUBLISH of the track the session accepted is ended with
+    /// PUBLISH_DONE (SUBSCRIPTION_ENDED), so each object reaches the session
+    /// once; `publish` then sends it no PUBLISH of the track.
     pub async fn accept_subscribe(
         &self,
         mut handler: SubscribeHandler,
@@ -769,6 +821,11 @@ impl Origin {
             .filter_type
             .start_location(track.numbering.largest());
         let request = (session_key(context), handler.request_id());
+        let ended_publish = track
+            .outlets
+            .iter_mut()
+            .filter(|outlet| outlet.request.0 == request.0)
+            .find_map(|outlet| outlet.end_publish().then_some(outlet.request));
         track.outlets.push(Outlet {
             request,
             state: OutletState::Serving(Serving {
@@ -794,6 +851,9 @@ impl Origin {
             track_alias,
             "SUBSCRIBE accepted"
         );
+        if let Some(published) = ended_publish {
+            state.subscriptions.remove(&published);
+        }
         Ok(None)
     }
 
@@ -865,7 +925,11 @@ impl Origin {
             for outlet in std::mem::take(&mut track.outlets) {
                 requests.push(outlet.request);
                 if let Some(serving) = outlet.serving() {
-                    ended.push(serving.send_task.end());
+                    ended.push(
+                        serving
+                            .send_task
+                            .end(PublishDoneCode::TrackEnded, "track ended"),
+                    );
                 }
             }
             // A producer that publishes the track again must produce its first
@@ -1162,7 +1226,6 @@ mod tests {
 
     use super::new_group_requests::MIN_GROUP_DURATION;
     use super::*;
-    use crate::modules::moqt::control_plane::error_codes::PublishDoneCode;
     use crate::modules::test_support::location;
     use crate::{
         RequestFailure, SessionEvent, Subscription, TrackObject, TrackReader, Version,
@@ -2595,6 +2658,80 @@ mod tests {
             // Assert
             assert_eq!(accepted.track_name(), TRACK);
             assert!(matches!(written, WriteOutcome::Sent(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_of_a_session_the_track_is_published_to_ends_the_publish() {
+        for version in DRAFTS {
+            // Arrange
+            let peers =
+                origin_with_track("origin-subscribe-ends-publish", RETENTION, version).await;
+            let accepted = publish(&peers).await;
+
+            // Act
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let SessionEvent::PublishDone(done) = next_event(&peers.server).await else {
+                panic!("expected PUBLISH_DONE");
+            };
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+
+            // Assert
+            assert_eq!(done.request_id(), accepted.request_id());
+            assert_eq!(done.status_code(), PublishDoneCode::SubscriptionEnded);
+            assert_eq!(
+                next_object(&peers, &subscription).await.group_id,
+                FIRST_GROUP_ID
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_accepted_after_the_session_subscribed_is_ended_unregistered() {
+        for version in DRAFTS {
+            // Arrange: the peer subscribes while the PUBLISH awaits PUBLISH_OK
+            let peers = origin_with_track("origin-recheck-on-register", RETENTION, version).await;
+            let origin = &peers.origin;
+            let mut published = pin!(origin.publish(&peers.client, NAMESPACE, TRACK));
+            let handler = tokio::select! {
+                _ = &mut published => panic!("publish returned before PUBLISH_OK"),
+                event = peers.server.receive_event() => {
+                    let Ok(SessionEvent::Publish(handler)) = event else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    handler
+                }
+            };
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+
+            // Act
+            let accepted = handler
+                .ok(128, FilterType::LargestObject, true)
+                .await
+                .unwrap();
+            handler.accept_data_receiver().await;
+            let (published, event) =
+                within(async { tokio::join!(&mut published, next_event(&peers.server)) }).await;
+
+            // Assert
+            published.unwrap();
+            let SessionEvent::PublishDone(done) = event else {
+                panic!("expected PUBLISH_DONE");
+            };
+            assert_eq!(done.request_id(), accepted.request_id());
+            assert_eq!(done.status_code(), PublishDoneCode::SubscriptionEnded);
+            origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            assert_eq!(
+                next_object(&peers, &subscription).await.group_id,
+                FIRST_GROUP_ID
+            );
         }
     }
 

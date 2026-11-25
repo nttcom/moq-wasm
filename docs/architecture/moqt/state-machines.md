@@ -97,11 +97,10 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, `object_sinks_current`, and `publish_namespace_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
+Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, `object_sinks_current`, `publish_namespace_current`, and `origin_sessions_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
 
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
-| `origin_sessions` | A session that is both a subscriber and a PUBLISH peer of one track gets two serving outlets (SUBSCRIBE registered while `publish` awaits PUBLISH_OK); every object is sent twice | `RECHECK_ON_REGISTER` + `SUBSCRIBE_ENDS_PUBLISH` |
 | `track_writer` | Prior Group ID Gap covers groups that exist: groups passed under Forward State 0, or a group whose stream failed to open | `GAP_FROM_NUMBERING` |
 | `new_group_requests` | Enabling dynamic groups after writes passes the first NEW_GROUP_REQUEST through unthrottled; re-enabling drops a delayed request | `KEEP_ON_REENABLE`, `SEED_OPEN_GROUP` |
 | `subscription` | Client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves | `DONE_BEFORE_SUBSCRIBE` |

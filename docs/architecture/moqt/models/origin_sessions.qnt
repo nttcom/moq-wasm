@@ -7,13 +7,15 @@
 // Code mapping (origin.rs):
 // - `OutletState` is the code's `OutletState`, whose `Serving` holds the
 //   Forward State; `Demand` is `OriginTrack::demand`.
-// - `publish` (:515-591) is two actions: `publish` checks that the session
-//   has no outlet (:526-534) under `state`, then `state` is unlocked while
-//   `publishing` stays held across the PUBLISH_OK await (:543-547);
-//   `registerPublish` pushes the Published outlet and calls `refresh_demand`
-//   (:558-576).
-// - `accept_subscribe` (:739-798) is one action, `handleSubscribe`: it holds
-//   `state` from the check to the outlet push, but never takes `publishing`.
+// - `publish` is two actions: `publish` checks that the session
+//   has no outlet under `state`, then `state` is unlocked while
+//   `publishing` stays held across the PUBLISH_OK await;
+//   `registerPublish` pushes the Published outlet and calls `refresh_demand`,
+//   or, with RECHECK_ON_REGISTER, sends PUBLISH_DONE when the session has
+//   an outlet.
+// - `accept_subscribe` is one action, `handleSubscribe`: it holds `state`
+//   from the check to the outlet push, but never takes `publishing`.
+//   SUBSCRIBE_ENDS_PUBLISH is `Outlet::end_publish`.
 // - `apply_update` (:709-734) through `lock_state_knowing` (:817-825): an
 //   update of a SUBSCRIBE is known at once; the model lets the peer update a
 //   PUBLISH only once `publish` registered it, which is where the lock wait
@@ -334,13 +336,13 @@ module origin_sessions {
   }
 }
 
-// expect: violation
+// expect: ok
 module origin_sessions_current {
   import origin_sessions(
     SESSIONS = Set("a", "b"),
     PEER_SUBSCRIBES_WHILE_PUBLISHED = false,
-    RECHECK_ON_REGISTER = false,
-    SUBSCRIBE_ENDS_PUBLISH = false,
+    RECHECK_ON_REGISTER = true,
+    SUBSCRIBE_ENDS_PUBLISH = true,
     REFRESH_ON_RELEASE = true,
   ).*
 }
