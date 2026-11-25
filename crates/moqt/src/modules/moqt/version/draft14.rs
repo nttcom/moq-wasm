@@ -341,7 +341,7 @@ impl ControlChannel {
     pub(super) async fn send_request(
         &self,
         connection: &Arc<Connection>,
-        reservation: RequestIdReservation<'_>,
+        mut reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let (request_id, message_type, payload, on_late_response) = match request {
@@ -395,9 +395,12 @@ impl ControlChannel {
             .map_err(|_| RequestFailure::ProtocolViolation("request could not be encoded"))?;
         debug_assert_eq!(request_id, reservation.request_id());
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let registered = self.register(connection, request_id, sender, on_late_response);
-        self.send_with_request_id(reservation, message_type, payload)
+        // Declared after `reservation`, so it drops first: an unsent entry is
+        // removed before the next request can take its Request ID.
+        let mut registered = self.register(connection, request_id, sender, on_late_response);
+        self.send_with_request_id(&mut reservation, message_type, payload)
             .await?;
+        registered.write = RequestWrite::Sent;
         Ok(PendingResponse {
             receiver,
             _registered: registered,
@@ -406,26 +409,30 @@ impl ControlChannel {
 
     pub(super) async fn send_subscribe_update(
         &self,
-        reservation: RequestIdReservation<'_>,
+        mut reservation: RequestIdReservation<'_>,
         subscribe_update: SubscribeUpdate,
     ) -> Result<(), TransportSendError> {
         debug_assert_eq!(subscribe_update.request_id, reservation.request_id());
         let payload = subscribe_update.encode().map_err(encode_error)?;
-        self.send_with_request_id(reservation, ControlMessageType::SubscribeUpdate, payload)
-            .await
+        self.send_with_request_id(
+            &mut reservation,
+            ControlMessageType::SubscribeUpdate,
+            payload,
+        )
+        .await
     }
 
     async fn send_with_request_id(
         &self,
-        reservation: RequestIdReservation<'_>,
+        reservation: &mut RequestIdReservation<'_>,
         message_type: ControlMessageType,
         payload: BytesMut,
     ) -> Result<(), TransportSendError> {
-        let RequestIdReservation(mut next_request_id) = reservation;
+        let RequestIdReservation(next_request_id) = reservation;
         self.send_stream.send(message_type, payload).await?;
-        *next_request_id += 2;
+        **next_request_id += 2;
         self.written_request_id_end
-            .store(*next_request_id, Ordering::Relaxed);
+            .store(**next_request_id, Ordering::Relaxed);
         Ok(())
     }
 
@@ -555,6 +562,7 @@ impl ControlChannel {
             inflight_requests: self.inflight_requests.clone(),
             connection: Arc::downgrade(connection),
             request_id,
+            write: RequestWrite::Unsent,
         }
     }
 
@@ -592,15 +600,23 @@ fn error_message_type(kind: RequestKind) -> ControlMessageType {
 }
 
 /// Holds the `inflight_requests` registration for an in-flight request. On
-/// drop, a still-waiting entry is downgraded to `Abandoned` (not removed):
-/// the caller gave up, but a late response must still find the entry so it
-/// triggers the registered action instead of a session close. The drop that
-/// takes the `Abandoned` entries past `MAX_ABANDONED_REQUESTS` closes the
-/// session with CONTROL_MESSAGE_TIMEOUT.
+/// drop, a request never written is removed, since no response can come.
+/// A written request's still-waiting entry is downgraded to `Abandoned` (not
+/// removed): the caller gave up, but a late response must still find the
+/// entry so it triggers the registered action instead of a session close.
+/// The drop that takes the `Abandoned` entries past `MAX_ABANDONED_REQUESTS`
+/// closes the session with CONTROL_MESSAGE_TIMEOUT.
 struct RegisteredSender {
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
     connection: Weak<Connection>,
     request_id: RequestId,
+    write: RequestWrite,
+}
+
+/// Whether the peer is to receive the request.
+enum RequestWrite {
+    Unsent,
+    Sent,
 }
 
 impl Drop for RegisteredSender {
@@ -608,6 +624,10 @@ impl Drop for RegisteredSender {
         let Ok(mut inflight) = self.inflight_requests.lock() else {
             return;
         };
+        if let RequestWrite::Unsent = self.write {
+            inflight.take(self.request_id);
+            return;
+        }
         let too_many = inflight.abandon(self.request_id);
         drop(inflight);
         if too_many && let Some(connection) = self.connection.upgrade() {
@@ -1360,6 +1380,31 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE, got {announced:?}");
         };
         assert_eq!(announced.track_namespace, "live/room");
+    }
+
+    #[tokio::test]
+    async fn request_dropped_before_it_is_written_is_not_counted_as_abandoned() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-unsent-dropped").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let held_stream = channel.send_stream.hold().await;
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::TrackStatus(track_status(reservation.request_id()));
+
+        // Act
+        let send = channel
+            .send_request(&connection, reservation, request)
+            .now_or_never();
+        drop(held_stream);
+
+        // Assert
+        assert!(send.is_none(), "wrote past the held control stream");
+        let inflight = channel.inflight_requests.lock().unwrap();
+        assert!(
+            matches!(&*inflight, InflightRequests::Open(requests) if requests.is_empty()),
+            "an unsent request stayed registered"
+        );
     }
 
     #[tokio::test]

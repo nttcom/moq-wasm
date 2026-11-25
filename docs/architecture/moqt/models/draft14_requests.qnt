@@ -474,7 +474,7 @@ module draft14_requests_current {
     INITIAL_LIMIT = 1,
     MAX_ABANDONED = 1,
     HOLD_RESERVATION = true,
-    UNREGISTER_UNSENT = false,
+    UNREGISTER_UNSENT = true,
     FINISH_CANCELLED_WRITE = false,
   ).*
 }
