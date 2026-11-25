@@ -966,12 +966,16 @@ impl ControlChannel {
         let Some(stream) = stream else {
             return Err(TransportSendError::ClosedStream);
         };
+        // The waiter is queued only once the stream is held, so a caller
+        // dropped while waiting for it leaves no waiter behind.
+        let queued = stream.sender.queue(message).await;
         let update = stream.update_waiters.enqueue();
-        if let Err(error) = stream.sender.send(&message).await {
+        let write = queued.write();
+        self.consume(reservation);
+        if let Err(error) = write.await {
             update.withdraw_unwritten();
             return Err(error);
         }
-        self.consume(reservation);
         Ok(update.written())
     }
 
@@ -1419,6 +1423,7 @@ mod tests {
     use std::sync::Arc;
 
     use bytes::{Bytes, BytesMut};
+    use futures::FutureExt;
 
     use super::{
         CallerState, Connection, ControlChannel, PendingResponse, RequestCancel, RequestStream,
@@ -1450,9 +1455,9 @@ mod tests {
             },
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
-                data_receiver, datagram_object, in_memory_draft18_sessions, location,
-                mandatory_track_properties, next_datagram, next_event, next_subgroup,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, StallingSendStream, accept_namespace,
+                accept_publish, data_receiver, datagram_object, in_memory_draft18_sessions,
+                location, mandatory_track_properties, next_datagram, next_event, next_subgroup,
                 notify_datagram, published_track_between, read_fetch_objects, sent_update,
                 spawn_connected_draft18_sessions, subscribed_track_reader,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
@@ -1554,6 +1559,80 @@ mod tests {
         let publications = publications.expect("every PUBLISH is answered in time");
         assert!(publications.iter().all(Result::is_ok));
         drop(accepting.await.unwrap());
+    }
+
+    const SUBSCRIPTION_REQUEST_ID: u64 = 0;
+
+    /// A client's channel with an outgoing subscription whose request stream
+    /// is `stream`.
+    fn channel_with_subscription(stream: &StallingSendStream) -> ControlChannel {
+        let channel = ControlChannel::new(
+            StreamSender::new(Box::new(StallingSendStream::default())),
+            0,
+            false,
+        );
+        let sender = Arc::new(StreamSender::new(Box::new(stream.clone())));
+        channel.requests().outgoing.insert(
+            SUBSCRIPTION_REQUEST_ID,
+            RequestStream::new(RequestStreamKind::Subscribe, sender),
+        );
+        channel
+    }
+
+    #[tokio::test]
+    async fn a_request_update_cancelled_mid_write_is_written_whole_and_uses_its_request_id() {
+        // Arrange
+        let stream = StallingSendStream::default();
+        let channel = channel_with_subscription(&stream);
+        let reservation = channel.reserve_request_id().await;
+        let message = messages::encode_new_group_request(reservation.request_id(), 1).unwrap();
+        let mut send =
+            Box::pin(channel.send_new_group_request(reservation, SUBSCRIPTION_REQUEST_ID, 1));
+        tokio::select! {
+            _ = &mut send => panic!("wrote past the stalled stream"),
+            () = stream.half_written.notified() => {}
+        }
+
+        // Act
+        drop(send);
+        stream.release.notify_one();
+
+        // Assert
+        assert_eq!(within(channel.reserve_request_id()).await.request_id(), 2);
+        let sender = channel.requests().outgoing[&SUBSCRIPTION_REQUEST_ID]
+            .sender
+            .clone();
+        drop(within(sender.lock()).await);
+        assert_eq!(*stream.written.lock().unwrap(), message[..]);
+    }
+
+    #[tokio::test]
+    async fn an_answer_reaches_its_update_after_an_update_cancelled_before_its_write() {
+        // Arrange
+        let stream = StallingSendStream::default();
+        let channel = channel_with_subscription(&stream);
+        let sender = channel.requests().outgoing[&SUBSCRIPTION_REQUEST_ID]
+            .sender
+            .clone();
+        let held = sender.lock().await;
+        let reservation = channel.reserve_request_id().await;
+        let cancelled = channel.send_new_group_request(reservation, SUBSCRIPTION_REQUEST_ID, 1);
+        assert!(cancelled.now_or_never().is_none());
+        drop(held);
+        stream.release.notify_one();
+        let reservation = within(channel.reserve_request_id()).await;
+        let message = messages::encode_new_group_request(reservation.request_id(), 1).unwrap();
+        let update =
+            within(channel.send_request_update(reservation, SUBSCRIPTION_REQUEST_ID, message))
+                .await
+                .unwrap();
+
+        // Act
+        channel.answer_update(SUBSCRIPTION_REQUEST_ID, Ok(()));
+
+        // Assert
+        let mut answer = update.0.expect("a draft-18 update has an answer");
+        assert_eq!(answer.try_recv(), Ok(Ok(())));
     }
 
     #[tokio::test]

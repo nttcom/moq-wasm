@@ -1,6 +1,7 @@
 use std::{sync::Arc, task::Poll};
 
 use crate::modules::{
+    executor,
     moqt::data_plane::stream::unacknowledged_streams::{SharedSendStream, UnacknowledgedStreams},
     transport::{transport_connection::BoxedSendStream, transport_send_stream::TransportSendError},
 };
@@ -42,8 +43,13 @@ impl StreamSender {
         self.send_stream.lock().await
     }
 
-    pub(crate) async fn lock_owned(&self) -> tokio::sync::OwnedMutexGuard<BoxedSendStream> {
-        self.send_stream.clone().lock_owned().await
+    /// Waits for the stream, writing nothing: a caller dropped here leaves
+    /// the stream untouched.
+    pub(crate) async fn queue(&self, bytes: BytesMut) -> QueuedMessage {
+        QueuedMessage {
+            stream: self.send_stream.clone().lock_owned().await,
+            bytes,
+        }
     }
 
     pub async fn send(&self, bytes: &BytesMut) -> Result<(), TransportSendError> {
@@ -87,6 +93,30 @@ impl StreamSender {
                 }
             })
             .await;
+        }
+    }
+}
+
+/// A message holding the stream, next to be written on it.
+pub(crate) struct QueuedMessage {
+    stream: tokio::sync::OwnedMutexGuard<BoxedSendStream>,
+    bytes: BytesMut,
+}
+
+impl QueuedMessage {
+    /// Writes the message in a task of its own, so the write completes even
+    /// if the returned future is dropped: a partial message would make the
+    /// peer parse the next one as its continuation.
+    pub(crate) fn write(self) -> impl Future<Output = Result<(), TransportSendError>> {
+        let Self { mut stream, bytes } = self;
+        let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
+        executor::spawn("Control Message Write", async move {
+            let _ = result_sender.send(stream.send(&bytes).await);
+        });
+        async move {
+            result_receiver
+                .await
+                .unwrap_or(Err(TransportSendError::ClosedStream))
         }
     }
 }

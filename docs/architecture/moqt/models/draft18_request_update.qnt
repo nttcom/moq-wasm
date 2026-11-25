@@ -8,9 +8,11 @@
 // `OQueued` / `OPartial` are a live `QueuedUpdate` and `OWaiting` an
 // `UpdateAnswer` (crates/moqt/src/modules/moqt/version/update_answer.rs).
 // - `outStart`: `send_request_update` with the Request ID reservation held
-//   (the reservation serializes updates): clones the stream and, when
-//   PUSH_BEFORE_WRITE, queues the answer waiter with
-//   `UpdateWaiters::enqueue` (`push_back`, one `std::sync::Mutex` hold).
+//   (the reservation serializes updates): holds the request stream
+//   (`StreamSender::queue`) and, when PUSH_BEFORE_WRITE, queues the answer
+//   waiter with `UpdateWaiters::enqueue` (`push_back`, one
+//   `std::sync::Mutex` hold). A caller dropped before it holds the stream
+//   has not started.
 // - `outWriteSome` / `outWriteDone` / `outWriteFail`: the
 //   `stream.sender.send(&message).await`. quinn's `write_all` can write part
 //   of the message and then wait for flow control. A failed write runs
@@ -20,9 +22,12 @@
 // - `outPush`: only when PUSH_BEFORE_WRITE is off: the waiter is pushed
 //   after the write, as a separate lock hold.
 // - `outCancel`: the caller's future is dropped inside the send await,
-//   dropping the `QueuedUpdate`. The waiter stays queued and the
-//   reservation is released unconsumed; bytes already written stay on the
-//   stream (a torn message).
+//   dropping the `QueuedUpdate`. The waiter stays queued. With
+//   WRITE_DETACHED (`QueuedMessage::write` runs the write in a task of its
+//   own and the Request ID is consumed when it starts) the update still
+//   reaches the peer whole; without it, the reservation is released
+//   unconsumed and bytes already written stay on the stream (a torn
+//   message).
 // - `outTimeout`: `UpdateAnswer::wait` gives up after the control message
 //   timeout and drops its receiver; the waiter stays queued.
 // - `peerAnswer`: the peer answers its oldest unanswered update.
@@ -45,10 +50,9 @@
 // - `inWrite`: the select loop takes the next ready answer future and
 //   writes its REQUEST_OK / REQUEST_ERROR.
 //
-// `draft18_request_update_current` is the implementation; it violates
-// `outAnswerReachesItsUpdate` and `noTornUpdate`.
-// `draft18_request_update_fixed` switches on WRITE_DETACHED (the write runs
-// to completion even when the caller drops its future) and passes.
+// `draft18_request_update_current` is the implementation, with
+// WRITE_DETACHED on (the write runs to completion even when the caller drops
+// its future), and passes, as does `draft18_request_update_fixed`.
 // The other instances turn off one guard the implementation relies on:
 // - `draft18_request_update_push_after_write`: PUSH_BEFORE_WRITE off fails
 //   `outAnswerReachesItsUpdate` (the answer can beat the push).
@@ -59,7 +63,7 @@
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft18_request_update.qnt
-//   quint verify --backend tlc --main draft18_request_update_current --invariant safety draft18_request_update.qnt   # violated
+//   quint verify --backend tlc --main draft18_request_update_current --invariant safety draft18_request_update.qnt   # passes
 //   quint verify --backend tlc --main draft18_request_update_fixed --invariant safety draft18_request_update.qnt     # passes
 //   quint verify --backend tlc --main draft18_request_update_push_after_write --invariant safety draft18_request_update.qnt
 //   quint verify --backend tlc --main draft18_request_update_unordered --invariant safety draft18_request_update.qnt
@@ -356,11 +360,11 @@ module draft18_request_update {
   }
 }
 
-// expect: violation
+// expect: ok
 module draft18_request_update_current {
   import draft18_request_update(
     N_OUT = 3, N_IN = 3,
-    PUSH_BEFORE_WRITE = true, WRITE_DETACHED = false,
+    PUSH_BEFORE_WRITE = true, WRITE_DETACHED = true,
     ORDERED_ANSWERS = true, ATOMIC_TIMEOUT = true,
   ).*
 }

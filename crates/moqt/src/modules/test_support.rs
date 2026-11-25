@@ -41,6 +41,7 @@ use crate::modules::transport::{
     transport_addresses::TransportAddresses,
     transport_connection::{BoxedConnection, BoxedReceiveStream, BoxedSendStream},
     transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
+    transport_send_stream::{TransportSendError, TransportSendStream},
     websocket::websocket_listener::WebSocketListener,
 };
 use crate::namespace::NamespaceInterest;
@@ -626,6 +627,44 @@ pub(crate) async fn unread_events_at_the_limit(session: &Session) -> usize {
     .await;
     tokio::time::sleep(NO_EVENT_TIMEOUT).await;
     events.unread()
+}
+
+/// Writes the first half of each message, then waits for `release`
+/// before the rest, as `write_all` does when flow control blocks it. Clones
+/// share the written bytes and the notifications.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StallingSendStream {
+    pub(crate) written: Arc<Mutex<Vec<u8>>>,
+    pub(crate) half_written: Arc<Notify>,
+    pub(crate) release: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl TransportSendStream for StallingSendStream {
+    async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError> {
+        let (first, rest) = buffer.split_at(buffer.len() / 2);
+        self.written.lock().unwrap().extend_from_slice(first);
+        self.half_written.notify_one();
+        self.release.notified().await;
+        self.written.lock().unwrap().extend_from_slice(rest);
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), TransportSendError> {
+        Ok(())
+    }
+
+    async fn reset(&mut self, _error_code: u64) -> Result<(), TransportSendError> {
+        Ok(())
+    }
+
+    fn set_priority(&mut self, _priority: i32) -> Result<(), TransportSendError> {
+        Ok(())
+    }
+
+    fn poll_stopped(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<u64>> {
+        std::task::Poll::Pending
+    }
 }
 
 pub(crate) async fn within<F: Future>(future: F) -> F::Output {

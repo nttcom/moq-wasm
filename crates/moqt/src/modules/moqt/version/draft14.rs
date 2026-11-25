@@ -883,13 +883,10 @@ mod tests {
     use std::{
         pin::Pin,
         sync::{Arc, atomic::Ordering},
-        task::{Context, Poll},
         time::Duration,
     };
 
-    use async_trait::async_trait;
-    use bytes::BytesMut;
-    use tokio::sync::{Notify, mpsc::error::TryRecvError};
+    use tokio::sync::mpsc::error::TryRecvError;
 
     use futures::FutureExt;
 
@@ -924,12 +921,11 @@ mod tests {
                 version::Version,
             },
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, connected_sessions,
-                next_event, notify_datagram, register_and_take_data_receiver,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, StallingSendStream, accept_publish,
+                connected_sessions, next_event, notify_datagram, register_and_take_data_receiver,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
             },
-            transport::transport_send_stream::TransportSendStream,
         },
         namespace::NamespaceInterest,
         object::{GroupOrder, Location},
@@ -1424,56 +1420,12 @@ mod tests {
         );
     }
 
-    /// Writes the first half of each message, then waits for `release`
-    /// before the rest, as `write_all` does when flow control blocks it.
-    #[derive(Debug)]
-    struct StallingSendStream {
-        written: Arc<std::sync::Mutex<Vec<u8>>>,
-        half_written: Arc<Notify>,
-        release: Arc<Notify>,
-    }
-
-    #[async_trait]
-    impl TransportSendStream for StallingSendStream {
-        async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError> {
-            let (first, rest) = buffer.split_at(buffer.len() / 2);
-            self.written.lock().unwrap().extend_from_slice(first);
-            self.half_written.notify_one();
-            self.release.notified().await;
-            self.written.lock().unwrap().extend_from_slice(rest);
-            Ok(())
-        }
-
-        fn close(&mut self) -> Result<(), TransportSendError> {
-            Ok(())
-        }
-
-        async fn reset(&mut self, _error_code: u64) -> Result<(), TransportSendError> {
-            Ok(())
-        }
-
-        fn set_priority(&mut self, _priority: i32) -> Result<(), TransportSendError> {
-            Ok(())
-        }
-
-        fn poll_stopped(&mut self, _cx: &mut Context<'_>) -> Poll<Option<u64>> {
-            Poll::Pending
-        }
-    }
-
     #[tokio::test]
     async fn a_request_cancelled_mid_write_is_written_whole_and_uses_its_request_id() {
         // Arrange
-        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let half_written = Arc::new(Notify::new());
-        let release = Arc::new(Notify::new());
-        let stream = StallingSendStream {
-            written: written.clone(),
-            half_written: half_written.clone(),
-            release: release.clone(),
-        };
+        let stream = StallingSendStream::default();
         let channel = ControlChannel::new(
-            BiStreamSender::new(Box::new(stream)),
+            BiStreamSender::new(Box::new(stream.clone())),
             0,
             REQUEST_ID_WINDOW,
             false,
@@ -1501,18 +1453,18 @@ mod tests {
         let mut send = Box::pin(channel.send_subscribe_update(reservation, update));
         tokio::select! {
             _ = &mut send => panic!("wrote past the stalled stream"),
-            () = half_written.notified() => {}
+            () = stream.half_written.notified() => {}
         }
 
         // Act
         drop(send);
-        release.notify_one();
+        stream.release.notify_one();
 
         // Assert
         let next = within(channel.reserve_request_id()).await.unwrap();
         assert_eq!(next.request_id(), 2);
         drop(within(channel.send_stream.hold()).await);
-        assert_eq!(*written.lock().unwrap(), message[..]);
+        assert_eq!(*stream.written.lock().unwrap(), message[..]);
     }
 
     #[tokio::test]

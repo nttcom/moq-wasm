@@ -18,9 +18,8 @@ pub(crate) type UpdateOutcome = Result<(), (RequestErrorCode, String)>;
 /// oldest first. The peer answers each REQUEST_UPDATE with exactly one
 /// REQUEST_OK or REQUEST_ERROR, in order (§10.9), so the k-th answer goes to
 /// the k-th waiter. That is the waiter of the k-th written update only while
-/// updates are enqueued one at a time (the caller holds the Request ID
-/// reservation from `enqueue` until the update is written or withdrawn) and
-/// before any of their bytes is written.
+/// each update is enqueued while holding the request stream, just before its
+/// write starts, and that write completes even if the caller is dropped.
 #[derive(Debug, Default)]
 pub(crate) struct UpdateWaiters(std::sync::Mutex<VecDeque<oneshot::Sender<UpdateOutcome>>>);
 
@@ -55,8 +54,8 @@ impl UpdateWaiters {
 
 /// A REQUEST_UPDATE whose waiter is queued while its message is written.
 /// It ends `written` or `withdraw_unwritten`; dropped instead (the send
-/// future cancelled), its waiter stays queued and takes the answer of the
-/// next written update.
+/// future cancelled), its waiter stays queued and takes the answer of its
+/// update, which is still written whole.
 #[must_use]
 pub(crate) struct QueuedUpdate {
     waiters: Arc<UpdateWaiters>,
@@ -69,8 +68,9 @@ impl QueuedUpdate {
         UpdateAnswer(Some(self.answer))
     }
 
-    /// Writing the message failed: removes the waiter, which the held
-    /// reservation keeps last.
+    /// Writing the message failed: removes the last waiter. A failed write
+    /// fails every later one on the stream, so each update queued behind
+    /// this one withdraws a waiter too.
     pub(crate) fn withdraw_unwritten(self) {
         self.waiters.withdraw_unwritten();
     }

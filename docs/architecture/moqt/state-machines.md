@@ -97,7 +97,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, and `draft18_outgoing_request_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
+Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, and `draft18_request_update_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
 
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
@@ -107,7 +107,6 @@ Every `*_current` instance except `origin_current`, `response_guard_current`, `d
 | `object_sinks` | `install` drains a buffer older than `UNKNOWN_TRACK_ALIAS_PERIOD` (expiry runs only in `notify`/`cancel`) | `EXPIRE_ON_INSTALL` |
 | `subscription` | PUBLISH_DONE right behind SUBSCRIBE_OK is processed before the receiver registers: full 10 s grace, stale carried record, or a receiver that never ends; expiry removes an unclaimed receiver (objects lost); client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves; updates sent for an ended request | `ACCEPT_BEFORE_NEXT`, `DONE_BEFORE_SUBSCRIBE`, `KEEP_UNCLAIMED_RECEIVER`, `END_TRACKED` |
 | `publish_namespace` | Dropped `PendingPublishNamespace` keeps its record; PUBLISH_NAMESPACE_CANCEL changes no state; a namespace refused during a migration is re-announced on the new connection | `FORGET_ON_DROP`, `FORGET_ON_CANCEL`, `WITHDRAW_ELSEWHERE` |
-| `draft18_request_update` | A REQUEST_UPDATE send cancelled mid-await leaves its waiter queued, so later REQUEST_OKs reach the wrong update (or a torn message) | `WRITE_DETACHED` |
 | `draft18_fetch` | REQUEST_ERROR after the response stream is attached leaves that stream open (also after the peer's STOP_SENDING, §5.2) | `RESET_RESPONSE_ON_ERROR` |
 | `migration` | A GOAWAY migration in flight when the current connection closes keeps the dead connection as `previous` forever, and revives a locally closed session; `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry; a session ending with a `previous` leaves it open | `FIX_CLOSED_DURING_MIGRATION`, `FIX_FINISH_CLOSES_PREVIOUS`, `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
 | `group_cutover` | A group the current connection delivered whole is dropped when its streams arrive out of order; a lagging relay's groups are delivered twice after `previous_ended` | `CUT_FROM_START`, `KEEP_NEWEST` (trade-off in file) |
