@@ -1317,6 +1317,7 @@ impl InMemoryLocalPubSubDirectory {
         let downstream_remains = track.downstream_remains();
         let client_remains = track.client_remains();
         let draining = self.draining_since_ms.get().is_some();
+        let had_producers = !track.producers.is_empty();
         let mut released_upstream_subscriptions = Vec::new();
         if !client_remains {
             track.producers.retain(|publisher_session_id, producer| {
@@ -1337,15 +1338,21 @@ impl InMemoryLocalPubSubDirectory {
                 !released
             });
         }
-        if track.producers.is_empty() {
+        // A track without producers whose consumers remain waits for an
+        // upstream SUBSCRIBE in flight: one its last producer left before
+        // (`outlive_last_producer`) already does.
+        if !track.producers.is_empty() {
+            track.report_upstream_forward(&track_key);
+        } else if !(downstream_remains
+            && (!had_producers
+                || track.outlive_last_producer(PublishDoneReason::publisher_session_closed())))
+        {
             self.end_downstream_subscriptions(
                 track,
                 &track_key,
                 PublishDoneReason::publisher_session_closed(),
             );
             entry.remove();
-        } else {
-            track.report_upstream_forward(&track_key);
         }
         Some(RemovedDownstreamSubscription {
             track_key,

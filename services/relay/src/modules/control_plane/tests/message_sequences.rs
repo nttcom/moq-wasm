@@ -1255,3 +1255,46 @@ fn a_subscribe_whose_publisher_ends_the_upstream_subscription_as_it_accepts_is_r
         );
     });
 }
+
+#[test]
+fn an_unsubscribe_leaves_the_other_subscribers_waiting_for_the_publisher_still_asked() {
+    runtime().block_on(async {
+        // Arrange: the track's last publisher ended it while the relay asks a second one
+        let relay = Relay::start();
+        let first_publisher = relay.connect(1).await;
+        let second_publisher = relay.connect(2).await;
+        let leaving_subscriber = relay.connect(3).await;
+        let staying_subscriber = relay.connect(4).await;
+        let track_key = TrackKey::new("room", "video");
+        let publish = first_publisher.publish(&track_key);
+        settle().await.unwrap();
+        let leaving_request_id = leaving_subscriber.subscribe(&track_key);
+        let staying_request_id = staying_subscriber.subscribe(&track_key);
+        settle().await.unwrap();
+        second_publisher.publish_namespace("room");
+        settle().await.unwrap();
+        first_publisher.publish_done(publish);
+        settle().await.unwrap();
+
+        // Act
+        leaving_subscriber.unsubscribe(leaving_request_id);
+        settle().await.unwrap();
+        let upstream_subscribes = second_publisher.pending_subscribes();
+        second_publisher.answer_subscribe(upstream_subscribes[0], SubscribeAnswer::Accept);
+        settle().await.unwrap();
+
+        // Assert: the subscriber left is fed by the second publisher, not told PUBLISH_DONE
+        assert_eq!(
+            staying_subscriber.sent(),
+            vec![Sent::SubscribeOk {
+                request_id: staying_request_id,
+            }]
+        );
+        assert!(
+            second_publisher
+                .sent()
+                .iter()
+                .all(|sent| !matches!(sent, Sent::Unsubscribe { .. }))
+        );
+    });
+}

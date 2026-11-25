@@ -268,7 +268,8 @@ module track {
   // `end_downstream_subscription` of consumer `x` without an end, then the
   // UNSUBSCRIBEs of the upstream subscriptions it released: once no client
   // remains, the SUBSCRIBE-initiated ones from relays, and once no one
-  // remains, all SUBSCRIBE-initiated ones.
+  // remains, all SUBSCRIBE-initiated ones. A track left without producers
+  // waits for an upstream SUBSCRIBE in flight while someone receives it.
   pure def removeConsumer(state: State, x: str): State =
     val t = { ...state.track, consumers: state.track.consumers.exclude(Set(x)) }
     val released =
@@ -276,13 +277,22 @@ module track {
       else t.producers.filter(p => p.origin == BySubscribe and (not(downstreamRemains(t)) or isRelay(p.pub)))
     val left = { ...t, producers: t.producers.exclude(released) }
     val removed = { ...state, track: left, alive: state.alive.exclude(released.map(upstreamOf)) }
-    if (left.producers == Set())
+    val hadProducers = t.producers != Set()
+    if (left.producers != Set()) removed
+    else if (downstreamRemains(left) and not(hadProducers)) removed
+    // `Track::outlive_last_producer`.
+    else if (downstreamRemains(left) and left.pending > 0)
+      {
+        ...removed,
+        track: { ...left, lastProducerEnd: true },
+        creations: state.creations.set(t.gen, Creating),
+      }
+    else
       {
         ...endTrack(removed),
         doneWhileAwaitingProducer:
           state.doneWhileAwaitingProducer or (left.pending > 0 and left.consumers != Set()),
       }
-    else removed
 
   // --- SUBSCRIBE / UNSUBSCRIBE -------------------------------------------
 
