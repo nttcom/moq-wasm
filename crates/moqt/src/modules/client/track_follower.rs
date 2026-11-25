@@ -146,28 +146,26 @@ enum Step {
 
 impl Follow {
     async fn run(mut self) {
-        let mut followed: Option<Subscription> = None;
-        let mut handover = PublisherHandover::default();
+        let mut follower = Follower::Idle;
         loop {
             let step = tokio::select! {
                 announcement = self.announcements.recv() => {
                     announcement.map_or(Step::Ended, Step::Announced)
                 }
                 handler = self.publish_receiver.recv() => handler.map_or(Step::Ended, |handler| Step::Published(Box::new(handler))),
-                object = next_object(&followed) => object.map_or(Step::Left, Step::Object),
-                () = left(&followed) => Step::Left,
+                object = next_object(follower.followed()) => object.map_or(Step::Left, Step::Object),
+                () = left(follower.followed()) => Step::Left,
             };
             match step {
                 Step::Announced(announcement) => {
-                    if announcement.active
-                        && announcement.namespace == self.namespace
-                        && handover.announced(followed.is_some())
+                    if announcement.namespace == self.namespace
+                        && follower.announced(announcement.active)
                     {
-                        followed = self.subscribe().await;
+                        follower.follow(self.subscribe().await);
                     }
                 }
                 Step::Published(handler) => {
-                    if followed.is_some() {
+                    if follower.followed().is_some() {
                         let _ = handler
                             .error(
                                 RequestErrorCode::Uninterested,
@@ -175,7 +173,7 @@ impl Follow {
                             )
                             .await;
                     } else {
-                        followed = self.accept(*handler).await;
+                        follower.follow(self.accept(*handler).await);
                     }
                 }
                 Step::Object(object) => {
@@ -184,12 +182,12 @@ impl Follow {
                     }
                 }
                 Step::Left => {
-                    followed = None;
+                    let handover = follower.left();
                     if self.event_sender.send(FollowEvent::PublisherLeft).is_err() {
                         return;
                     }
-                    if handover.followed_publisher_left() {
-                        followed = self.subscribe().await;
+                    if handover {
+                        follower.follow(self.subscribe().await);
                     }
                 }
                 Step::Ended => return,
@@ -256,7 +254,7 @@ impl Follow {
     }
 }
 
-async fn next_object(followed: &Option<Subscription>) -> Option<ReceivedObject> {
+async fn next_object(followed: Option<&Subscription>) -> Option<ReceivedObject> {
     match followed {
         Some(subscription) => subscription.next().await.ok().flatten(),
         None => pending().await,
@@ -264,7 +262,7 @@ async fn next_object(followed: &Option<Subscription>) -> Option<ReceivedObject> 
 }
 
 /// Resolves on the followed subscription's PUBLISH_DONE.
-async fn left(followed: &Option<Subscription>) {
+async fn left(followed: Option<&Subscription>) {
     match followed {
         Some(subscription) => {
             subscription.done().await;
@@ -273,25 +271,58 @@ async fn left(followed: &Option<Subscription>) {
     }
 }
 
+/// The follow task's state between steps (`Follower` in
+/// `docs/architecture/moqt/models/track_follower.qnt`); a SUBSCRIBE or
+/// PUBLISH_OK in flight is awaited from `Idle`.
+///
 /// A publisher that announces while another is followed takes over at the
 /// followed one's PUBLISH_DONE: a relay may still hold a publisher that has
 /// gone, and that PUBLISH_DONE then arrives after the new PUBLISH_NAMESPACE.
-#[derive(Default)]
-struct PublisherHandover {
-    announced_while_following: bool,
+enum Follower<S = Subscription> {
+    Idle,
+    Following(S),
+    /// The namespace was announced while `S` was followed.
+    FollowingWithHandover(S),
 }
 
-impl PublisherHandover {
-    /// Returns whether to subscribe now.
-    fn announced(&mut self, following: bool) -> bool {
-        self.announced_while_following = following;
-        !following
+impl<S> Follower<S> {
+    fn followed(&self) -> Option<&S> {
+        match self {
+            Self::Idle => None,
+            Self::Following(followed) | Self::FollowingWithHandover(followed) => Some(followed),
+        }
     }
 
-    /// Returns whether to subscribe now, for a publisher that announced
-    /// while the one that left was followed.
-    fn followed_publisher_left(&mut self) -> bool {
-        std::mem::take(&mut self.announced_while_following)
+    /// Takes a PUBLISH_NAMESPACE (`active`) or PUBLISH_NAMESPACE_DONE of the
+    /// followed namespace; returns whether to subscribe now.
+    fn announced(&mut self, active: bool) -> bool {
+        match std::mem::replace(self, Self::Idle) {
+            Self::Idle => active,
+            Self::Following(followed) | Self::FollowingWithHandover(followed) if active => {
+                *self = Self::FollowingWithHandover(followed);
+                false
+            }
+            withdrawn => {
+                *self = withdrawn;
+                false
+            }
+        }
+    }
+
+    /// Takes the followed subscription's end; returns whether to subscribe
+    /// now, for a publisher that announced while the one that left was
+    /// followed.
+    fn left(&mut self) -> bool {
+        matches!(
+            std::mem::replace(self, Self::Idle),
+            Self::FollowingWithHandover(_)
+        )
+    }
+
+    /// Follows the answer to a SUBSCRIBE or PUBLISH_OK sent from `Idle`, if
+    /// any.
+    fn follow(&mut self, followed: Option<S>) {
+        *self = followed.map_or(Self::Idle, Self::Following);
     }
 }
 
@@ -501,20 +532,20 @@ mod tests {
     #[test]
     fn a_publisher_announcing_while_none_is_followed_is_subscribed_at_once() {
         // Arrange
-        let mut handover = PublisherHandover::default();
+        let mut follower = Follower::<()>::Idle;
 
         // Act / Assert
-        assert!(handover.announced(false));
+        assert!(follower.announced(true));
     }
 
     #[test]
     fn a_publisher_announcing_while_another_is_followed_takes_over_when_that_one_leaves() {
         // Arrange
-        let mut handover = PublisherHandover::default();
+        let mut follower = Follower::Following(());
 
         // Act
-        let subscribed_at_announce = handover.announced(true);
-        let subscribed_at_leave = handover.followed_publisher_left();
+        let subscribed_at_announce = follower.announced(true);
+        let subscribed_at_leave = follower.left();
 
         // Assert
         assert!(!subscribed_at_announce);
@@ -524,11 +555,12 @@ mod tests {
     #[test]
     fn the_followed_publisher_leaving_without_a_waiting_publisher_subscribes_nothing() {
         // Arrange
-        let mut handover = PublisherHandover::default();
-        handover.announced(false);
+        let mut follower = Follower::Idle;
+        assert!(follower.announced(true));
+        follower.follow(Some(()));
 
         // Act / Assert
-        assert!(!handover.followed_publisher_left());
+        assert!(!follower.left());
     }
 
     #[tokio::test]
@@ -647,5 +679,105 @@ mod tests {
             payload(event),
             Some(Bytes::from_static(b"group-1-object-0"))
         );
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::Follower;
+
+        /// `Follower` of `track_follower_current` in track_follower.qnt.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Model {
+            Idle,
+            Subscribing,
+            Following,
+            FollowingWithHandover,
+        }
+
+        #[derive(Debug, Clone)]
+        enum Event {
+            /// `takeAnnouncement` of a PUBLISH_NAMESPACE (`true`) or
+            /// PUBLISH_NAMESPACE_DONE of the followed namespace.
+            Announced(bool),
+            /// `subscribeAnswered`: SUBSCRIBE_OK (`true`) or an error.
+            SubscribeAnswered(bool),
+            /// `takePublish`, accepted (`true`) or failed; refused while
+            /// following.
+            Published(bool),
+            /// `followedLeft`.
+            Left,
+        }
+
+        fn event() -> impl Strategy<Value = Event> {
+            prop_oneof![
+                any::<bool>().prop_map(Event::Announced),
+                any::<bool>().prop_map(Event::SubscribeAnswered),
+                any::<bool>().prop_map(Event::Published),
+                Just(Event::Left),
+            ]
+        }
+
+        /// The model's next state, or `None` where the action is disabled.
+        fn model_step(model: Model, event: &Event) -> Option<Model> {
+            match (model, event) {
+                (Model::Subscribing, Event::SubscribeAnswered(true)) => Some(Model::Following),
+                (Model::Subscribing, Event::SubscribeAnswered(false)) => Some(Model::Idle),
+                (Model::Subscribing, _) | (_, Event::SubscribeAnswered(_)) => None,
+                (Model::Idle, Event::Announced(true)) => Some(Model::Subscribing),
+                (_, Event::Announced(true)) => Some(Model::FollowingWithHandover),
+                (_, Event::Announced(false)) => Some(model),
+                (Model::Idle, Event::Published(true)) => Some(Model::Following),
+                (_, Event::Published(_)) => Some(model),
+                (Model::Idle, Event::Left) => None,
+                (Model::Following, Event::Left) => Some(Model::Idle),
+                (Model::FollowingWithHandover, Event::Left) => Some(Model::Subscribing),
+            }
+        }
+
+        /// `subscribing`: the follow task awaits a SUBSCRIBE answer.
+        fn abstraction(follower: &Follower<()>, subscribing: bool) -> Model {
+            match follower {
+                Follower::Idle if subscribing => Model::Subscribing,
+                Follower::Idle => Model::Idle,
+                Follower::Following(()) => Model::Following,
+                Follower::FollowingWithHandover(()) => Model::FollowingWithHandover,
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn follower_steps_like_the_model(events in vec(event(), 0..32)) {
+                // Arrange
+                let mut follower = Follower::Idle;
+                let mut subscribing = false;
+                let mut model = Model::Idle;
+
+                for event in events {
+                    let Some(next) = model_step(model, &event) else {
+                        continue;
+                    };
+
+                    // Act
+                    match event {
+                        Event::Announced(active) => subscribing = follower.announced(active),
+                        Event::SubscribeAnswered(ok) => {
+                            subscribing = false;
+                            follower.follow(ok.then_some(()));
+                        }
+                        Event::Published(ok) => {
+                            if follower.followed().is_none() {
+                                follower.follow(ok.then_some(()));
+                            }
+                        }
+                        Event::Left => subscribing = follower.left(),
+                    }
+                    model = next;
+
+                    // Assert
+                    prop_assert_eq!(abstraction(&follower, subscribing), model);
+                }
+            }
+        }
     }
 }

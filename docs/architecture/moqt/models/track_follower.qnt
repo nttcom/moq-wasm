@@ -1,5 +1,5 @@
 // A model of the client follow/watch layer (crates/moqt/src/modules/client):
-// - `Follow::run` and `PublisherHandover` (track_follower.rs): the follow
+// - `Follow::run` and its `Follower` enum (track_follower.rs): the follow
 //   task's loop. One action is one turn of the loop: one `Step` handled up to
 //   the next `select!`, except that `self.subscribe().await` is split into
 //   sending the SUBSCRIBE and taking its answer, since announcements queue
@@ -21,7 +21,8 @@
 //
 // Switches:
 // - CLEAR_ON_WITHDRAWAL: a withdrawal of the namespace (`active == false`)
-//   clears `PublisherHandover::announced_while_following`.
+//   turns `Follower::FollowingWithHandover` into `Follower::Following`
+//   (`Follower::announced(false)`).
 // - END_DROPS_HANDLERS: `Routes::end` also drops the handlers, so every
 //   `WatchTaker` / `PublishTaker` sender goes.
 // - END_CLOSES_WATCHERS: `Routes::end` calls `NamespaceWatchers::close`
@@ -42,12 +43,12 @@ module track_follower {
   // Announcements queued for the follow task.
   pure val MAX_INBOX = 2
 
-  // The follow task (`followed` and `handover` in `Follow::run`).
+  // The follow task (`Follower` in `Follow::run`).
   type Follower =
-    | Idle                  // `followed == None`
-    | Subscribing           // in `self.subscribe().await`
-    | Following             // `followed == Some`, no handover
-    | FollowingWithHandover // `followed == Some`, `announced_while_following`
+    | Idle                  // `Follower::Idle`
+    | Subscribing           // `Follower::Idle`, in `self.subscribe().await`
+    | Following             // `Follower::Following`
+    | FollowingWithHandover // `Follower::FollowingWithHandover`
     | Ended                 // `run` returned: `TrackFollower::next` returns None
 
   type Phase =
@@ -151,7 +152,7 @@ module track_follower {
     s' = { ...s, follower: Following },
   }
 
-  // `Step::Left`: the followed subscription ended; `followed_publisher_left`
+  // `Step::Left`: the followed subscription ended; `Follower::left`
   // decides whether to subscribe again.
   action followedLeft = all {
     following,

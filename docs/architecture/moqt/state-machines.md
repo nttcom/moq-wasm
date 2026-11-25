@@ -82,7 +82,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | Group cutover | `GroupCutover{current_start, state: Cutover}` (`Waiting{previous: PreviousSide (Live{newest} / Ended), _cut_over}` / `At(c)`; dropping `_cut_over` signals the cutover) in `moqt/domains/group_cutover.rs` | `Waiting(newest)`, `PreviousEnded`, `At(c)` × `Signalled` | [`group_cutover.qnt`](models/group_cutover.qnt) |
 | Session close | `UnacknowledgedStreams`, no session flag | `Open`, `Closing`, `Closed` | — |
 | Client event loop (`Routes`) | `EventLoopTask` handle, route tables | `Running`, `Ended`, `Closed` | — |
-| `TrackFollower` | `followed: Option`, `announced_while_following` | `Idle`, `Following`, `FollowingWithPendingHandover` | [`track_follower.qnt`](models/track_follower.qnt) |
+| `TrackFollower` | `Follow::run` local `follower: Follower` (`Idle` / `Following(Subscription)` / `FollowingWithHandover(Subscription)`) in `client/track_follower.rs` | `Idle`, `Following`, `FollowingWithHandover` | [`track_follower.qnt`](models/track_follower.qnt) |
 | `TrackWriter` subscriber notifications (client) | `subscribers: Arc<Semaphore>` | `Open`, `Closed`, `Unregistered` | — |
 
 ## Data plane and transport
