@@ -499,13 +499,13 @@ module migration {
   }
 }
 
-// expect: violation
+// expect: ok
 module migration_current {
   import migration(
     CONNECTIONS = 0.to(2),
     FIX_CLOSED_DURING_MIGRATION = true,
     FIX_FINISH_CLOSES_PREVIOUS = true,
-    FIX_REPORT_STAYING_END = false,
+    FIX_REPORT_STAYING_END = true,
     FIX_DONE_BEFORE_STOP = true,
     FIX_SERVE_ON_RECEIPT = true,
   ).*

@@ -57,6 +57,7 @@ Each connection allocates its own wire IDs (draft-14 §9.1), mapped to stable lo
 **Re-send & filters**
 - **Filter**: Carried subscriptions re-send with current Forward state and `NextGroupStart` (or `AbsoluteRange` starting after the newest handed-out group, keeping `End Group`).
 - **`SUBSCRIBE_UPDATE` state**: Updates replace carried Forward state and priority; setting `End Group` converts the carried filter into an `AbsoluteRange`.
+- **Refused re-sends**: A subscription the new server does not accept stays on the previous connection and ends with it: its receiver ends and the application gets a `PublishDone` event (`GOING_AWAY`), as for a `PUBLISH_DONE`.
 - **Skipped re-sends**: Not re-sent if `PUBLISH_DONE` already ended it, or if an `AbsoluteRange`'s `End Group` already started on the previous connection (kept open up to 10 s until its streams finish). A `PUBLISH_DONE` from the previous connection for a carried subscription only signals drain and is suppressed.
 
 **Deduplication & FETCH**
