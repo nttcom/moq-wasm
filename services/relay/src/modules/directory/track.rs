@@ -182,8 +182,9 @@ pub(crate) struct Track {
     /// Upstream SUBSCRIBEs sent for the track and not yet answered.
     pending_producers: usize,
     /// Publisher sessions an upstream SUBSCRIBE is on its way to, until its
-    /// answer adds or drops the producer, each with the Request IDs of the
-    /// subscriptions the publisher ended meanwhile without a producer.
+    /// answer adds or drops the producer. Each maps to the Request IDs the
+    /// publisher ended with PUBLISH_DONE meanwhile, before any producer had
+    /// them.
     subscribing: HashMap<SessionId, HashSet<u64>>,
     last_failure: Option<CreationFailure>,
     /// Read only while the track has no producer; every way the last
@@ -254,8 +255,9 @@ impl Track {
         true
     }
 
-    /// Records a PUBLISH_DONE that found no producer, for the upstream
-    /// SUBSCRIBE in flight to the publisher whose answer it may end.
+    /// Records a PUBLISH_DONE that found no producer, in case it ends the
+    /// upstream SUBSCRIBE in flight to that publisher before its SUBSCRIBE_OK
+    /// is handled.
     pub(crate) fn upstream_subscription_ended(
         &mut self,
         publisher_session_id: SessionId,

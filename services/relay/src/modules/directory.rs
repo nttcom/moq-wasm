@@ -104,22 +104,13 @@ impl TrackReservation {
         &self.entry
     }
 
-    /// Releases the reservation of a subscriber that keeps no consumer of
-    /// the track, and with it the upstream subscriptions the track no
-    /// longer wants, as `end_downstream_subscription` does; the caller sends
-    /// their UNSUBSCRIBEs. `None` when the entry is gone.
+    /// For a subscriber that keeps no consumer of the track: releases its
+    /// reservation and the upstream subscriptions the track no longer wants,
+    /// like `end_downstream_subscription`. The caller sends their
+    /// UNSUBSCRIBEs. `None` when the entry is gone.
     pub(crate) fn release(mut self) -> Option<RemovedDownstreamSubscription> {
         self.released = true;
-        let Entry::Occupied(mut track) = self
-            .directory
-            .upstream_tracks
-            .entry(self.entry.track_key.clone())
-        else {
-            return None;
-        };
-        if track.get().generation != self.entry.generation {
-            return None;
-        }
+        let mut track = self.directory.occupied_track(&self.entry)?;
         track.get_mut().release_reservation(self.peer);
         Some(RemovedDownstreamSubscription {
             track_key: self.entry.track_key.clone(),
@@ -300,6 +291,14 @@ impl InMemoryLocalPubSubDirectory {
         self.upstream_tracks
             .get_mut(&entry.track_key)
             .filter(|track| track.generation == entry.generation)
+    }
+
+    /// `track_mut` for a caller that may remove the entry.
+    fn occupied_track(&self, entry: &TrackEntry) -> Option<OccupiedEntry<'_, TrackKey, Track>> {
+        match self.upstream_tracks.entry(entry.track_key.clone()) {
+            Entry::Occupied(track) if track.get().generation == entry.generation => Some(track),
+            _ => None,
+        }
     }
 
     /// draft-22 §6.6.1: a draining relay unsubscribes from its publishers once
@@ -889,8 +888,8 @@ impl InMemoryLocalPubSubDirectory {
     /// Finds the track for a SUBSCRIBE from a `requester` peer, or starts its
     /// creation: the entry is inserted `Creating` so that the SUBSCRIBEs
     /// that follow wait for this one instead of subscribing upstream again.
-    /// A `Started` creator counts as one pending producer until it calls
-    /// `pending_producer_ended` once it sent its upstream SUBSCRIBEs.
+    /// A `Started` creator counts as one pending producer and must call
+    /// `pending_producer_ended` after sending its upstream SUBSCRIBEs.
     pub(crate) fn track_or_begin_creation(
         self: &Arc<Self>,
         track_key: &TrackKey,
@@ -959,12 +958,9 @@ impl InMemoryLocalPubSubDirectory {
         entry: &TrackEntry,
         failure: Option<CreationFailure>,
     ) -> bool {
-        let Entry::Occupied(mut track) = self.upstream_tracks.entry(entry.track_key.clone()) else {
+        let Some(mut track) = self.occupied_track(entry) else {
             return false;
         };
-        if track.get().generation != entry.generation {
-            return false;
-        }
         match track.get_mut().pending_producer_ended(failure) {
             PendingProducersOutcome::Kept => false,
             PendingProducersOutcome::CreationFailed => {
@@ -1220,8 +1216,9 @@ impl InMemoryLocalPubSubDirectory {
             })
             .map(|entry| entry.key().clone());
         let Some(track_key) = track_key else {
-            // The subscription may be one whose SUBSCRIBE_OK is still on its
-            // way to `add_upstream_subscription_to_track`.
+            // No producer has it yet: its SUBSCRIBE_OK may still be on its way
+            // to `add_upstream_subscription_to_track`, so every track
+            // subscribing to the publisher records the end.
             for mut track in self.upstream_tracks.iter_mut() {
                 track.upstream_subscription_ended(publisher_session_id, upstream_request_id);
             }
@@ -1353,9 +1350,10 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
-    /// Removes the producers `track` no longer wants once a subscriber left
-    /// it, returning the upstream subscriptions to UNSUBSCRIBE, and ends the
-    /// track when no producer is left to feed the subscribers remaining.
+    /// Removes the producers the track no longer wants after a subscriber
+    /// left and returns their upstream subscriptions to UNSUBSCRIBE. Ends and
+    /// removes the track when no producer is left, unless its remaining
+    /// subscribers wait for an upstream SUBSCRIBE in flight.
     fn release_unwanted_producers(
         &self,
         mut entry: OccupiedEntry<'_, TrackKey, Track>,
@@ -1386,9 +1384,9 @@ impl InMemoryLocalPubSubDirectory {
                 !released
             });
         }
-        // A track without producers whose consumers remain waits for an
-        // upstream SUBSCRIBE in flight: one its last producer left before
-        // (`outlive_last_producer`) already does.
+        // With subscribers left, a track that had no producer already waits
+        // (kept by `outlive_last_producer`); one that just lost its last
+        // producer waits only while an upstream SUBSCRIBE is in flight.
         if !track.producers.is_empty() {
             track.report_upstream_forward(&track_key);
         } else if !(downstream_remains
@@ -2992,7 +2990,7 @@ mod tests {
     #[tokio::test]
     async fn a_reservation_released_without_a_consumer_releases_the_upstream_subscriptions_nobody_wants()
      {
-        // Arrange: the one subscriber that found the track is refused
+        // Arrange: the track's only subscriber holds a reservation and no consumer
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_upstream_subscription(
             track_key(),

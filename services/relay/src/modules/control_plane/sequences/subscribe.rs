@@ -35,8 +35,8 @@ pub(crate) const UPSTREAM_ATTEMPTS: usize = 3;
 
 enum Acceptance {
     Answered,
-    /// Answered SUBSCRIBE_ERROR, or the answer failed, and no consumer of
-    /// the subscriber is left.
+    /// Sent SUBSCRIBE_ERROR, or failed to send the answer; the subscriber
+    /// has no consumer left.
     Refused,
     UpstreamGone,
 }
@@ -332,10 +332,10 @@ impl Subscribe {
         }
     }
 
-    /// Resolves the track's publishers and sends each a SUBSCRIBE in a
-    /// `PendingProducerTask`, then ends the creator's pending producer;
-    /// without any publisher, that fails the creation unless a producer
-    /// feeds the track or another upstream SUBSCRIBE for it is in flight.
+    /// Resolves the track's publishers, sends each a SUBSCRIBE in a
+    /// `PendingProducerTask`, then ends the creator's pending producer.
+    /// With no publisher found, the creation fails unless a producer feeds
+    /// the track or another upstream SUBSCRIBE for it is in flight.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "debug",
@@ -373,23 +373,21 @@ impl Subscribe {
                 requester,
             )
             .await;
-        let failure = if publishers.is_empty() {
-            Some(UpstreamSubscriptionError::PublisherNotFound.failure())
-        } else {
-            subscribe_publishers(
-                &PendingProducerDeps {
-                    table: table.clone(),
-                    forwarder: forwarder.clone(),
-                    cache_store: cache_store.clone(),
-                    resolver: upstream_publisher_resolver.clone(),
-                },
-                entry,
-                session_id,
-                publishers,
-                new_group_request,
-            );
-            None
-        };
+        let failure = publishers
+            .is_empty()
+            .then(|| UpstreamSubscriptionError::PublisherNotFound.failure());
+        subscribe_publishers(
+            &PendingProducerDeps {
+                table: table.clone(),
+                forwarder: forwarder.clone(),
+                cache_store: cache_store.clone(),
+                resolver: upstream_publisher_resolver.clone(),
+            },
+            entry,
+            session_id,
+            publishers,
+            new_group_request,
+        );
         if table.pending_producer_ended(entry, failure) {
             cache_store.publisher_left(track_key);
         }

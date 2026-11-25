@@ -1259,7 +1259,7 @@ fn a_subscribe_whose_publisher_ends_the_upstream_subscription_as_it_accepts_is_r
 #[test]
 fn an_unsubscribe_leaves_the_other_subscribers_waiting_for_the_publisher_still_asked() {
     runtime().block_on(async {
-        // Arrange: the track's last publisher ended it while the relay asks a second one
+        // Arrange: the track's only publisher sends PUBLISH_DONE while the relay's SUBSCRIBE to a second publisher is unanswered
         let relay = Relay::start();
         let first_publisher = relay.connect(1).await;
         let second_publisher = relay.connect(2).await;
@@ -1283,7 +1283,7 @@ fn an_unsubscribe_leaves_the_other_subscribers_waiting_for_the_publisher_still_a
         second_publisher.answer_subscribe(upstream_subscribes[0], SubscribeAnswer::Accept);
         settle().await.unwrap();
 
-        // Assert: the subscriber left is fed by the second publisher, not told PUBLISH_DONE
+        // Assert: the staying subscriber is not sent PUBLISH_DONE and the second publisher is not unsubscribed
         assert_eq!(
             staying_subscriber.sent(),
             vec![Sent::SubscribeOk {
