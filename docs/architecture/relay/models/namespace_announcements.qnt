@@ -354,6 +354,10 @@ module namespace_announcements {
     },
   }
 
+  // `forget_refused_announcements` after the error.
+  pure def forgetUnder(st: State, x: str, f: str): State =
+    { ...st, rec: st.rec.set(x, st.rec.get(x).filter(n => not(under(n, f)))) }
+
   action subscribeRouteFailed(x: str): bool = all {
     val t = s.subTasks.get(x)
     all {
@@ -365,8 +369,11 @@ module namespace_announcements {
 
   // SUBSCRIBE_NAMESPACE_ERROR: moqt drops the subscription with what it held.
   action subscribeRefused(x: str): bool = all {
-    s.subTasks.get(x).phase == SFailing,
-    s' = setSub({ ...s, moqt: s.moqt.set(x, noMoqtSub) }, x, idleSub),
+    val t = s.subTasks.get(x)
+    all {
+      t.phase == SFailing,
+      s' = setSub(forgetUnder({ ...s, moqt: s.moqt.set(x, noMoqtSub) }, x, t.prefix), x, idleSub),
+    },
   }
 
   action updatePrefix(x: str): bool = all {
@@ -407,7 +414,8 @@ module namespace_announcements {
     val t = s.subTasks.get(x)
     all {
       t.phase == UFailing,
-      s' = setSub({ ...s, moqt: s.moqt.set(x, noMoqtSub) }, x, { ...idleSub, phase: UnReleasing, prefix: t.prefix }),
+      val refused = forgetUnder({ ...s, moqt: s.moqt.set(x, noMoqtSub) }, x, t.target)
+      s' = setSub(refused, x, { ...idleSub, phase: UnReleasing, prefix: t.prefix }),
     },
   }
 

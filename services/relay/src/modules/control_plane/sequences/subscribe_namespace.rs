@@ -112,6 +112,13 @@ impl SubscribeNameSpace {
             {
                 tracing::warn!(%error, session_id = %session_id, "failed to send SUBSCRIBE_NAMESPACE_ERROR");
             }
+            forget_refused_announcements(
+                forwarder,
+                session_id,
+                track_namespace_prefix,
+                subscription,
+            )
+            .await;
             return;
         }
         if let Err(e) = handler.ok().await {
@@ -221,6 +228,13 @@ impl SubscribeNameSpace {
                     "namespace route not registered".to_string(),
                 )
                 .await;
+            forget_refused_announcements(
+                forwarder,
+                session_id,
+                new_track_namespace_prefix,
+                subscription,
+            )
+            .await;
             return;
         }
         // A failed update ended the subscription (§10.9.1); the
@@ -453,6 +467,22 @@ fn is_announced_to(
     match subscriber_peer {
         SessionPeer::Client => table.has_namespace_publishers(track_namespace),
         SessionPeer::Relay => table.has_client_namespace_publisher(track_namespace),
+    }
+}
+
+/// Forgets the namespaces announced on a subscription refused after it was
+/// registered: moqt drops them with the request. Call it once the error is
+/// sent, as moqt still holds what is announced before.
+async fn forget_refused_announcements(
+    forwarder: &ControlMessageForwarder,
+    session_id: SessionId,
+    track_namespace_prefix: &str,
+    subscription: NamespaceSubscription,
+) {
+    if subscription.interest.includes_namespaces() {
+        forwarder
+            .forget_announced_namespaces(session_id, track_namespace_prefix, None)
+            .await;
     }
 }
 
