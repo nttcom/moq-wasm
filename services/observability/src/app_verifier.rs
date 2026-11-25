@@ -104,6 +104,7 @@ fn outcome(result: &Result<SignedToken, VerifyError>) -> &'static str {
 mod tests {
     use std::time::{Duration, SystemTime};
 
+    use auth_token::unix_now;
     use http_server::testing::StubServer;
     use hyper::StatusCode;
 
@@ -114,13 +115,6 @@ mod tests {
             r#"{{"appId":"app-1","isRelay":false,"claims":{{"appId":"app-1","subscribe":"","iat":{},"exp":{exp}}}}}"#,
             exp - 60
         )
-    }
-
-    fn unix_now() -> u64 {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
     }
 
     #[tokio::test]

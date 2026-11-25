@@ -62,10 +62,7 @@ pub(crate) fn test_bots() -> TestBots {
 /// The VTS `/verify` answer for the app `app`'s launch token for its whole
 /// root, signed now and living a minute.
 pub(crate) fn launch_token_answer() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let now = auth_token::unix_now();
     json!({ "appId": "app", "isRelay": false,
             "claims": { "appId": "app", "bots": "", "iat": now, "exp": now + 60 } })
     .to_string()
