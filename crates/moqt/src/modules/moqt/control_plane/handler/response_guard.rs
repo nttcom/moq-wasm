@@ -55,9 +55,19 @@ impl ResponseGuard {
         self.request.request_id()
     }
 
-    /// Records that the request is answered. Answering again is not refused.
-    pub(crate) fn mark_responded(&self) {
-        *self.answer.lock().expect("answer lock") = Answer::Answered;
+    /// Records that the request is answered, and returns whether this call
+    /// did; only the first answer of a request may send a response.
+    pub(crate) fn mark_responded(&self) -> bool {
+        let mut answer = self.answer.lock().expect("answer lock");
+        if *answer != Answer::Unanswered {
+            tracing::debug!(
+                request_id = self.request.request_id(),
+                "request already answered; response not sent"
+            );
+            return false;
+        }
+        *answer = Answer::Answered;
+        true
     }
 
     /// Moves an unanswered request to `AutoRejected` when `self` is the last
@@ -91,6 +101,9 @@ impl ResponseGuard {
         anyhow::bail!("the peer's draft cannot carry the track's properties")
     }
 
+    /// `accept` and `reject` answer at most once: once the request is
+    /// answered, they send nothing and return `Ok(())`.
+    ///
     /// `response` must be an `*_OK`; it is logged as `*_OK sent`. An `*_OK`
     /// the peer's draft cannot carry is answered with INTERNAL_ERROR instead,
     /// so the requester does not wait for its timeout, and the returned
@@ -99,7 +112,9 @@ impl ResponseGuard {
         &self,
         response: OutgoingResponse,
     ) -> Result<(), TransportSendError> {
-        self.mark_responded();
+        if !self.mark_responded() {
+            return Ok(());
+        }
         match self.connection.control.respond(response).await {
             Ok(()) => {
                 self.request.log_ok_sent();
@@ -124,7 +139,9 @@ impl ResponseGuard {
         code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.mark_responded();
+        if !self.mark_responded() {
+            return Ok(());
+        }
         send_request_error(&self.connection, &self.request, code, reason_phrase).await
     }
 }
@@ -232,6 +249,32 @@ mod tests {
         assert_eq!(sent[0].field("track_namespace"), Some("a/b"));
         assert_eq!(sent[0].field("error_code"), Some("Unauthorized"));
         assert_eq!(sent[0].field("reason_phrase"), Some("denied"));
+    }
+
+    #[tokio::test]
+    async fn a_second_answer_sends_nothing() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("response-guard-answer-once").await;
+        let publisher = client.publisher();
+        let request =
+            tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+        handler
+            .error(RequestErrorCode::Unauthorized, "denied".to_string())
+            .await
+            .unwrap();
+
+        // Act
+        let second = handler.ok().await;
+        let _ = request.await.unwrap();
+
+        // Assert: the first answer wins; the second returns Ok without sending
+        assert!(second.is_ok());
+        assert_eq!(telemetry.events("PUBLISH_NAMESPACE_ERROR sent").len(), 1);
+        assert!(telemetry.events("PUBLISH_NAMESPACE_OK sent").is_empty());
     }
 
     #[tokio::test]

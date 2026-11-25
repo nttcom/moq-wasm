@@ -8,9 +8,9 @@
 // threads. Each action is one atomic step:
 // - `cloneHandler`: `Clone` adds a strong reference to `answer`.
 // - `ok` / `error`: `accept` / `reject` (`&self`, callable any number of
-//   times): `mark_responded` (`Answer::Answered`), then the response is
-//   sent. Merged into one step: another clone's `Drop` between the two sees
-//   `Answered` already.
+//   times): `mark_responded` moves `Unanswered` to `Answered`, then the
+//   response is sent; an answered request sends nothing. Merged into one
+//   step: another clone's `Drop` between the two sees `Answered` already.
 // - `dropCheck`: `Drop::drop` calls `auto_reject_if_last`, which reads
 //   `answer` and `Arc::strong_count` and decides whether to spawn the
 //   NOT_SUPPORTED rejecter (`Answer::AutoRejected`).
@@ -19,8 +19,8 @@
 //   sends NOT_SUPPORTED. Two clones dropped on two threads can both run
 //   `dropCheck` before either runs `dropField`.
 //
-// `response_guard_current` is the implementation; it violates both
-// invariants. `response_guard_fixed` switches on ANSWER_ONCE and
+// `response_guard_current` is the implementation (ANSWER_ONCE on); it
+// violates `everyRequestAnswered`. `response_guard_fixed` switches on ANSWER_ONCE and
 // LAST_DROP_ATOMIC and passes; `response_guard_answer_once` switches on only
 // ANSWER_ONCE and still fails `everyRequestAnswered`.
 //
@@ -136,7 +136,7 @@ module response_guard_current {
   import response_guard(
     CLONES = Set("g1", "g2"),
     FIRST = "g1",
-    ANSWER_ONCE = false,
+    ANSWER_ONCE = true,
     LAST_DROP_ATOMIC = false,
   ).*
 }
