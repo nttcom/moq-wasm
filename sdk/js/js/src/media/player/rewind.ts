@@ -84,8 +84,8 @@ export class GroupTimeline {
   }
 
   /// The newest group the publisher has finished writing. The live edge group
-  /// is still open, and a FETCH that reaches into it leaves the relay cache and
-  /// is forwarded to a publisher that does not serve FETCH.
+  /// is still open, and a FETCH that reaches into it does not end until the
+  /// publisher closes that group.
   get newestClosed(): GroupMark | undefined {
     return this.cached().at(this.live ? -2 : -1)
   }
@@ -105,8 +105,8 @@ export class GroupTimeline {
 
   /// Resolves the newest closed group that starts at or before `captureMicros`,
   /// or the oldest closed one when the position lies before all of them. The
-  /// live edge group is excluded because the publisher is still writing to it
-  /// and a FETCH for an open group escapes the relay cache.
+  /// live edge group is excluded: a FETCH for it does not end until the
+  /// publisher closes it.
   resolveSeekTarget(captureMicros: number): GroupMark | undefined {
     const latest = this.latest
     if (!latest) {

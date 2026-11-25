@@ -125,7 +125,7 @@ When audio groups are unaligned (not covered by the media timeline and starts di
 **Subscriptions & review**
 - **Single active review**: Only one review runs at a time; a new seek, `goLive`, live video track change, or `stop` cancels the prior review (single-group FETCHes populating `reviewGroupStore` may finish).
 - **VOD is FETCH-only**: Non-live broadcasts open no media `SUBSCRIBE` and send no `TRACK_STATUS`.
-- **Closed-group review boundary**: A review FETCH never reaches into the open live-edge group.
+- **Closed-group review boundary**: A review FETCH never reaches into the open live-edge group, since such a FETCH does not end until the publisher closes that group.
 - **Ordered Forward updates**: `SUBSCRIBE_UPDATE` Forward toggles apply strictly in issue order.
 - **Immediate `PUBLISH_DONE` drop**: Drops ended subscriptions immediately rather than reading late objects during `moqt`'s draft-14 §9.12 grace period.
 
