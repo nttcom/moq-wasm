@@ -1292,7 +1292,7 @@ pub(crate) fn rejection<T, E: Into<anyhow::Error>>(result: Result<T, E>) -> Reje
     }
 }
 
-pub(crate) fn location(group_id: u64, object_id: u64) -> crate::object::Location {
+pub(crate) const fn location(group_id: u64, object_id: u64) -> crate::object::Location {
     crate::object::Location {
         group_id,
         object_id,
