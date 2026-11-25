@@ -15,7 +15,6 @@ mod temporary_apps;
 mod translated_audio;
 mod translated_catalog;
 mod translation_engine;
-mod translation_policy;
 
 use std::{sync::Arc, time::Duration};
 
@@ -28,12 +27,11 @@ use tokio::{net::TcpListener, sync::Semaphore};
 use crate::{
     broadcast_namespace::BroadcastNamespaces,
     gemini::{AgentPlatform, GeminiCredentials},
-    root_translation::{RootTranslation, TranslationResources},
+    root_translation::{RootTranslation, TranslationPolicy, TranslationResources},
     session_server::{SessionServer, SessionServerState},
     target_language::find_by_code,
     temporary_apps::TemporaryApps,
     translation_engine::TranslationEngine,
-    translation_policy::TranslationPolicy,
 };
 
 #[derive(Parser, Debug)]

@@ -12,7 +12,7 @@ Living document. Update alongside any change to design intent, module boundaries
 ### Translation Backends & Limits
 - **Gemini Live Translate** (`gemini/platform.rs`): Connects to Gemini Enterprise Agent Platform (`global` Live API over WebSocket with `Authorization: Bearer`) using `google-cloud`'s `MetadataToken` on Cloud Run, or `gcloud` impersonation (`LIVE_TRANSLATE_GCLOUD_IMPERSONATE`) locally.
 - **`--echo` mode**: Returns source audio after each language's fixed delay without Google Cloud. Startup fails unless `--echo` or `LIVE_TRANSLATE_GCP_PROJECT` is set.
-- **On-demand vs. `--always-on`** (`translation_policy.rs`): Languages translate only while subscribed, except `--always-on` languages which run for the whole broadcast (~1 s tune-in instead of waiting for Gemini's first response) and ignore viewer count and time limits.
+- **On-demand vs. `--always-on`** (`TranslationPolicy` in `root_translation.rs`): Languages translate only while subscribed, except `--always-on` languages which run for the whole broadcast (~1 s tune-in instead of waiting for Gemini's first response) and ignore viewer count and time limits.
 - **Time & failure caps**: Non-always-on languages stop after `--language-time-limit-minutes` (checked every minute, ending subscriptions with `PUBLISH_DONE` so viewers fall back to original audio). A language also ends with `translation unavailable` if Gemini closes with a policy violation or rapid failures back off to 30 s.
 
 ### HTTP Server & Temporary Apps (`session_server.rs`, `temporary_apps.rs`)

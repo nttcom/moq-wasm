@@ -112,8 +112,8 @@ mod tests {
     use tokio::sync::Semaphore;
 
     use crate::{
-        root_translation::TranslationResources, translation_engine::TranslationEngine,
-        translation_policy::TranslationPolicy,
+        root_translation::{TranslationPolicy, TranslationResources},
+        translation_engine::TranslationEngine,
     };
 
     use super::*;
