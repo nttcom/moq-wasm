@@ -277,7 +277,9 @@ impl ObjectSinks {
         &mut self,
         track_alias: u64,
         mut receiver: SinkReceiver,
+        now: Duration,
     ) -> Result<(), TerminationErrorCode> {
+        self.remove_expired(now);
         if self
             .sinks
             .get(&track_alias)
@@ -489,7 +491,7 @@ impl Connection {
     }
 
     /// Installs `receiver` for `track_alias` and hands it the objects that
-    /// arrived before. Fails when another subscription holds the alias. The
+    /// arrived within UNKNOWN_TRACK_ALIAS_PERIOD before. Fails when another subscription holds the alias. The
     /// sinks stay locked while the returned guard lives.
     pub(crate) async fn install_receiver(
         &self,
@@ -497,7 +499,7 @@ impl Connection {
         receiver: SinkReceiver,
     ) -> Result<tokio::sync::MutexGuard<'_, ObjectSinks>, TerminationErrorCode> {
         let mut sinks = self.object_sinks.lock().await;
-        sinks.install(track_alias, receiver)?;
+        sinks.install(track_alias, receiver, executor::now())?;
         Ok(sinks)
     }
 
@@ -629,7 +631,7 @@ mod tests {
         moqt::{
             data_plane::stream::open_subgroups::OpenSubgroups,
             runtime::dispatch::incoming_object::{
-                IncomingDatagram, IncomingObject, incoming_object_channel,
+                IncomingDatagram, IncomingObject, IncomingObjectSender, incoming_object_channel,
             },
             version::Version,
         },
@@ -663,9 +665,13 @@ mod tests {
     }
 
     fn sink_receiver() -> SinkReceiver {
+        sink_receiver_with(incoming_object_channel().0)
+    }
+
+    fn sink_receiver_with(sender: IncomingObjectSender) -> SinkReceiver {
         SinkReceiver {
             request_id: 1,
-            sender: incoming_object_channel().0,
+            sender,
             logical_alias: 100,
             newest_group: None,
             cutover: None,
@@ -732,7 +738,7 @@ mod tests {
     fn an_object_of_a_buffered_track_alias_is_dropped_once_the_connection_buffers_the_limit() {
         // Arrange
         let mut sinks = full_sinks();
-        sinks.install(100, sink_receiver()).unwrap();
+        sinks.install(100, sink_receiver(), START).unwrap();
         notify_datagram(&mut sinks, TRACK_ALIAS, START);
         for _ in 0..MAX_PENDING_OBJECTS_PER_TRACK_ALIAS - 1 {
             notify_datagram(&mut sinks, OTHER_TRACK_ALIAS, START);
@@ -755,7 +761,7 @@ mod tests {
         let mut sinks = full_sinks();
 
         // Act
-        sinks.install(100, sink_receiver()).unwrap();
+        sinks.install(100, sink_receiver(), START).unwrap();
         let notification = notify_datagram(&mut sinks, TRACK_ALIAS, START);
 
         // Assert
@@ -805,7 +811,7 @@ mod tests {
     fn a_cancelled_track_alias_is_forgotten_once_the_period_ends() {
         // Arrange
         let mut sinks = ObjectSinks::default();
-        sinks.install(TRACK_ALIAS, sink_receiver()).unwrap();
+        sinks.install(TRACK_ALIAS, sink_receiver(), START).unwrap();
         sinks.cancel_subscription(1, START);
 
         // Act: the next cancellation drops it, with no object arriving
@@ -814,5 +820,26 @@ mod tests {
         // Assert
         assert!(!sinks.sinks.contains_key(&TRACK_ALIAS));
         assert_eq!(sinks.expiries.len(), 1);
+    }
+
+    #[test]
+    fn a_receiver_installed_after_the_unknown_track_alias_period_gets_no_stale_objects() {
+        // Arrange
+        let mut sinks = ObjectSinks::default();
+        notify_datagram(&mut sinks, TRACK_ALIAS, START);
+        let (sender, mut receiver) = incoming_object_channel();
+
+        // Act
+        sinks
+            .install(
+                TRACK_ALIAS,
+                sink_receiver_with(sender),
+                START + UNKNOWN_TRACK_ALIAS_PERIOD,
+            )
+            .unwrap();
+
+        // Assert
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(sinks.pending_objects, 0);
     }
 }
