@@ -3,6 +3,7 @@ import type { MediaCatalogTrack } from '../catalog'
 import { FakeSession, receivedObject } from './testing/fakeSession'
 import type { MediaKind, ObjectHandler } from './trackContext'
 import { TrackSubscriptions } from './trackSubscriptions'
+import { settle } from '../../testing/settle'
 
 const VIDEO: MediaCatalogTrack = { name: 'video', label: 'video' }
 
@@ -249,7 +250,7 @@ test('a resume while a subscription is being made is sent once it is made', asyn
   // Act
   const subscribed = subscriptions.subscribe('video', 'video', VIDEO, () => {})
   subscriptions.resumeForward()
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settle()
   answer()
   await subscribed
 
@@ -322,7 +323,7 @@ async function endSubscription(kinds: MediaKind[], ended: MediaKind): Promise<[M
     await subscriptions.subscribe(kind, kind, kind === 'video' ? VIDEO : AUDIO, () => {})
   }
   session.publishDone(ended, DONE)
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settle()
   return reported
 }
 

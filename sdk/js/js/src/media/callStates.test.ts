@@ -1,13 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { CallStates, type CallStateUpdate, parseState } from './callStates'
 import { FakeTextTrackSession } from './player/testing/fakeTextTrackSession'
+import { settle } from '../testing/settle'
 
 const CALL = ['app', 'room', 'phone', 'abc']
 
 /// Lets the reader of a subscription take what was delivered.
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
 
 function following(fake: FakeTextTrackSession): { updates: CallStateUpdate[]; states: CallStates; run: Promise<void> } {
   const updates: CallStateUpdate[] = []

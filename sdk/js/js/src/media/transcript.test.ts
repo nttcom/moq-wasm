@@ -2,15 +2,13 @@ import { expect, test } from '@playwright/test'
 import { RequestError } from '../core/requestError'
 import { type TranscriptRecord, subscribeTranscript } from './transcript'
 import { FakeTextTrackSession } from './player/testing/fakeTextTrackSession'
+import { settle } from '../testing/settle'
 
 const ROOM = ['app', 'room']
 
 const record = (t: number, speaker: string, text: string) => JSON.stringify([{ T: t, data: { speaker, text } }])
 
 /// Lets the reader of a subscription take what was delivered.
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
 
 test('the transcript of the transcriber is read from the current group', async () => {
   // Arrange

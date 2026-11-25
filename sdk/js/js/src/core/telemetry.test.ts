@@ -11,6 +11,7 @@ import {
   registerPlayerStats,
   registerPublisherStats
 } from './telemetry'
+import { settle } from '../testing/settle'
 
 type Sent = {
   url: string
@@ -269,7 +270,7 @@ test('the records of a token the server rejected are sent without it', async () 
   const { telemetry: subject, sent } = telemetry(401)
   subject.span(span('first'), 'expired-jwt')
   subject.flush()
-  await new Promise((resolve) => setTimeout(resolve))
+  await settle()
 
   // Act
   subject.span(span('second'), 'expired-jwt')
