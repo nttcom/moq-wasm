@@ -157,9 +157,15 @@ impl TrackPublisher {
                     source: self.tracks.video.clone(),
                 };
                 if let Some(demand_sender) = &self.tracks.demand_sender {
-                    self.broadcast
-                        .publish_on_demand(&self.tracks.audio, demand_sender.clone())
-                        .await?;
+                    let cmaf_name = self
+                        .audio_cmaf
+                        .is_some()
+                        .then(|| cmaf_track_name(&self.tracks.audio));
+                    for name in std::iter::once(&self.tracks.audio).chain(cmaf_name.as_ref()) {
+                        self.broadcast
+                            .publish_on_demand(name, demand_sender.clone())
+                            .await?;
+                    }
                 }
                 self.broadcast
                     .update_audio_catalog(&self.tracks.audio, info)
@@ -400,14 +406,15 @@ mod tests {
     use std::time::Duration;
 
     use mediapack::aac::AudioSpecificConfig;
-    use tokio::sync::Notify;
+    use tokio::sync::{Notify, mpsc};
 
     use super::*;
     use crate::{
         broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
         relay_connection::RelayConnection,
         test_support::{
-            FakeRelay, VIDEO_TICK_US, decode_times, keyframe_at, video_sample, vp8_config,
+            FakeRelay, TEST_TIMEOUT, VIDEO_TICK_US, decode_times, keyframe_at, video_sample,
+            vp8_config,
         },
     };
 
@@ -975,5 +982,39 @@ mod tests {
         // Assert
         let fragment = relay.first_object(&subscription).await;
         assert!(fragment.payload.windows(4).any(|window| window == b"moof"));
+    }
+
+    #[tokio::test]
+    async fn an_on_demand_aac_audio_reports_the_demand_of_its_cmaf_sibling() {
+        // Arrange
+        let relay = FakeRelay::spawn("publisher-cmaf-audio-demand");
+        let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+        let mut publisher = relay_publisher(
+            &relay,
+            SourceTracks {
+                demand_sender: Some(demand_sender),
+                ..SourceTracks::default()
+            },
+        );
+
+        // Act
+        publisher
+            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(
+                AudioSpecificConfig::new(2, 48_000, 1),
+            )))
+            .await
+            .unwrap();
+        let mut reported = Vec::new();
+        while reported.len() < 2 {
+            let demand = tokio::time::timeout(TEST_TIMEOUT, demand_receiver.recv())
+                .await
+                .expect("each audio track must report its demand")
+                .unwrap();
+            reported.push(demand.track_name);
+        }
+
+        // Assert
+        reported.sort();
+        assert_eq!(reported, ["audio", "audio_cmaf"]);
     }
 }
