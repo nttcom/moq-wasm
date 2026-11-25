@@ -10,11 +10,10 @@ from moq_wasm.codecs import VideoDecoder, VideoEncoder
 from moq_wasm.media import MediaSource, RemoteBroadcast, create_broadcast
 
 from tests.conftest import started_relay
-from tests.fake_native import FakeRelay, called, open_session
+from tests.fake_native import TIMEOUT_SECONDS, FakeRelay, called, open_session, within
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
-TIMEOUT_SECONDS = 5
 BOT = ["anon", "room", "bot"]
 SIZE = (64, 48)
 FRAMERATE = 30
@@ -28,10 +27,6 @@ RENDITION_QUEUE_CAPACITY = 300
 
 def picture(index: int) -> bytes:
     return bytes([index * 8 % 256]) * (SIZE[0] * SIZE[1] * 3)
-
-
-async def within(awaitable):
-    return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
 
 
 async def test_a_broadcast_with_media_publishes_its_namespace_through_the_media_broadcast():

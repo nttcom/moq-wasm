@@ -12,15 +12,9 @@ from moq_wasm import _token
 from moq_wasm._token import TokenKeeper
 
 from tests.cancellation import cancel_as_it_resumes
-from tests.fake_native import FakeRelay, native_future, open_session, unsigned_token
+from tests.fake_native import TIMEOUT_SECONDS, FakeRelay, native_future, open_session, unsigned_token, within
 
-TIMEOUT_SECONDS = 5
 NAMESPACE = ["anon", "room", "bot"]
-
-
-
-async def within(awaitable):
-    return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
 
 
 async def eventually(condition: Callable[[], bool]) -> None:

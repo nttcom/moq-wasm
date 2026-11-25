@@ -13,18 +13,13 @@ import moq_wasm
 from moq_wasm import codecs
 from moq_wasm.media import Catalog, CatalogTrack, EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
-from tests.fake_native import STAY_OPEN, FakeRelay, FakeWriter, called, open_session, until
+from tests.fake_native import STAY_OPEN, TIMEOUT_SECONDS, FakeRelay, FakeWriter, called, open_session, until, within
 from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
-TIMEOUT_SECONDS = 5
 ROOM = ["anon", "room"]
 BOT = [*ROOM, "bot"]
-
-
-async def within(awaitable):
-    return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
 
 
 def catalog_payload(*tracks: dict) -> bytes:
