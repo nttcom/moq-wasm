@@ -1,11 +1,11 @@
 // A model of the NEW_GROUP_REQUEST throttle of one Origin track
 // (draft-18 §10.2.13): `NewGroupRequests`
-// (crates/moqt/src/modules/moqt/domains/origin/new_group_requests.rs :19-95),
+// (crates/moqt/src/modules/moqt/domains/origin/new_group_requests.rs :19-94),
 // its `NewGroupDelayTask` (origin/new_group_delay_task.rs), and the Origin
-// calls that drive it (origin.rs): `accept_new_group_requests` (:333-343)
+// calls that drive it (origin.rs): `accept_new_group_requests` (:431-441)
 // replaces the track's `NewGroupRequests`; `OriginTrack::request_new_group`
-// (:252-261), reached from `accept_subscribe`, `publish` and `apply_update`,
-// calls `request`; `OriginTrack::store` (:264-292), reached from every
+// (:320-328), reached from `accept_subscribe`, `publish` and `apply_update`,
+// calls `request`; `OriginTrack::store` (:340-367), reached from every
 // write, calls `object_placed`.
 //
 // Each action is one critical section under the Origin's `state` lock, or
