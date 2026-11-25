@@ -674,7 +674,7 @@ impl Subscriber {
         }
         let mut answers = Vec::new();
         for (connection, subscription_request_id) in
-            self.on_live_connections(subscription.request_id())
+            self.on_open_subscription_connections(subscription.request_id())
         {
             let reservation = connection.control.reserve_request_id().await?;
             let subscribe_update = SubscribeUpdate {
@@ -721,7 +721,7 @@ impl Subscriber {
         let new_group_request = largest_group.map_or(0, |group_id| group_id + 1);
         let mut sent = false;
         for (connection, subscription_request_id) in
-            self.on_live_connections(subscription.request_id())
+            self.on_open_subscription_connections(subscription.request_id())
         {
             let reservation = connection.control.reserve_request_id().await?;
             sent |= connection
@@ -842,6 +842,9 @@ impl Subscriber {
             self.session
                 .cancel_subscription(&connection, request_id)
                 .await;
+            if !connection.end_subscription(request_id) {
+                continue;
+            }
             connection
                 .control
                 .notify_end(Notification::Unsubscribe(Unsubscribe { request_id }))
@@ -1008,6 +1011,14 @@ impl Subscriber {
                 Some((connection, wire_id))
             })
             .collect()
+    }
+
+    /// `on_live_connections` without those where the subscription ended, for
+    /// which nothing more is sent.
+    fn on_open_subscription_connections(&self, logical_id: u64) -> Vec<(Arc<Connection>, u64)> {
+        let mut connections = self.on_live_connections(logical_id);
+        connections.retain(|(connection, wire_id)| !connection.subscription_ended(*wire_id));
+        connections
     }
 
     fn on_live_connection(&self, logical_id: u64) -> Option<(Arc<Connection>, u64)> {
@@ -2556,6 +2567,28 @@ mod tests {
 
         // Assert
         assert_eq!(cancel.request_id(), handler.request_id);
+    }
+
+    #[tokio::test]
+    async fn an_unsubscribed_subscription_sends_no_further_message() {
+        for version in DRAFTS {
+            // Arrange
+            let track = subscribed_track("subscriber-after-unsubscribe", version).await;
+            let subscriber = track.client.subscriber();
+            subscriber.unsubscribe(&track.subscription).await.unwrap();
+            let SessionEvent::Unsubscribe(_) = next_event(&track.server).await else {
+                panic!("expected UNSUBSCRIBE");
+            };
+
+            // Act
+            let updated = subscriber.end_before_group(&track.subscription, 1).await;
+            let unsubscribed = subscriber.unsubscribe(&track.subscription).await;
+
+            // Assert: the next message the publisher gets is the marker
+            assert!(updated.is_ok(), "{version:?}: {updated:?}");
+            assert!(unsubscribed.is_ok(), "{version:?}: {unsubscribed:?}");
+            wait_for_control_delivery(&track.client, &track.server).await;
+        }
     }
 
     #[tokio::test]

@@ -120,6 +120,7 @@ impl ControlMessageReceiveTask {
                                 DepacketizeResult::SessionEvent(event) => {
                                     session.room_for_event(&connection).await;
                                     if let SessionEvent::PublishDone(handler) = &event {
+                                        connection.end_subscription(handler.request_id());
                                         let _ = publish_done_sender.send(handler.clone());
                                     }
                                     if let Err(error) = connection.event_sender.send(event) {
@@ -507,12 +508,19 @@ mod tests {
     use crate::{
         SessionEvent, Version,
         modules::{
-            moqt::{control_plane::error_codes::PublishDoneCode, version::draft14::ControlChannel},
+            moqt::{
+                control_plane::{
+                    control_messages::messages::subscribe_update::SubscribeUpdate,
+                    error_codes::PublishDoneCode,
+                },
+                version::draft14::ControlChannel,
+            },
             test_support::{
                 DISCONNECT_TIMEOUT, next_event, published_track, received_subscribe_update,
                 spawn_connected_native_sessions, subscribed_track, subscription,
             },
         },
+        object::Location,
     };
 
     /// A Request ID of the client's parity far above any it has used.
@@ -603,11 +611,27 @@ mod tests {
         let event = next_event(&track.server).await;
         assert!(matches!(event, SessionEvent::Unsubscribe(_)), "{event:?}");
 
-        // Act
-        track
-            .client
-            .subscriber()
-            .update_forward(&track.subscription, false)
+        let connection = track.client.subscriber().session.connection();
+        let reservation = connection.control.reserve_request_id().await.unwrap();
+        let update = SubscribeUpdate {
+            request_id: reservation.request_id(),
+            subscription_request_id: track.subscription.request_id(),
+            start_location: Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_group: 0,
+            subscriber_priority: 128,
+            forward: false,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            new_group_request: None,
+        };
+
+        // Act: the subscriber sends nothing more for it, so write it directly
+        connection
+            .control
+            .send_subscribe_update(reservation, update)
             .await
             .unwrap();
 

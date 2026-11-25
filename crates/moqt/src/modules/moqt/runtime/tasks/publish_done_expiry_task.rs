@@ -152,7 +152,7 @@ mod tests {
             },
             test_support::{
                 DRAFTS, connected_sessions, next_event, open_subgroup, send_payload,
-                send_without_waiting, take_data_receiver, within,
+                send_without_waiting, take_data_receiver, wait_for_control_delivery, within,
             },
         },
         object::ContentExists,
@@ -344,6 +344,28 @@ mod tests {
                 within(object_receiver.recv()).await.is_none(),
                 "{version:?}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscription_publish_done_ended_sends_no_update_or_unsubscribe() {
+        for version in DRAFTS {
+            // Arrange
+            let subscription =
+                unclaimed_served_subscription("publish-done-no-update", version).await;
+            end_with_publish_done(&subscription, 0).await;
+            let subscriber = subscription.server.subscriber();
+
+            // Act
+            let updated = subscriber
+                .update_forward(&subscription.object_receiver, false)
+                .await;
+            let unsubscribed = subscriber.unsubscribe(&subscription.object_receiver).await;
+
+            // Assert: the next message the publisher gets is the marker
+            assert!(updated.is_ok(), "{version:?}: {updated:?}");
+            assert!(unsubscribed.is_ok(), "{version:?}: {unsubscribed:?}");
+            wait_for_control_delivery(&subscription.server, &subscription.client).await;
         }
     }
 

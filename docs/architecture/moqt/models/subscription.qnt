@@ -50,7 +50,8 @@
 //   unclaimed `receiver_map` entry; dropping the sink's sender ends it once
 //   the application has read what it holds.
 // - END_TRACKED: the subscriber records a request as ended on PUBLISH_DONE or
-//   UNSUBSCRIBE and sends nothing more for it.
+//   UNSUBSCRIBE (`Connection::end_subscription`) and sends nothing more for
+//   it.
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck subscription.qnt
@@ -413,7 +414,7 @@ module subscription_current {
     ACCEPT_BEFORE_NEXT = true,
     DONE_BEFORE_SUBSCRIBE = false,
     KEEP_UNCLAIMED_RECEIVER = true,
-    END_TRACKED = false,
+    END_TRACKED = true,
   ).*
 }
 

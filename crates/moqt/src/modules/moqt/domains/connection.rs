@@ -82,6 +82,10 @@ pub(crate) struct Connection {
     /// accepted and neither side has ended. A session that follows GOAWAY
     /// closes a previous connection only once this set is empty.
     served: std::sync::Mutex<HashSet<u64>>,
+    /// The wire ids of this side's subscriptions here that ended: the peer
+    /// sent PUBLISH_DONE or this side sent UNSUBSCRIBE. Kept for the
+    /// connection's lifetime.
+    ended_subscriptions: std::sync::Mutex<HashSet<u64>>,
     pub(crate) object_sinks: tokio::sync::Mutex<ObjectSinks>,
     pub(crate) fetch_notification_map:
         std::sync::Mutex<HashMap<RequestId, mpsc::UnboundedSender<FetchDataReceiver>>>,
@@ -407,6 +411,7 @@ impl Connection {
             track_alias: AtomicU64::new(0),
             carried: std::sync::Mutex::default(),
             served: std::sync::Mutex::default(),
+            ended_subscriptions: std::sync::Mutex::default(),
             object_sinks: tokio::sync::Mutex::default(),
             fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
             unacknowledged_streams: UnacknowledgedStreams::default(),
@@ -461,6 +466,16 @@ impl Connection {
             .subscription_starts
             .get(&logical_id)
             .copied()
+    }
+
+    /// Records that this side's subscription `wire_id` ended here; `false`
+    /// when it had already ended.
+    pub(crate) fn end_subscription(&self, wire_id: u64) -> bool {
+        lock(&self.ended_subscriptions).insert(wire_id)
+    }
+
+    pub(crate) fn subscription_ended(&self, wire_id: u64) -> bool {
+        lock(&self.ended_subscriptions).contains(&wire_id)
     }
 
     pub(crate) fn serve(&self, request_id: u64) {

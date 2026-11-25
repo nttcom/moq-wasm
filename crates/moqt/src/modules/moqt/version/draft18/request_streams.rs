@@ -78,10 +78,11 @@ use crate::{
 };
 
 fn emit(scope: &Scope, event: SessionEvent) {
-    if let SessionEvent::PublishDone(handler) = &event
-        && let Some(publish_done_sender) = scope.channel().publish_done_sender()
-    {
-        let _ = publish_done_sender.send(handler.clone());
+    if let SessionEvent::PublishDone(handler) = &event {
+        scope.connection.end_subscription(handler.request_id());
+        if let Some(publish_done_sender) = scope.channel().publish_done_sender() {
+            let _ = publish_done_sender.send(handler.clone());
+        }
     }
     if let Err(error) = scope.connection.event_sender.send(event) {
         tracing::debug!(?error, "session event dropped: the session is gone");
