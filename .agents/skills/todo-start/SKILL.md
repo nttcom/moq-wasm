@@ -1,8 +1,8 @@
 ---
 name: todo-start
-description: Do a TODO from docs/todos/ and delete it in the same PR. Use when the user asks to work on, finish or drop a TODO.
+description: Work on, finish, or drop a TODO from docs/todos/ and delete it in the same PR.
 ---
 
-1. Read `docs/todos/README.md`. The argument is the TODO; without one, propose the top of `high/`.
-2. Check the TODO is still needed. If not, propose deleting or rewriting it, and stop.
-3. Do the work. In the same PR, delete the file and update the docs it makes stale: `architecture.md`, ADRs and READMEs.
+1. Read `docs/todos/README.md`. Target the given TODO, or propose the top item in `high/`.
+2. Verify it is still needed; if not, propose deleting or rewriting it and stop.
+3. Do the work, delete the TODO file, and update any stale docs (`architecture.md`, ADRs, READMEs) in the same PR.
