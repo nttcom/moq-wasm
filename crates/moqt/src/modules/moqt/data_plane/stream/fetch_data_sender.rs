@@ -190,7 +190,7 @@ mod tests {
     use super::{FetchDataSender, UnknownRange};
     use crate::{
         Session, SessionEvent,
-        fetch::FetchOption,
+        fetch::{FetchHandler, FetchOption},
         modules::{
             moqt::{
                 control_plane::control_messages::messages::parameters::location::Location,
@@ -229,7 +229,7 @@ mod tests {
         client: &Session,
         server: &Session,
         stream: MockTransportSendStream,
-    ) -> FetchDataSender {
+    ) -> (FetchHandler, FetchDataSender) {
         let mut subscriber = client.subscriber();
         tokio::spawn(async move {
             let _ = subscriber
@@ -256,9 +256,10 @@ mod tests {
             .session
             .connection_of(handler.request_id)
             .unwrap();
-        FetchDataSender::new(&connection, Box::new(stream), wire_request_id)
+        let sender = FetchDataSender::new(&connection, Box::new(stream), wire_request_id)
             .await
-            .unwrap()
+            .unwrap();
+        (handler, sender)
     }
 
     #[tokio::test]
@@ -279,7 +280,7 @@ mod tests {
                 version
             );
             let (stream, mut reset_receiver) = recording_stream();
-            let sender = answering_fetch(&client, &server, stream).await;
+            let (_handler, sender) = answering_fetch(&client, &server, stream).await;
 
             // Act
             drop(sender);
@@ -307,7 +308,7 @@ mod tests {
             ),
         ] {
             let (stream, mut reset_receiver) = recording_stream();
-            let sender = answering_fetch(&client, &server, stream).await;
+            let (_handler, sender) = answering_fetch(&client, &server, stream).await;
             sender
                 .send_object(&Object {
                     location: Location {

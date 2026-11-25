@@ -23,8 +23,8 @@
 //   it removes the entry and FINs the request stream.
 // - `appError`: `send_on_incoming(REQUEST_ERROR, ends_request)`: takes the
 //   entry and writes REQUEST_ERROR + FIN (the write fails after the peer's
-//   STOP_SENDING). With RESET_RESPONSE_ON_ERROR it also resets an attached
-//   response stream.
+//   STOP_SENDING). With RESET_RESPONSE_ON_ERROR it first resets an attached
+//   response stream still open (`ServedFetch::ResponseAttached`).
 // - `openResponse`: `create_fetch_stream` / `FetchDataSender::new`:
 //   `attach_fetch_response` under the lock, or a reset and bail when the
 //   entry is gone (ATTACH_CHECKS_ENTRY).
@@ -42,9 +42,9 @@
 //   reset, `peer_ended`) runs `fetch_cancelled` → `reset_cancelled_fetch`:
 //   takes the entry and resets the request stream and an attached response.
 //
-// `draft18_fetch_current` is the implementation; it violates
-// `noOrphanResponse` and `stopResetsResponse`. `draft18_fetch_fixed` switches on
-// RESET_RESPONSE_ON_ERROR and passes. Guards the implementation relies on:
+// `draft18_fetch_current` is the implementation, with RESET_RESPONSE_ON_ERROR
+// on, and passes, as does `draft18_fetch_fixed`. Guards the implementation
+// relies on:
 // - `draft18_fetch_attach_unchecked`: ATTACH_CHECKS_ENTRY off fails
 //   `noOrphanResponse`.
 // - `draft18_fetch_fin_at_ok`: WAIT_FOR_RESPONSE off (FETCH_OK ends the
@@ -57,7 +57,7 @@
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft18_fetch.qnt
-//   quint verify --backend tlc --main draft18_fetch_current --invariant safety draft18_fetch.qnt   # violated
+//   quint verify --backend tlc --main draft18_fetch_current --invariant safety draft18_fetch.qnt   # passes
 //   quint verify --backend tlc --main draft18_fetch_fixed --invariant safety draft18_fetch.qnt     # passes
 //   quint verify --backend tlc --main draft18_fetch_attach_unchecked --invariant safety draft18_fetch.qnt
 //   quint verify --backend tlc --main draft18_fetch_fin_at_ok --invariant safety draft18_fetch.qnt
@@ -302,10 +302,10 @@ module draft18_fetch {
   }
 }
 
-// expect: violation
+// expect: ok
 module draft18_fetch_current {
   import draft18_fetch(
-    RESET_RESPONSE_ON_ERROR = false,
+    RESET_RESPONSE_ON_ERROR = true,
     ATTACH_CHECKS_ENTRY = true,
     WAIT_FOR_RESPONSE = true,
     CLOSE_MAY_FAIL = false,

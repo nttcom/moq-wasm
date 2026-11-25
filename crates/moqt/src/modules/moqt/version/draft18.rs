@@ -169,7 +169,7 @@ impl RequestStream {
 /// both FETCH_OK is sent and the response stream has ended, the transitions
 /// return `None`: the entry goes and the request stream ends with FIN. The
 /// response stream, once opened, is reset with the request stream when the
-/// FETCH is cancelled (§5.2). `R` is the response stream, a parameter so
+/// FETCH is cancelled (§5.2), and, still open, when it is rejected. `R` is the response stream, a parameter so
 /// the transitions can be checked without a transport.
 #[derive(Debug, Clone, Default)]
 enum ServedFetch<R = Arc<StreamSender>> {
@@ -1017,6 +1017,15 @@ impl ControlChannel {
             tracing::debug!(request_id, "no open request stream for the response");
             return Err(TransportSendError::ClosedStream);
         };
+        // Only a REQUEST_ERROR ends a FETCH here. Its response stream, still
+        // open, is reset before the error goes out, so no object follows it
+        // and the requester's STOP_SENDING has no stream left to reset (§5.2).
+        if ends_request
+            && let ServedFetch::ResponseAttached(response) = &stream.fetch
+            && let Err(error) = response.reset(cancelled()).await
+        {
+            tracing::debug!(%error, request_id, "could not reset the response stream of a rejected FETCH");
+        }
         stream.sender.send(&message).await?;
         if ends_request {
             stream.sender.close().await?;
@@ -2421,6 +2430,61 @@ mod tests {
             error.to_string().contains("stream reset by peer"),
             "{error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_fetch_whose_response_stream_is_open_resets_that_stream() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-error-resets-response", "moqt").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .fetch(
+                    "ns".into(),
+                    "track".into(),
+                    location(0, 0),
+                    location(1, 0),
+                    FetchOption::default(),
+                )
+                .await
+                .map(drop)
+        });
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+        let sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        let object = Object {
+            location: location(0, 0),
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: Default::default(),
+            payload: Bytes::from_static(b"o"),
+            ends_group: false,
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".into())
+            .await
+            .unwrap();
+        let sent = sender.send_object(&object).await;
+
+        // Assert: §5.2 no FETCH object follows the REQUEST_ERROR; ClosedStream is this side's own reset
+        let error = sent.expect_err("the response stream is reset");
+        assert!(
+            matches!(
+                error.downcast_ref::<TransportSendError>(),
+                Some(TransportSendError::ClosedStream)
+            ),
+            "{error:#}"
+        );
+        assert!(request.await.unwrap().is_err());
     }
 
     #[tokio::test]
