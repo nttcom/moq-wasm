@@ -84,7 +84,24 @@ impl TrackWriter {
     /// draft-ietf-moq-transport-14; a writer that has not opened a group yet
     /// may start anywhere.
     pub async fn start_group_at(&mut self, group_id: u64) -> anyhow::Result<()> {
+        let skipped = self.numbering.skip_to(group_id)?;
+        if skipped > 0 {
+            self.numbering.set_gap(skipped);
+        }
+        self.start_group().await
+    }
+
+    /// Opens `group_id`, whose first object carries `prior_group_id_gap`
+    /// (none when `0`) in place of the ids this writer skipped: the caller
+    /// numbers the track, and this writer may have passed over groups that
+    /// exist, as in Forward State 0 or when a stream failed to open.
+    pub(crate) async fn start_numbered_group(
+        &mut self,
+        group_id: u64,
+        prior_group_id_gap: u64,
+    ) -> anyhow::Result<()> {
         self.numbering.skip_to(group_id)?;
+        self.numbering.set_gap(prior_group_id_gap);
         self.start_group().await
     }
 
@@ -103,12 +120,16 @@ impl TrackWriter {
         Ok(())
     }
 
+    /// Writes `payload` as group `group_id`, carrying `prior_group_id_gap`
+    /// as `start_numbered_group` does.
     pub(crate) async fn write_group_at(
         &mut self,
         group_id: u64,
+        prior_group_id_gap: u64,
         payload: Bytes,
     ) -> anyhow::Result<()> {
         self.numbering.skip_to(group_id)?;
+        self.numbering.set_gap(prior_group_id_gap);
         self.write_group(payload).await
     }
 
@@ -314,24 +335,29 @@ impl GroupNumbering {
         }
     }
 
-    /// Moves the next group to `group_id`, keeping a gap past the next id
-    /// for the next object; before any group opened it moves the first one
-    /// too. Fails, changing nothing, when `group_id` precedes the next group.
-    fn skip_to(&mut self, group_id: u64) -> anyhow::Result<()> {
-        if self.groups() == 0 {
+    /// Moves the next group to `group_id` and returns how many ids that
+    /// skips past the next one; before any group opened it moves the first
+    /// one too and skips none. Fails, changing nothing, when `group_id`
+    /// precedes the next group.
+    fn skip_to(&mut self, group_id: u64) -> anyhow::Result<u64> {
+        let skipped = if self.groups() == 0 {
             self.first = group_id;
+            0
         } else {
             let next = self.next()?;
             ensure!(
                 group_id >= next,
                 "group {group_id} precedes the next group {next}"
             );
-            if group_id > next {
-                self.pending_gap = Some(group_id - next);
-            }
-        }
+            group_id - next
+        };
         self.next = Some(group_id);
-        Ok(())
+        Ok(skipped)
+    }
+
+    /// The next object carries `gap`; `0` clears the gap.
+    fn set_gap(&mut self, gap: u64) {
+        self.pending_gap = (gap > 0).then_some(gap);
     }
 
     fn next(&self) -> anyhow::Result<u64> {
@@ -696,6 +722,7 @@ mod tests {
             /// `rejoin_group_at`: back to the group opened last, which only
             /// an abandoned group still open since the last skip can be.
             Rewind,
+            SetGap(u64),
             TakeGap,
         }
 
@@ -704,12 +731,14 @@ mod tests {
                 group_id().prop_map(Step::SkipTo),
                 Just(Step::Open),
                 Just(Step::Rewind),
+                prop_oneof![Just(0), Just(1), Just(u64::MAX)].prop_map(Step::SetGap),
                 Just(Step::TakeGap),
             ]
         }
 
         /// track_writer.qnt `skipTo` / `opened` / `written` under
-        /// `track_writer_current`, in u128 so the id after u64::MAX exists.
+        /// `track_writer_current` (GAP_FROM_NUMBERING: skipping records no
+        /// gap; the caller sets it), in u128 so the id after u64::MAX exists.
         struct Model {
             first: u128,
             next: u128,
@@ -719,16 +748,18 @@ mod tests {
         const EXHAUSTED: u128 = 1 << 64;
 
         impl Model {
-            fn skip_to(&mut self, group_id: u128) -> bool {
-                if self.next == self.first {
+            /// The ids skipped, or `None` on failure.
+            fn skip_to(&mut self, group_id: u128) -> Option<u128> {
+                let skipped = if self.next == self.first {
                     self.first = group_id;
+                    0
                 } else if self.next == EXHAUSTED || group_id < self.next {
-                    return false;
-                } else if group_id > self.next {
-                    self.pending_gap = group_id - self.next;
-                }
+                    return None;
+                } else {
+                    group_id - self.next
+                };
                 self.next = group_id;
-                true
+                Some(skipped)
             }
 
             fn groups(&self) -> u64 {
@@ -752,7 +783,8 @@ mod tests {
                     let (succeeded, expected) = match step {
                         Step::SkipTo(group_id) => {
                             rejoinable = None;
-                            (numbering.skip_to(group_id).is_ok(), model.skip_to(group_id.into()))
+                            let skipped = numbering.skip_to(group_id).ok().map(u128::from);
+                            (skipped == model.skip_to(group_id.into()), true)
                         }
                         Step::Open => {
                             let opened = numbering.next().map(|group_id| {
@@ -770,6 +802,11 @@ mod tests {
                                 numbering.rewind_to(group_id);
                                 model.next = group_id.into();
                             }
+                            (true, true)
+                        }
+                        Step::SetGap(gap) => {
+                            numbering.set_gap(gap);
+                            model.pending_gap = gap.into();
                             (true, true)
                         }
                         Step::TakeGap => {

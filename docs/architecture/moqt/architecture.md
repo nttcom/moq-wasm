@@ -106,7 +106,7 @@ flowchart LR
 All 5 tasks abort when `ConnectionTasks` drops (`ControlReceiver` and `PublishDoneExpiryTask` hold `Weak` refs so they never leak the session). `Session` exposes lightweight `Publisher`/`Subscriber` facades, `Session::closed() -> TransportClose`, `Session::url_scheme()`, and `Publisher::begin_publish_namespace` (non-blocking ordered write + `PendingPublishNamespace`). A second `GOAWAY` or server-received `GOAWAY` with URI closes with `PROTOCOL_VIOLATION` (§9.4). Client sessions with `follow_go_away: true` route through `MigrationTask` ([`session-migration.md`](session-migration.md)).
 
 ### `TrackWriter` / `TrackReader`
-- **`TrackWriter`**: Wraps `StreamDataSenderFactory` (1 payload/object, 1 subgroup/group, `SubgroupId::None`, default priority 128). `start_group()` sends `EndOfGroup` + FIN; `start_group_at(id)` aligns switching sets and emits Prior Group ID Gap.
+- **`TrackWriter`**: Wraps `StreamDataSenderFactory` (1 payload/object, 1 subgroup/group, `SubgroupId::None`, default priority 128). `start_group()` sends `EndOfGroup` + FIN; `start_group_at(id)` aligns switching sets and emits Prior Group ID Gap for the ids it skips. An Origin outlet's writer instead carries the gap its `Placement` got from the numbering (a `GroupBoundary::At` past the next id), so groups it passed in Forward State 0 or failed to open are never announced as nonexistent.
 - **`TrackReader`**: Wraps `DataReceiver`, reading subgroup streams concurrently into a 64-object bounded channel (applying QUIC backpressure; ordering guaranteed per subgroup only). Skips status objects; per-stream resets end only that stream (`DEBUG`); only `MalformedTrackError` returns `Err`.
 
 **Late-join helpers**

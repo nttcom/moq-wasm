@@ -14,6 +14,10 @@ pub enum GroupBoundary {
 pub struct Placement {
     pub location: Location,
     pub starts_group: bool,
+    /// The Prior Group ID Gap (draft-14 §11.1, draft-18 §12.8) of a group's
+    /// first object: the Group IDs a `GroupBoundary::At` skipped past the
+    /// group before it, which no object is ever placed in. `0` otherwise.
+    pub(crate) prior_group_id_gap: u64,
 }
 
 pub(super) struct ObjectNumbering {
@@ -47,17 +51,21 @@ impl ObjectNumbering {
                         .checked_add(1)
                         .context("no group follows group u64::MAX")?,
                 };
-                Ok(Some(self.start_group(group_id)))
+                Ok(Some(self.start_group(group_id, 0)))
             }
             GroupBoundary::At(group_id) => {
-                if let Some(largest) = self.largest {
-                    ensure!(
-                        group_id > largest.group_id,
-                        "group {group_id} does not follow the open group {}",
-                        largest.group_id
-                    );
-                }
-                Ok(Some(self.start_group(group_id)))
+                let gap = match self.largest {
+                    None => 0,
+                    Some(largest) => {
+                        ensure!(
+                            group_id > largest.group_id,
+                            "group {group_id} does not follow the open group {}",
+                            largest.group_id
+                        );
+                        group_id - largest.group_id - 1
+                    }
+                };
+                Ok(Some(self.start_group(group_id, gap)))
             }
         }
     }
@@ -73,10 +81,11 @@ impl ObjectNumbering {
         Ok(Some(Placement {
             location: *largest,
             starts_group: false,
+            prior_group_id_gap: 0,
         }))
     }
 
-    fn start_group(&mut self, group_id: u64) -> Placement {
+    fn start_group(&mut self, group_id: u64, prior_group_id_gap: u64) -> Placement {
         let location = Location {
             group_id,
             object_id: 0,
@@ -85,6 +94,7 @@ impl ObjectNumbering {
         Placement {
             location,
             starts_group: true,
+            prior_group_id_gap,
         }
     }
 }
@@ -100,6 +110,7 @@ mod tests {
                 object_id,
             },
             starts_group,
+            prior_group_id_gap: 0,
         })
     }
 
@@ -147,7 +158,13 @@ mod tests {
         let next = numbering.place(GroupBoundary::Next).unwrap();
 
         // Assert
-        assert_eq!(skipped, placed(12, 0, true));
+        assert_eq!(
+            skipped,
+            Some(Placement {
+                prior_group_id_gap: 3,
+                ..placed(12, 0, true).unwrap()
+            })
+        );
         assert!(stale.is_err());
         assert_eq!(next, placed(13, 0, true));
     }
@@ -227,6 +244,11 @@ mod tests {
                         (Ok(placed), Some(expected)) => {
                             let placed = placed.map(|placement| {
                                 prop_assert_eq!(placement.starts_group, placement.location.object_id == 0);
+                                let gap = match (boundary, before) {
+                                    (GroupBoundary::At(group_id), Some(largest)) => group_id - largest.group_id - 1,
+                                    _ => 0,
+                                };
+                                prop_assert_eq!(placement.prior_group_id_gap, gap);
                                 prop_assert!(before.is_none_or(|largest| placement.location > largest));
                                 Ok((placement.location.group_id, placement.location.object_id))
                             }).transpose()?;

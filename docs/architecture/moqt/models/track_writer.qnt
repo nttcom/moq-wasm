@@ -11,12 +11,11 @@
 // loses no interleaving that matters to the writer; the Forward State only
 // matters at the moment `queue_sends` reads it.
 // - Forward State 1: `send_placed` (outlet_send_task.rs :171-206) →
-//   `start_group_at` (:86) = `GroupNumbering::skip_to` (:320-335) +
-//   `finish_current_group` + `open_group` (:216-243); or `rejoin_group_at`
-//   (:63-73); or `join_group_at` (:94-104); then
-//   `write_with_extension_headers` (:130-144), which takes the pending gap.
-//   `Payload::Group` → `write_group_at` (:106-113) → `write_group` (:146-152).
-// - Forward State 0: `LeaveGroup` → `abandon_group` (:52-54).
+//   `start_numbered_group` = `GroupNumbering::skip_to` + `set_gap` +
+//   `finish_current_group` + `open_group`; or `rejoin_group_at`; or
+//   `join_group_at`; then `write_with_extension_headers`, which takes the
+//   pending gap. `Payload::Group` → `write_group_at` → `write_group`.
+// - Forward State 0: `LeaveGroup` → `abandon_group`.
 // - `open_group` may fail (no stream, or setting priority / the header
 //   fails); a write may fail (STOP_SENDING, reset). The outlet's writer is
 //   created with first group id 0 (origin.rs `outlet_send_task` :208-221).
@@ -35,7 +34,11 @@
 // - GAP_FROM_NUMBERING (fix): the writer stops deriving the gap from its own
 //   `next`; the outlet puts on a group's first object the gap the
 //   numbering made (`GroupBoundary::At` past the next id), the only groups
-//   the origin knows never exist.
+//   the origin knows never exist. In the code, `Placement::prior_group_id_gap`
+//   reaches `TrackWriter::start_numbered_group` / `write_group_at`, and
+//   `GroupNumbering::skip_to` returns the ids it skips instead of storing
+//   them; only the public `start_group_at`, which no outlet calls, still
+//   announces them.
 //
 // Commands (from docs/architecture/moqt/models, Java 21+ on PATH):
 //   quint typecheck track_writer.qnt
@@ -57,7 +60,7 @@ module track_writer {
   type Slot = NoGroup | Group(int)
 
   // `TrackWriter`'s `GroupNumbering` (`first`, `next`, `pending_gap`) and
-  // `GroupSlot`. `pendingGap` 0 is `None` (`skip_to` never stores
+  // `GroupSlot`. `pendingGap` 0 is `None` (`set_gap` never stores
   // `Some(0)`). `next` never reaches u64::MAX here.
   type Writer = {
     first: int,
@@ -262,7 +265,7 @@ module track_writer {
   }
 }
 
-// expect: violation
+// expect: ok
 module track_writer_current {
   import track_writer(
     MAX_GROUP = 3,
@@ -271,7 +274,7 @@ module track_writer_current {
     OPEN_CAN_FAIL = true,
     WRITE_CAN_FAIL = true,
     ADVANCE_ON_OPEN_FAILURE = false,
-    GAP_FROM_NUMBERING = false,
+    GAP_FROM_NUMBERING = true,
   ).*
 }
 
