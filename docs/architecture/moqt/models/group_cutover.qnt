@@ -4,19 +4,19 @@
 //
 // Code mapping:
 // - `GroupCutover::{waiting_after, take_previous, take_current,
-//   release_previous, previous_ended}` (group_cutover.rs:27-97).
-// - `SinkCutover::takes` (domains/connection.rs:169-178) calls
-//   `take_previous`/`take_current` under the `SharedCutover` mutex with
-//   `location_of` (connection.rs:157-165): a datagram's own location, or
+//   release_previous, previous_ended}` (group_cutover.rs:64-130).
+// - `SinkCutover::takes` (domains/connection.rs:165-173) calls
+//   `take_previous`/`take_current` under the `GroupCutover` mutex with
+//   `location_of` (connection.rs:155-163): a datagram's own location, or
 //   `(group, 0)` for a whole subgroup stream, even one that starts mid-group.
-// - `current_start` is `first_whole_group` (session/migration_task.rs:773-784):
+// - `current_start` is `first_whole_group` (session/migration_task.rs:772-783):
 //   the first group the new subscription delivers whole.
-// - `release_when_idle` (session/migration_task.rs:586-611) calls
+// - `release_when_idle` (session/migration_task.rs:587-608) calls
 //   `release_previous` once no subgroup stream is open on the previous
-//   connection; `Router::retire` (migration_task.rs:311-330) calls
+//   connection; `Router::retire` (migration_task.rs:312-334) calls
 //   `previous_ended` and closes the previous connection.
 //
-// One action = one hold of the `SharedCutover` mutex: one object (datagram)
+// One action = one hold of the `GroupCutover` mutex: one object (datagram)
 // or one subgroup stream reaching a sink, one `release_previous` that
 // returned true, or one `previous_ended`. A subgroup stream is modeled as
 // arriving whole at once; `release_when_idle` only runs while no stream is
@@ -56,7 +56,8 @@ module group_cutover {
   // `Cutover` (group_cutover.rs:19).
   type Cutover = Waiting | At(int)
 
-  // The previous connection's side of the subscription.
+  // The previous connection's side of the subscription; the code's
+  // `PreviousSide {Live, Ended}` (group_cutover.rs:32) while `Waiting`.
   type PreviousSide =
     | PLive      // delivering; the cutover may still be waiting for it
     | PReleased  // `release_previous` returned true
@@ -65,7 +66,7 @@ module group_cutover {
   type Loc = (int, int)
 
   type State = {
-    // `GroupCutover::newest`; -1 for `None`.
+    // `PreviousSide::Live::newest`; -1 for `None` and for `Ended`.
     newest: int,
     currentStart: int,
     cut: Cutover,

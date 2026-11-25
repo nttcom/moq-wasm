@@ -1,3 +1,5 @@
+use tokio::sync::oneshot;
+
 /// Decides which of a track's two subscriptions each object is taken from
 /// while a session migrates: groups before the cutover come from the
 /// previous subscription, the cutover group and later ones from the
@@ -8,27 +10,68 @@
 /// first: the publisher sends to both servers at once, so the previous one
 /// may win every race.
 pub(crate) struct GroupCutover {
-    newest: Option<u64>,
     /// The first group the current subscription delivers whole; it joins
     /// earlier groups mid-way.
     current_start: u64,
     state: Cutover,
 }
 
-#[derive(Clone, Copy, PartialEq)]
 enum Cutover {
-    Waiting,
+    /// No cutover group yet; dropping `_cut_over` signals that it is fixed.
+    Waiting {
+        previous: PreviousSide,
+        _cut_over: oneshot::Sender<()>,
+    },
+    /// Groups before it come from the previous subscription, the rest from
+    /// the current one.
     At(u64),
+}
+
+/// The previous subscription while the cutover waits.
+#[derive(Clone, Copy)]
+enum PreviousSide {
+    /// Delivering; it handed out groups up to `newest`.
+    Live { newest: Option<u64> },
+    /// Its connection closed; what it handed out is forgotten, as the
+    /// publisher may number the groups on the current one lower.
+    Ended,
+}
+
+impl PreviousSide {
+    fn newest(self) -> Option<u64> {
+        match self {
+            Self::Live { newest } => newest,
+            Self::Ended => None,
+        }
+    }
+
+    /// An object of `group_id` arrived and is taken, even one still in
+    /// flight when the connection closed.
+    fn note(&mut self, group_id: u64) {
+        let newest = self
+            .newest()
+            .map_or(group_id, |newest| newest.max(group_id));
+        *self = Self::Live {
+            newest: Some(newest),
+        };
+    }
 }
 
 impl GroupCutover {
     /// Waiting for the current subscription, after the previous one handed
-    /// out groups up to `newest`.
-    pub(crate) fn waiting_after(newest: Option<u64>, current_start: u64) -> Self {
+    /// out groups up to `newest`. `cut_over` is dropped once the cutover
+    /// group is fixed.
+    pub(crate) fn waiting_after(
+        newest: Option<u64>,
+        current_start: u64,
+        cut_over: oneshot::Sender<()>,
+    ) -> Self {
         Self {
-            newest,
             current_start,
-            state: Cutover::Waiting,
+            state: Cutover::Waiting {
+                previous: PreviousSide::Live { newest },
+                _cut_over: cut_over,
+            },
         }
     }
 
@@ -36,8 +79,8 @@ impl GroupCutover {
     /// nothing yet, it starts at its first group start, even when its group
     /// IDs are lower.
     pub(crate) fn previous_ended(&mut self) {
-        if self.state == Cutover::Waiting {
-            self.newest = None;
+        if let Cutover::Waiting { previous, .. } = &mut self.state {
+            *previous = PreviousSide::Ended;
         }
     }
 
@@ -48,52 +91,55 @@ impl GroupCutover {
     /// while that group lies before the current subscription's start: only
     /// the previous one can deliver the groups in between.
     pub(crate) fn release_previous(&mut self) -> bool {
-        if self.state == Cutover::Waiting {
-            let next = self.newest.map_or(0, |newest| newest + 1);
-            if self.newest.is_some() && next < self.current_start {
-                return false;
-            }
-            self.state = Cutover::At(next);
+        let Cutover::Waiting { previous, .. } = &self.state else {
+            return true;
+        };
+        let newest = previous.newest();
+        let next = newest.map_or(0, |newest| newest + 1);
+        if newest.is_some() && next < self.current_start {
+            return false;
         }
+        self.state = Cutover::At(next);
         true
     }
 
-    pub(crate) fn is_cut_over(&self) -> bool {
-        matches!(self.state, Cutover::At(_))
-    }
-
     pub(crate) fn take_previous(&mut self, group_id: u64) -> bool {
-        let take = match self.state {
-            Cutover::At(cutover) => group_id < cutover,
-            Cutover::Waiting => true,
-        };
-        if take {
-            self.note(group_id);
+        match &mut self.state {
+            Cutover::At(cutover) => group_id < *cutover,
+            Cutover::Waiting { previous, .. } => {
+                previous.note(group_id);
+                true
+            }
         }
-        take
     }
 
     pub(crate) fn take_current(&mut self, group_id: u64, object_id: u64) -> bool {
-        let take = match self.state {
-            Cutover::At(cutover) => group_id >= cutover,
-            Cutover::Waiting => {
-                let cutover = match self.newest {
+        let cutover = match &self.state {
+            Cutover::At(cutover) => *cutover,
+            Cutover::Waiting { previous, .. } => {
+                let cutover = match previous.newest() {
                     Some(newest) if group_id <= newest => newest + 1,
                     _ if object_id == 0 && group_id >= self.current_start => group_id,
                     _ => group_id + 1,
                 };
                 self.state = Cutover::At(cutover);
-                group_id >= cutover
+                cutover
             }
         };
-        if take {
-            self.note(group_id);
-        }
-        take
+        group_id >= cutover
     }
 
-    fn note(&mut self, group_id: u64) {
-        self.newest = Some(self.newest.map_or(group_id, |newest| newest.max(group_id)));
+    #[cfg(test)]
+    fn cutover(&self) -> Option<u64> {
+        match self.state {
+            Cutover::Waiting { .. } => None,
+            Cutover::At(cutover) => Some(cutover),
+        }
+    }
+
+    #[cfg(test)]
+    fn is_cut_over(&self) -> bool {
+        self.cutover().is_some()
     }
 }
 
@@ -101,8 +147,12 @@ impl GroupCutover {
 mod tests {
     use super::*;
 
+    fn waiting_after(newest: Option<u64>, current_start: u64) -> GroupCutover {
+        GroupCutover::waiting_after(newest, current_start, oneshot::channel().0)
+    }
+
     fn migrating_after(groups: &[u64]) -> GroupCutover {
-        GroupCutover::waiting_after(groups.iter().copied().max(), 0)
+        waiting_after(groups.iter().copied().max(), 0)
     }
 
     #[test]
@@ -163,7 +213,7 @@ mod tests {
     #[test]
     fn a_group_the_current_session_joined_mid_way_is_left_to_the_previous_session() {
         // Arrange: the current subscription delivers whole groups from group 3
-        let mut cutover = GroupCutover::waiting_after(Some(1), 3);
+        let mut cutover = waiting_after(Some(1), 3);
 
         // Act
         let current_joined_group = cutover.take_current(2, 0);
@@ -215,7 +265,7 @@ mod tests {
     #[test]
     fn the_previous_session_is_kept_for_the_groups_before_the_current_start() {
         // Arrange: the current subscription starts at group 3
-        let mut cutover = GroupCutover::waiting_after(Some(1), 3);
+        let mut cutover = waiting_after(Some(1), 3);
 
         // Act
         let released_owing = cutover.release_previous();
@@ -234,7 +284,7 @@ mod tests {
     fn a_current_subscription_without_a_whole_group_keeps_the_previous_one() {
         // Arrange: the migration passes u64::MAX when the current one
         // delivers no whole group
-        let mut cutover = GroupCutover::waiting_after(Some(1), u64::MAX);
+        let mut cutover = waiting_after(Some(1), u64::MAX);
 
         // Act
         let released = cutover.release_previous();
@@ -281,8 +331,9 @@ mod tests {
         use std::collections::{BTreeSet, HashMap};
 
         use proptest::{collection::vec, option, prelude::*};
+        use tokio::sync::oneshot::{self, error::TryRecvError};
 
-        use super::super::GroupCutover;
+        use super::{super::GroupCutover, waiting_after};
 
         /// The groups both subscriptions carry, numbered alike by the one
         /// publisher: few, so the subscriptions often meet in a group.
@@ -350,7 +401,7 @@ mod tests {
             fn each_group_comes_whole_from_one_subscription(migration in migration()) {
                 // Arrange
                 let current_start = migration.current_start();
-                let mut cutover = GroupCutover::waiting_after(migration.newest, current_start);
+                let mut cutover = waiting_after(migration.newest, current_start);
                 // The groups up to `newest` count as handed out already.
                 let mut previous_taken: BTreeSet<u64> =
                     (0..migration.newest.map_or(0, |newest| newest + 1)).collect();
@@ -421,6 +472,65 @@ mod tests {
                             cutover.previous_ended();
                             previous_ended = true;
                         }
+                    }
+                }
+            }
+
+            #[test]
+            fn a_fixed_cutover_separates_the_subscriptions_and_is_signalled(migration in migration()) {
+                // Arrange
+                let (cut_over, mut cut_over_receiver) = oneshot::channel();
+                let mut cutover = GroupCutover::waiting_after(
+                    migration.newest,
+                    migration.current_start(),
+                    cut_over,
+                );
+                // The groups the cutover counts as handed out by the previous
+                // subscription: the groups up to `newest`, and none it took
+                // before that subscription ended while the cutover waited.
+                let mut previous_taken: BTreeSet<u64> =
+                    (0..migration.newest.map_or(0, |newest| newest + 1)).collect();
+                let mut current_taken = BTreeSet::new();
+
+                for event in migration.events {
+                    // Act
+                    match event {
+                        Event::Previous { group_id } => {
+                            if cutover.take_previous(group_id) {
+                                previous_taken.insert(group_id);
+                            }
+                        }
+                        Event::Current { group_id, object_id } => {
+                            if cutover.take_current(group_id, object_id) {
+                                current_taken.insert(group_id);
+                            }
+                        }
+                        Event::ReleasePrevious => {
+                            cutover.release_previous();
+                        }
+                        Event::PreviousEnded => {
+                            if !cutover.is_cut_over() {
+                                previous_taken.clear();
+                            }
+                            cutover.previous_ended();
+                        }
+                    }
+
+                    // Assert: the cutover is signalled exactly when it is
+                    // fixed, and then lies above every group taken from the
+                    // previous subscription and at or below every group taken
+                    // from the current one
+                    let signalled = matches!(cut_over_receiver.try_recv(), Err(TryRecvError::Closed));
+                    prop_assert_eq!(signalled, cutover.is_cut_over());
+                    if let Some(cut) = cutover.cutover() {
+                        prop_assert!(
+                            previous_taken.iter().all(|group_id| *group_id < cut),
+                            "previous groups {:?} not before cutover {}", previous_taken, cut
+                        );
+                        prop_assert!(
+                            current_taken.iter().all(|group_id| *group_id >= cut),
+                            "current groups {:?} not from cutover {}", current_taken, cut
+                        );
                     }
                 }
             }

@@ -16,7 +16,8 @@ use crate::{
             },
             data_plane::stream::open_subgroups::OpenSubgroups,
             domains::{
-                connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
+                connection::{Connection, CutoverStart, SinkCutover, SinkReceiver},
+                group_cutover::GroupCutover,
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
                 session_creator::{ClientEndpoint, SetupRejected},
@@ -124,14 +125,14 @@ struct Previous {
     /// - no subscription that ends on this connection has a stream open, or
     ///   `CUTOVER_LIMIT` has passed.
     released: BoxFuture<()>,
-    cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
+    cutovers: Vec<Arc<std::sync::Mutex<GroupCutover>>>,
 }
 
 struct Migrated {
     live: Live,
     url: String,
     released: BoxFuture<()>,
-    cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
+    cutovers: Vec<Arc<std::sync::Mutex<GroupCutover>>>,
 }
 
 struct Router {
@@ -328,7 +329,7 @@ impl Router {
             )));
         }
         for cutover in previous.cutovers {
-            lock(&cutover).cutover.previous_ended();
+            lock(&cutover).previous_ended();
         }
     }
 
@@ -589,7 +590,7 @@ async fn migrate(
 /// publisher sends every later group to the new connection too.
 async fn release_when_idle(
     moved_from: &Connection,
-    cutover: &std::sync::Mutex<SharedCutover>,
+    cutover: &std::sync::Mutex<GroupCutover>,
     open: &OpenSubgroups,
 ) {
     loop {
@@ -601,9 +602,7 @@ async fn release_when_idle(
             if !open.is_empty() {
                 continue;
             }
-            let mut shared = lock(cutover);
-            if shared.cutover.release_previous() {
-                shared.cut_over = None;
+            if lock(cutover).release_previous() {
                 return;
             }
             // Subscribed under the lock, so the owed group's stream is seen
@@ -618,7 +617,7 @@ enum Carried {
     /// Subscribed on the new connection; both sinks share `cutover`.
     Moved {
         cut_over: oneshot::Receiver<()>,
-        cutover: Arc<std::sync::Mutex<SharedCutover>>,
+        cutover: Arc<std::sync::Mutex<GroupCutover>>,
         previous_open: OpenSubgroups,
     },
     /// The previous connection has started the subscription's End Group;

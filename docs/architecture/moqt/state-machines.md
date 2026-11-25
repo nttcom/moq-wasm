@@ -11,7 +11,6 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | Enum | Location |
 | --- | --- |
 | `ObjectSink {Buffer, Receiver, Cancelled}` | `moqt/domains/connection.rs` |
-| `Cutover {Waiting, At}` | `moqt/domains/group_cutover.rs` |
 | `Entry {Waiting, Abandoned}` (draft-14 inflight request), `LateResponseAction` | `moqt/version/draft14.rs` |
 | `AnswerSlot {Waiting, Answered, TimedOut}` | `moqt/control_plane/handler/update_answer.rs` |
 | `Outstanding {PassedOn, Delayed}` | `moqt/domains/origin/new_group_requests.rs` |
@@ -80,7 +79,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | --- | --- | --- | --- |
 | Migration router | `Router::route` locals `previous`, `migration`, `reconnecting`, `current_closed` | `Steady`, `Draining`, `Migrating`, `MigratingCurrentLost`, `Reconnecting`, `Ended` | [`migration.qnt`](models/migration.qnt) |
 | Connection | `go_away_received`, `closed_locally`, `served`, membership in `connections` | `Live`, `GoAwayReceived`, `ClosedLocally`, `ClosedByPeer`, `Retired` | [`migration.qnt`](models/migration.qnt) |
-| Group cutover | `GroupCutover{newest, current_start, state}`, `cut_over` sender | `Waiting(newest)`, `PreviousEnded`, `At(c)` × `Signalled` | [`group_cutover.qnt`](models/group_cutover.qnt) |
+| Group cutover | `GroupCutover{current_start, state: Cutover}` (`Waiting{previous: PreviousSide (Live{newest} / Ended), _cut_over}` / `At(c)`; dropping `_cut_over` signals the cutover) in `moqt/domains/group_cutover.rs` | `Waiting(newest)`, `PreviousEnded`, `At(c)` × `Signalled` | [`group_cutover.qnt`](models/group_cutover.qnt) |
 | Session close | `UnacknowledgedStreams`, no session flag | `Open`, `Closing`, `Closed` | — |
 | Client event loop (`Routes`) | `EventLoopTask` handle, route tables | `Running`, `Ended`, `Closed` | — |
 | `TrackFollower` | `followed: Option`, `announced_while_following` | `Idle`, `Following`, `FollowingWithPendingHandover` | [`track_follower.qnt`](models/track_follower.qnt) |

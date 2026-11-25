@@ -20,7 +20,7 @@ Add `proptest` (`default-features = false`, feature: `std`) as a dev-dependency 
 - Cross-draft forwarding (`SUBSCRIBE`, `TRACK_STATUS`, `SUBSCRIBE_NAMESPACE`, `PUBLISH_NAMESPACE`, `PUBLISH`, `PUBLISH_DONE`, `FETCH`) preserves meaning up to draft-omitted fields (reason phrases truncated at 1,024 bytes on a UTF-8 boundary, fields absent in draft-14 `PUBLISH`, `PUBLISH_DONE` codes undefined in draft-14), failing to encode only at exact draft limits (draft-14: empty namespaces or integers `>= 2^62`; draft-18: empty namespace fields, `DELETE` tokens, or inverted ranges).
 
 **Session state**
-- During session migration, `GroupCutover` delivers each group from at most one subscription (all objects or none) and starts from the current subscription only at group start while the previous subscription may still deliver it.
+- During session migration, `GroupCutover` delivers each group from at most one subscription (all objects or none) and starts from the current subscription only at group start while the previous subscription may still deliver it; once fixed (and signalled exactly then), the cutover lies above every group it counts as taken from the previous subscription and at or below every group taken from the current one.
 - `UpdateWaiters` hands every REQUEST_UPDATE answer to the caller of the update it answers when updates are written or withdrawn one at a time.
 - `ObjectLedger` rejects an object copy if and only if it conflicts with an accepted copy, making malformation detection independent of arrival order.
 
