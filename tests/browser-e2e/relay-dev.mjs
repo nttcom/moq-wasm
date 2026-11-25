@@ -3,15 +3,24 @@
 
 import {
   registerSignalHandlers,
+  runCommand,
   spawnProcess,
   spawnViteServer,
   terminateProcess,
   waitForOutput,
 } from "./process.mjs";
-import { repoRoot } from "../../scripts/dev-env.mjs";
 import {
+  ensureLinuxEnvironment,
+  getErrorMessage,
+  repoRoot,
+  resolveCommandName,
+} from "../../scripts/dev-env.mjs";
+import {
+  assertE2EPrerequisites,
   getDefaultBaseUrl,
+  getDefaultMoqtUrl,
   getDefaultWebPort,
+  jsDir,
   waitForHttpOk,
 } from "./helpers.mjs";
 import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
@@ -48,4 +57,34 @@ export function startRelayAndPage(pagePath, { timeoutMs, onCleanup } = {}) {
   ready.catch(() => {});
 
   return { childProcesses, cleanup, ready };
+}
+
+/// The spec reads the relay URL from `<PAGE>_E2E_MOQT_URL`; `env` entries
+/// override the defaults. Sets `process.exitCode = 1` on failure.
+export function runPageE2E(page, env = {}) {
+  const main = async () => {
+    ensureLinuxEnvironment();
+    assertE2EPrerequisites();
+    const { cleanup, ready } = startRelayAndPage(
+      `/moq-wasm/examples/${page}/index.html`,
+    );
+    try {
+      await ready;
+      await runCommand(resolveCommandName("npm"), ["run", `e2e:${page}`], {
+        cwd: jsDir,
+        env: {
+          ...process.env,
+          MEDIA_E2E_BASE_URL: getDefaultBaseUrl(),
+          [`${page.toUpperCase()}_E2E_MOQT_URL`]: getDefaultMoqtUrl(),
+          ...env,
+        },
+      });
+    } finally {
+      await cleanup();
+    }
+  };
+  main().catch((error) => {
+    console.error(getErrorMessage(error));
+    process.exitCode = 1;
+  });
 }

@@ -11,7 +11,6 @@ import {
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   jsDir,
-  mediaIndexPath,
   startTcpProxy,
 } from "./helpers.mjs";
 import { startRelayAndPage } from "./relay-dev.mjs";
@@ -27,9 +26,12 @@ async function main() {
   let expectedTransport = "webtransport";
   let proxy = null;
 
-  const { cleanup, ready } = startRelayAndPage(mediaIndexPath, {
-    onCleanup: () => proxy?.close(),
-  });
+  const { cleanup, ready } = startRelayAndPage(
+    "/moq-wasm/examples/media/index.html",
+    {
+      onCleanup: () => proxy?.close(),
+    },
+  );
 
   try {
     await ready;
