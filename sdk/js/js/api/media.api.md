@@ -64,6 +64,12 @@ export type AudioPublishStats = EncodedRateStats & {
 };
 
 // @public (undocumented)
+export function botNamespace(room: string[], botType: string): string[];
+
+// @public (undocumented)
+export function botTypeOf(room: string[], namespace: string[]): string | undefined;
+
+// @public (undocumented)
 export class BroadcastCatalog {
     constructor(session: MoqSession, namespace: string[], options?: BroadcastCatalogOptions);
     // (undocumented)
@@ -766,7 +772,24 @@ export type StatusState = 'idle' | 'ok' | 'review' | 'error';
 export type StreamKind = 'subscribe' | 'fetch';
 
 // @public (undocumented)
+export function subscribeTranscript(session: MoqSession, room: string[], onRecords: (records: TranscriptRecord[]) => void): Promise<TranscriptSubscription>;
+
+// @public (undocumented)
 export type TrackInput = true | MediaTrackConstraints | MediaStreamTrack;
+
+// @public (undocumented)
+export type TranscriptRecord = {
+    startedAtMs: number;
+    speaker: string;
+    text: string;
+    live: boolean;
+};
+
+// @public (undocumented)
+export type TranscriptSubscription = {
+    readonly done: Promise<PublishDone | undefined>;
+    close(): Promise<void>;
+};
 
 // @public (undocumented)
 export type VideoCodecName = 'h264' | 'h265' | 'vp8' | 'vp9' | 'av1';
@@ -795,6 +818,7 @@ export function watchBroadcasts(session: MoqSession, prefix: string[], options: 
 // @public (undocumented)
 export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
     filter?: (namespace: string[]) => boolean;
+    onBotChange?(botType: string, present: boolean): void;
     onAdd(broadcast: RemoteBroadcast): void;
     onRemove(broadcast: RemoteBroadcast): void;
 };

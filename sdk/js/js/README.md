@@ -10,12 +10,12 @@ Browser SDK for publishing and playing live video, audio, and data over Media ov
 
 ## Entry points
 
-| Import path          | Use for                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| `moq-wasm`           | `MoqSession`, raw tracks (`publishTrack`, `subscribe`, `fetch`), namespace watches |
-| `moq-wasm/media`\*   | `createBroadcast`, `LivePlayer`, `RemoteBroadcast`, `watchBroadcasts`              |
-| `moq-wasm/element`   | `<moq-player>` custom HTML element (unreleased; available on `master`)             |
-| `moq-wasm/recording` | `openRecording` for replaying recorded MoQ archives                                |
+| Import path          | Use for                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `moq-wasm`           | `MoqSession`, raw tracks (`publishTrack`, `subscribe`, `fetch`), namespace watches                                        |
+| `moq-wasm/media`\*   | `createBroadcast`, `LivePlayer`, `RemoteBroadcast`, `watchBroadcasts`, `subscribeTranscript`, `botNamespace`, `botTypeOf` |
+| `moq-wasm/element`   | `<moq-player>` custom HTML element (unreleased; available on `master`)                                                    |
+| `moq-wasm/recording` | `openRecording` for replaying recorded MoQ archives                                                                       |
 
 \*`moq-wasm/media` is unstable and may change in any minor release.
 
@@ -139,6 +139,36 @@ Playback starts while the element is in the document with `namespace` and `src` 
 | `player` (read-only) | Active `LivePlayer` while playing (for `setVolume`, `stats`, etc.)                         |
 
 Events: `statechange`, `liveframe` (mirroring `LivePlayerCallbacks`), and `error` (`ErrorEvent`) on connect/start failure. See the [Embed example](https://github.com/nttcom/moq-wasm/tree/master/examples/browser/examples/embed).
+
+## Room bots and captions
+
+Bots launched in a room publish at `[...room, 'bots', botType]`. Pass `onBotChange` to `watchBroadcasts` to track when bots enter or leave (including bots already in the room), and call `subscribeTranscript` while the `transcriber` bot is present:
+
+```js
+import { botTypeOf, subscribeTranscript, watchBroadcasts } from 'moq-wasm/media'
+
+const room = ['app-id', 'room-1']
+let transcript // the latest subscribeTranscript() promise, if the transcriber is in the room
+
+const watch = await watchBroadcasts(session, room, {
+  // Exclude bot namespaces if you only play human participants.
+  filter: (namespace) => botTypeOf(room, namespace) === undefined,
+  onBotChange: (botType, present) => {
+    setBotBadge(botType, present)
+    if (botType !== 'transcriber') return
+    // Close the subscription of the transcriber's previous stay, even one still being set up.
+    transcript?.then((subscription) => subscription.close()).catch(() => {})
+    transcript = present ? subscribeTranscript(session, room, renderTranscript) : undefined
+    transcript?.catch(console.error)
+  },
+  onAdd: (broadcast) => addParticipant(broadcast),
+  onRemove: (broadcast) => removeParticipant(broadcast)
+})
+```
+
+- `onBotChange` is independent of `filter` and playback: a bot namespace another session published is still passed to `filter` and played unless excluded, while a bot this session published is only reported. Bots are reported on the same watch because a relay rejects a second `SUBSCRIBE_NAMESPACE` with an overlapping prefix (`NAMESPACE_PREFIX_OVERLAP`). `onBotChange` is not called on `watch.close()`.
+- `subscribeTranscript` follows the `transcript` track of `botNamespace(room, 'transcriber')` with a joining FETCH and live subscription, skipping malformed objects and records. `onRecords` receives every record in the order the transcriber published them each time they change; history from the joining FETCH has `live === false`, and `onRecords` is not called after `close()`. It rejects with `RequestError` when the transcriber is absent, and its returned `TranscriptSubscription` exposes `done` (resolving on `PUBLISH_DONE`, or `undefined` if the session ends first) and `close()`.
+- Pages reading `session.watchNamespaces(room)` directly can use `botTypeOf(room, namespace)` to recognize bot namespaces and `botNamespace(room, botType)` to build them.
 
 ## Authentication
 

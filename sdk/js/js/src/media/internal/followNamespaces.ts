@@ -1,5 +1,6 @@
 import type { MoqNamespaceWatch, MoqSession } from '../../core/session'
 import { sdkLog } from '../../core/log'
+import { botTypeOf } from '../bots'
 import { isOwnBroadcast } from '../ownBroadcasts'
 import { getErrorMessage } from './status'
 
@@ -7,6 +8,7 @@ const TARGET = 'moq-wasm::media::watch_broadcasts'
 
 export type FollowNamespacesOptions<B> = {
   filter?: (namespace: string[]) => boolean
+  onBotChange?(botType: string, present: boolean): void
   play(namespace: string[]): B
   onAdd(broadcast: B): void
   onRemove(broadcast: B): void
@@ -27,12 +29,13 @@ function callPage<T>(callback: () => T): T | undefined {
 /// runs where the wasm module cannot load, as in the unit tests.
 export async function followNamespaces<B extends { dispose(): Promise<void> }>(
   session: MoqSession,
+  prefix: string[],
   watch: MoqNamespaceWatch,
   broadcasts: Map<string, B>,
   options: FollowNamespacesOptions<B>,
   closed: () => boolean
 ): Promise<void> {
-  const { filter, play, onAdd, onRemove } = options
+  const { filter, onBotChange, play, onAdd, onRemove } = options
   const remove = async (namespace: string[], key: string) => {
     const broadcast = broadcasts.get(key)
     if (!broadcast) {
@@ -70,6 +73,10 @@ export async function followNamespaces<B extends { dispose(): Promise<void> }>(
     for await (const { kind, namespace } of watch) {
       if (closed()) {
         return
+      }
+      const botType = botTypeOf(prefix, namespace)
+      if (botType !== undefined && onBotChange) {
+        callPage(() => onBotChange(botType, kind === 'announced'))
       }
       const key = JSON.stringify(namespace)
       await remove(namespace, key)

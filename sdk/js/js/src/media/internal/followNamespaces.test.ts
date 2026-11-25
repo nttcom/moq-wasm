@@ -2,9 +2,11 @@ import { expect, test } from '@playwright/test'
 import { followNamespaces } from './followNamespaces'
 import type { LogRecord } from '../../core/init'
 import { setSdkLogSink } from '../../core/log'
+import { noteOwnBroadcast } from '../ownBroadcasts'
 import { FakeTextTrackSession } from '../player/testing/fakeTextTrackSession'
 
 const ROOM = ['app', 'room']
+const TRANSCRIBER = ['app', 'room', 'bots', 'transcriber']
 const BOB = ['app', 'room', 'bob']
 const ALICE = ['app', 'room', 'alice']
 
@@ -13,6 +15,7 @@ type FakeBroadcast = { namespace: string[]; disposed: boolean; dispose(): Promis
 type Behaviour = {
   filter?: (namespace: string[]) => boolean
   play?: (namespace: string[]) => void
+  onBotChange?: (botType: string) => void
   onAdd?: (namespace: string[]) => void
   onRemove?: (namespace: string[]) => void
   dispose?: (namespace: string[]) => Promise<void>
@@ -42,7 +45,7 @@ function settle(): Promise<void> {
 }
 
 type Following = {
-  /// Every `onAdd` and `onRemove` in the order it was called, as `add app/room/alice`.
+  /// Every callback in the order it was called, as `add app/room/alice`.
   heard: string[]
   /// Every broadcast `play` made.
   broadcasts: FakeBroadcast[]
@@ -60,10 +63,18 @@ async function following(fake: FakeTextTrackSession, behaviour: Behaviour = {}):
   const watch = await fake.session.watchNamespaces(ROOM)
   void followNamespaces(
     fake.session,
+    ROOM,
     watch,
     played,
     {
-      filter: (namespace) => behaviour.filter?.(namespace) ?? true,
+      filter: (namespace) => {
+        heard.push(`filter ${namespace.join('/')}`)
+        return behaviour.filter?.(namespace) ?? true
+      },
+      onBotChange: (botType, present) => {
+        heard.push(`bot ${botType} ${present}`)
+        behaviour.onBotChange?.(botType)
+      },
       play: (namespace) => {
         behaviour.play?.(namespace)
         const broadcast = {
@@ -107,19 +118,124 @@ function throwsForBob(error: Error): (namespace: string[]) => undefined {
   }
 }
 
-test('a namespace the filter excludes is not played', async () => {
+test('a bot announced in the room is reported present before it is filtered and played', async () => {
   // Arrange
   const fake = new FakeTextTrackSession()
-  const { heard } = await following(fake, { filter: (namespace) => namespace.at(-1) !== 'bob' })
+  const { heard } = await following(fake)
 
   // Act
-  fake.watches[0].announce(BOB)
+  fake.watches[0].announce(TRANSCRIBER)
   fake.watches[0].announce(ALICE)
-  fake.watches[0].withdraw(BOB)
+  await settle()
+
+  // Assert: a member is no bot
+  expect(heard).toEqual([
+    'bot transcriber true',
+    'filter app/room/bots/transcriber',
+    'add app/room/bots/transcriber',
+    'filter app/room/alice',
+    'add app/room/alice'
+  ])
+})
+
+test('a bot withdrawn from the room is reported absent before it is removed', async () => {
+  // Arrange
+  const fake = new FakeTextTrackSession()
+  const { heard } = await following(fake)
+  fake.watches[0].announce(TRANSCRIBER)
+  await settle()
+  heard.length = 0
+
+  // Act
+  fake.watches[0].withdraw(TRANSCRIBER)
   await settle()
 
   // Assert
-  expect(heard).toEqual(['add app/room/alice'])
+  expect(heard).toEqual(['bot transcriber false', 'remove app/room/bots/transcriber'])
+})
+
+test('a bot announced again is reported present again without being reported absent', async () => {
+  // Arrange
+  const fake = new FakeTextTrackSession()
+  const { heard } = await following(fake)
+  fake.watches[0].announce(TRANSCRIBER)
+  await settle()
+  heard.length = 0
+
+  // Act
+  fake.watches[0].announce(TRANSCRIBER)
+  await settle()
+
+  // Assert
+  expect(heard).toEqual([
+    'bot transcriber true',
+    'remove app/room/bots/transcriber',
+    'filter app/room/bots/transcriber',
+    'add app/room/bots/transcriber'
+  ])
+})
+
+test('a bot the filter excludes is reported but not played', async () => {
+  // Arrange
+  const fake = new FakeTextTrackSession()
+  const { heard } = await following(fake, { filter: (namespace) => namespace.length === 3 })
+
+  // Act
+  fake.watches[0].announce(TRANSCRIBER)
+  fake.watches[0].announce(ALICE)
+  fake.watches[0].withdraw(TRANSCRIBER)
+  await settle()
+
+  // Assert
+  expect(heard).toEqual([
+    'bot transcriber true',
+    'filter app/room/bots/transcriber',
+    'filter app/room/alice',
+    'add app/room/alice',
+    'bot transcriber false'
+  ])
+})
+
+test('a bot this session published is reported but neither filtered nor played', async () => {
+  // Arrange
+  const fake = new FakeTextTrackSession()
+  noteOwnBroadcast(fake.session, TRANSCRIBER)
+  const { heard } = await following(fake)
+
+  // Act
+  fake.watches[0].announce(TRANSCRIBER)
+  await settle()
+
+  // Assert
+  expect(heard).toEqual(['bot transcriber true'])
+})
+
+test('an onBotChange that throws is reported and the bot is still filtered and played', async () => {
+  // Arrange
+  const fake = new FakeTextTrackSession()
+  const error = new Error('onBotChange bug')
+  const { heard } = await following(fake, {
+    onBotChange: () => {
+      throw error
+    }
+  })
+
+  // Act
+  fake.watches[0].announce(TRANSCRIBER)
+  fake.watches[0].announce(ALICE)
+  fake.watches[0].withdraw(ALICE)
+  await settle()
+
+  // Assert
+  expect(reported).toEqual([error])
+  expect(heard).toEqual([
+    'bot transcriber true',
+    'filter app/room/bots/transcriber',
+    'add app/room/bots/transcriber',
+    'filter app/room/alice',
+    'add app/room/alice',
+    'remove app/room/alice'
+  ])
 })
 
 test('a namespace announced again is removed and added anew', async () => {
@@ -134,7 +250,13 @@ test('a namespace announced again is removed and added anew', async () => {
   await settle()
 
   // Assert
-  expect(heard).toEqual(['add app/room/alice', 'remove app/room/alice', 'add app/room/alice'])
+  expect(heard).toEqual([
+    'filter app/room/alice',
+    'add app/room/alice',
+    'remove app/room/alice',
+    'filter app/room/alice',
+    'add app/room/alice'
+  ])
 })
 
 test('a filter that throws is reported, its namespace is not played and later events are still delivered', async () => {
@@ -152,7 +274,7 @@ test('a filter that throws is reported, its namespace is not played and later ev
 
   // Assert
   expect(reported).toEqual([error])
-  expect(heard).toEqual(['add app/room/alice', 'remove app/room/alice'])
+  expect(heard).toEqual(['filter app/room/bob', 'filter app/room/alice', 'add app/room/alice', 'remove app/room/alice'])
 })
 
 test('an onAdd that throws is reported and later events are still delivered', async () => {
@@ -169,7 +291,13 @@ test('an onAdd that throws is reported and later events are still delivered', as
 
   // Assert
   expect(reported).toEqual([error])
-  expect(heard).toEqual(['add app/room/bob', 'add app/room/alice', 'remove app/room/alice'])
+  expect(heard).toEqual([
+    'filter app/room/bob',
+    'add app/room/bob',
+    'filter app/room/alice',
+    'add app/room/alice',
+    'remove app/room/alice'
+  ])
 })
 
 test('a broadcast whose onAdd threw is still disposed of and removed when its namespace is withdrawn', async () => {
@@ -185,7 +313,7 @@ test('a broadcast whose onAdd threw is still disposed of and removed when its na
 
   // Assert
   expect(broadcasts.map((broadcast) => broadcast.disposed)).toEqual([true])
-  expect(heard).toEqual(['add app/room/bob', 'remove app/room/bob'])
+  expect(heard).toEqual(['filter app/room/bob', 'add app/room/bob', 'remove app/room/bob'])
 })
 
 test('an onRemove that throws is reported, the removal stands and later events are still delivered', async () => {
@@ -195,6 +323,7 @@ test('an onRemove that throws is reported, the removal stands and later events a
   const { heard } = await following(fake, { onRemove: throwsForBob(error) })
   fake.watches[0].announce(BOB)
   await settle()
+  heard.length = 0
 
   // Act
   fake.watches[0].withdraw(BOB)
@@ -206,9 +335,10 @@ test('an onRemove that throws is reported, the removal stands and later events a
   // Assert: bob, announced again, is added without a second removal
   expect(reported).toEqual([error])
   expect(heard).toEqual([
-    'add app/room/bob',
     'remove app/room/bob',
+    'filter app/room/bob',
     'add app/room/bob',
+    'filter app/room/alice',
     'add app/room/alice',
     'remove app/room/alice'
   ])
@@ -236,7 +366,7 @@ test('a played namespace is removed when it is withdrawn although the filter now
   // Assert: the filter was asked about the announcement only
   expect(filtered).toBe(1)
   expect(broadcasts.map((broadcast) => broadcast.disposed)).toEqual([true])
-  expect(heard).toEqual(['add app/room/alice', 'remove app/room/alice'])
+  expect(heard).toEqual(['filter app/room/alice', 'add app/room/alice', 'remove app/room/alice'])
 })
 
 test('a dispose that rejects is logged, still removes the broadcast and the watch goes on', async () => {
@@ -253,6 +383,7 @@ test('a dispose that rejects is logged, still removes the broadcast and the watc
   })
   fake.watches[0].announce(BOB)
   await settle()
+  heard.length = 0
 
   // Act
   fake.watches[0].withdraw(BOB)
@@ -264,7 +395,7 @@ test('a dispose that rejects is logged, still removes the broadcast and the watc
     ['disposing of a broadcast failed', 'app/room/bob', 'dispose failed']
   ])
   expect(reported).toEqual([])
-  expect(heard).toEqual(['add app/room/bob', 'remove app/room/bob', 'add app/room/alice'])
+  expect(heard).toEqual(['remove app/room/bob', 'filter app/room/alice', 'add app/room/alice'])
 })
 
 test('a broadcast that fails to start is logged and a later announcement is still played', async () => {
@@ -284,7 +415,7 @@ test('a broadcast that fails to start is logged and a later announcement is stil
     ['playing a broadcast failed', 'app/room/bob', 'play failed']
   ])
   expect(reported).toEqual([])
-  expect(heard).toEqual(['add app/room/alice'])
+  expect(heard).toEqual(['filter app/room/bob', 'filter app/room/alice', 'add app/room/alice'])
 })
 
 test('a close during the disposal of a namespace announced again plays nothing more', async () => {
@@ -315,7 +446,7 @@ test('a close during the disposal of a namespace announced again plays nothing m
   await settle()
 
   // Assert: neither a second onAdd nor, after close, an onRemove
-  expect(watching.heard).toEqual(['add app/room/alice'])
+  expect(watching.heard).toEqual(['filter app/room/alice', 'add app/room/alice'])
   expect(watching.played.size).toBe(0)
   expect(watching.broadcasts.map((broadcast) => broadcast.disposed)).toEqual([true])
 })

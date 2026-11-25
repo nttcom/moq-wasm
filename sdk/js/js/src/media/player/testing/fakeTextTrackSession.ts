@@ -1,4 +1,5 @@
 import type {
+  MoqLocation,
   MoqNamespaceWatch,
   MoqSession,
   MoqSubscribeGroupStartOptions,
@@ -10,13 +11,17 @@ import type {
 import { RequestError, RequestErrorCode } from '../../../core/requestError'
 
 /// One SUBSCRIBE the session answered: `deliver` hands its reader an object,
-/// `end` ends it with PUBLISH_DONE, after which its reader reads nothing more.
+/// `end` ends it with PUBLISH_DONE, or with `undefined` as a session that ends
+/// without one, after which its reader reads nothing more. After `close`, the
+/// reader still takes the objects delivered so far, as a read pending at
+/// UNSUBSCRIBE can outlive it (`MoqSubscription.close`).
 export type FakeTextSubscription = {
+  namespace: string[]
   track: string
   options: MoqSubscribeGroupStartOptions
   closed: boolean
-  deliver(groupId: bigint, text: string): void
-  end(done: PublishDone): void
+  deliver(groupId: bigint, text: string, objectId?: bigint): void
+  end(done: PublishDone | undefined): void
 }
 
 /// One SUBSCRIBE_NAMESPACE the session answered: `announce` and `withdraw`
@@ -30,10 +35,12 @@ export type FakeNamespaceWatch = {
 
 /// A session whose SUBSCRIBEs stay open until the test ends them; while
 /// `absent`, the relay answers every SUBSCRIBE with TRACK_DOES_NOT_EXIST.
+/// Every SUBSCRIBE answers with `largest`.
 export class FakeTextTrackSession {
   readonly subscriptions: FakeTextSubscription[] = []
   readonly watches: FakeNamespaceWatch[] = []
   absent = false
+  largest: MoqLocation | undefined
 
   get session(): MoqSession {
     return this as unknown as MoqSession
@@ -44,7 +51,7 @@ export class FakeTextTrackSession {
   }
 
   async subscribeCurrentGroup(
-    _namespace: string[],
+    namespace: string[],
     track: string,
     options: MoqSubscribeGroupStartOptions = {}
   ): Promise<MoqSubscription> {
@@ -57,16 +64,17 @@ export class FakeTextTrackSession {
     const queued: ReceivedObject[] = []
     let wake = () => {}
     let ended = false
-    let endDone = (_done: PublishDone) => {}
+    let endDone = (_done: PublishDone | undefined) => {}
     const done = new Promise<PublishDone | undefined>((resolve) => {
       endDone = resolve
     })
     const subscription: FakeTextSubscription = {
+      namespace,
       track,
       options,
       closed: false,
-      deliver: (groupId, text) => {
-        queued.push(textObject(groupId, text))
+      deliver: (groupId, text, objectId = 0n) => {
+        queued.push(textObject(groupId, objectId, text))
         wake()
       },
       end: (published) => {
@@ -77,13 +85,15 @@ export class FakeTextTrackSession {
     }
     this.subscriptions.push(subscription)
     return {
-      largest: undefined,
+      largest: this.largest,
       done,
       async *[Symbol.asyncIterator]() {
-        while (!subscription.closed && !ended) {
+        while (!ended) {
           const object = queued.shift()
           if (object) {
             yield object
+          } else if (subscription.closed) {
+            return
           } else {
             await new Promise<void>((resolve) => {
               wake = resolve
@@ -137,12 +147,12 @@ export class FakeTextTrackSession {
   }
 }
 
-function textObject(groupId: bigint, text: string): ReceivedObject {
+function textObject(groupId: bigint, objectId: bigint, text: string): ReceivedObject {
   const objectPayload = new TextEncoder().encode(text)
   return {
     groupId,
     subgroupId: 0n,
-    objectId: 0n,
+    objectId,
     objectStatus: undefined,
     objectPayload,
     objectPayloadLength: objectPayload.byteLength,
