@@ -59,7 +59,7 @@ Disabled when `SourceTracks::cmaf` is off. Otherwise every media track except A-
 - **Catalog exception**: Newest catalog object stays cached for publisher lifetime and is refreshed by `CatalogRefreshTask` at least every **30 s** (half default relay cache TTL, msf-02 §5), even when no media flows.
 
 ### Sharing a Session
-- **`RelayConnection::new`**: Owns its session, reads events, rejects unknown `SUBSCRIBE`s with `TRACK_DOES_NOT_EXIST`, and closes session on `close`.
+- **`RelayConnection::new`**: Owns its session, reads events, rejects unknown `SUBSCRIBE`s with `TRACK_DOES_NOT_EXIST`, and closes session on `close`. `refresh_auth_token` replaces the target's token before it expires: an open session sends it to the relay ([relay "Token refresh"](../relay/architecture.md)), and every later `CLIENT_SETUP` (first connect, GOAWAY, reconnect) carries it. Where the next token comes from is the caller's concern.
 - **`RelayConnection::with_session`**: Publishes onto a caller-owned session and `Origin` (e.g., browser sharing publish + play). Caller forwards events to `RelayConnection::handle`, which handles broadcast tracks and returns unhandled events (`Disconnected` after stopping sends; foreign `SUBSCRIBE`s/unknown `UNSUBSCRIBE`s). `close` leaves the session open.
 - **`RelayConnection::with_client_session`**: Implements `moqt::client::EventHandler` so callers register it via `Session::add_handler` ahead of `Origin` and remove it via `HandlerId` when broadcasts end.
 

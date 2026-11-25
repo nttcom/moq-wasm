@@ -14,7 +14,7 @@ pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod fake_relay;
 
-pub(crate) use fake_relay::FakeRelay;
+pub(crate) use fake_relay::{FakeRelay, REFUSED_TOKEN};
 
 pub(crate) fn vp8_config() -> VideoConfig {
     VideoConfig::Vp8(Vp8Config {

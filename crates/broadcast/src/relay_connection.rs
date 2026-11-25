@@ -11,8 +11,8 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use bytes::Bytes;
 use moqt::{
-    CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
-    TransportStats,
+    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, RequestErrorCode,
+    Session, SessionEvent, TransportStats,
     client::{self, EventHandler},
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, TrackDemand, WriteOutcome},
@@ -50,6 +50,8 @@ pub struct MoqtTarget {
 #[derive(Clone)]
 pub struct RelayConnection {
     target: Option<MoqtTarget>,
+    /// Read by every CLIENT_SETUP.
+    auth_token: Option<Arc<Mutex<String>>>,
     connected: Arc<Mutex<Option<Arc<ConnectedRelay>>>>,
     ledger: StreamLedger,
 }
@@ -171,8 +173,13 @@ impl RelayConnection {
     // the Arc is shared across tokio worker threads.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn new(target: Option<MoqtTarget>) -> Self {
+        let auth_token = target
+            .as_ref()
+            .and_then(|target| target.auth_token.clone())
+            .map(|token| Arc::new(Mutex::new(token)));
         Self {
             target,
+            auth_token,
             connected: Arc::new(Mutex::new(None)),
             ledger: StreamLedger::default(),
         }
@@ -187,6 +194,7 @@ impl RelayConnection {
         let relay = ConnectedRelay::new(false, session, origin, ledger.clone());
         Self {
             target: None,
+            auth_token: None,
             connected: Arc::new(Mutex::new(Some(Arc::new(relay)))),
             ledger,
         }
@@ -230,6 +238,30 @@ impl RelayConnection {
         }
     }
 
+    /// Sends `token` to the relay on an open session and uses it for every
+    /// later CLIENT_SETUP. `app_id` is the token's `appId`.
+    /// Fails, keeping the previous token, when the relay refuses `token`,
+    /// the session has ended, or the connection was given no token.
+    pub async fn refresh_auth_token(&self, app_id: String, token: String) -> Result<()> {
+        let Some(current) = &self.auth_token else {
+            bail!("the relay connection has no token to refresh");
+        };
+        let connected = self.connected.lock().await;
+        if let Some(relay) = connected.clone() {
+            // Sends wait for this lock, so the relay's answer is awaited without it.
+            drop(connected);
+            relay
+                .session
+                .subscriber()
+                .refresh_authorization_token(app_id, &token)
+                .await
+                .context("refresh the authorization token")?;
+        }
+        // Without a session the lock is still held, so a connect starting now sends `token`.
+        *current.lock().await = token;
+        Ok(())
+    }
+
     /// `None` until the relay session exists; the lock is also held for the
     /// whole connect, so a caller during it sees `None` as well.
     pub fn transport_stats(&self) -> Option<TransportStats> {
@@ -248,7 +280,9 @@ impl RelayConnection {
         let Some(target) = &self.target else {
             return Ok(None);
         };
-        let relay = Arc::new(ConnectedRelay::connect(target, self.ledger.clone()).await?);
+        let relay = Arc::new(
+            ConnectedRelay::connect(target, self.auth_token.clone(), self.ledger.clone()).await?,
+        );
         *connected = Some(relay.clone());
         Ok(Some(relay))
     }
@@ -256,12 +290,16 @@ impl RelayConnection {
 
 impl ConnectedRelay {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
+    async fn connect(
+        target: &MoqtTarget,
+        auth_token: Option<Arc<Mutex<String>>>,
+        ledger: StreamLedger,
+    ) -> Result<Self> {
         let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
             certificate_verification: CertificateVerification::native_roots_or_disabled(
                 target.verify_certificate,
             ),
-            authorization_token: target.auth_token.clone().map(Into::into),
+            authorization_token: auth_token.map(AuthorizationTokenSource::shared),
             ..ClientConfig::default()
         })?;
         let connecting = endpoint
@@ -709,7 +747,7 @@ mod tests {
     use mediapack::{AudioConfig, VideoConfig, vp8::Vp8Config};
 
     use crate::broadcast::{AudioTrackInfo, Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
-    use crate::test_support::{FakeRelay, TEST_TIMEOUT};
+    use crate::test_support::{FakeRelay, REFUSED_TOKEN, TEST_TIMEOUT};
 
     fn video_track_info() -> VideoTrackInfo {
         VideoTrackInfo {
@@ -1643,6 +1681,96 @@ mod tests {
             )),
             "{tokens:?}"
         );
+    }
+
+    fn connection_with_token(relay: &FakeRelay, token: &str) -> RelayConnection {
+        RelayConnection::new(Some(MoqtTarget {
+            url: relay.url.clone(),
+            auth_token: Some(token.to_string()),
+            verify_certificate: false,
+        }))
+    }
+
+    #[tokio::test]
+    async fn a_refreshed_token_is_sent_to_the_relay_on_the_open_session() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("refresh-open-session");
+        let connection = connection_with_token(&relay, "secret");
+        live_cam(connection.clone()).announce().await.unwrap();
+
+        // Act
+        connection
+            .refresh_auth_token("app".to_string(), "renewed".to_string())
+            .await
+            .unwrap();
+
+        // Assert
+        relay
+            .wait_for_request("TRACK_STATUS app/update_auth_token renewed")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_token_refreshed_before_the_session_opens_is_the_one_client_setup_carries() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("refresh-before-connect");
+        let connection = connection_with_token(&relay, "secret");
+
+        // Act
+        connection
+            .refresh_auth_token("app".to_string(), "renewed".to_string())
+            .await
+            .unwrap();
+        live_cam(connection).announce().await.unwrap();
+        let tokens = tokio::time::timeout(TEST_TIMEOUT, &mut relay.authorization_tokens)
+            .await
+            .expect("the publisher must connect")
+            .unwrap();
+
+        // Assert
+        assert!(
+            tokens.iter().any(|token| matches!(
+                token,
+                AuthorizationToken::UseValue { token_value, .. }
+                    if token_value.as_ref() == b"renewed"
+            )),
+            "{tokens:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_the_relay_refuses_fails_and_leaves_the_previous_one_in_force() {
+        // Arrange
+        let relay = FakeRelay::spawn("refresh-refused");
+        let connection = connection_with_token(&relay, "secret");
+        live_cam(connection.clone()).announce().await.unwrap();
+
+        // Act
+        let refreshed = connection
+            .refresh_auth_token("app".to_string(), REFUSED_TOKEN.to_string())
+            .await;
+
+        // Assert
+        assert!(refreshed.is_err());
+        assert_eq!(
+            *connection.auth_token.as_ref().unwrap().lock().await,
+            "secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn refreshing_fails_on_a_connection_that_was_given_no_token() {
+        // Arrange
+        let relay = FakeRelay::spawn("refresh-without-token");
+        let connection = relay.connection();
+
+        // Act
+        let refreshed = connection
+            .refresh_auth_token("app".to_string(), "renewed".to_string())
+            .await;
+
+        // Assert
+        assert!(refreshed.is_err());
     }
 
     #[tokio::test]

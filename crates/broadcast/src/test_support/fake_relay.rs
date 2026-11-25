@@ -5,9 +5,9 @@ use std::{
 };
 
 use moqt::{
-    AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
-    TrackReader, Version,
-    object::{DataReceiver, Subgroup, SubgroupStart, TrackData},
+    AuthorizationToken, Endpoint, NATIVE, RequestErrorCode, Session, SessionEvent, Subscription,
+    TrackObject, TrackProperties, TrackReader, Version,
+    object::{ContentExists, DataReceiver, Subgroup, SubgroupStart, TrackData},
     server::ServerConfig,
     subscribe::{FilterType, SubscribeOption},
 };
@@ -20,8 +20,10 @@ use crate::{
     relay_connection::{MoqtTarget, RelayConnection},
 };
 
+pub(crate) const REFUSED_TOKEN: &str = "refused";
+
 /// A relay that accepts one publisher session and answers its
-/// PUBLISH_NAMESPACE and PUBLISH.
+/// PUBLISH_NAMESPACE, PUBLISH, and token refreshes (TRACK_STATUS).
 pub(crate) struct FakeRelay {
     pub(crate) url: String,
     pub(crate) session: oneshot::Receiver<Arc<Session>>,
@@ -148,6 +150,34 @@ impl FakeRelay {
                     SessionEvent::PublishDone(handler) => {
                         if let Some(track) = published_tracks.get(&handler.request_id()) {
                             let _ = request_sender.send(format!("PUBLISH_DONE {track}"));
+                        }
+                    }
+                    SessionEvent::TrackStatus(handler) => {
+                        let token = handler
+                            .authorization_tokens()
+                            .iter()
+                            .find_map(|token| match token {
+                                AuthorizationToken::UseValue { token_value, .. } => {
+                                    Some(String::from_utf8_lossy(token_value).into_owned())
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let _ = request_sender.send(format!(
+                            "TRACK_STATUS {}/{} {token}",
+                            handler.track_namespace(),
+                            handler.track_name()
+                        ));
+                        if token == REFUSED_TOKEN {
+                            handler
+                                .error(RequestErrorCode::Unauthorized, "refused".to_string())
+                                .await
+                                .unwrap();
+                        } else {
+                            handler
+                                .ok(0, ContentExists::False, TrackProperties::default())
+                                .await
+                                .unwrap();
                         }
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
