@@ -151,9 +151,6 @@ impl RelayRouteRegistry for StubRouteRegistry {
     }
 
     async fn register_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
-        if self.namespace_subscriber_relay_ids.is_none() {
-            unimplemented!("not used with the stub route registry")
-        }
         Ok(())
     }
 

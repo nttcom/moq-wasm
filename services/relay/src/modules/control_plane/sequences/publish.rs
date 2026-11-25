@@ -3,7 +3,7 @@ use moqt::{RequestErrorCode, namespace::NamespaceInterest};
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry,
+        namespace_routes::NamespaceRoutes, route_registry::RelayRouteRegistry,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -19,7 +19,10 @@ use crate::modules::{
         InMemoryLocalPubSubDirectory,
         track::{Producer, ProducerOrigin, ProducerState},
     },
-    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    domain::{
+        publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
+        track_key::TrackKey,
+    },
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
 
@@ -54,18 +57,6 @@ impl Publish {
             upstream_subscription.track_name(),
         );
 
-        if is_origin_client
-            && !self
-                .register_route(
-                    cascading_relay_context.route_registry,
-                    &track_key,
-                    handler.as_ref(),
-                )
-                .await
-        {
-            return;
-        }
-
         let forward = match self
             .register_upstream_subscription(
                 session_id,
@@ -97,13 +88,24 @@ impl Publish {
                 {
                     tracing::error!("failed to send PUBLISH_ERROR. close session.");
                 }
-                cascading_relay_context
-                    .namespace_routes
-                    .withdraw_track(&track_key, table)
-                    .await;
                 return;
             }
         };
+
+        if is_origin_client
+            && !self
+                .register_route(
+                    session_id,
+                    upstream_subscription.request_id(),
+                    table,
+                    cascading_relay_context.namespace_routes,
+                    &track_key,
+                    handler.as_ref(),
+                )
+                .await
+        {
+            return;
+        }
 
         self.notify_namespace_subscribers(
             downstream_publish,
@@ -134,13 +136,19 @@ impl Publish {
         skip_all,
         fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
     )]
+    /// Registers the route of a client's PUBLISH already in the directory, so
+    /// a withdrawal crossing it sees the client. On failure the PUBLISH leaves
+    /// the directory again and is answered PUBLISH_ERROR.
     async fn register_route(
         &self,
-        route_registry: &dyn RelayRouteRegistry,
+        session_id: SessionId,
+        request_id: u64,
+        table: &InMemoryLocalPubSubDirectory,
+        namespace_routes: &NamespaceRoutes,
         track_key: &TrackKey,
         handler: &dyn PublishHandler,
     ) -> bool {
-        let Err(err) = route_registry.register_track_publisher(track_key).await else {
+        let Err(err) = namespace_routes.reconcile_track(track_key, table).await else {
             return true;
         };
         tracing::warn!(
@@ -149,6 +157,12 @@ impl Publish {
             track_name = %track_key.track_name,
             "failed to register track route"
         );
+        table.end_upstream_subscription(
+            session_id,
+            request_id,
+            PublishDoneReason::publisher_session_closed(),
+        );
+        namespace_routes.withdraw_track(track_key, table).await;
         if handler
             .error(
                 RequestErrorCode::InternalError,
