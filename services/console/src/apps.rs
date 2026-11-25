@@ -3,7 +3,6 @@ use std::time::Duration;
 use anyhow::anyhow;
 use app_registry::{App, RegistryStore};
 use auth_token::{Claims, sign_token};
-use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 pub(crate) const MAX_TOKEN_TTL_SECONDS: u64 = 24 * 60 * 60;
@@ -148,9 +147,7 @@ fn random_secret() -> anyhow::Result<String> {
 
 fn random_bytes<const N: usize>() -> anyhow::Result<[u8; N]> {
     let mut bytes = [0; N];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| anyhow!("the system random source failed"))?;
+    aws_lc_rs::rand::fill(&mut bytes).map_err(|_| anyhow!("the system random source failed"))?;
     Ok(bytes)
 }
 
