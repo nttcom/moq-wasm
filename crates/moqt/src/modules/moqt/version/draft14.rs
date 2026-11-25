@@ -398,9 +398,14 @@ impl ControlChannel {
         // Declared after `reservation`, so it drops first: an unsent entry is
         // removed before the next request can take its Request ID.
         let mut registered = self.register(connection, request_id, sender, on_late_response);
-        self.send_with_request_id(&mut reservation, message_type, payload)
+        let write = self
+            .queue_with_request_id(&mut reservation, message_type, payload)
             .await?;
         registered.write = RequestWrite::Sent;
+        if let Err(error) = write.await {
+            registered.write = RequestWrite::Unsent;
+            return Err(error.into());
+        }
         Ok(PendingResponse {
             receiver,
             _registered: registered,
@@ -414,26 +419,30 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         debug_assert_eq!(subscribe_update.request_id, reservation.request_id());
         let payload = subscribe_update.encode().map_err(encode_error)?;
-        self.send_with_request_id(
+        self.queue_with_request_id(
             &mut reservation,
             ControlMessageType::SubscribeUpdate,
             payload,
         )
+        .await?
         .await
     }
 
-    async fn send_with_request_id(
+    /// Waits for the control stream and consumes the Request ID. The
+    /// returned write completes even if dropped, so the peer receives every
+    /// consumed Request ID, in order.
+    async fn queue_with_request_id(
         &self,
         reservation: &mut RequestIdReservation<'_>,
         message_type: ControlMessageType,
         payload: BytesMut,
-    ) -> Result<(), TransportSendError> {
+    ) -> Result<impl Future<Output = Result<(), TransportSendError>>, TransportSendError> {
         let RequestIdReservation(next_request_id) = reservation;
-        self.send_stream.send(message_type, payload).await?;
+        let queued = self.send_stream.queue(message_type, payload).await?;
         **next_request_id += 2;
         self.written_request_id_end
             .store(**next_request_id, Ordering::Relaxed);
-        Ok(())
+        Ok(queued.write())
     }
 
     pub(super) async fn respond(
@@ -616,6 +625,7 @@ struct RegisteredSender {
 /// Whether the peer is to receive the request.
 enum RequestWrite {
     Unsent,
+    /// The write is under way and completes even if the caller is dropped.
     Sent,
 }
 
@@ -873,10 +883,13 @@ mod tests {
     use std::{
         pin::Pin,
         sync::{Arc, atomic::Ordering},
+        task::{Context, Poll},
         time::Duration,
     };
 
-    use tokio::sync::mpsc::error::TryRecvError;
+    use async_trait::async_trait;
+    use bytes::BytesMut;
+    use tokio::sync::{Notify, mpsc::error::TryRecvError};
 
     use futures::FutureExt;
 
@@ -899,9 +912,11 @@ mod tests {
                         subscribe::Subscribe,
                         subscribe_namespace::SubscribeNamespace,
                         subscribe_ok::SubscribeOk,
+                        subscribe_update::SubscribeUpdate,
                     },
                     enums::ResponseMessage,
                 },
+                data_plane::stream::bi_stream_sender::BiStreamSender,
                 domains::{
                     connection::{Connection, IncomingObjectNotification},
                     session_events::MAX_UNREAD_EVENTS,
@@ -914,11 +929,13 @@ mod tests {
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
             },
+            transport::transport_send_stream::TransportSendStream,
         },
         namespace::NamespaceInterest,
         object::{GroupOrder, Location},
         publish::{PublishDoneCode, PublishOption},
         subscribe::TrackStatusHandler,
+        wire::encode_control_message,
     };
 
     const REQUEST_ID: u64 = 1;
@@ -1405,6 +1422,97 @@ mod tests {
             matches!(&*inflight, InflightRequests::Open(requests) if requests.is_empty()),
             "an unsent request stayed registered"
         );
+    }
+
+    /// Writes the first half of each message, then waits for `release`
+    /// before the rest, as `write_all` does when flow control blocks it.
+    #[derive(Debug)]
+    struct StallingSendStream {
+        written: Arc<std::sync::Mutex<Vec<u8>>>,
+        half_written: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl TransportSendStream for StallingSendStream {
+        async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError> {
+            let (first, rest) = buffer.split_at(buffer.len() / 2);
+            self.written.lock().unwrap().extend_from_slice(first);
+            self.half_written.notify_one();
+            self.release.notified().await;
+            self.written.lock().unwrap().extend_from_slice(rest);
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), TransportSendError> {
+            Ok(())
+        }
+
+        async fn reset(&mut self, _error_code: u64) -> Result<(), TransportSendError> {
+            Ok(())
+        }
+
+        fn set_priority(&mut self, _priority: i32) -> Result<(), TransportSendError> {
+            Ok(())
+        }
+
+        fn poll_stopped(&mut self, _cx: &mut Context<'_>) -> Poll<Option<u64>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_cancelled_mid_write_is_written_whole_and_uses_its_request_id() {
+        // Arrange
+        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let half_written = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let stream = StallingSendStream {
+            written: written.clone(),
+            half_written: half_written.clone(),
+            release: release.clone(),
+        };
+        let channel = ControlChannel::new(
+            BiStreamSender::new(Box::new(stream)),
+            0,
+            REQUEST_ID_WINDOW,
+            false,
+        );
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let update = SubscribeUpdate {
+            request_id: reservation.request_id(),
+            subscription_request_id: REQUEST_ID,
+            start_location: Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_group: 0,
+            subscriber_priority: 128,
+            forward: true,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            new_group_request: None,
+        };
+        let message = encode_control_message(
+            ControlMessageType::SubscribeUpdate,
+            update.encode().unwrap(),
+        )
+        .unwrap();
+        let mut send = Box::pin(channel.send_subscribe_update(reservation, update));
+        tokio::select! {
+            _ = &mut send => panic!("wrote past the stalled stream"),
+            () = half_written.notified() => {}
+        }
+
+        // Act
+        drop(send);
+        release.notify_one();
+
+        // Assert
+        let next = within(channel.reserve_request_id()).await.unwrap();
+        assert_eq!(next.request_id(), 2);
+        drop(within(channel.send_stream.hold()).await);
+        assert_eq!(*written.lock().unwrap(), message[..]);
     }
 
     #[tokio::test]
