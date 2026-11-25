@@ -56,7 +56,7 @@ flowchart BT
 
 | Crate | Audience | Targets | Role |
 | --- | --- | --- | --- |
-| [`obs-moqt`](obs-moqt/README.md) | External | native (`cdylib`) | OBS Studio output and streaming service for publishing OBS's H.264/AAC stream directly to a MoQT relay (GPL-2.0-or-later) |
+| [`obs-moqt`](obs-moqt/README.md) | External | native (`cdylib`) | OBS Studio output and streaming service for publishing OBS's H.264/AAC stream directly to a MoQT relay (GPL-3.0-or-later; every other crate is MIT) |
 
 ## Auth & service infrastructure
 

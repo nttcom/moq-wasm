@@ -100,7 +100,7 @@ All three SDKs interoperate, follow `GOAWAY`, reconnect automatically, and suppo
 | [`services/sip-gateway`](docs/architecture/sip-gateway/architecture.md) | Inbound/outbound SIP + SDES-SRTP room bridge |
 | [`services/recorder`](services/recorder/README.md) | Multi-participant fMP4 recording and replayable MoQ archives |
 | [`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) | GStreamer `moqtsink` plugin (H.264/AAC) |
-| [`crates/obs-moqt`](crates/obs-moqt/README.md) | OBS Studio plugin that streams to a relay (H.264/AAC) |
+| [`crates/obs-moqt`](crates/obs-moqt/README.md) | OBS Studio plugin that streams to a relay (H.264/AAC; GPL-3.0-or-later) |
 
 ## Try it locally
 
@@ -182,3 +182,7 @@ make chrome           # Chrome with local relay cert (Linux: make chrome:linux)
 - [Relay configuration & clustering](services/relay/README.md)
 - [Signing JWTs outside `anon/**`](crates/auth-token/README.md)
 - [Tests & two-relay topology](tests/README.md)
+
+## License
+
+[MIT](LICENSE), except [`crates/obs-moqt`](crates/obs-moqt/README.md#license): an OBS Studio plugin is distributed under the GPL, so that crate is GPL-3.0-or-later.
