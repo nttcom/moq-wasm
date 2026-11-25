@@ -26,7 +26,7 @@ codecs = ["av>=15", "numpy>=1.26"]
 pipecat = ["moq-wasm[codecs]", "pipecat-ai>=1.13,<2"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=1.4", "pytest-xdist>=3.6", "pipecat-ai>=1.13", "av>=15", "pdoc>=16", "pyright>=1.1.414"]
+dev = ["pytest>=8", "pytest-asyncio>=1.4", "pytest-xdist>=3.6", "pytest-timeout>=2.3", "pipecat-ai>=1.13", "av>=15", "pdoc>=16", "pyright>=1.1.414"]
 
 [tool.maturin]
 python-source = "python"
@@ -40,6 +40,10 @@ pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# A hung test fails after this instead of holding its xdist worker until the CI step times out.
+# The setup is left out: the first test of a worker builds the relay and VTS with cargo.
+timeout = 120
+timeout_func_only = true
 
 [tool.uv]
 # Rebuild the extension module when its Rust sources change. uv ignores files
