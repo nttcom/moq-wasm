@@ -15,6 +15,7 @@ pub(crate) mod setup;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    mem,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
@@ -857,7 +858,10 @@ impl ControlChannel {
         .run();
         Ok(PendingResponse {
             receiver,
-            cancel: RequestCancel(Some((Arc::downgrade(connection), request_id))),
+            cancel: RequestCancel(CallerState::AwaitingResponse(SentRequest {
+                connection: Arc::downgrade(connection),
+                request_id,
+            })),
         })
     }
 
@@ -1214,14 +1218,64 @@ pub(crate) struct PendingResponse {
     cancel: RequestCancel,
 }
 
-/// The request whose stream is reset when this is dropped armed; that
-/// withdraws the request (§3.3.2).
-struct RequestCancel(Option<(Weak<Connection>, RequestId)>);
+/// A request this side sent on its own stream.
+struct SentRequest {
+    connection: Weak<Connection>,
+    request_id: RequestId,
+}
+
+impl SentRequest {
+    fn cancel(self) {
+        end_outgoing(&self.connection, self.request_id, false);
+    }
+}
+
+/// Where the caller of a request this side sent is.
+enum CallerState {
+    /// `PendingResponse` waits for the response.
+    AwaitingResponse(SentRequest),
+    /// `ReceivedResponse` holds a success response not yet accepted.
+    Delivered(SentRequest),
+    /// Answered without asking the peer, rejected, or accepted.
+    Ended,
+}
+
+/// Resets the request stream when dropped `AwaitingResponse` or
+/// `Delivered`; that withdraws the request (§3.3.2).
+struct RequestCancel(CallerState);
+
+impl RequestCancel {
+    fn take(&mut self) -> CallerState {
+        mem::replace(&mut self.0, CallerState::Ended)
+    }
+
+    /// The caller took a response: a success one is `Delivered` until
+    /// `accept`, an error one cancels the request.
+    fn deliver(&mut self, success: bool) -> Self {
+        match self.take() {
+            CallerState::AwaitingResponse(request) if success => {
+                Self(CallerState::Delivered(request))
+            }
+            CallerState::AwaitingResponse(request) => {
+                request.cancel();
+                Self(CallerState::Ended)
+            }
+            state => Self(state),
+        }
+    }
+
+    fn accept(&mut self) {
+        self.take();
+    }
+}
 
 impl Drop for RequestCancel {
     fn drop(&mut self) {
-        if let Some((connection, request_id)) = self.0.take() {
-            end_outgoing(&connection, request_id, false);
+        match self.take() {
+            CallerState::AwaitingResponse(request) | CallerState::Delivered(request) => {
+                request.cancel();
+            }
+            CallerState::Ended => {}
         }
     }
 }
@@ -1233,7 +1287,7 @@ impl PendingResponse {
         let _ = sender.send(Some(response));
         Self {
             receiver,
-            cancel: RequestCancel(None),
+            cancel: RequestCancel(CallerState::Ended),
         }
     }
 
@@ -1247,11 +1301,7 @@ impl PendingResponse {
         .await
         {
             Ok(Ok(Some(message))) => {
-                let cancel = if is_success(&message) {
-                    RequestCancel(self.cancel.0.take())
-                } else {
-                    RequestCancel(None)
-                };
+                let cancel = self.cancel.deliver(is_success(&message));
                 Ok(ReceivedResponse { message, cancel })
             }
             Ok(Ok(None)) => Err(RequestFailure::Withdrawn),
@@ -1274,7 +1324,7 @@ impl ReceivedResponse {
     }
 
     pub(super) fn accept(mut self) -> ResponseMessage {
-        self.cancel.0 = None;
+        self.cancel.accept();
         self.message
     }
 }
@@ -1298,7 +1348,8 @@ mod tests {
     use bytes::{Bytes, BytesMut};
 
     use super::{
-        ControlChannel, Scope, codec,
+        CallerState, Connection, ControlChannel, RequestCancel, RequestStream, RequestStreamKind,
+        Scope, SentRequest, codec,
         message_stream::{MessageDecoder, MessageReceiver},
         messages, parameters,
         request_streams::OutgoingRequestTask,
@@ -1465,6 +1516,97 @@ mod tests {
             matches!(notification, IncomingObjectNotification::Discarded),
             "{notification:?}"
         );
+    }
+
+    /// A `RequestCancel` awaiting the response of a SUBSCRIBE registered as
+    /// `client`'s outgoing request 0.
+    async fn awaiting_response(client: &crate::Session) -> (Arc<Connection>, RequestCancel) {
+        let connection = client.subscriber().session.connection();
+        let (send_stream, _) = connection.transport.open_bi().await.unwrap();
+        let stream = RequestStream::new(
+            RequestStreamKind::Subscribe,
+            Arc::new(StreamSender::new(send_stream)),
+        );
+        ControlChannel::of(&connection)
+            .requests()
+            .outgoing
+            .insert(0, stream);
+        let cancel = RequestCancel(CallerState::AwaitingResponse(SentRequest {
+            connection: Arc::downgrade(&connection),
+            request_id: 0,
+        }));
+        (connection, cancel)
+    }
+
+    fn is_open(connection: &Connection) -> bool {
+        ControlChannel::of(connection)
+            .requests()
+            .outgoing
+            .contains_key(&0)
+    }
+
+    #[tokio::test]
+    async fn a_dropped_pending_response_cancels_its_request() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-pending-dropped", "moqt").await;
+        let (connection, cancel) = awaiting_response(&client).await;
+
+        // Act
+        drop(cancel);
+
+        // Assert
+        assert!(!is_open(&connection));
+    }
+
+    #[tokio::test]
+    async fn an_error_response_cancels_its_request() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-error-delivered", "moqt").await;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+
+        // Act
+        let delivered = cancel.deliver(false);
+
+        // Assert
+        assert!(!is_open(&connection));
+        assert!(matches!(delivered.0, CallerState::Ended));
+    }
+
+    #[tokio::test]
+    async fn an_accepted_success_response_keeps_its_request_open() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-success-accepted", "moqt").await;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+
+        // Act
+        let mut delivered = cancel.deliver(true);
+        drop(cancel);
+        delivered.accept();
+        drop(delivered);
+
+        // Assert
+        assert!(is_open(&connection));
+    }
+
+    #[tokio::test]
+    async fn a_success_response_dropped_before_accept_cancels_its_request() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-success-dropped", "moqt").await;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+        let delivered = cancel.deliver(true);
+        drop(cancel);
+        let open_while_delivered = is_open(&connection);
+
+        // Act
+        drop(delivered);
+
+        // Assert
+        assert!(open_while_delivered);
+        assert!(!is_open(&connection));
     }
 
     /// Spawns a SUBSCRIBE from `client` and returns it with the handler
