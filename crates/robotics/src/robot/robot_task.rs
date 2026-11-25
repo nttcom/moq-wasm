@@ -359,10 +359,7 @@ fn tick_period(config: ArbiterConfig) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn elements(path: &str) -> Vec<String> {
-        path.split('/').map(str::to_string).collect()
-    }
+    use crate::robot::test_support::elements;
 
     #[test]
     fn relative_to_strips_the_room_and_skips_other_namespaces() {
