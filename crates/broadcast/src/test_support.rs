@@ -23,6 +23,15 @@ pub(crate) fn vp8_config() -> VideoConfig {
     })
 }
 
+pub(crate) fn video_sample(dts_us: u64, is_keyframe: bool) -> VideoSample {
+    VideoSample {
+        data: Bytes::from_static(b"frame"),
+        is_keyframe,
+        pts: Timestamp::from_micros(dts_us),
+        dts: Timestamp::from_micros(dts_us),
+    }
+}
+
 pub(crate) fn keyframe_at(pts_us: u64) -> MediaEvent {
     MediaEvent::Video(VideoSample {
         data: Bytes::from_static(b"nal"),

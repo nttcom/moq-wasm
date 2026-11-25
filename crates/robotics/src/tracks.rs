@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use anyhow::Result;
 use broadcast::Broadcast;
 use bytes::Bytes;
@@ -88,9 +86,7 @@ pub(crate) async fn write_record<D: Serialize>(
 
 /// This host's wall clock in milliseconds since the Unix epoch.
 pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as u64)
+    moqt::executor::system_time().as_millis() as u64
 }
 
 #[cfg(test)]

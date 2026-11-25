@@ -134,24 +134,11 @@ async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPub
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
     use mediapack::Timestamp;
 
     use super::*;
     use crate::relay_connection::{MoqtTarget, RelayConnection};
-
-    fn keyframe() -> MediaEvent {
-        keyframe_at(Timestamp::ZERO)
-    }
-
-    fn keyframe_at(pts: Timestamp) -> MediaEvent {
-        MediaEvent::Video(VideoSample {
-            data: Bytes::from_static(b"nal"),
-            is_keyframe: true,
-            pts,
-            dts: pts,
-        })
-    }
+    use crate::test_support::keyframe_at;
 
     fn wall_clock_micros() -> u64 {
         executor::system_time().as_micros() as u64
@@ -166,7 +153,7 @@ mod tests {
 
         // Act: without an await the publish task never runs, as while it connects to the relay
         let before = wall_clock_micros();
-        writer.push(keyframe_at(pts)).unwrap();
+        writer.push(keyframe_at(pts.micros())).unwrap();
         let after = wall_clock_micros();
         let captured = writer
             .shared_timing()
@@ -195,11 +182,11 @@ mod tests {
         let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
 
         // Act
-        let queued = writer.push(keyframe());
+        let queued = writer.push(keyframe_at(0));
         let err = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 tokio::task::yield_now().await;
-                if let Err(err) = writer.push(keyframe()) {
+                if let Err(err) = writer.push(keyframe_at(0)) {
                     return err;
                 }
             }

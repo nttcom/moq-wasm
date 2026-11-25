@@ -418,7 +418,9 @@ mod tests {
     use crate::{
         broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
         relay_connection::RelayConnection,
-        test_support::{FakeRelay, VIDEO_TICK_US, decode_times, keyframe_at, vp8_config},
+        test_support::{
+            FakeRelay, VIDEO_TICK_US, decode_times, keyframe_at, video_sample, vp8_config,
+        },
     };
 
     fn publisher() -> TrackPublisher {
@@ -444,12 +446,7 @@ mod tests {
     }
 
     fn video_at(dts_us: u64, is_keyframe: bool) -> MediaEvent {
-        MediaEvent::Video(VideoSample {
-            data: Bytes::from_static(b"frame"),
-            is_keyframe,
-            pts: Timestamp::from_micros(dts_us),
-            dts: Timestamp::from_micros(dts_us),
-        })
+        MediaEvent::Video(video_sample(dts_us, is_keyframe))
     }
 
     fn recorded(publisher: &TrackPublisher) -> Vec<(u64, u64)> {
@@ -701,15 +698,6 @@ mod tests {
             ]
         }
 
-        fn sample(dts_us: u64, is_keyframe: bool) -> VideoSample {
-            VideoSample {
-                data: Bytes::from_static(b"frame"),
-                is_keyframe,
-                pts: Timestamp::from_micros(dts_us),
-                dts: Timestamp::from_micros(dts_us),
-            }
-        }
-
         fn group_ids(boundaries: &[GroupBoundary]) -> Vec<u64> {
             boundaries
                 .iter()
@@ -756,7 +744,7 @@ mod tests {
                         rendition_keyframe,
                     } => {
                         video_us += gap_us;
-                        let frame = sample(video_us, is_keyframe);
+                        let frame = video_sample(video_us, is_keyframe);
                         let group = video_groups
                             .boundary(frame.is_keyframe.then(|| alignment.keyframe(video_us)));
                         published.video.push(group);
@@ -767,7 +755,7 @@ mod tests {
                             published.video_cmaf.push(object.group);
                         }
                         source_frames.push((
-                            sample(video_us, rendition_keyframe),
+                            video_sample(video_us, rendition_keyframe),
                             group,
                             source_keyframes,
                         ));
