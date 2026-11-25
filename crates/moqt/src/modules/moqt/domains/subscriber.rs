@@ -1369,7 +1369,7 @@ mod tests {
                 send_until_stopped, send_without_waiting, sent_update,
                 spawn_connected_draft18_sessions, spawn_connected_native_sessions,
                 spawn_connected_native_sessions_following_go_away, subscribe_namespace_accepted,
-                subscribed_track, wait_for_control_delivery, within,
+                subscribed_track, wait_for_control_delivery, wait_for_draft14_response, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2584,6 +2584,7 @@ mod tests {
     async fn subscribe_dropped_after_its_subscribe_ok_arrived_unsubscribes() {
         // Arrange
         let (client, server) = spawn_connected_native_sessions("subscriber-drop-after-ok").await;
+        let session = client.subscriber().session;
         let mut subscriber = client.subscriber();
         let mut request = Box::pin(subscriber.subscribe(
             "ns".to_string(),
@@ -2595,7 +2596,7 @@ mod tests {
             panic!("expected SUBSCRIBE from the client");
         };
         handler.ok(0, ContentExists::False).await.unwrap();
-        wait_for_control_delivery(&server, &client).await;
+        wait_for_draft14_response(&session, handler.request_id()).await;
 
         // Act
         drop(request);
@@ -2624,7 +2625,7 @@ mod tests {
             panic!("expected SUBSCRIBE from the client");
         };
         let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
-        wait_for_control_delivery(&server, &client).await;
+        wait_for_draft14_response(&session, handler.request_id()).await;
         let receiver_map = session.receiver_map.lock().await;
         assert!(request.as_mut().now_or_never().is_none());
 

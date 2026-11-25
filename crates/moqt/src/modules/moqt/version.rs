@@ -951,6 +951,16 @@ impl ControlChannel {
         }
     }
 
+    /// Whether the response of this side's draft-14 request `request_id` has
+    /// not been handed to its caller.
+    #[cfg(test)]
+    pub(crate) fn awaits_draft14_response(&self, request_id: RequestId) -> bool {
+        match self {
+            Self::Draft14(channel) => channel.awaits_response(request_id),
+            Self::Draft18(_) => panic!("only a draft-14 test asks"),
+        }
+    }
+
     /// Uses the next Request ID for a request a test writes itself.
     #[cfg(test)]
     pub(crate) async fn take_request_id(&self) -> RequestId {

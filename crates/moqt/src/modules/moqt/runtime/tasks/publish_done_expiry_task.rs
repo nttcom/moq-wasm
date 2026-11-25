@@ -152,7 +152,7 @@ mod tests {
             },
             test_support::{
                 DRAFTS, connected_sessions, next_event, open_subgroup, send_payload,
-                take_data_receiver, within,
+                send_without_waiting, take_data_receiver, within,
             },
         },
         object::ContentExists,
@@ -233,6 +233,52 @@ mod tests {
                     .await;
 
             // Assert: it ends well before the grace period
+            assert!(matches!(ended, Ok(None)), "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_done_right_behind_subscribe_ok_counts_the_streams_of_the_new_receiver() {
+        for version in DRAFTS {
+            // Arrange: the server's SUBSCRIBE is answered while its caller is not polled
+            let (client, server) = connected_sessions("publish-done-behind-ok", version).await;
+            let mut subscriber = server.subscriber();
+            let session = subscriber.session.clone();
+            let mut subscribed = std::pin::pin!(subscriber.subscribe(
+                "ns".into(),
+                "track".into(),
+                SubscribeOption::default()
+            ));
+            let SessionEvent::Subscribe(handler) =
+                send_without_waiting(&mut subscribed, &client).await
+            else {
+                panic!("expected SUBSCRIBE from the server");
+            };
+            let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+            let served = handler.into_subscription(track_alias);
+            let publisher = client.publisher();
+            let mut group = open_subgroup(&publisher.create_stream(&served), 0).await;
+            send_payload(&mut group, b"object").await;
+            publisher
+                .publish_done(&served, PublishDoneCode::TrackEnded, 1, String::new())
+                .await
+                .unwrap();
+            // Lets the server read PUBLISH_DONE before its caller registers
+            // the receiver.
+            let _ = tokio::time::timeout(Duration::from_millis(500), server.receive_event()).await;
+
+            // Act
+            let subscription = within(subscribed).await.unwrap();
+            let mut object_receiver =
+                take_data_receiver(&session, subscription.track_alias()).await;
+            let arrived = within(object_receiver.recv()).await;
+            let ended = tokio::time::timeout(Duration::from_secs(1), object_receiver.recv()).await;
+
+            // Assert: it ends well before the grace period
+            assert!(
+                matches!(arrived, Some(IncomingObject::Subgroup(_))),
+                "{version:?}"
+            );
             assert!(matches!(ended, Ok(None)), "{version:?}");
         }
     }

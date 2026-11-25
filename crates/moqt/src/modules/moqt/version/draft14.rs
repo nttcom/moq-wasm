@@ -575,6 +575,16 @@ impl ControlChannel {
         }
     }
 
+    /// Whether the response of `request_id` has not been handed to its caller.
+    #[cfg(test)]
+    pub(super) fn awaits_response(&self, request_id: RequestId) -> bool {
+        let inflight = self
+            .inflight_requests
+            .lock()
+            .expect("inflight_requests poisoned");
+        matches!(&*inflight, InflightRequests::Open(requests) if requests.contains_key(&request_id))
+    }
+
     fn take_inflight_request(&self, request_id: RequestId) -> Option<Entry> {
         self.inflight_requests
             .lock()
@@ -673,8 +683,15 @@ impl PendingResponse {
 
 /// A response on its way to the caller. Dropped before `accept`, while still
 /// in the channel or after the caller got it, it is withdrawn through
-/// `handle_late_response`.
-pub(crate) struct ReceivedResponse(Option<UnacceptedResponse>);
+/// `handle_late_response`. After a SUBSCRIBE_OK, the control receive task
+/// reads the next message only once this is accepted or dropped, so a
+/// PUBLISH_DONE right behind it finds the receiver the caller registers
+/// before `accept`.
+pub(crate) struct ReceivedResponse {
+    unaccepted: Option<UnacceptedResponse>,
+    /// Dropped with the response; never sent.
+    _handed_over: tokio::sync::oneshot::Sender<()>,
+}
 
 struct UnacceptedResponse {
     message: ResponseMessage,
@@ -691,29 +708,40 @@ impl ReceivedResponse {
         connection: &Arc<Connection>,
         request_id: RequestId,
         action: LateResponseAction,
+        handed_over: tokio::sync::oneshot::Sender<()>,
     ) -> Self {
-        Self(Some(UnacceptedResponse {
-            message,
-            session: Arc::downgrade(session),
-            connection: Arc::downgrade(connection),
-            request_id,
-            action,
-        }))
+        Self {
+            unaccepted: Some(UnacceptedResponse {
+                message,
+                session: Arc::downgrade(session),
+                connection: Arc::downgrade(connection),
+                request_id,
+                action,
+            }),
+            _handed_over: handed_over,
+        }
     }
 
     // Only `accept` and `drop` take the response, and both consume `self`.
     pub(super) fn message(&self) -> &ResponseMessage {
-        &self.0.as_ref().expect("taken only on consume").message
+        &self
+            .unaccepted
+            .as_ref()
+            .expect("taken only on consume")
+            .message
     }
 
     pub(super) fn accept(mut self) -> ResponseMessage {
-        self.0.take().expect("taken only on consume").message
+        self.unaccepted
+            .take()
+            .expect("taken only on consume")
+            .message
     }
 }
 
 impl Drop for ReceivedResponse {
     fn drop(&mut self) {
-        let Some(unaccepted) = self.0.take() else {
+        let Some(unaccepted) = self.unaccepted.take() else {
             return;
         };
         let (Some(session), Some(connection)) = (

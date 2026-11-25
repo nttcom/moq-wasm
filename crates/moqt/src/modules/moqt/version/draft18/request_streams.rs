@@ -1008,6 +1008,8 @@ pub(crate) struct OutgoingRequestTask {
     pub(super) receiver: MessageReceiver,
     /// `None` once this side withdrew the request unanswered.
     pub(super) response: tokio::sync::oneshot::Sender<Option<ResponseMessage>>,
+    /// Resolves once the caller accepted or dropped the response.
+    pub(super) released: tokio::sync::oneshot::Receiver<()>,
     pub(super) group_order: GroupOrder,
 }
 
@@ -1032,6 +1034,7 @@ impl OutgoingRequestTask {
             stream,
             mut receiver,
             response,
+            released,
             group_order,
         } = self;
         let RequestStream {
@@ -1088,6 +1091,7 @@ impl OutgoingRequestTask {
             return;
         };
         let succeeded = is_success(&first_response);
+        let subscribed = matches!(first_response, ResponseMessage::SubscribeOk(_));
         // The subscriber's PUBLISH_OK is where its updates start from.
         let mut baseline = match &first_response {
             ResponseMessage::PublishOk(ok) => Some(update_baseline(
@@ -1107,6 +1111,11 @@ impl OutgoingRequestTask {
             return;
         }
         drop(context);
+        if subscribed {
+            // A PUBLISH_DONE right behind waits until the caller registered
+            // the receiver and accepted.
+            let _ = released.await;
+        }
         // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn,
         // with the Request ID each was announced under.
         let mut namespaces: HashMap<Vec<String>, RequestId> = HashMap::new();

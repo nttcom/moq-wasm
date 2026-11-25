@@ -901,17 +901,20 @@ impl ControlChannel {
         let stream = RequestStream::new(kind, sender);
         self.requests().outgoing.insert(request_id, stream.clone());
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
+        let (handed_over, released) = tokio::sync::oneshot::channel();
         request_streams::OutgoingRequestTask {
             connection: Arc::downgrade(connection),
             request_id,
             stream,
             receiver: MessageReceiver::new(receive_stream, MessageDecoder),
             response: response_sender,
+            released,
             group_order: group_order.unwrap_or(GroupOrder::Ascending),
         }
         .run();
         Ok(PendingResponse {
             receiver,
+            handed_over: Some(handed_over),
             cancel: RequestCancel(CallerState::AwaitingResponse(SentRequest {
                 connection: Arc::downgrade(connection),
                 request_id,
@@ -1265,6 +1268,8 @@ fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: 
 
 pub(crate) struct PendingResponse {
     receiver: tokio::sync::oneshot::Receiver<Option<ResponseMessage>>,
+    /// Moves into the `ReceivedResponse`; see `ReceivedResponse::_handed_over`.
+    handed_over: Option<tokio::sync::oneshot::Sender<()>>,
     cancel: RequestCancel,
 }
 
@@ -1373,6 +1378,7 @@ impl PendingResponse {
         let _ = sender.send(Some(response));
         Self {
             receiver,
+            handed_over: None,
             cancel: RequestCancel(CallerState::Ended),
         }
     }
@@ -1388,7 +1394,11 @@ impl PendingResponse {
         {
             Ok(Ok(Some(message))) => {
                 let cancel = self.cancel.deliver(&message);
-                Ok(ReceivedResponse { message, cancel })
+                Ok(ReceivedResponse {
+                    message,
+                    cancel,
+                    _handed_over: self.handed_over.take(),
+                })
             }
             Ok(Ok(None)) => Err(RequestFailure::Withdrawn),
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
@@ -1402,6 +1412,11 @@ impl PendingResponse {
 pub(crate) struct ReceivedResponse {
     message: ResponseMessage,
     cancel: RequestCancel,
+    /// Dropped with the response; never sent. After a SUBSCRIBE_OK, the
+    /// request stream's task reads the next message only then, so a
+    /// PUBLISH_DONE right behind it finds the receiver the caller registers
+    /// before `accept`.
+    _handed_over: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl ReceivedResponse {
@@ -1708,7 +1723,11 @@ mod tests {
         response_sender
             .send(Some(subscribe_ok_response(track_alias)))
             .unwrap();
-        let pending = PendingResponse { receiver, cancel };
+        let pending = PendingResponse {
+            receiver,
+            handed_over: None,
+            cancel,
+        };
 
         // Act
         drop(pending);

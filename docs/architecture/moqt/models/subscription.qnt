@@ -11,9 +11,11 @@
 //   `ObjectSinks::notify` under `Connection::object_sinks`).
 // - `controlTask`: one message handled by the control receive task
 //   (moqt/version/draft14/control_message_receive_task.rs): SUBSCRIBE_OK is
-//   handed to the caller through a oneshot (:132-148) and the task reads the
-//   next message at once; PUBLISH_DONE is pushed to `PublishDoneExpiryTask`
-//   and to the session's events (:122).
+//   handed to the caller through a oneshot and the task reads the next
+//   message once the caller accepted or dropped it; PUBLISH_DONE is pushed
+//   to `PublishDoneExpiryTask` and to the session's events. draft-18's
+//   request stream task (version/draft18/request_streams.rs) orders a
+//   PUBLISH_DONE behind its SUBSCRIBE_OK the same way.
 // - The caller of `Subscriber::subscribe_joining`
 //   (moqt/domains/subscriber.rs:187-275): `callerGotOk` takes the response
 //   from the oneshot; `callerRegisters` is
@@ -40,7 +42,7 @@
 //   `update_forward`/`end_before_group`/`request_new_group`; `appUnsubscribes`
 //   is `Subscriber::unsubscribe` (subscriber.rs:837-851).
 //
-// Switches (all off in `subscription_current`):
+// Switches (`subscription_current` turns on the ones the code implements):
 // - ACCEPT_BEFORE_NEXT: the control receive task reads the next message only
 //   once the caller accepted (or dropped) the SUBSCRIBE_OK it handed over.
 // - DONE_BEFORE_SUBSCRIBE: the `done` waiter is registered before SUBSCRIBE is
@@ -409,7 +411,7 @@ module subscription {
 module subscription_current {
   import subscription(
     MAX_STREAMS = 2,
-    ACCEPT_BEFORE_NEXT = false,
+    ACCEPT_BEFORE_NEXT = true,
     DONE_BEFORE_SUBSCRIBE = false,
     KEEP_UNCLAIMED_RECEIVER = false,
     END_TRACKED = false,

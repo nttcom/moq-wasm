@@ -136,15 +136,25 @@ impl ControlMessageReceiveTask {
                                             sender,
                                             on_late_response,
                                         }) => {
+                                            let subscribed =
+                                                matches!(message, ResponseMessage::SubscribeOk(_));
+                                            let (handed_over, released) =
+                                                tokio::sync::oneshot::channel();
                                             // If the caller stopped waiting, `send` hands the
                                             // response back and dropping it withdraws the request.
-                                            let _ = sender.send(ReceivedResponse::new(
+                                            let sent = sender.send(ReceivedResponse::new(
                                                 message,
                                                 &session,
                                                 &connection,
                                                 request_id,
                                                 on_late_response,
+                                                handed_over,
                                             ));
+                                            if subscribed && sent.is_ok() {
+                                                // A PUBLISH_DONE right behind waits until the
+                                                // caller registered the receiver and accepted.
+                                                let _ = released.await;
+                                            }
                                         }
                                         Some(Entry::Abandoned(action)) => {
                                             handle_late_response(
