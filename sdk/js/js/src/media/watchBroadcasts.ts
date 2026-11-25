@@ -1,10 +1,6 @@
-import type { MoqSession, MoqNamespaceWatch } from '../core/session'
-import { sdkLog } from '../core/log'
-import { getErrorMessage } from './internal/status'
-import { isOwnBroadcast } from './ownBroadcasts'
+import type { MoqSession } from '../core/session'
+import { followNamespaces } from './internal/followNamespaces'
 import { RemoteBroadcast, type RemoteBroadcastOptions } from './remoteBroadcast'
-
-const TARGET = 'moq-wasm::media::watch_broadcasts'
 
 export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
   filter?: (namespace: string[]) => boolean
@@ -32,7 +28,9 @@ export async function watchBroadcasts(
   const watch = await session.watchNamespaces(prefix)
   const broadcasts = new Map<string, RemoteBroadcast>()
   let closed = false
-  void follow(session, watch, options, broadcasts, () => closed)
+  const { filter, onAdd, onRemove, ...broadcastOptions } = options
+  const play = (namespace: string[]) => new RemoteBroadcast(session, namespace, broadcastOptions)
+  void followNamespaces(session, watch, broadcasts, { filter, play, onAdd, onRemove }, () => closed)
   return {
     close: async () => {
       closed = true
@@ -41,43 +39,5 @@ export async function watchBroadcasts(
       broadcasts.clear()
       await Promise.all(all.map((broadcast) => broadcast.dispose()))
     }
-  }
-}
-
-async function follow(
-  session: MoqSession,
-  watch: MoqNamespaceWatch,
-  options: WatchBroadcastsOptions,
-  broadcasts: Map<string, RemoteBroadcast>,
-  closed: () => boolean
-): Promise<void> {
-  const { filter, onAdd, onRemove, ...broadcastOptions } = options
-  const remove = async (key: string) => {
-    const broadcast = broadcasts.get(key)
-    if (!broadcast) {
-      return
-    }
-    broadcasts.delete(key)
-    await broadcast.dispose()
-    onRemove(broadcast)
-  }
-  try {
-    for await (const { kind, namespace } of watch) {
-      if (closed()) {
-        return
-      }
-      if (isOwnBroadcast(session, namespace) || (filter && !filter(namespace))) {
-        continue
-      }
-      const key = JSON.stringify(namespace)
-      await remove(key)
-      if (kind === 'announced') {
-        const broadcast = new RemoteBroadcast(session, namespace, broadcastOptions)
-        broadcasts.set(key, broadcast)
-        onAdd(broadcast)
-      }
-    }
-  } catch (error) {
-    sdkLog(session, 'error', TARGET, 'watching broadcasts failed', { error: getErrorMessage(error) })
   }
 }

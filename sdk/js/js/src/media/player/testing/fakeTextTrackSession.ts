@@ -1,7 +1,9 @@
 import type {
+  MoqNamespaceWatch,
   MoqSession,
   MoqSubscribeGroupStartOptions,
   MoqSubscription,
+  NamespaceEvent,
   PublishDone,
   ReceivedObject
 } from '../../../core/session'
@@ -17,10 +19,20 @@ export type FakeTextSubscription = {
   end(done: PublishDone): void
 }
 
+/// One SUBSCRIBE_NAMESPACE the session answered: `announce` and `withdraw`
+/// hand its reader a namespace event.
+export type FakeNamespaceWatch = {
+  prefix: string[]
+  closed: boolean
+  announce(namespace: string[]): void
+  withdraw(namespace: string[]): void
+}
+
 /// A session whose SUBSCRIBEs stay open until the test ends them; while
 /// `absent`, the relay answers every SUBSCRIBE with TRACK_DOES_NOT_EXIST.
 export class FakeTextTrackSession {
   readonly subscriptions: FakeTextSubscription[] = []
+  readonly watches: FakeNamespaceWatch[] = []
   absent = false
 
   get session(): MoqSession {
@@ -84,6 +96,40 @@ export class FakeTextTrackSession {
         wake()
       }
     } as unknown as MoqSubscription
+  }
+
+  async watchNamespaces(prefix: string[]): Promise<MoqNamespaceWatch> {
+    const queued: NamespaceEvent[] = []
+    let wake = () => {}
+    const push = (event: NamespaceEvent) => {
+      queued.push(event)
+      wake()
+    }
+    const watch: FakeNamespaceWatch = {
+      prefix,
+      closed: false,
+      announce: (namespace) => push({ kind: 'announced', namespace }),
+      withdraw: (namespace) => push({ kind: 'withdrawn', namespace })
+    }
+    this.watches.push(watch)
+    return {
+      async *[Symbol.asyncIterator]() {
+        while (!watch.closed) {
+          const event = queued.shift()
+          if (event) {
+            yield event
+          } else {
+            await new Promise<void>((resolve) => {
+              wake = resolve
+            })
+          }
+        }
+      },
+      close: async () => {
+        watch.closed = true
+        wake()
+      }
+    } as unknown as MoqNamespaceWatch
   }
 
   open(track: string): FakeTextSubscription[] {
