@@ -5,7 +5,7 @@ Next: in session cleanup (`services/relay/src/modules/control_plane/session_work
 ## Goal
 
 A client that subscribes to a prefix right after its last subscriber disconnected is answered SUBSCRIBE_NAMESPACE_OK.
-Reproduced with a route registry double that holds calls: the new client is the prefix's first client, `register_route` (`sequences/subscribe_namespace.rs:96`) finds this relay's own entry still in the registry, and the client is answered SUBSCRIBE_NAMESPACE_ERROR with NamespacePrefixOverlap.
+Reproduced with a route registry double that holds calls: the new client is the prefix's first client, `register_route` (`sequences/subscribe_namespace.rs:96`) finds this relay's own entry still in the registry, and the client is answered SUBSCRIBE_NAMESPACE_ERROR with NamespacePrefixOverlap; so does `docs/architecture/relay/models/namespace.qnt` (invariant `noPrefixOverlapWithItself`, 5 steps).
 
 ## Plan
 
