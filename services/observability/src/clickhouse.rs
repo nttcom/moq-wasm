@@ -40,10 +40,6 @@ impl ClickHouse {
             .iter()
             .map(|(name, value)| (format!("param_{name}"), value.as_str()))
             .collect();
-        let params: Vec<(&str, &str)> = params
-            .iter()
-            .map(|(name, value)| (name.as_str(), *value))
-            .collect();
         let body = self
             .post(&params, format!("{sql} FORMAT JSONEachRow"))
             .await?;
@@ -55,7 +51,7 @@ impl ClickHouse {
             .collect()
     }
 
-    async fn post(&self, params: &[(&str, &str)], body: String) -> anyhow::Result<String> {
+    async fn post(&self, params: &[(String, &str)], body: String) -> anyhow::Result<String> {
         let mut url =
             reqwest::Url::parse(&self.config.url).context("CLICKHOUSE_URL is not a URL")?;
         url.query_pairs_mut()
