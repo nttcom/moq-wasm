@@ -17,3 +17,6 @@ telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
 tracing = { workspace = true }
 
+
+[dev-dependencies]
+http-server = { path = "../../crates/http-server", features = ["testing"] }
