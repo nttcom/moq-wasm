@@ -1,5 +1,5 @@
 use crate::modules::{
-    cascading::route_registry::RelayRouteRegistry,
+    cascading::namespace_routes::NamespaceRoutes,
     control_plane::control_message_forwarder::ControlMessageForwarder,
     directory::InMemoryLocalPubSubDirectory,
     domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
@@ -18,7 +18,7 @@ impl Unsubscribe {
         session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        route_registry: &dyn RelayRouteRegistry,
+        namespace_routes: &NamespaceRoutes,
         subscribe_id: u64,
         end: Option<PublishDoneReason>,
     ) {
@@ -49,7 +49,7 @@ impl Unsubscribe {
         super::release_upstream_subscriptions(
             table,
             forwarder,
-            route_registry,
+            namespace_routes,
             &removed.track_key,
             &removed.released_upstream_subscriptions,
         )
@@ -61,6 +61,8 @@ impl Unsubscribe {
 mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::downstream_subscription;
+    use std::sync::Arc;
+
     use tokio::sync::oneshot;
 
     use super::*;
@@ -79,7 +81,8 @@ mod tests {
 
     struct TestContext {
         upstream: UpstreamReleaseContext,
-        route_registry: StubRouteRegistry,
+        route_registry: Arc<StubRouteRegistry>,
+        namespace_routes: NamespaceRoutes,
         runner_stop_receivers: Vec<oneshot::Receiver<PublishDoneReason>>,
     }
 
@@ -103,9 +106,11 @@ mod tests {
                 .stop_receiver
             })
             .collect();
+        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::MustNotBeCalled));
         TestContext {
             upstream,
-            route_registry: StubRouteRegistry::new(PublisherLookup::MustNotBeCalled),
+            namespace_routes: NamespaceRoutes::new(route_registry.clone()),
+            route_registry,
             runner_stop_receivers,
         }
     }
@@ -125,7 +130,7 @@ mod tests {
                 session_id,
                 &ctx.upstream.table,
                 &ctx.upstream.forwarder,
-                &ctx.route_registry,
+                &ctx.namespace_routes,
                 subscribe_id,
                 end,
             )

@@ -1,10 +1,7 @@
 use crate::modules::{
-    cascading::route_registry::RelayRouteRegistry,
-    control_plane::{
-        control_message_forwarder::ControlMessageForwarder, sequences::publish::Publish,
-    },
-    directory::InMemoryLocalPubSubDirectory,
-    domain::track_key::TrackKey,
+    cascading::namespace_routes::NamespaceRoutes,
+    control_plane::control_message_forwarder::ControlMessageForwarder,
+    directory::InMemoryLocalPubSubDirectory, domain::track_key::TrackKey,
 };
 
 pub(crate) struct MalformedTrackCleanup;
@@ -29,7 +26,7 @@ impl MalformedTrackCleanup {
         track_key: &TrackKey,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        route_registry: &dyn RelayRouteRegistry,
+        namespace_routes: &NamespaceRoutes,
     ) {
         let released = table.remove_upstream_track(track_key);
         // draft-14 §2.5: the cache latch makes the whole track malformed, so
@@ -42,15 +39,16 @@ impl MalformedTrackCleanup {
             )
             .await;
         }
-        Publish::withdraw_track_route(table, route_registry, track_key).await;
+        namespace_routes.withdraw_track(track_key, table).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::modules::{
-        cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::ProducerOrigin,
         domain::session_id::SessionId,
         test_support::{
@@ -62,15 +60,12 @@ mod tests {
     };
 
     async fn run_cleanup(ctx: &UpstreamReleaseContext) {
-        run_cleanup_with(ctx, &NoopRelayRouteRegistry).await;
+        run_cleanup_with(ctx, &NamespaceRoutes::unregistered()).await;
     }
 
-    async fn run_cleanup_with(
-        ctx: &UpstreamReleaseContext,
-        route_registry: &dyn RelayRouteRegistry,
-    ) {
+    async fn run_cleanup_with(ctx: &UpstreamReleaseContext, namespace_routes: &NamespaceRoutes) {
         MalformedTrackCleanup
-            .handle(&track_key(), &ctx.table, &ctx.forwarder, route_registry)
+            .handle(&track_key(), &ctx.table, &ctx.forwarder, namespace_routes)
             .await;
     }
 
@@ -140,10 +135,10 @@ mod tests {
     async fn detection_of_a_published_track_withdraws_its_route() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Publish).await;
-        let route_registry = StubRouteRegistry::new(PublisherLookup::MustNotBeCalled);
+        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::MustNotBeCalled));
 
         // Act
-        run_cleanup_with(&ctx, &route_registry).await;
+        run_cleanup_with(&ctx, &NamespaceRoutes::new(route_registry.clone())).await;
 
         // Assert
         assert!(!ctx.table.has_client_published_track(&track_key()));

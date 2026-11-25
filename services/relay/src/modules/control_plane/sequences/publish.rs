@@ -97,12 +97,10 @@ impl Publish {
                 {
                     tracing::error!("failed to send PUBLISH_ERROR. close session.");
                 }
-                Self::withdraw_track_route(
-                    table,
-                    cascading_relay_context.route_registry,
-                    &track_key,
-                )
-                .await;
+                cascading_relay_context
+                    .namespace_routes
+                    .withdraw_track(&track_key, table)
+                    .await;
                 return;
             }
         };
@@ -162,30 +160,6 @@ impl Publish {
             tracing::error!("failed to send PUBLISH_ERROR. close session.");
         }
         false
-    }
-
-    #[tracing::instrument(
-        level = "debug",
-        name = "relay.sequence.publish.withdraw_track_route",
-        skip_all,
-        fields(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name)
-    )]
-    pub(crate) async fn withdraw_track_route(
-        table: &InMemoryLocalPubSubDirectory,
-        route_registry: &dyn RelayRouteRegistry,
-        track_key: &TrackKey,
-    ) {
-        if table.has_client_published_track(track_key) {
-            return;
-        }
-        if let Err(err) = route_registry.unregister_track_publisher(track_key).await {
-            tracing::warn!(
-                error = ?err,
-                track_namespace = %track_key.track_namespace,
-                track_name = %track_key.track_name,
-                "failed to unregister track route"
-            );
-        }
     }
 
     #[tracing::instrument(

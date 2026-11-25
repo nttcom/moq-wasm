@@ -1,5 +1,5 @@
 use crate::modules::{
-    cascading::route_registry::RelayRouteRegistry,
+    cascading::namespace_routes::NamespaceRoutes,
     control_plane::control_message_forwarder::ControlMessageForwarder,
     directory::InMemoryLocalPubSubDirectory, domain::session_id::SessionId,
 };
@@ -16,7 +16,7 @@ impl ReleaseUnwatchedPublishes {
         publisher_session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        route_registry: &dyn RelayRouteRegistry,
+        namespace_routes: &NamespaceRoutes,
     ) {
         for (track_key, released) in
             table.release_unwatched_published_subscriptions(publisher_session_id)
@@ -24,7 +24,7 @@ impl ReleaseUnwatchedPublishes {
             super::release_upstream_subscriptions(
                 table,
                 forwarder,
-                route_registry,
+                namespace_routes,
                 &track_key,
                 std::slice::from_ref(&released),
             )
@@ -36,10 +36,11 @@ impl ReleaseUnwatchedPublishes {
 #[cfg(test)]
 mod tests {
 
+    use std::sync::Arc;
+
     use super::*;
     use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
-        cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::ProducerOrigin,
         domain::session_peer::SessionPeer,
         test_support::{
@@ -52,16 +53,16 @@ mod tests {
     };
 
     async fn release(ctx: &UpstreamReleaseContext) {
-        release_with(ctx, &NoopRelayRouteRegistry).await;
+        release_with(ctx, &NamespaceRoutes::unregistered()).await;
     }
 
-    async fn release_with(ctx: &UpstreamReleaseContext, route_registry: &dyn RelayRouteRegistry) {
+    async fn release_with(ctx: &UpstreamReleaseContext, namespace_routes: &NamespaceRoutes) {
         ReleaseUnwatchedPublishes
             .handle(
                 PUBLISHER_SESSION,
                 &ctx.table,
                 &ctx.forwarder,
-                route_registry,
+                namespace_routes,
             )
             .await;
     }
@@ -87,10 +88,10 @@ mod tests {
     async fn an_unwatched_published_track_has_its_route_withdrawn() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Publish).await;
-        let route_registry = StubRouteRegistry::new(PublisherLookup::MustNotBeCalled);
+        let route_registry = Arc::new(StubRouteRegistry::new(PublisherLookup::MustNotBeCalled));
 
         // Act
-        release_with(&ctx, &route_registry).await;
+        release_with(&ctx, &NamespaceRoutes::new(route_registry.clone())).await;
 
         // Assert
         assert!(!ctx.table.has_client_published_track(&track_key()));

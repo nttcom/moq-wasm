@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 
 use crate::modules::directory::track::DownstreamSubscription;
 use crate::modules::{
-    cascading::route_registry::RelayRouteRegistry,
+    cascading::namespace_routes::NamespaceRoutes,
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
@@ -29,7 +29,7 @@ pub(crate) struct DownstreamPublish {
     pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) forwarder: ControlMessageForwarder,
     pub(crate) cache_store: Arc<TrackCacheStore>,
-    pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
+    pub(crate) namespace_routes: Arc<NamespaceRoutes>,
 }
 
 impl DownstreamPublish {
@@ -131,7 +131,7 @@ impl DownstreamPublish {
         if !start_egress(
             &self.table,
             &self.forwarder,
-            self.route_registry.as_ref(),
+            self.namespace_routes.as_ref(),
             &self.cache_store,
             EgressRequest {
                 subscriber_session_id,

@@ -1,8 +1,8 @@
 use super::WorkerDeps;
 use crate::modules::{
     control_plane::sequences::{
-        publish::Publish, publish_namespace_done::PublishNamespaceDone,
-        unsubscribe_namespace::UnsubscribeNamespace, withdraw_released_track_route,
+        publish_namespace_done::PublishNamespaceDone, unsubscribe_namespace::UnsubscribeNamespace,
+        withdraw_released_track_route,
     },
     directory::track::RemovedSessionSubscriptions,
     domain::session_id::SessionId,
@@ -38,7 +38,7 @@ async fn cleanup_removed_session(
     for removed_downstream in removed.downstream_subscriptions {
         withdraw_released_track_route(
             table,
-            deps.route_registry.as_ref(),
+            deps.namespace_routes.as_ref(),
             &removed_downstream.track_key,
             &removed_downstream.released_upstream_subscriptions,
         )
@@ -64,7 +64,9 @@ async fn cleanup_removed_session(
             deps.cache_store.publisher_left(&track_key);
         }
         if was_client {
-            Publish::withdraw_track_route(table, deps.route_registry.as_ref(), &track_key).await;
+            deps.namespace_routes
+                .withdraw_track(&track_key, table)
+                .await;
         }
     }
 

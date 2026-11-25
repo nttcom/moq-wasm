@@ -115,7 +115,7 @@ impl PendingProducerTask {
                             track_key,
                             &deps.table,
                             &deps.forwarder,
-                            deps.resolver.route_registry(),
+                            &deps.resolver.namespace_routes,
                         )
                         .await;
                 }

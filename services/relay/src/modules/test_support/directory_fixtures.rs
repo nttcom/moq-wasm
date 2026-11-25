@@ -6,6 +6,7 @@ use crate::modules::{
     auth::{test_support::TEST_VERSIONS, verified_token::VerifiedToken},
     cascading::{
         inter_relay_connection_manager::{InterRelayClientConfig, InterRelayConnectionManager},
+        namespace_routes::NamespaceRoutes,
         route_registry::NoopRelayRouteRegistry,
     },
     control_plane::{
@@ -272,7 +273,7 @@ impl DownstreamPublishContext {
             table: self.table.clone(),
             forwarder: self.forwarder.clone(),
             cache_store: self.cache_store.clone(),
-            route_registry: Arc::new(NoopRelayRouteRegistry),
+            namespace_routes: Arc::new(NamespaceRoutes::unregistered()),
         }
     }
 
