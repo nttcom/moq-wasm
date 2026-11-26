@@ -27,11 +27,21 @@ const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 const TRANSPORT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Nor does it end a connection whose peer never sends CLIENT_SETUP. The wait
 /// includes the client's token provider, which runs once the transport is open.
-const CLIENT_SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+const CLIENT_SETUP_TIMEOUT: Duration = setup_timeout(Duration::from_secs(10));
 /// Nor a client's wait for SERVER_SETUP from a server that answers keep-alives
 /// but not CLIENT_SETUP: 30 s, as long as quinn's default idle timeout and the
 /// WebSocket client's `DIAL_TIMEOUT`.
-const SERVER_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
+const SERVER_SETUP_TIMEOUT: Duration = setup_timeout(Duration::from_secs(30));
+
+/// The deadline tests wait on the real clock: pausing tokio's clock over QUIC
+/// would race quinn's timers and UDP delivery.
+const fn setup_timeout(production: Duration) -> Duration {
+    if cfg!(test) {
+        Duration::from_secs(2)
+    } else {
+        production
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("peer closed the connection before SERVER_SETUP (code {code}: {reason})")]
@@ -918,7 +928,6 @@ mod tests {
     #[tokio::test]
     async fn a_peer_that_sends_no_client_setup_is_closed_after_the_deadline() {
         // Arrange: the server waits for the control stream
-        let (telemetry, _guard) = capture_telemetry();
         let server =
             Endpoint::<NATIVE>::create_server(&self_signed_server_config("accept-silent-peer"))
                 .unwrap();
@@ -929,13 +938,6 @@ mod tests {
             application_protocols(TEST_VERSIONS).unwrap().quic_alpns[0],
         ))
         .await;
-        within(async {
-            while telemetry.events("MoQT version negotiated").is_empty() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await;
-        tokio::time::pause();
 
         // Act
         let error =
@@ -971,7 +973,6 @@ mod tests {
                     .await
             });
             let _handshake = within(accept).await.unwrap();
-            tokio::time::pause();
 
             // Act
             let result =
@@ -979,7 +980,6 @@ mod tests {
                     .await
                     .expect("the client still waits for SERVER_SETUP")
                     .unwrap();
-            tokio::time::resume();
 
             // Assert
             let Err(error) = result else {
