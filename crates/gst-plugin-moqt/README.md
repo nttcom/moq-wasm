@@ -2,11 +2,39 @@
 
 GStreamer sink plugin (`moqtsink`) that publishes H.264 video and AAC audio from a GStreamer pipeline to a MoQT relay as an MSF broadcast (LOC + CMAF tracks via [`crates/broadcast`](../broadcast/README.md)).
 
-## Requirements & build
+## Requirements
 
-Requires GStreamer 1.20+ with `gst-plugins-base`, `gst-plugins-good`, and `gst-plugins-bad` (`brew install gstreamer` on macOS; `pkg-config`, `libgstreamer1.0-dev`, `gstreamer1.0-tools`, `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad` on Debian/Ubuntu).
+Requires GStreamer 1.20+ with `gst-plugins-base`, `gst-plugins-good`, and `gst-plugins-bad` for the elements upstream of `moqtsink` (`h264parse`, `aacparse`, …): `brew install gstreamer` on macOS; `gstreamer1.0-tools`, `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad` on Debian/Ubuntu; the [official MSVC installer](https://gstreamer.freedesktop.org/download/) on Windows.
 
-Build and verify the plugin:
+## Install
+
+Each `gst-plugin-moqt` release on the [releases page](https://github.com/nttcom/moq-wasm/releases) has one archive per platform holding the plugin and `LICENSE`. Put the plugin in GStreamer's user plugin directory:
+
+| Platform | Archive | Built against | Plugin directory |
+| --- | --- | --- | --- |
+| macOS (Apple silicon) | `gst-plugin-moqt-<version>-macos-arm64.tar.gz` | Homebrew's `gstreamer` | `~/.local/share/gstreamer-1.0/plugins` |
+| Linux (x86_64 / aarch64) | `gst-plugin-moqt-<version>-linux-<arch>.tar.gz` | Ubuntu 22.04 (glibc 2.35+, GStreamer 1.20+) | `~/.local/share/gstreamer-1.0/plugins` |
+| Windows (x64) | `gst-plugin-moqt-<version>-windows-x64.zip` | Official MSVC GStreamer | `%LOCALAPPDATA%\gstreamer-1.0\plugins` |
+
+On macOS and Linux (set `VERSION` and the archive's platform):
+
+```shell
+VERSION=0.1.0 PLATFORM=macos-arm64   # or linux-x86_64, linux-aarch64
+mkdir -p ~/.local/share/gstreamer-1.0/plugins
+curl -fL "https://github.com/nttcom/moq-wasm/releases/download/gst-plugin-moqt-v${VERSION}/gst-plugin-moqt-${VERSION}-${PLATFORM}.tar.gz" \
+  | tar -xz -C ~/.local/share/gstreamer-1.0/plugins --exclude LICENSE
+gst-inspect-1.0 moqtsink
+```
+
+On Windows, extract `gstmoqt.dll` from the zip into `%LOCALAPPDATA%\gstreamer-1.0\plugins` (create the folder if it is missing) and run `gst-inspect-1.0 moqtsink`.
+
+- **macOS**: The plugin is not signed. `curl` leaves no quarantine on it; if a browser downloaded the archive, run `xattr -d com.apple.quarantine ~/.local/share/gstreamer-1.0/plugins/libgstmoqt.dylib`, or GStreamer fails to load it. The official `GStreamer.framework` is not supported.
+- **Other directories**: `GST_PLUGIN_PATH` adds any directory holding the plugin.
+- **Uninstall**: Delete the plugin file from the plugin directory.
+
+## Build from source
+
+Additionally requires `pkg-config` and the GStreamer development files (`libgstreamer1.0-dev` on Debian/Ubuntu; included in Homebrew's `gstreamer` and the official Windows installer's development setup). Build and verify the plugin:
 
 ```shell
 make gst-plugin
