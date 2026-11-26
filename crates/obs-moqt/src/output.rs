@@ -6,14 +6,14 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicI32, AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use broadcast::{
     Broadcast, BroadcastWriter, PushOutcome, RelayConnection, SourceTracks, TokenRefreshTask,
 };
-use mediapack::MediaEvent;
+use mediapack::{MediaEvent, Timestamp};
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 
 use crate::{
@@ -25,9 +25,9 @@ use crate::{
         obs_output_can_begin_data_capture, obs_output_end_data_capture,
         obs_output_get_audio_encoder, obs_output_get_service, obs_output_get_video_encoder,
         obs_output_initialize_encoders, obs_output_set_last_error, obs_output_signal_stop,
-        obs_register_output_s, obs_service_get_settings,
+        obs_register_output_s, obs_service_get_settings, os_gettime_ns,
     },
-    media_input::{MediaInput, ticks_to_micros},
+    media_input::{MediaInput, capture_origin, obs_delay_micros, ticks_to_micros},
     publish_settings::{PublishSettings, read_token_file},
 };
 
@@ -80,6 +80,7 @@ unsafe impl Sync for OutputHandle {}
 struct Publishing {
     writer: BroadcastWriter,
     media: MediaInput,
+    capture_origin_set: bool,
     /// Re-reads the token file while the session is up.
     _token_refresh: Option<TokenRefreshTask>,
 }
@@ -98,6 +99,7 @@ impl Publishing {
         Ok(Self {
             writer: BroadcastWriter::run(broadcast, SourceTracks::default()),
             media: MediaInput::default(),
+            capture_origin_set: false,
             _token_refresh: token_refresh,
         })
     }
@@ -275,6 +277,12 @@ impl Shared {
             }
         };
         for event in events {
+            if let MediaEvent::Video(sample) = &event
+                && !state.capture_origin_set
+            {
+                state.capture_origin_set = true;
+                set_capture_origin(&mut state.writer, packet, sample.pts)?;
+            }
             let is_video_sample = matches!(event, MediaEvent::Video(_));
             if state.writer.push(event)? == PushOutcome::Dropped && is_video_sample {
                 self.dropped_frames.fetch_add(1, Ordering::Relaxed);
@@ -294,6 +302,36 @@ impl Shared {
         // SAFETY: `output` is live; libobs ends the capture on its own thread.
         unsafe { obs_output_signal_stop(self.output.0, code) };
     }
+}
+
+/// Tells `writer` when the stream's first video sample, shown at
+/// `presentation_time`, was captured, so that the time it spent inside OBS
+/// counts as delay. OBS stamps a frame on its own clock when it composes it,
+/// and `sys_dts_usec` of the keyframe that starts a stream is that stamp;
+/// later packets carry decode-order times. Without a usable stamp the writer
+/// counts from the sample's arrival, as for any other source.
+fn set_capture_origin(
+    writer: &mut BroadcastWriter,
+    packet: &EncoderPacket,
+    presentation_time: Timestamp,
+) -> Result<()> {
+    // SAFETY: `os_gettime_ns` only reads a clock.
+    let obs_now_micros = (unsafe { os_gettime_ns() } / 1_000) as i64;
+    let track_namespace = writer.broadcast().namespace().join("/");
+    let Some(delay_micros) = obs_delay_micros(obs_now_micros, packet.sys_dts_usec) else {
+        tracing::warn!(%track_namespace, "OBS output got no capture time for its first frame");
+        return Ok(());
+    };
+    let wall_now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since_epoch| since_epoch.as_micros() as u64);
+    writer.set_capture_origin(capture_origin(
+        Timestamp::from_micros(wall_now),
+        delay_micros,
+        presentation_time,
+    ))?;
+    tracing::info!(obs_delay_ms = delay_micros / 1_000, %track_namespace, "OBS output measured the delay inside OBS");
+    Ok(())
 }
 
 /// # Safety

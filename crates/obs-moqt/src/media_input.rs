@@ -16,6 +16,32 @@ pub(crate) fn ticks_to_micros(ticks: i64, timebase_num: i32, timebase_den: i32) 
     i64::try_from(micros.div_euclid(i128::from(timebase_den))).ok()
 }
 
+/// Longer than OBS holds a frame back for encoding, audio buffering, and its
+/// stream delay setting together.
+const MAX_OBS_DELAY_MICROS: i64 = 3_600_000_000;
+
+/// How long ago OBS composed the frame it stamped `frame_obs_micros`, on its
+/// clock that now reads `obs_now_micros`. `None` when the stamp is in the
+/// future or more than an hour old, as for a stamp that is on another clock.
+pub(crate) fn obs_delay_micros(obs_now_micros: i64, frame_obs_micros: i64) -> Option<u64> {
+    let delay = obs_now_micros.checked_sub(frame_obs_micros)?;
+    (0..=MAX_OBS_DELAY_MICROS)
+        .contains(&delay)
+        .then_some(delay as u64)
+}
+
+/// The wall-clock time of presentation time zero, given a frame shown at
+/// `presentation_time` that was captured `delay_micros` before `wall_now`.
+pub(crate) fn capture_origin(
+    wall_now: Timestamp,
+    delay_micros: u64,
+    presentation_time: Timestamp,
+) -> Timestamp {
+    wall_now
+        .saturating_sub(Timestamp::from_micros(delay_micros))
+        .saturating_sub(presentation_time)
+}
+
 /// Turns the packets of OBS's H.264 and AAC encoders into `MediaEvent`s on
 /// one clock that starts at the first video packet.
 #[derive(Default)]
@@ -123,6 +149,28 @@ mod tests {
     }
 
     #[test]
+    fn takes_the_delay_of_a_frame_stamped_on_the_same_clock_within_the_last_hour() {
+        // Act / Assert
+        assert_eq!(obs_delay_micros(5_000_000, 4_200_000), Some(800_000));
+        assert_eq!(obs_delay_micros(5_000_000, 5_000_000), Some(0));
+        assert_eq!(obs_delay_micros(5_000_000, 5_000_001), None);
+        assert_eq!(obs_delay_micros(MAX_OBS_DELAY_MICROS + 1, 0), None);
+        assert_eq!(obs_delay_micros(i64::MIN, 1), None);
+    }
+
+    #[test]
+    fn puts_presentation_time_zero_before_the_frame_by_its_presentation_time() {
+        // Arrange: a frame shown at 66 ms that OBS composed 800 ms ago
+        let wall_now = Timestamp::from_micros(1_000_000_000);
+
+        // Act
+        let origin = capture_origin(wall_now, 800_000, Timestamp::from_micros(66_000));
+
+        // Assert
+        assert_eq!(origin, Timestamp::from_micros(999_134_000));
+    }
+
+    #[test]
     fn completes_a_keyframe_with_the_parameter_sets_of_the_extra_data() {
         // Arrange
         let mut input = MediaInput::default();
@@ -185,6 +233,39 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn a_frame_is_captured_its_delay_before_now_whatever_its_presentation_time(
+            wall_now in prop_oneof![0u64..10_000_000, 1_700_000_000_000_000u64..1_900_000_000_000_000],
+            obs_now in prop_oneof![0i64..10_000_000, 0i64..100_000_000_000_000],
+            delay in prop_oneof![0i64..3, 0i64..=MAX_OBS_DELAY_MICROS],
+            presentation in prop_oneof![0u64..200_000, 0u64..86_400_000_000],
+        ) {
+            // Act
+            let delay_micros = obs_delay_micros(obs_now, obs_now - delay).unwrap();
+            let origin = capture_origin(
+                Timestamp::from_micros(wall_now),
+                delay_micros,
+                Timestamp::from_micros(presentation),
+            );
+
+            // Assert: the origin is `presentation` before the capture unless it stops at zero
+            let captured = wall_now.saturating_sub(delay as u64);
+            prop_assert!(origin.micros() <= captured);
+            prop_assert_eq!(origin.micros(), captured.saturating_sub(presentation));
+        }
+
+        #[test]
+        fn a_stamp_outside_the_last_hour_gives_no_delay(
+            obs_now in -1_000_000i64..100_000_000_000_000,
+            outside in prop_oneof![
+                1i64..1_000_000_000_000,
+                (MAX_OBS_DELAY_MICROS + 1..1_000_000_000_000_000).prop_map(|delay| -delay),
+            ],
+        ) {
+            // Act / Assert: `outside` puts the stamp in the future or more than an hour back
+            prop_assert_eq!(obs_delay_micros(obs_now, obs_now + outside), None);
+        }
+
         #[test]
         fn later_ticks_never_map_to_earlier_microseconds(
             ticks in prop_oneof![-1_000i64..1_000, -1_000_000i64..1_000_000_000],
