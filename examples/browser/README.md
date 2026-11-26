@@ -12,17 +12,17 @@ make chrome         # Chrome trusting the local relay cert (make chrome:linux on
 
 ## Examples
 
-| Page                                                                                    | Description                                                             |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `message`                                                                               | Send and receive MoQT control messages manually                         |
-| `media`, `media-cmaf`                                                                   | WebCodecs publisher/subscriber in LOC or CMAF packaging                 |
-| `embed`                                                                                 | Playback using the `<moq-player>` custom element (`moq-wasm/element`)   |
-| [`live-viewer`](examples/live-viewer/README.md)                                         | Player with rewind for `ingest-gateway`, `moqtsink`, and in-browser MP4 |
-| [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                               |
-| [`live-translate`](examples/live-translate/README.md)                                   | Live translated broadcast via `services/live-translate`                 |
-| `onvif`                                                                                 | Remote PTZ camera control and viewing via `services/ingest-gateway`     |
-| `remote-monitoring`                                                                     | USB camera remote monitoring                                            |
-| `moq-chat-moderation`, `moq-camera-detection`, `moq-ptz-tracking`, `moq-ai-voice-agent` | Pipecat bot demos (see [`examples/python`](../python))                  |
+| Page                                                                                    | Description                                                                         |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `message`                                                                               | Send and receive MoQT control messages manually                                     |
+| `media`, `media-cmaf`                                                                   | WebCodecs publisher/subscriber in LOC or CMAF packaging                             |
+| `embed`                                                                                 | Playback using the `<moq-player>` custom element (`moq-wasm/element`)               |
+| [`live-viewer`](examples/live-viewer/README.md)                                         | Player with rewind for `ingest-gateway`, `moqtsink`, `obs-moqt`, and in-browser MP4 |
+| [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                                           |
+| [`live-translate`](examples/live-translate/README.md)                                   | Live translated broadcast via `services/live-translate`                             |
+| `onvif`                                                                                 | Remote PTZ camera control and viewing via `services/ingest-gateway`                 |
+| `remote-monitoring`                                                                     | USB camera remote monitoring                                                        |
+| `moq-chat-moderation`, `moq-camera-detection`, `moq-ptz-tracking`, `moq-ai-voice-agent` | Pipecat bot demos (see [`examples/python`](../python))                              |
 
 ## Relay and authentication
 
