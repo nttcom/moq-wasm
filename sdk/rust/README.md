@@ -14,7 +14,7 @@ Async Rust SDK for Media over QUIC Transport (MoQT) relays, matching the [JavaSc
 
 ```toml
 [dependencies]
-moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.0.1" }
+moq-wasm = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-sdk-v0.1.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1"
 serde_json = "1" # needed for the media broadcast example
