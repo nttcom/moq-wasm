@@ -10,7 +10,7 @@
 // - `announceSend(ns, local)`: `send_publish_namespace` under the Request
 //   ID reservation. When the peer has a SUBSCRIBE_NAMESPACE covering `ns`
 //   (`local`), `advertise_namespace` answers PUBLISH_NAMESPACE_OK itself and
-//   `send_request` returns without `consume` (unless CONSUME_LOCAL);
+//   `send_request` returns, consuming the ID only with CONSUME_LOCAL;
 //   otherwise the request is written and the ID consumed. The reservation
 //   serializes these, so one action is one whole `send_request`.
 // - `announceRecord(ns)`: `announce` inserts `published_namespaces[id] = ns`
@@ -36,8 +36,11 @@
 //   `Closed` / `Malformed`). A SUBSCRIBE_OK whose `response.send` fails
 //   (the caller dropped `PendingResponse`) runs `abandoned`
 //   (`cancel_unclaimed_track_alias`).
-//   A FIN, reset or decode error removes the entry, FINs the stream and drops
-//   the response sender.
+//   A reset removes the entry and FINs the stream (`end_unanswered`); with
+//   FIX_FIRST_MESSAGE it then answers the caller with a REQUEST_ERROR
+//   (§3.3.2: the peer cancelled the request), otherwise drops the response
+//   sender. A FIN or decode error does the same as a reset without the fix;
+//   with it, `close_on_violation` closes the session (§5.1).
 // - `callerReceive`: `PendingResponse::response` takes the oneshot
 //   (`RequestCancel::deliver`): a success response moves `CallerState` to
 //   `Delivered`; an error response resets the stream from
@@ -49,7 +52,9 @@
 //   or `Delivered` runs `end_outgoing`: takes the entry and resets the
 //   stream, notifying `reader_stop`. With
 //   CLEAN_ABANDONED_ALIAS it also does what draft-14's `handle_late_response`
-//   does: `cancel_unclaimed_track_alias` and `cancel_subscription`.
+//   does: `cancel_unclaimed_track_alias` and `cancel_subscription`
+//   (`abandon_track_alias`, for a SUBSCRIBE_OK `Delivered` or left in the
+//   oneshot when `PendingResponse` is dropped).
 // - `callerInstall` / `callerAccept`: `register_data_receiver`
 //   (`install_receiver`, then the `receiver_map` lock), then `accept`
 //   (`CallerState::Ended`).
@@ -59,18 +64,14 @@
 // With TAKE_ATOMIC off, a remover checks the entry under one lock hold and
 // removes it under another (`removerEnd`).
 //
-// `draft18_outgoing_request_current` is the implementation; it violates
-// `requestIdsDistinct`, `everyAnnouncedNamespaceRecorded`,
-// `abandonedAliasCancelled`, `noSessionClosedWhileLive` and
-// `malformedResponseClosesSession`. `draft18_outgoing_request_fixed` turns on
-// CONSUME_LOCAL, CLEAN_ABANDONED_ALIAS and FIX_FIRST_MESSAGE and passes.
+// `draft18_outgoing_request_current` is the implementation, with every fix
+// switch on, and passes, as does `draft18_outgoing_request_fixed`.
 // `draft18_outgoing_request_take_split` turns TAKE_ATOMIC off and fails
 // `streamEndedOnce`.
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft18_outgoing_request.qnt
-//   quint verify --backend tlc --main draft18_outgoing_request_current --invariant safety draft18_outgoing_request.qnt   # violated
-//   quint verify --backend tlc --main draft18_outgoing_request_current --invariant <name> draft18_outgoing_request.qnt
+//   quint verify --backend tlc --main draft18_outgoing_request_current --invariant safety draft18_outgoing_request.qnt   # passes
 //   quint verify --backend tlc --main draft18_outgoing_request_fixed --invariant safety draft18_outgoing_request.qnt     # passes
 //   quint verify --backend tlc --main draft18_outgoing_request_take_split --invariant safety draft18_outgoing_request.qnt
 module draft18_outgoing_request {
@@ -225,6 +226,10 @@ module draft18_outgoing_request {
   def unclaimedCancelled(sink: Sink): Sink =
     if (sink == SinkReceiver) sink else SinkCancelled
 
+  // `end_unanswered` for a FIN or decode error before FIX_FIRST_MESSAGE.
+  def unansweredEnd(st: State): State =
+    if (FIX_FIRST_MESSAGE) st else removed(st, "first", HFin)
+
   action taskFirst: bool = all {
     s.first == Unread,
     s.peer != PIdle or s.readerStopped,
@@ -252,12 +257,13 @@ module draft18_outgoing_request {
             else
               s' = { ...removed(s, "first", HFin), first: ReadReset,
                      slot: if (callerAlive) SlotSenderGone else s.slot }
+        // With FIX_FIRST_MESSAGE the session close ends the stream.
         else if (s.peer == PFinNoResponse)
-            s' = { ...removed(s, "first", HFin), first: ReadFin,
+            s' = { ...unansweredEnd(s), first: ReadFin,
                    slot: if (callerAlive) SlotSenderGone else s.slot,
                    violationClose: s.violationClose or FIX_FIRST_MESSAGE }
         else
-            s' = { ...removed(s, "first", HFin), first: ReadGarbage,
+            s' = { ...unansweredEnd(s), first: ReadGarbage,
                    slot: if (callerAlive) SlotSenderGone else s.slot,
                    violationClose: s.violationClose or FIX_FIRST_MESSAGE },
       },
@@ -381,13 +387,13 @@ module draft18_outgoing_request {
   }
 }
 
-// expect: violation
+// expect: ok
 module draft18_outgoing_request_current {
   import draft18_outgoing_request(
     NAMESPACES = Set("a", "b"),
-    CONSUME_LOCAL = false,
-    CLEAN_ABANDONED_ALIAS = false,
-    FIX_FIRST_MESSAGE = false,
+    CONSUME_LOCAL = true,
+    CLEAN_ABANDONED_ALIAS = true,
+    FIX_FIRST_MESSAGE = true,
     TAKE_ATOMIC = true,
   ).*
 }

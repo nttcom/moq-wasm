@@ -975,10 +975,12 @@ enum FirstMessage {
     Received(Message),
     /// The peer ended its half with FIN before a message.
     Finished,
-    /// The stream was reset, or the connection lost, before a message.
+    /// The peer reset its half before a message.
+    Reset,
+    /// The connection was lost before a message.
     Closed,
     /// The first bytes do not decode as a message of the stream.
-    Malformed,
+    Malformed(String),
 }
 
 impl FirstMessage {
@@ -987,12 +989,14 @@ impl FirstMessage {
             None => Self::Cancelled,
             Some(Ok(Some(message))) => Self::Received(message),
             Some(Ok(None)) => Self::Finished,
+            Some(Err(StreamReceiveError::Closed(ReadError::Reset))) => Self::Reset,
             Some(Err(StreamReceiveError::Closed(_))) => Self::Closed,
             Some(Err(
-                StreamReceiveError::Decode(_)
-                | StreamReceiveError::ProtocolViolation(_)
-                | StreamReceiveError::MalformedTrack(_),
-            )) => Self::Malformed,
+                StreamReceiveError::Decode(reason) | StreamReceiveError::ProtocolViolation(reason),
+            )) => Self::Malformed(reason),
+            Some(Err(StreamReceiveError::MalformedTrack(_))) => {
+                unreachable!("only object streams report a malformed track")
+            }
         }
     }
 }
@@ -1008,14 +1012,11 @@ pub(crate) struct OutgoingRequestTask {
 }
 
 impl OutgoingRequestTask {
-    /// Drops the objects buffered under the alias of a SUBSCRIBE_OK whose
-    /// caller stopped waiting; the stream reset already withdrew the request
-    /// (§3.3.2).
+    /// Withdraws the alias of a SUBSCRIBE_OK whose caller stopped waiting;
+    /// the stream reset already withdrew the request (§3.3.2).
     pub(super) async fn abandoned(scope: &Scope, response: ResponseMessage) {
         if let ResponseMessage::SubscribeOk(subscribe_ok) = response {
-            scope
-                .session
-                .cancel_unclaimed_track_alias(&scope.connection, subscribe_ok.track_alias)
+            super::abandon_track_alias(scope, subscribe_ok.request_id, subscribe_ok.track_alias)
                 .await;
         }
     }
@@ -1053,12 +1054,25 @@ impl OutgoingRequestTask {
         let message = match first {
             FirstMessage::Cancelled => return,
             FirstMessage::Received(message) => message,
-            FirstMessage::Finished | FirstMessage::Closed | FirstMessage::Malformed => {
-                if let Some(stream) = context.channel().take_outgoing(request_id)
-                    && let Err(error) = stream.sender.close().await
-                {
-                    tracing::debug!(%error, "could not end the stream of an unanswered request");
-                }
+            // §3.3.2: the peer cancelled the request instead of answering it.
+            FirstMessage::Reset => {
+                Self::end_unanswered(&context, request_id).await;
+                Message::RequestError(messages::RequestErrorMessage {
+                    code: RequestErrorCode::InternalError,
+                    reason: "request stream reset".to_string(),
+                })
+            }
+            FirstMessage::Closed => {
+                Self::end_unanswered(&context, request_id).await;
+                return;
+            }
+            // §5.1: every request is answered before its stream ends.
+            FirstMessage::Finished => {
+                close_on_violation(&context, "request stream ended before its response");
+                return;
+            }
+            FirstMessage::Malformed(reason) => {
+                close_on_violation(&context, &reason);
                 return;
             }
         };
@@ -1228,6 +1242,14 @@ impl OutgoingRequestTask {
                     return;
                 }
             }
+        }
+    }
+
+    async fn end_unanswered(scope: &Scope, request_id: RequestId) {
+        if let Some(stream) = scope.channel().take_outgoing(request_id)
+            && let Err(error) = stream.sender.close().await
+        {
+            tracing::debug!(%error, "could not end the stream of an unanswered request");
         }
     }
 
