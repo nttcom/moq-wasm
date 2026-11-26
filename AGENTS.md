@@ -133,6 +133,7 @@ Use only field names from this table; add new names here before using them:
 | `control_reason` | Robot `control` record reason: `action`, `left`, `stale`, or `episode` |
 | `episode_id` | Robot's open episode ID |
 | `loop_latency_ms` | `now − basis` of an applied robot action (ms from observation to arrival on robot clock) |
+| `obs_delay_ms` | Milliseconds the first video frame of a stream spent inside OBS (encoding, audio buffering, stream delay) before `obs-moqt` received it |
 
 ## 8. Git Conventions
 - **Commits**: English, Conventional Commits `type(scope): description`.

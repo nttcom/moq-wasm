@@ -1,6 +1,6 @@
 //! The part of the libobs C ABI this plugin uses, declared by hand from the
 //! OBS Studio 32.0 headers (`obs.h`, `obs-defs.h`, `obs-output.h`,
-//! `obs-service.h`, `obs-encoder.h`).
+//! `obs-service.h`, `obs-encoder.h`, `util/platform.h`).
 
 use std::ffi::{c_char, c_int, c_void};
 
@@ -145,4 +145,7 @@ unsafe extern "C" {
     pub(crate) fn obs_data_get_int(data: *mut ObsData, name: *const c_char) -> i64;
     pub(crate) fn obs_data_set_int(data: *mut ObsData, name: *const c_char, value: i64);
     pub(crate) fn obs_data_release(data: *mut ObsData);
+
+    /// OBS's clock in nanoseconds: the one it stamps video frames with.
+    pub(crate) fn os_gettime_ns() -> u64;
 }
