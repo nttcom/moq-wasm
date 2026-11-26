@@ -258,7 +258,6 @@ async function addSource(current: OpenedRecording, namespace: string[]): Promise
     container,
     callbacks: {
       onStateChange: requestRender,
-      onLiveFrame: () => {},
       onLog: (level, message) => {
         if (level === 'error' || level === 'warn') {
           console[level](`[${key}] ${message}`)

@@ -64,9 +64,9 @@ export type { Packaging } from './trackContext'
 /// What a callback throws is reported with `reportError`, as an exception of
 /// an event listener is, and the player goes on as if it had returned.
 export type LivePlayerCallbacks = {
-  onStateChange(): void
-  onLiveFrame(): void
-  onLog(level: LogLevel, message: string): void
+  onStateChange?(): void
+  onLiveFrame?(): void
+  onLog?(level: LogLevel, message: string): void
   /// Called with the LOC Audio Level (draft-ietf-moq-loc-04 §2.3.3.2) of each
   /// live LOC audio object that carries one.
   onAudioLevel?(level: AudioLevel): void
@@ -76,7 +76,7 @@ const DEFAULT_DELIVERY_TIMEOUT_MS = 2_000
 
 export type LivePlayerOptions = {
   container: HTMLElement
-  callbacks: LivePlayerCallbacks
+  callbacks?: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
   /// Keep live subscriptions and decoding running during review so `goLive()` switches immediately.
@@ -210,7 +210,7 @@ export class LivePlayer {
   private rewindStatus: PlayerStatus = { text: 'Live', state: 'ok' }
 
   constructor(options: LivePlayerOptions) {
-    this.callbacks = options.callbacks
+    this.callbacks = options.callbacks ?? {}
     this.keepLiveWhileReviewing = options.keepLiveWhileReviewing ?? false
     this.source = options.source
     this.context = {
@@ -219,7 +219,7 @@ export class LivePlayer {
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => {
         forwardSdkLog(this.context.session, level, 'moq-wasm::media::live_player', message)
-        callPage(() => options.callbacks.onLog(level, message))
+        callPage(() => this.callbacks.onLog?.(level, message))
       }
     }
     this.textTracks = new TextTracks(this.context)
@@ -270,7 +270,7 @@ export class LivePlayer {
           if (ids && trackAlias !== undefined) {
             this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
           }
-          callPage(() => this.callbacks.onLiveFrame())
+          callPage(() => this.callbacks.onLiveFrame?.())
         },
         onKeyFrameNeeded: (groupId) => this.requestGroupAfterCut(groupId)
       },
@@ -949,7 +949,7 @@ export class LivePlayer {
 
   private changed(): void {
     this.applyPlaybackRate()
-    callPage(() => this.callbacks.onStateChange())
+    callPage(() => this.callbacks.onStateChange?.())
   }
 
   private setRewindStatus(text: string, state: StatusState): void {

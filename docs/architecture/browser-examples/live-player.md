@@ -31,7 +31,7 @@ flowchart TB
 ```ts
 type LivePlayerOptions = {
   container: HTMLElement
-  callbacks: LivePlayerCallbacks // onStateChange, onLiveFrame, onLog, onAudioLevel?
+  callbacks?: LivePlayerCallbacks // onStateChange?, onLiveFrame?, onLog?, onAudioLevel?
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
   keepLiveWhileReviewing?: boolean

@@ -87,10 +87,7 @@ import { MoqSession } from 'moq-wasm'
 import { LivePlayer } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 
-const player = new LivePlayer({
-  container: document.querySelector('#player'),
-  callbacks: { onStateChange() {}, onLiveFrame() {}, onLog() {} }
-})
+const player = new LivePlayer({ container: document.querySelector('#player') })
 
 document.querySelector('#watch').onclick = async () => {
   const session = await MoqSession.connect('https://relay-1.moqt.research.skyway.io:443')
