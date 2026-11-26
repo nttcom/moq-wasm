@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.9.0
+
+- Breaking: a live seek bar now spans only the window the relay can replay, and its left end shows how far that window reaches behind live; the time since the broadcast started is no longer shown while live. `LivePlayer.elapsedMsAt` returns `undefined` while live, and `SeekAxis.broadcastStartSeconds` is set only for a broadcast that is not live. To label a live position, use how far it is behind `SeekAxis.liveEdgeSeconds`.
+
+- Breaking: the chat track's `eventType` is now `io.skyway.research.moqt.chat.v1` (was `com.skyway.chat.v1`). Accept both names to read the chat of publishers on 0.8.0 and earlier.
+
+- Breaking: `parseCatalog`, `new Mp4Index`, `Mp4Index.video()` and `Mp4Index.annexBVideoSample` throw an `Error` instead of a string, and `parseCatalog` throws for a catalog without a `tracks` array (draft-ietf-moq-msf-02 §5.1.4). `LivePlayer` and `RemoteBroadcast` ignore such a catalog and keep their current tracks.
+
+- `<moq-player>`, a custom element in `moq-wasm/element`, plays a broadcast: `<moq-player src="…" namespace="room/alice" controls>`.
+  - It connects while it is in the page, reconnects when `src`, `namespace` or `token` change, and closes its session when removed. `token` is an attribute, or a property holding a function that returns a fresh token.
+  - Set its `session` property to play on a session the page opened (it never closes that session), `tracks` to choose the tracks, and the `packaging` attribute (`loc` or `cmaf`).
+  - `player` returns its `LivePlayer`; it fires `statechange` and `liveframe`, and `error` when connecting fails.
+  - Import `moq-wasm/media/player.css`, and with `controls` also `moq-wasm/media/controls.css`.
+
+- `PlayerControls.dispose()` removes the controls from their container and stops listening to the page's keys.
+
+- `LivePlayer.setAudioVideoSync('video-ahead')` presents live LOC video without waiting for the audio output, so the sound follows the picture by the output latency plus 20 ms. It is for games and remote control, where the picture has to answer the input. `'synced'`, the default, presents a frame as its sound is heard. `AudioVideoSync` is exported from `moq-wasm/media`.
+
+- `LivePlayerOptions.callbacks` and each of `onStateChange`, `onLiveFrame` and `onLog` are optional: `new LivePlayer({ container })` is enough. Code that calls the members of a `LivePlayerCallbacks` value itself now needs `?.`.
+
+- `PhoneCall` (`moq-wasm/media`) joins a phone call that the SIP gateway placed or answered for the page's app server: `PhoneCall.join(session, { call, local, audio })` publishes the microphone and plays the phone, `listen` reports `dialing`, `ringing`, `answered` and `ended` with the reason, `sendDtmf` sends DTMF digits, and `hangUp` ends the call.
+
+- Bots in a room:
+  - `botNamespace(room, botType)` returns `[...room, 'bots', botType]`, and `botTypeOf(room, namespace)` returns `<type>` for exactly that namespace, otherwise `undefined`.
+  - `WatchBroadcastsOptions.onBotChange(botType, present)` reports bots announced and withdrawn under the watched prefix, independently of `filter` and playback. Follow bots on this watch instead of a second `watchNamespaces`, which a relay rejects with `NAMESPACE_PREFIX_OVERLAP`.
+  - `subscribeTranscript(session, room, onRecords)` follows the transcriber's `transcript` track and calls `onRecords` with every `TranscriptRecord` (`{ startedAtMs, speaker, text, live }`) each time they change. It rejects with `RequestError` while the transcriber is absent; the returned `TranscriptSubscription` has `done` and `close()`.
+
+  ```js
+  import { botTypeOf, subscribeTranscript, watchBroadcasts } from 'moq-wasm/media'
+
+  const room = ['app-id', 'room-1']
+  let transcript
+
+  const watch = await watchBroadcasts(session, room, {
+    filter: (namespace) => botTypeOf(room, namespace) === undefined,
+    onBotChange: (botType, present) => {
+      if (botType !== 'transcriber') return
+      transcript?.then((subscription) => subscription.close()).catch(() => {})
+      transcript = present ? subscribeTranscript(session, room, renderTranscript) : undefined
+      transcript?.catch(console.error)
+    },
+    onAdd: (broadcast) => addParticipant(broadcast),
+    onRemove: (broadcast) => removeParticipant(broadcast)
+  })
+  ```
+
+- `createBroadcast` takes `eventTimelines`: each `{ name, eventType, priority }` is listed in the catalog as a JSON event timeline; write it with `session.publishTrack`, passing the same `priority`.
+
+- `AudioPublishStats` (from `LocalSource.stats()`) has `input`: the `AudioData` the encoder read per second, the latest sample rate and channel count, and the minimum and mean-power levels over the last second, in dBov. With `init({ telemetry })`, each source that publishes audio sends them as the `client.publisher.audio_*` metrics, and a source logs `mute`, `unmute` and `ended` of its audio track.
+
+- With `init({ telemetry })`, a failed `MoqSession.connect` sends a `session connect failed` warning with the error of each transport tried or the server's rejection of the SETUP, and a wasm module that fails to load (such as a stale cached page after a redeploy) sends a `wasm module failed to load` error.
+
+- CMAF tracks published with `cmaf: true` carry the same clock as their LOC tracks (the capture time in Unix microseconds), and the media timeline lists that time as its presentation time (draft-ietf-moq-msf-02 §7.1.1). Players before 0.9.0 show a wrong elapsed time for such broadcasts.
+
+- A callback or listener the page passes to `moq-wasm/media` that throws no longer breaks the SDK: the exception is reported with `reportError` and the SDK carries on as if the callback had returned. `watchBroadcasts` also keeps watching when creating or disposing of a `RemoteBroadcast` fails, calls `filter` on announcements only (a withdrawn played namespace is always removed), and calls nothing after `BroadcastWatch.close()`.
+
+- `LivePlayer.setBufferPolicy`: while audio plays, a `maximumMs` below what the audio output needs is raised to it, so the sound no longer drops out and the picture no longer stutters from 10 s into playback.
+
+- `MoqSession.connect` rejects when the relay accepts the connection but sends no SERVER_SETUP within 30 s, instead of waiting forever.
+
+- `session.publishTrack` with `datagram: true` accepts a track registered again on the same session and keeps sending it in datagrams; without `datagram`, it rejects for a track that has sent objects in datagrams.
+
+- A track published with `retentionMs` no longer serves to FETCH, or keeps in memory, objects older than `retentionMs` when it has not been written to since.
+
+- A SUBSCRIBE to a track a broadcast removed (such as when its camera track ends) is refused with `TRACK_DOES_NOT_EXIST` until the track is published again.
+
+- A source's renditions no longer grow memory without bound while the relay does not take their objects: beyond about 300 queued frames, rendition frames are dropped up to the next keyframe.
+
+- Fixed:
+  - a video muted and unmuted in quick succession sometimes never being published again;
+  - a subscriber missing objects written while an earlier `TrackWriter.write` or `writeGroup` to the same track had not resolved;
+  - a subscription's `done` not resolving when PUBLISH_DONE arrives right after SUBSCRIBE_OK;
+  - on draft-18, `publish` failing with "request stream reset" when the peer accepted and at once unsubscribed;
+  - an unhandled `InvalidStateError` when CMAF playback was closed during an append;
+  - `Mp4Index` and `Mp4Broadcast` giving enormous sample times for MP4 files with negative composition offsets;
+  - CMAF video samples overlapping or leaving a one-tick gap, and media publishing stopping when a video frame or keyframe repeated the previous timestamp.
+
+- GOAWAY migration, protocol limits and malformed input: after a GOAWAY a subscription no longer drops or duplicates a group, and a session closed during the migration stays closed (#2073, #2074); a request with more than 32 namespace fields, an empty field on draft-18, or a Full Track Name over 4,096 bytes fails alone instead of closing the session (#1740, #1812); NEW_GROUP_REQUEST throttling and Prior Group ID Gap are sent correctly (#2071, #2072); and stream and draft-14 parsing edge cases are handled (#1707, #1738, #1791).
+
 ## 0.8.0
 
 - Breaking: `LiveStats.receivedKbps` is now `{ video: number; audio: number }`, and `receivedAudioKbps` is removed:
