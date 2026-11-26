@@ -1,5 +1,5 @@
 import { MoqSession, reportLog } from 'moq-wasm'
-import { bearerToken, connectOptions, renewedTemporaryToken } from '../../utils/access'
+import { connectOptions } from '../../utils/access'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
 import { PublishPreview } from './publishPreview'
@@ -70,7 +70,6 @@ element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watc
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
 element<HTMLButtonElement>('publishBtn').addEventListener('click', () => void publishMp4())
 element<HTMLButtonElement>('stopPublishBtn').addEventListener('click', () => void mp4Publisher.stop())
-setUpCopyTokenButton(element<HTMLButtonElement>('copyTokenBtn'))
 element<HTMLButtonElement>('deliveryToggleBtn').addEventListener('click', () => {
   const overlay = element<HTMLDivElement>('delivery-overlay')
   overlay.hidden = !overlay.hidden
@@ -261,26 +260,6 @@ function latestFetchActivity(records: StreamRecord[], now: number): number {
 
 function trackNamespace(): string[] {
   return parseTrackNamespace(element<HTMLInputElement>('namespace').value)
-}
-
-/// The OBS plugin of the setup guide publishes only with a token. The button copies a token of the
-/// page's app, signed for a new hour when the app is temporary.
-function setUpCopyTokenButton(button: HTMLButtonElement): void {
-  const label = button.textContent
-  if (bearerToken() === undefined) {
-    button.disabled = true
-    button.title = 'このモードにはトークンがありません'
-    return
-  }
-  button.addEventListener('click', async () => {
-    const token = (await renewedTemporaryToken()) ?? bearerToken()
-    if (!token) {
-      return
-    }
-    await navigator.clipboard.writeText(token)
-    button.textContent = 'コピーしました'
-    window.setTimeout(() => (button.textContent = label), 2000)
-  })
 }
 
 function appendLog(level: 'info' | 'warn' | 'error', message: string): void {

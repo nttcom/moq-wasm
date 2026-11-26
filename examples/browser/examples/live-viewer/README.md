@@ -1,6 +1,6 @@
 # live-viewer
 
-Plays MSF broadcasts from `services/ingest-gateway`, GStreamer `moqtsink`, the OBS plugin `obs-moqt`, or the page's built-in MP4 publisher, with rendition switching and relay-cache rewind. Design: [live-player.md](../../../../docs/architecture/browser-examples/live-player.md).
+Plays MSF broadcasts from `services/ingest-gateway`, GStreamer `moqtsink`, or the page's built-in MP4 publisher, with rendition switching and relay-cache rewind. Design: [live-player.md](../../../../docs/architecture/browser-examples/live-player.md).
 
 ## Start a stream
 
@@ -14,8 +14,6 @@ External ffmpeg/OBS routes publish anonymously to `anon/live/test` — select **
 | ffmpeg → local ingest → local relay           | `make relay`, `make gst-srt-publish` (or `make ingest-gateway`), `make ffmpeg-srt-bbb-local` (or `make ffmpeg-srt`) | `https://127.0.0.1:4433`                      |
 
 For OBS: SRT `srt://<host>:9000?mode=caller&streamid=anon/live/test` or RTMP `rtmp://<host>:1935/anon/live/test` (key `stream`), where `<host>` is `relay-1.moqt.research.skyway.io` or `localhost`. Override the viewer's default relay URL (`relay-1`) with `?moqtUrl=...`.
-
-OBS can also publish straight to the relay with the [`obs-moqt`](../../../../crates/obs-moqt/README.md) plugin, without an ingest. The plugin publishes only with a token, so leave the viewer out of **Public**: in the **MoQT** dock enter `moqt://relay.moqt.research.skyway.io:443`, the viewer's **Track Namespace**, and the token that **トークンをコピー** in the page's setup guide copies (the page's temporary app, valid for 1 hour), then press **Use for streaming** and **Start Streaming**.
 
 ## Controls
 
