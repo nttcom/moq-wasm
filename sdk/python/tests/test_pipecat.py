@@ -1921,17 +1921,16 @@ async def test_stopping_a_room_whose_start_failed_waits_until_it_withdrew_its_br
     await within(reported())
     starting.cancel()
     await asyncio.gather(starting, return_exceptions=True)
-    # Sent before the fresh room's watch, which the relay would refuse as the room's.
-    unwatching = asyncio.ensure_future(watch.close())
 
     # Act
     await within(failing.stop("input"))
 
-    # Assert: a fresh room on the session publishes the same broadcast
+    # Assert: a fresh room on the session publishes the same broadcast; the session's watch is closed
+    # first, as the relay would refuse the fresh room's watch like the room's
+    await within(watch.close())
     fresh = Room(session, room_options(room=room, audio_in=True, audio_out=True), RecordingSink())
     await within(fresh.start("input"))
     await within(fresh.stop("input"))
-    await within(unwatching)
     await session.close()
 
 
