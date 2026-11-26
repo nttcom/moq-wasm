@@ -9,7 +9,7 @@ This repository implements Media over QUIC Transport (MoQT), a low-latency QUIC-
 
 ### Workspace Layout
 - `services/` — standalone deployed processes (servers and bridges: `relay`, `vts`, `ingest-gateway`).
-- `crates/` — libraries and plugins linked by other crates, SDKs, or GStreamer (`moqt`, `broadcast`, `gst-plugin-moqt`), including libraries with an optional CLI (`auth-token`).
+- `crates/` — libraries and plugins linked by other crates, SDKs, GStreamer, or OBS Studio (`moqt`, `broadcast`, `gst-plugin-moqt`, `obs-moqt`), including libraries with an optional CLI (`auth-token`).
 - `sdk/` — installable language SDKs:
   - `sdk/js`: crate `wasm`, npm package under `js/`.
   - `sdk/python`: crate `python` and Python package.
@@ -20,7 +20,7 @@ This repository implements Media over QUIC Transport (MoQT), a low-latency QUIC-
 - Omit any `moqt-` prefix (the workspace is the namespace). Binaries take the package name.
 - Pick a name in order:
   1. Implements a spec → spec name (`moqt`, `msf`).
-  2. External ecosystem convention → follow it (`gst-plugin-moqt`).
+  2. External ecosystem convention → follow it (`gst-plugin-moqt`, `obs-moqt`).
   3. Otherwise → 1–2 kebab-case role words (`relay`, `broadcast`, `ingest-gateway`, `egress-gateway`).
 - Abbreviate only if already used in code, flags, or env vars (`msf`, `vts`); otherwise spell out (`auth-token`).
 

@@ -19,6 +19,7 @@ flowchart BT
     robotics["robotics<br/>Teleoperation & arbiter"]
     transcode["transcode<br/>GStreamer ABR & compositor"]
     gst["gst-plugin-moqt<br/>moqtsink plugin"]
+    obs["obs-moqt<br/>OBS Studio plugin"]
 
     mediapack -. "moqt feature" .-> moqt
     broadcast --> moqt
@@ -30,6 +31,8 @@ flowchart BT
     transcode --> mediapack
     gst --> broadcast
     gst --> mediapack
+    obs --> broadcast
+    obs --> mediapack
 ```
 
 ## Protocol & media
@@ -48,6 +51,12 @@ flowchart BT
 | --- | --- | --- | --- |
 | [`transcode`](transcode/README.md) | External / Workspace | native (GStreamer) | In-process GStreamer H.264 ABR ladder transcoder and offline multi-participant MP4 compositor |
 | [`gst-plugin-moqt`](gst-plugin-moqt/README.md) | External | native (`cdylib`) | GStreamer `moqtsink` plugin for publishing H.264/AAC pipelines directly to a MoQT relay |
+
+## OBS Studio
+
+| Crate | Audience | Targets | Role |
+| --- | --- | --- | --- |
+| [`obs-moqt`](obs-moqt/README.md) | External | native (`cdylib`) | OBS Studio output and streaming service for publishing OBS's H.264/AAC stream directly to a MoQT relay (GPL-3.0-or-later; every other crate is MIT) |
 
 ## Auth & service infrastructure
 

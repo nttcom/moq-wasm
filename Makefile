@@ -35,9 +35,10 @@ EGRESS_GATEWAY_VIDEO_PORT ?= 5014
 EGRESS_GATEWAY_AUDIO_PORT ?= 5016
 EGRESS_GATEWAY_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
+OBS_PLUGIN_DIR ?= $(HOME)/Library/Application Support/obs-studio/plugins/obs-moqt.plugin/Contents/MacOS
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp egress-gateway gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
+.PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp egress-gateway gst-plugin gst-srt-publish obs-plugin obs-plugin-install onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -105,6 +106,15 @@ gst-srt-publish: gst-plugin
 		demux. ! queue ! h264parse config-interval=-1 ! moqt. \
 		demux. ! queue ! aacparse ! moqt. \
 		moqtsink name=moqt relay-url=$(GST_MOQT_URL) $(GST_TLS_PROPERTIES) namespace=$(GST_NAMESPACE)
+
+# OBS Studio plugin (crates/obs-moqt): `moqt_output` publishes OBS's H.264/AAC stream into MoQT.
+obs-plugin:
+	cargo build -p obs-moqt --release
+
+# Copies the plugin into the user plugin directory of OBS on macOS.
+obs-plugin-install: obs-plugin
+	mkdir -p "$(OBS_PLUGIN_DIR)"
+	cp target/release/libobs_moqt.dylib "$(OBS_PLUGIN_DIR)/obs-moqt"
 
 ## Media helpers
 # -re with no catch-up: by default ffmpeg reads faster after a slow start until
