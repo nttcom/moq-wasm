@@ -1,0 +1,174 @@
+name: GStreamer plugin
+
+# `docs/architecture/gst-plugin-moqt/architecture.md` "Release".
+on:
+  pull_request:
+    paths:
+      - "crates/gst-plugin-moqt/**"
+      - "!crates/gst-plugin-moqt/**.md"
+      - ".github/workflows/gst-plugin.yml"
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  macos:
+    # Apple silicon, against Homebrew's GStreamer.
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Install GStreamer
+        run: brew install gstreamer pkgconf
+      - name: Build the plugin
+        run: cargo build -p gst-plugin-moqt --release --locked
+      - name: Build the archive
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
+          mkdir package
+          cp target/release/libgstmoqt.dylib LICENSE package/
+          tar -czf "gst-plugin-moqt-${version}-macos-arm64.tar.gz" -C package .
+      - name: Check GStreamer loads the plugin
+        run: |
+          plugins="${HOME}/.local/share/gstreamer-1.0/plugins"
+          mkdir -p "${plugins}"
+          tar -xzf gst-plugin-moqt-*-macos-arm64.tar.gz -C "${plugins}" ./libgstmoqt.dylib
+          otool -L "${plugins}/libgstmoqt.dylib"
+          gst-inspect-1.0 moqtsink
+      - name: Upload the archive
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gst-plugin-macos-arm64
+          path: gst-plugin-moqt-*-macos-arm64.tar.gz
+          if-no-files-found: error
+
+  linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    # Ubuntu 22.04's glibc 2.35 and GStreamer 1.20 are the oldest the
+    # archive supports.
+    container: ubuntu:22.04
+    steps:
+      - name: Install GStreamer
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            ca-certificates curl build-essential pkg-config libgstreamer1.0-dev gstreamer1.0-tools
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Build the plugin
+        run: cargo build -p gst-plugin-moqt --release --locked
+      - name: Build the archive
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
+          mkdir package
+          cp target/release/libgstmoqt.so LICENSE package/
+          tar -czf "gst-plugin-moqt-${version}-linux-${ARCH}.tar.gz" -C package .
+      - name: Check GStreamer loads the plugin
+        run: |
+          plugins="${HOME}/.local/share/gstreamer-1.0/plugins"
+          mkdir -p "${plugins}"
+          tar -xzf gst-plugin-moqt-*-linux-*.tar.gz -C "${plugins}" ./libgstmoqt.so
+          gst-inspect-1.0 moqtsink
+      - name: Upload the archive
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gst-plugin-linux-${{ matrix.arch }}
+          path: gst-plugin-moqt-*-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  windows:
+    # Against the official MSVC GStreamer.
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    env:
+      GSTREAMER_VERSION: "1.28.9"
+      GSTREAMER_ROOT: C:\gstreamer\1.0\msvc_x86_64
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Download GStreamer
+        env:
+          GSTREAMER_SHA256: ce4008705e8c6fe92803535b82fb3d6551e183f438e6ef26682ac4d0aca61076
+        run: |
+          curl --fail --silent --show-error --location --output gstreamer.exe \
+            "https://gstreamer.freedesktop.org/data/pkg/windows/${GSTREAMER_VERSION}/msvc/gstreamer-1.0-msvc-x86_64-${GSTREAMER_VERSION}.exe"
+          echo "${GSTREAMER_SHA256}  gstreamer.exe" | sha256sum --check
+      # PowerShell, because Git Bash rewrites the installer's `/` switches into paths.
+      - name: Install GStreamer with its development files
+        shell: pwsh
+        run: |
+          $installer = Start-Process -FilePath .\gstreamer.exe -Wait -PassThru -ArgumentList `
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TYPE=devel', "/DIR=$env:GSTREAMER_ROOT"
+          if ($installer.ExitCode -ne 0) { exit $installer.ExitCode }
+          "$env:GSTREAMER_ROOT\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "PKG_CONFIG_PATH=$env:GSTREAMER_ROOT\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build the plugin
+        run: |
+          pkg-config --modversion gstreamer-1.0
+          cargo build -p gst-plugin-moqt --release --locked
+      - name: Build the archive
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
+          mkdir package
+          cp target/release/gstmoqt.dll LICENSE package/
+          (cd package && 7z a -bso0 "../gst-plugin-moqt-${version}-windows-x64.zip" .)
+      - name: Check GStreamer loads the plugin
+        run: |
+          plugins="$(cygpath --unix "${LOCALAPPDATA}")/gstreamer-1.0/plugins"
+          mkdir -p "${plugins}"
+          7z e -bso0 "-o${plugins}" gst-plugin-moqt-*-windows-x64.zip gstmoqt.dll
+          gst-inspect-1.0 moqtsink
+      - name: Upload the archive
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gst-plugin-windows-x64
+          path: gst-plugin-moqt-*-windows-x64.zip
+          if-no-files-found: error
