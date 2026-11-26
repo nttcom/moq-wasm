@@ -14,7 +14,7 @@ use tracing::Instrument;
 
 use crate::{
     bots::{BotError, Bots, Heartbeat, StartError, StartRequest},
-    launch_auth::{LaunchAuth, Rejection},
+    launch_auth::{LaunchAuth, Rejection, rejected},
     store::BotRecord,
 };
 
@@ -143,7 +143,7 @@ async fn latest(
 ) -> JsonResponse {
     let prefix = match authorized_prefix(state, headers, query).await {
         Ok(prefix) => prefix,
-        Err((status, error)) => return error_response(status, error),
+        Err(rejection) => return rejection_response(&rejection),
     };
     match state.bots.latest(bot_type, &prefix, now_ms()).await {
         Ok(Some(bot)) => json_response(StatusCode::OK, &bot),
@@ -155,7 +155,7 @@ async fn latest(
 async fn room(state: &ServerState, headers: &HeaderMap, query: Option<&str>) -> JsonResponse {
     let prefix = match authorized_prefix(state, headers, query).await {
         Ok(prefix) => prefix,
-        Err((status, error)) => return error_response(status, error),
+        Err(rejection) => return rejection_response(&rejection),
     };
     match state.bots.room(&prefix, now_ms()).await {
         Ok(bots) => json_response(StatusCode::OK, &json!({ "bots": bots })),
@@ -169,17 +169,16 @@ async fn authorized_prefix(
     state: &ServerState,
     headers: &HeaderMap,
     query: Option<&str>,
-) -> Result<String, (StatusCode, &'static str)> {
+) -> Result<String, Rejection> {
     let Some(prefix) = query_params(query).remove("namespace_prefix") else {
-        return Err((StatusCode::BAD_REQUEST, "invalid_request"));
+        return Err(rejected(StatusCode::BAD_REQUEST, "invalid_request"));
     };
-    match state.launch_auth.authorize(headers, &prefix).await {
-        Ok(_) => Ok(prefix),
-        Err(rejection) => {
-            log_refusal(&rejection, &prefix);
-            Err((rejection.status, rejection.error))
-        }
-    }
+    state
+        .launch_auth
+        .authorize(headers, &prefix)
+        .await
+        .inspect_err(|rejection| log_refusal(rejection, &prefix))?;
+    Ok(prefix)
 }
 
 async fn show(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
@@ -188,14 +187,14 @@ async fn show(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str
             Ok(bot) => json_response(StatusCode::OK, &bot),
             Err(error) => internal(&error),
         },
-        Err((status, error)) => error_response(status, error),
+        Err(rejection) => rejection_response(&rejection),
     }
 }
 
 async fn stop(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
     let record = match authorized_record(state, headers, bot_type, id).await {
         Ok(record) => record,
-        Err((status, error)) => return error_response(status, error),
+        Err(rejection) => return rejection_response(&rejection),
     };
     match state.bots.stop(id).await {
         Ok(()) => {
@@ -219,29 +218,27 @@ async fn authorized_record(
     headers: &HeaderMap,
     bot_type: &str,
     id: &str,
-) -> Result<BotRecord, (StatusCode, &'static str)> {
+) -> Result<BotRecord, Rejection> {
     let record = match state.bots.record(bot_type, id).await {
         Ok(Some(record)) => record,
-        Ok(None) => return Err((StatusCode::NOT_FOUND, "not_found")),
+        Ok(None) => return Err(rejected(StatusCode::NOT_FOUND, "not_found")),
         Err(error) => {
             tracing::error!(
                 error = format!("{error:#}"),
                 "bot-dispatcher request failed"
             );
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal_error"));
+            return Err(rejected(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+            ));
         }
     };
-    match state
+    state
         .launch_auth
         .authorize(headers, &record.namespace_prefix)
         .await
-    {
-        Ok(_) => Ok(record),
-        Err(rejection) => {
-            log_refusal(&rejection, &record.namespace_prefix);
-            Err((rejection.status, rejection.error))
-        }
-    }
+        .inspect_err(|rejection| log_refusal(rejection, &record.namespace_prefix))?;
+    Ok(record)
 }
 
 async fn token(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
@@ -299,6 +296,10 @@ fn bot_error(error: BotError, id: &str) -> JsonResponse {
 
 fn refused(rejection: Rejection, prefix: &str) -> JsonResponse {
     log_refusal(&rejection, prefix);
+    rejection_response(&rejection)
+}
+
+fn rejection_response(rejection: &Rejection) -> JsonResponse {
     error_response(rejection.status, rejection.error)
 }
 

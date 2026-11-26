@@ -16,7 +16,7 @@ pub(crate) struct Rejection {
     pub(crate) error: &'static str,
 }
 
-fn rejected(status: StatusCode, error: &'static str) -> Rejection {
+pub(crate) fn rejected(status: StatusCode, error: &'static str) -> Rejection {
     Rejection { status, error }
 }
 
