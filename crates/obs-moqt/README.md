@@ -4,18 +4,19 @@ OBS Studio plugin that publishes the stream OBS encodes (H.264 video, AAC audio)
 
 ## Install
 
-Requires OBS Studio 32.0 or newer (tested with 32.0.2 on macOS). An installer exists for macOS on Apple silicon; on other platforms, [build from source](#build-from-source).
+Requires OBS Studio 32.0 or newer. Download the package for your platform from the newest `obs-moqt` release on the [releases page](https://github.com/nttcom/moq-wasm/releases), install it as below, then restart OBS and tick **Docks → MoQT**. **Help → Log Files → View Current Log** lists `obs-moqt` among the loaded modules.
 
-1. Download `obs-moqt-<version>-macos-arm64.pkg` from the newest `obs-moqt` release on the [releases page](https://github.com/nttcom/moq-wasm/releases).
-2. Open it. The installer is not signed, so macOS refuses the first time: open **System Settings → Privacy & Security**, press **Open Anyway** next to the installer's name, and open it again.
-3. Follow the installer. It puts `obs-moqt.plugin` into `~/Library/Application Support/obs-studio/plugins` and asks for no administrator password.
-4. Restart OBS and tick **Docks → MoQT**.
+| Platform | Package | Install | Uninstall |
+| --- | --- | --- | --- |
+| macOS (Apple silicon) | `obs-moqt-<version>-macos-arm64.pkg` | Open the installer. It asks for no administrator password | Delete `~/Library/Application Support/obs-studio/plugins/obs-moqt.plugin` |
+| Windows (x64) | `obs-moqt-<version>-windows-x64.zip` | Extract its `obs-moqt` folder into `C:\ProgramData\obs-studio\plugins` (create the folder if it is missing) | Delete `C:\ProgramData\obs-studio\plugins\obs-moqt` |
+| Linux (x86_64) | `obs-moqt-<version>-linux-x86_64.tar.gz` | `mkdir -p ~/.config/obs-studio/plugins && tar -xzf obs-moqt-<version>-linux-x86_64.tar.gz -C ~/.config/obs-studio/plugins` | Delete `~/.config/obs-studio/plugins/obs-moqt` |
 
-To uninstall, delete `~/Library/Application Support/obs-studio/plugins/obs-moqt.plugin`.
+- **macOS**: The installer is not signed, so macOS refuses it the first time: open **System Settings → Privacy & Security**, press **Open Anyway** next to the installer's name, and open it again.
+- **Linux**: Built on Ubuntu 24.04 for the OBS of the [`obsproject` PPA](https://launchpad.net/~obsproject/+archive/ubuntu/obs-studio). Other distributions and the Flatpak are not tested.
+- **Tested**: Streaming is tested on macOS (OBS 32.0.2). On Windows (OBS 32.0.2) and Linux (the PPA's OBS), each build is only checked to load in OBS.
 
 ## Build from source
-
-Nothing from OBS is needed at build time: libobs and Qt symbols are resolved when OBS loads the plugin.
 
 ```shell
 make obs-plugin            # cargo build -p obs-moqt --release
@@ -23,17 +24,17 @@ make obs-plugin-install    # macOS: copies it into OBS's user plugin directory
 make obs-plugin-pkg        # macOS: builds the installer under target/obs-plugin-pkg
 ```
 
-The dock is C++ and needs a C++17 compiler and Qt 6 headers no newer than the Qt in OBS (6.8 in OBS 32.0). `make obs-plugin` takes the compiler flags that find them from `pkg-config --cflags Qt6Widgets`, or from `OBS_MOQT_QT_CFLAGS`:
+On Linux, copy `target/release/libobs_moqt.so` to `~/.config/obs-studio/plugins/obs-moqt/bin/64bit/obs-moqt.so`; on Windows, `target\release\obs_moqt.dll` to `C:\ProgramData\obs-studio\plugins\obs-moqt\bin\64bit\obs-moqt.dll`.
 
-```shell
-# macOS, with the Qt package OBS itself is built with
-# (obs-deps release named in OBS's buildspec.json, unpacked to $QT):
-make obs-plugin-install OBS_MOQT_QT_CFLAGS="-F$QT/lib"
-```
+Nothing from OBS is needed at build time. The dock is C++ and needs a C++17 compiler and Qt 6 headers no newer than the Qt in OBS; `OBS_MOQT_QT_CFLAGS` holds the compiler flags that find them:
 
-Without those flags, and in a plain `cargo build`, the plugin builds without the dock and the service is selected as in [Without the dock](#without-the-dock).
+| Platform | Qt | Flags |
+| --- | --- | --- |
+| macOS | The Qt package OBS is built with (the obs-deps release named in OBS's `buildspec.json`), unpacked to `$QT` | `make obs-plugin OBS_MOQT_QT_CFLAGS="-F$QT/lib"` |
+| Linux | The distribution's `qt6-base-dev` | None: `make obs-plugin` asks `pkg-config --cflags Qt6Widgets` |
+| Windows (MSVC) | The same obs-deps Qt package for Windows, unpacked to `%QT%` | `OBS_MOQT_QT_CFLAGS=-I%QT%/include` and `OBS_MOQT_QT_LIB_DIR=%QT%/lib`, then `cargo build -p obs-moqt --release` |
 
-`make obs-plugin-install` creates `~/Library/Application Support/obs-studio/plugins/obs-moqt.plugin/Contents/MacOS/obs-moqt`. On Linux (not tested yet), copy `target/release/libobs_moqt.so` to `~/.config/obs-studio/plugins/obs-moqt/bin/64bit/obs-moqt.so`. Restart OBS afterwards; **Help → Log Files → View Current Log** lists `obs-moqt` among the loaded modules.
+Without `OBS_MOQT_QT_CFLAGS`, as in a plain `cargo build`, the plugin builds without the dock and the service is selected as in [Without the dock](#without-the-dock).
 
 ## Select the MoQT service
 

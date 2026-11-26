@@ -2,8 +2,10 @@
 
 ## 0.1.0
 
-- The first release of `obs-moqt`, as an unsigned installer for OBS Studio
-  32.0 on macOS (Apple silicon).
+- The first release of `obs-moqt` for OBS Studio 32: an unsigned installer
+  for macOS (Apple silicon), a zip for Windows (x64) and a tarball for Linux
+  (x86_64, Ubuntu 24.04 with the `obsproject` PPA). Streaming is tested on
+  macOS; the Windows and Linux builds are checked to load in OBS.
 
 - **Start Streaming** publishes OBS's H.264 video and AAC audio to a MoQT
   relay as an MSF broadcast (LOC and CMAF tracks).
