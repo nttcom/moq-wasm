@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getErrorMessage } from '../../../../utils/page'
 import { latestBot, startBot, stopBot } from '../../../../utils/roomBots'
 import type { TranscriptRecord } from 'moq-wasm/media'
 import { type TranscriberStatus, freshCaptions, transcriptRecordKey } from '../media/transcript'
@@ -131,13 +132,13 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       setHidden(false)
       startBot(TRANSCRIBER_BOT_TYPE, namespacePrefix, { asr })
         .then((bot) => setStartingId(bot.id))
-        .catch((caught) => setError(errorText(caught)))
+        .catch((caught) => setError(getErrorMessage(caught)))
     },
     stop: () => {
       setStartingId(undefined)
       latestBot(TRANSCRIBER_BOT_TYPE, namespacePrefix)
         .then((bot) => (bot ? stopBot(TRANSCRIBER_BOT_TYPE, bot.id) : undefined))
-        .catch((caught) => setError(errorText(caught)))
+        .catch((caught) => setError(getErrorMessage(caught)))
     },
     show: (shown) => setHidden(!shown),
     status,
@@ -145,10 +146,6 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
     records,
     captions
   }
-}
-
-function errorText(caught: unknown): string {
-  return caught instanceof Error ? caught.message : String(caught)
 }
 
 /// The effect's cleanup: unsubscribes whether or not the SUBSCRIBE has been answered yet.
