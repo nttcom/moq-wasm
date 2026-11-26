@@ -43,7 +43,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | PUBLISH_DONE countdown | `Countdown` (`Counting{arrived, needed}` / `GraceOnly`) in `moqt/runtime/tasks/publish_done_expiry_task.rs`, owned by its future in `expiries`; `waiting` membership = counting down | `Idle`, `Counting(n)`, `GraceOnly`, `Expired` | [`subscription.qnt`](models/subscription.qnt) |
 | Subscriber Forward / update | `Subscription.forward`, `last_update`, carried `option.forward` | `Original(forward)`, `Updated(option)` | — |
 | Pending FETCH | `fetch_notification_map`, `fetch_receiver_map`, `PendingFetch.kept` | `Registered`, `StreamDelivered`, `Kept`, `Accepted`, `Removed`, `ConnectionClosed` | — |
-| PUBLISH_NAMESPACE record | `NamespaceRecord` (`Unrecorded` / `Recorded` / `Answered`) as `PendingPublishNamespace.record` in `moqt/domains/pending_publish_namespace.rs`; `published_namespaces` and carried `published_namespaces` changed only together by `PublishedNamespaceRecord` (`insert` / `forget`) and `SessionContext::withdraw_published_namespace` in `moqt/domains/session_context.rs` | `Pending`, `Accepted`, `Rejected`, `Withdrawn`, `Cancelled` | [`publish_namespace.qnt`](models/publish_namespace.qnt) |
+| PUBLISH_NAMESPACE record | `NamespaceRecord` (`Unrecorded` / `Recorded` / `Answered`) as `PendingPublishNamespace.record` in `moqt/domains/pending_publish_namespace.rs`; `published_namespaces` and carried `published_namespaces` changed only together by `PublishedNamespaceRecord` (`insert` / `keep` / `forget`, and its `Drop`) and `SessionContext::withdraw_published_namespace` / `forget_cancelled_namespace` in `moqt/domains/session_context.rs` | `Pending`, `Accepted`, `Rejected`, `Withdrawn`, `Cancelled` | [`publish_namespace.qnt`](models/publish_namespace.qnt) |
 | SUBSCRIBE_NAMESPACE (carried) | carried `namespaces[id]` | `InFlight`, `Carried`, `Removed` | — |
 | `NamespaceWatchers` entry | `Vec<(prefix, Sender)>` | `Active`, `Dropped` (pruned lazily) | — |
 
@@ -97,7 +97,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, and `object_sinks_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
+Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, `object_sinks_current`, and `publish_namespace_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
 
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
@@ -105,7 +105,6 @@ Every `*_current` instance except `origin_current`, `response_guard_current`, `d
 | `track_writer` | Prior Group ID Gap covers groups that exist: groups passed under Forward State 0, or a group whose stream failed to open | `GAP_FROM_NUMBERING` |
 | `new_group_requests` | Enabling dynamic groups after writes passes the first NEW_GROUP_REQUEST through unthrottled; re-enabling drops a delayed request | `KEEP_ON_REENABLE`, `SEED_OPEN_GROUP` |
 | `subscription` | Client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves | `DONE_BEFORE_SUBSCRIBE` |
-| `publish_namespace` | Dropped `PendingPublishNamespace` keeps its record; PUBLISH_NAMESPACE_CANCEL changes no state; a namespace refused during a migration is re-announced on the new connection | `FORGET_ON_DROP`, `FORGET_ON_CANCEL`, `WITHDRAW_ELSEWHERE` |
 | `migration` | A GOAWAY migration in flight when the current connection closes keeps the dead connection as `previous` forever, and revives a locally closed session; `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry; a session ending with a `previous` leaves it open | `FIX_CLOSED_DURING_MIGRATION`, `FIX_FINISH_CLOSES_PREVIOUS`, `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
 | `group_cutover` | A group the current connection delivered whole is dropped when its streams arrive out of order; a lagging relay's groups are delivered twice after `previous_ended` | `CUT_FROM_START`, `KEEP_NEWEST` (trade-off in file) |
 | `track_follower` | A withdrawal (`active=false`) keeps the handover flag, so the follower resubscribes to a gone publisher; `TrackWatch::next` never returns `None` after the session ends | `CLEAR_ON_WITHDRAWAL`, `END_DROPS_HANDLERS` |

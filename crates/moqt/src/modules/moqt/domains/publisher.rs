@@ -138,7 +138,9 @@ impl Publisher {
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
-    /// defines no response message for PUBLISH_NAMESPACE_DONE.
+    /// defines no response message for PUBLISH_NAMESPACE_DONE. Call it only
+    /// after `begin_publish_namespace` for the namespace returned: a call
+    /// still sending records the namespace after this withdrawal.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
         self.session.withdraw_published_namespace(&namespace).await;
         let vec_namespace = namespace_tuple(&namespace);
@@ -444,7 +446,10 @@ mod tests {
     use crate::{
         RequestErrorCode, RequestFailure, Session, SessionEvent, Subscription, Version,
         modules::{
-            moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
+            moqt::{
+                domains::session_context::SessionContext,
+                runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
+            },
             test_support::{
                 DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, capture_telemetry, connected_sessions,
                 data_receiver, first_subgroup_stream, mandatory_track_properties, next_event,
@@ -702,6 +707,103 @@ mod tests {
             .update(|carried| carried.published_namespaces().clone());
         assert!(carried.is_empty(), "{carried:?}");
         assert!(!session.publishes_namespace("a"));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_unanswered_publish_namespace_is_neither_published_nor_carried() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_native_sessions_following_go_away("dropped-publish-namespace").await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let pending = within(publisher.begin_publish_namespace("a".into()))
+            .await
+            .unwrap();
+
+        // Act
+        drop(pending);
+
+        // Assert
+        assert!(!session.publishes_namespace("a"));
+        within(carried_namespaces_empty(&session)).await;
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_namespace_is_not_published() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("cancelled-namespace", version).await;
+            let publisher = client.publisher();
+            let (announced, ()) = within(async {
+                tokio::join!(
+                    publisher.publish_namespace("live/room".into()),
+                    accept_namespace(&server)
+                )
+            })
+            .await;
+            announced.unwrap();
+
+            // Act
+            server
+                .publisher()
+                .publish_namespace_cancel(
+                    "live/room".into(),
+                    RequestErrorCode::Uninterested,
+                    "gone".into(),
+                )
+                .await
+                .unwrap();
+            let event = next_event(&client).await;
+
+            // Assert: the application still hears the cancel
+            assert!(
+                matches!(event, SessionEvent::PublishNamespaceCancel(_)),
+                "{version:?}: {event:?}"
+            );
+            assert!(!client.publishes_namespace("live/room"), "{version:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-cancelled-namespace").await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let (announced, ()) = within(async {
+            tokio::join!(
+                publisher.publish_namespace("a".into()),
+                accept_namespace(&server)
+            )
+        })
+        .await;
+        announced.unwrap();
+
+        // Act
+        server
+            .publisher()
+            .publish_namespace_cancel("a".into(), RequestErrorCode::Uninterested, "gone".into())
+            .await
+            .unwrap();
+        next_event(&client).await;
+
+        // Assert
+        within(carried_namespaces_empty(&session)).await;
+    }
+
+    async fn carried_namespaces_empty(session: &SessionContext) {
+        loop {
+            let carried = session
+                .read_carried()
+                .await
+                .unwrap()
+                .update(|carried| carried.published_namespaces().is_empty());
+            if carried {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
     }
 
     #[tokio::test]

@@ -12,8 +12,9 @@ use crate::{
         executor,
         moqt::{
             control_plane::{
-                constants::TerminationErrorCode, enums::RequestId,
-                namespace_interest::NamespaceInterest,
+                constants::TerminationErrorCode,
+                control_messages::messages::publish_namespace_done::PublishNamespaceDone,
+                enums::RequestId, namespace_interest::NamespaceInterest,
             },
             data_plane::{
                 object_ledger::ObjectLedger,
@@ -21,11 +22,12 @@ use crate::{
             },
             domains::{
                 connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
+                namespace_tuple,
                 request_failure::RequestFailure,
                 session_events::SessionEventSender,
             },
             runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
-            version::Version,
+            version::{Notification, Version},
         },
         transport::transport_stats::TransferredBytes,
     },
@@ -156,10 +158,13 @@ impl CarriedGuard<'_> {
 
 /// The entries one PUBLISH_NAMESPACE added to
 /// `SessionContext::published_namespaces` and
-/// `CarriedRequests::published_namespaces`, which `forget` removes.
+/// `CarriedRequests::published_namespaces`, which `forget` removes. Dropped
+/// before `keep` or `forget`, it forgets them too, in a spawned task.
 pub(crate) struct PublishedNamespaceRecord {
     session: Arc<SessionContext>,
     request_id: u64,
+    /// `keep` or `forget` settled the entries.
+    settled: bool,
 }
 
 impl PublishedNamespaceRecord {
@@ -179,14 +184,39 @@ impl PublishedNamespaceRecord {
         Self {
             session: session.clone(),
             request_id,
+            settled: false,
         }
     }
 
-    pub(crate) async fn forget(self) {
+    /// The entries stay: the namespace was accepted, or its connection was
+    /// lost and a migration announces it again.
+    pub(crate) fn keep(mut self) {
+        self.settled = true;
+    }
+
+    pub(crate) async fn forget(mut self) {
+        self.settled = true;
         lock(&self.session.published_namespaces).remove(&self.request_id);
-        if let Some(carried) = self.session.read_carried().await {
-            carried.update(|carried| carried.published_namespaces.remove(&self.request_id));
+        let request_id = self.request_id;
+        self.session
+            .forget_carried_namespaces(generation_of(request_id), |id, _| *id == request_id)
+            .await;
+    }
+}
+
+impl Drop for PublishedNamespaceRecord {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
         }
+        lock(&self.session.published_namespaces).remove(&self.request_id);
+        let session = self.session.clone();
+        let request_id = self.request_id;
+        executor::try_spawn("forget a dropped PUBLISH_NAMESPACE", async move {
+            session
+                .forget_carried_namespaces(generation_of(request_id), |id, _| *id == request_id)
+                .await;
+        });
     }
 }
 
@@ -297,6 +327,64 @@ impl SessionContext {
                     .retain(|_, carried| carried != namespace)
             });
         }
+    }
+
+    /// The peer of the connection of generation `from` cancelled
+    /// `namespace`: removes every record of it, the carried ones in a spawned
+    /// task, so the control stream that read the cancel does not wait for a
+    /// migration, which awaits answers on it.
+    pub(crate) fn forget_cancelled_namespace(self: &Arc<Self>, from: u64, namespace: String) {
+        lock(&self.published_namespaces).retain(|_, published| *published != namespace);
+        let session = self.clone();
+        executor::try_spawn("forget a cancelled PUBLISH_NAMESPACE", async move {
+            session
+                .forget_carried_namespaces(from, |_, carried| *carried == namespace)
+                .await;
+        });
+    }
+
+    /// Removes the carried namespaces `forgotten` picks, refused or cancelled
+    /// by the peer of the connection of generation `from`. A migration may
+    /// have announced one again since it was sent, so each is withdrawn with
+    /// PUBLISH_NAMESPACE_DONE on the other live connections that announced
+    /// it: the one it was sent on and the newer ones. Holds the `carried`
+    /// read lock until then, so no migration announces it meanwhile.
+    async fn forget_carried_namespaces(
+        &self,
+        from: u64,
+        mut forgotten: impl FnMut(&u64, &String) -> bool,
+    ) {
+        let Some(carried) = self.read_carried().await else {
+            return;
+        };
+        let removed: Vec<(u64, String)> = carried.update(|carried| {
+            carried
+                .published_namespaces
+                .extract_if(.., |request_id, namespace| forgotten(request_id, namespace))
+                .collect()
+        });
+        for (request_id, namespace) in removed {
+            for connection in self.live_connections() {
+                if connection.generation < generation_of(request_id)
+                    || connection.generation == from
+                {
+                    continue;
+                }
+                let done = PublishNamespaceDone::new(namespace_tuple(&namespace));
+                if let Err(error) = connection
+                    .control
+                    .notify_end(Notification::PublishNamespaceDone(done))
+                    .await
+                {
+                    tracing::warn!(
+                        %error,
+                        track_namespace = %namespace,
+                        "PUBLISH_NAMESPACE_DONE for a forgotten namespace not sent"
+                    );
+                }
+            }
+        }
+        drop(carried);
     }
 
     pub(crate) async fn read_carried(&self) -> Option<CarriedGuard<'_>> {
