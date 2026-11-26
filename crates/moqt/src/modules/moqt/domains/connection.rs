@@ -139,20 +139,14 @@ pub(crate) struct CutoverStart {
     /// The track alias the application knows.
     pub(crate) logical_alias: u64,
     pub(crate) sender: IncomingObjectSender,
-    pub(crate) shared: Arc<std::sync::Mutex<SharedCutover>>,
+    pub(crate) shared: Arc<std::sync::Mutex<GroupCutover>>,
     pub(crate) previous_open_subgroups: OpenSubgroups,
 }
 
 /// One side of a subscription read on two connections during a migration.
 pub(crate) struct SinkCutover {
-    pub(crate) shared: Arc<std::sync::Mutex<SharedCutover>>,
+    pub(crate) shared: Arc<std::sync::Mutex<GroupCutover>>,
     pub(crate) previous: bool,
-}
-
-pub(crate) struct SharedCutover {
-    pub(crate) cutover: GroupCutover,
-    /// Dropped once the cutover group is fixed.
-    pub(crate) cut_over: Option<oneshot::Sender<()>>,
 }
 
 /// A subgroup stream carries one group and is taken as starting at the
@@ -170,15 +164,11 @@ fn location_of(object: &IncomingObject) -> (u64, u64) {
 
 impl SinkCutover {
     fn takes(&self, (group_id, object_id): (u64, u64)) -> bool {
-        let mut shared = lock(&self.shared);
+        let mut cutover = lock(&self.shared);
         if self.previous {
-            return shared.cutover.take_previous(group_id);
+            return cutover.take_previous(group_id);
         }
-        let takes = shared.cutover.take_current(group_id, object_id);
-        if shared.cutover.is_cut_over() {
-            shared.cut_over = None;
-        }
-        takes
+        cutover.take_current(group_id, object_id)
     }
 }
 
@@ -545,10 +535,11 @@ impl Connection {
     ) -> Option<CutoverStart> {
         let mut sinks = self.object_sinks.lock().await;
         let (_, receiver) = sinks.receiver_mut(wire_request_id)?;
-        let shared = Arc::new(std::sync::Mutex::new(SharedCutover {
-            cutover: GroupCutover::waiting_after(receiver.newest_group, current_start),
-            cut_over: Some(cut_over),
-        }));
+        let shared = Arc::new(std::sync::Mutex::new(GroupCutover::waiting_after(
+            receiver.newest_group,
+            current_start,
+            cut_over,
+        )));
         receiver.cutover = Some(SinkCutover {
             shared: shared.clone(),
             previous: true,

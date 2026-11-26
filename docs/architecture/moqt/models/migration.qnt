@@ -4,16 +4,18 @@
 // connection.
 //
 // Code mapping (paths under crates/moqt/src/modules/moqt/):
-// - `Router::route` (domains/session/migration_task.rs:146-268): locals
-//   `previous`, `migration`, `reconnecting`, `current_closed` are
-//   `router.previous`, `router.migration` (`Reconnecting` = `reconnecting`)
-//   and `router.current`'s `Reading`/`ClosedSeen`.
-// - `Router::reconnects` (migration_task.rs:270-286), `Router::retire`
-//   (:311-332), `Router::finish` (:334-340).
-// - `migrate` (migration_task.rs:435-584): `session.move_to` (:544) and the
-//   `released` future (:553-577), which ends in `SessionContext::unserved`
-//   (domains/session_context.rs:368-375); `carry_subscription` (:621-715)
-//   and `Carried::Stays` (:613-628).
+// - `Router::route` (domains/session/migration_task.rs:202-324): locals
+//   `previous` and `migration: Migration` (:141-191) are `router.previous`
+//   and `router.migration` (`Migration::{None, Following, Reconnecting}`);
+//   `router.currentRead` is `CurrentRead` inside `Migration::Following`
+//   (`Migration::None` reads the current connection, `Reconnecting` has seen
+//   it closed).
+// - `Router::reconnects` (migration_task.rs:326-341), `Router::retire`
+//   (:364-385), `Router::finish` (:388-393).
+// - `migrate` (migration_task.rs:487-633): `session.move_to` (:597) and the
+//   `released` future (:606-630), which ends in `SessionContext::unserved`
+//   (domains/session_context.rs:368-375); `carry_subscription` (:680-788)
+//   and `Carried::Stays` (:664-678).
 // - `SessionContext::{move_to, forget_previous}` (session_context.rs:395, 461):
 //   the session's `connections` mirror `router.current`/`router.previous`,
 //   since `move_to` runs in the same poll that hands `Migrated` to the router.

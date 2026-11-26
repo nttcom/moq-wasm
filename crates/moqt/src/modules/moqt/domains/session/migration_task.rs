@@ -16,7 +16,8 @@ use crate::{
             },
             data_plane::stream::open_subgroups::OpenSubgroups,
             domains::{
-                connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
+                connection::{Connection, CutoverStart, SinkCutover, SinkReceiver},
+                group_cutover::GroupCutover,
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
                 session_creator::{ClientEndpoint, SetupRejected},
@@ -124,14 +125,69 @@ struct Previous {
     /// - no subscription that ends on this connection has a stream open, or
     ///   `CUTOVER_LIMIT` has passed.
     released: BoxFuture<()>,
-    cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
+    cutovers: Vec<Arc<std::sync::Mutex<GroupCutover>>>,
 }
 
 struct Migrated {
     live: Live,
     url: String,
     released: BoxFuture<()>,
-    cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
+    cutovers: Vec<Arc<std::sync::Mutex<GroupCutover>>>,
+}
+
+/// The move of the session to a new connection, together with whether the
+/// router still reads the current connection: it stops at the current
+/// connection's Disconnected, which ends the session unless a move runs.
+enum Migration {
+    /// No move in flight; the current connection is read.
+    None,
+    /// Following a GOAWAY to the connection it names.
+    Following {
+        migrated: BoxFuture<anyhow::Result<Migrated>>,
+        current: CurrentRead,
+    },
+    /// Connecting again after the current connection was lost; its
+    /// Disconnected was read.
+    Reconnecting(BoxFuture<anyhow::Result<Migrated>>),
+}
+
+/// Whether the router has read the current connection's Disconnected.
+enum CurrentRead {
+    Reading,
+    ClosedSeen,
+}
+
+impl Migration {
+    fn reads_current(&self) -> bool {
+        matches!(
+            self,
+            Self::None
+                | Self::Following {
+                    current: CurrentRead::Reading,
+                    ..
+                }
+        )
+    }
+
+    /// Notes the current connection's Disconnected; `false` when no move
+    /// runs, so the session ends or reconnects.
+    fn current_closed(&mut self) -> bool {
+        match self {
+            Self::None => false,
+            Self::Following { current, .. } => {
+                *current = CurrentRead::ClosedSeen;
+                true
+            }
+            Self::Reconnecting(_) => true,
+        }
+    }
+
+    fn in_flight(&mut self) -> Option<&mut BoxFuture<anyhow::Result<Migrated>>> {
+        match self {
+            Self::None => None,
+            Self::Following { migrated, .. } | Self::Reconnecting(migrated) => Some(migrated),
+        }
+    }
 }
 
 struct Router {
@@ -145,14 +201,12 @@ struct Router {
 impl Router {
     async fn route(mut self, mut current: Live) {
         let mut previous: Option<Previous> = None;
-        let mut migration: Option<BoxFuture<anyhow::Result<Migrated>>> = None;
-        let mut reconnecting = false;
-        let mut current_closed = false;
+        let mut migration = Migration::None;
         loop {
             tokio::select! {
-                event = current.events.recv(), if !current_closed => match event {
+                event = current.events.recv(), if migration.reads_current() => match event {
                     Some(SessionEvent::GoAway(go_away)) => {
-                        if migration.is_none() {
+                        if matches!(migration, Migration::None) {
                             let url = match go_away.new_session_uri() {
                                 "" => self.url.clone(),
                                 uri => uri.to_string(),
@@ -164,26 +218,27 @@ impl Router {
                                 current.connection.generation + 1,
                                 event_sender,
                             );
-                            migration = Some(Box::pin(migrate(
-                                self.session.clone(),
-                                connecting,
-                                events,
-                                url,
-                                self.session_span.clone(),
-                            )));
+                            migration = Migration::Following {
+                                migrated: Box::pin(migrate(
+                                    self.session.clone(),
+                                    connecting,
+                                    events,
+                                    url,
+                                    self.session_span.clone(),
+                                )),
+                                current: CurrentRead::Reading,
+                            };
                         }
                     }
                     Some(SessionEvent::Disconnected()) | None => {
-                        current_closed = true;
-                        if migration.is_none() {
+                        if !migration.current_closed() {
                             let close = current.connection.transport.closed().await;
                             if !self.reconnects(&current.connection, &close).await {
                                 self.finish(&current).await;
                                 return;
                             }
                             tracing::info!(%close, url = %self.url, "connection lost; reconnecting");
-                            reconnecting = true;
-                            migration = Some(Box::pin(reconnect(
+                            migration = Migration::Reconnecting(Box::pin(reconnect(
                                 self.session.clone(),
                                 self.reconnect.clone(),
                                 self.url.clone(),
@@ -233,8 +288,8 @@ impl Router {
                     }
                     PreviousSignal::Event(Some(event)) => self.forward(event),
                 },
-                migrated = optional(migration.as_mut()) => {
-                    migration = None;
+                migrated = optional(migration.in_flight()) => {
+                    let ended = std::mem::replace(&mut migration, Migration::None);
                     match migrated {
                         Ok(migrated) => {
                             if let Some(older) = previous.take() {
@@ -246,7 +301,7 @@ impl Router {
                                 released: migrated.released,
                                 cutovers: migrated.cutovers,
                             };
-                            if std::mem::take(&mut reconnecting) {
+                            if let Migration::Reconnecting(_) = ended {
                                 // A lost connection delivers nothing more.
                                 self.retire(moved_from);
                                 tracing::info!("reconnected");
@@ -254,12 +309,10 @@ impl Router {
                                 previous = Some(moved_from);
                                 tracing::info!("moved to the new connection");
                             }
-                            current_closed = false;
                         }
                         Err(error) => {
-                            reconnecting = false;
                             tracing::warn!(error = format!("{error:#}"), "migration failed; staying on the current connection");
-                            if current_closed {
+                            if !ended.reads_current() {
                                 self.finish(&current).await;
                                 return;
                             }
@@ -328,7 +381,7 @@ impl Router {
             )));
         }
         for cutover in previous.cutovers {
-            lock(&cutover).cutover.previous_ended();
+            lock(&cutover).previous_ended();
         }
     }
 
@@ -589,7 +642,7 @@ async fn migrate(
 /// publisher sends every later group to the new connection too.
 async fn release_when_idle(
     moved_from: &Connection,
-    cutover: &std::sync::Mutex<SharedCutover>,
+    cutover: &std::sync::Mutex<GroupCutover>,
     open: &OpenSubgroups,
 ) {
     loop {
@@ -601,9 +654,7 @@ async fn release_when_idle(
             if !open.is_empty() {
                 continue;
             }
-            let mut shared = lock(cutover);
-            if shared.cutover.release_previous() {
-                shared.cut_over = None;
+            if lock(cutover).release_previous() {
                 return;
             }
             // Subscribed under the lock, so the owed group's stream is seen
@@ -618,7 +669,7 @@ enum Carried {
     /// Subscribed on the new connection; both sinks share `cutover`.
     Moved {
         cut_over: oneshot::Receiver<()>,
-        cutover: Arc<std::sync::Mutex<SharedCutover>>,
+        cutover: Arc<std::sync::Mutex<GroupCutover>>,
         previous_open: OpenSubgroups,
     },
     /// The previous connection has started the subscription's End Group;
