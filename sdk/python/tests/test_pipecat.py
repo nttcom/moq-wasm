@@ -7137,11 +7137,12 @@ async def test_an_assistant_image_drawn_before_the_next_one_queued_is_shown_unti
 
 async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(monkeypatch):
     # Arrange: a live output whose encodes take 100 ms, given 600 ms of speech in frames of 30 ms,
-    # each followed by a synchronized picture
+    # each followed by a synchronized picture, with no drain deadline but the test's
     relay = FakeRelay()
     session = await open_session(relay)
     transport = MoqWasmTransport(session, speaking_params())
     slow_encodes(monkeypatch, 0.1)
+    monkeypatch.setattr(_transport, "LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS", TIMEOUT_SECONDS)
     pushed_at: list[float] = []
     push_audio = FakeMediaSource.push_audio
 
@@ -7169,11 +7170,12 @@ async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(mo
 async def test_synchronized_pictures_past_two_seconds_of_them_waiting_are_dropped(monkeypatch):
     # Arrange: a live output at 10 pictures a second, which holds 20 synchronized pictures at most,
     # whose encodes take 100 ms, given 900 ms of speech in frames of 30 ms, each followed by a
-    # synchronized picture
+    # synchronized picture, with no drain deadline but the test's
     relay = FakeRelay()
     session = await open_session(relay)
     transport = MoqWasmTransport(session, speaking_params(video_out_framerate=10))
     slow_encodes(monkeypatch, 0.1)
+    monkeypatch.setattr(_transport, "LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS", TIMEOUT_SECONDS)
     values = record_encoded_values(monkeypatch)
     frames = []
     for value in range(30):
