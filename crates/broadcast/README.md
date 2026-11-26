@@ -89,6 +89,7 @@ Customize default track names via `SourceTracks`.
 ## Key caveats
 
 - **Group alignment**: Video keyframes open new wall-clock-seeded groups; audio joins the latest video group (dropped before the first video keyframe; audio-only opens a group every 1 s).
+- **Capture timestamps**: The first pushed sample counts as captured when it is pushed, and the rest follow by PTS. A source that knows the real capture time calls `BroadcastWriter::set_capture_origin` before its first push.
 - **ABR keyframe ordering**: Push the source video sample to `BroadcastWriter::push()` **before** sending it to [`transcode::Transcoder`](../transcode/README.md) so `FollowSource` renditions match the synchronously assigned keyframe group ID.
 - **Publishing policy**: `catalog` is always eagerly `PUBLISH`ed at `Forward State 1` (refreshed on change and every 30 s, `Retention::NewestOnly`). LOC media tracks use `Forward State 1` by default, or `Forward State 0` when `on_demand` is enabled (media flows only while subscribed). CMAF siblings wait for incoming `SUBSCRIBE`.
 - **Backpressure & retention**: Media tracks keep 60 s for relay `FETCH`. `BroadcastWriter` buffers 2,310 slots (8 reserved for configs); when full, `push()` returns `PushOutcome::Dropped` and drops video until a keyframe fits.
