@@ -2716,21 +2716,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "obs-moqt"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "broadcast",
- "bytes",
- "cc",
- "mediapack",
- "proptest",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "observability"
 version = "0.1.0"
 dependencies = [

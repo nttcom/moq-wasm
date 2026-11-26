@@ -56,55 +56,6 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS<small
-                      >MoQT プラグイン</small
-                    ></span
-                  >
-                  <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small
-                      >MoQT</small
-                    ></span
-                  >
-                </h3>
-              </summary>
-              <ol class="setup-steps">
-                <li>
-                  <h4>プラグインを導入</h4>
-                  <p class="hint">
-                    <a
-                      href="https://github.com/nttcom/moq-wasm/tree/master/crates/obs-moqt#readme"
-                      target="_blank"
-                      rel="noreferrer"
-                      >obs-moqt</a
-                    >（OBS 32 以降）
-                  </p>
-                </li>
-                <li>
-                  <h4>OBS の「ドック → MoQT」に入力</h4>
-                  <p class="hint">Relay URL</p>
-                  <pre><code>moqt://relay.moqt.research.skyway.io:443</code></pre>
-                  <p class="hint">
-                    Namespace は右の Track Namespace と同じ値 · Token は下のボタンでコピー（1 時間有効）
-                  </p>
-                  <button type="button" id="copyTokenBtn" data-testid="live-viewer-copy-token-button">
-                    トークンをコピー
-                  </button>
-                </li>
-                <li>
-                  <h4>配信開始</h4>
-                  <p class="hint">Use for streaming → 配信開始</p>
-                </li>
-                <li>
-                  <h4>視聴</h4>
-                  <p class="hint">同じ namespace で Watch</p>
-                </li>
-              </ol>
-            </details>
-            <details class="setup-panel setup-toggle">
-              <summary>
-                <h3 class="setup-flow">
-                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small
                       >SRT / RTMP</small
                     ></span
