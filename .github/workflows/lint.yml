@@ -40,7 +40,81 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      audit: ${{ steps.filter.outputs.audit }}
+      js: ${{ steps.filter.outputs.js }}
+      sdk_package: ${{ steps.filter.outputs.sdk_package }}
+      console_web: ${{ steps.filter.outputs.console_web }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/list-changed-files
+      - name: Detect changed lint inputs
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rust=false
+          audit=false
+          js=false
+          sdk_package=false
+          console_web=false
+
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/lint.yml|.github/actions/list-changed-files/*)
+                rust=true
+                audit=true
+                js=true
+                sdk_package=true
+                console_web=true
+                continue
+                ;;
+            esac
+
+            # Cargo reads none of the second pattern's paths; every other path counts, so a new crate or fixture needs no entry.
+            case "$path" in
+              crates/moqt/README.md|sdk/rust/README.md|.github/actions/install-ffmpeg-deps/*) rust=true ;;
+              *.md|docs/*|.github/*|scripts/*|package.json|package-lock.json|examples/browser/*|examples/python/*|sdk/js/js/*|sdk/python/python/*|sdk/python/tests/*|sdk/python/pyproject.toml|sdk/python/uv.lock|services/console/web/*|tests/browser-e2e/*) ;;
+              *) rust=true ;;
+            esac
+
+            case "$path" in
+              Cargo.lock|.cargo/audit.toml) audit=true ;;
+            esac
+
+            case "$path" in
+              # prettier reads .gitignore as an ignore file.
+              .gitignore|package.json|package-lock.json|examples/browser/*|sdk/js/js/*) js=true ;;
+            esac
+
+            # The wasm crate and the crates it builds from (cargo tree -p wasm --target wasm32-unknown-unknown).
+            case "$path" in
+              package.json|package-lock.json|examples/browser/*|sdk/js/*|crates/moqt/*|crates/broadcast/*|crates/mediapack/*|crates/msf/*|crates/telemetry/*|crates/telemetry-report/*|Cargo.toml|Cargo.lock|rust-toolchain|.cargo/config.toml|.github/actions/setup-wasm-pack/*) sdk_package=true ;;
+            esac
+
+            case "$path" in
+              services/console/web/*) console_web=true ;;
+            esac
+          done < changed-files.txt
+
+          {
+            echo "rust=$rust"
+            echo "audit=$audit"
+            echo "js=$js"
+            echo "sdk_package=$sdk_package"
+            echo "console_web=$console_web"
+          } >> "$GITHUB_OUTPUT"
+
   lint-and-test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     container:
       image: rust:1.100.0@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
@@ -97,6 +171,8 @@ jobs:
             echo "::warning title=moqt version boundary::$message"
           fi
   cargo-audit:
+    needs: changes
+    if: needs.changes.outputs.audit == 'true'
     runs-on: ubuntu-latest
     container:
       image: rust:1.100.0@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
@@ -132,7 +208,8 @@ jobs:
         run: cargo audit
   test-coverage-report:
     name: coverage
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: changes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     container:
       image: rust:1.100.0@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
@@ -184,6 +261,8 @@ jobs:
           files: lcov.info
           fail_ci_if_error: true
   prettier:
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: ubuntu-latest
     container:
       image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
@@ -197,6 +276,8 @@ jobs:
       - name: Check code formatting
         run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "sdk/js/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore
   browser-unit-test:
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: ubuntu-latest
     container:
       image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
@@ -210,6 +291,8 @@ jobs:
       - name: Run browser unit tests
         run: npm test --workspaces
   sdk-package:
+    needs: changes
+    if: needs.changes.outputs.sdk_package == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -250,6 +333,8 @@ jobs:
       - name: Build a Vite project from the packed tarball
         run: npm run check:pack -w moq-wasm
   console-web:
+    needs: changes
+    if: needs.changes.outputs.console_web == 'true'
     runs-on: ubuntu-latest
     container:
       image: cimg/node:22.23.4@sha256:097391155ab978930031757a857cf57278b907da8a994f278bbd27443c5018bf
