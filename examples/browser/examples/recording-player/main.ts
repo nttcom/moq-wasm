@@ -15,7 +15,7 @@ import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { offeredVersions } from '../../utils/moqtVersion'
 import { setUpRelayUrlControls } from '../../utils/relayPicker'
 import { urlFromQuery } from '../../utils/serviceUrl'
-import { moveBetweenTabs, syncTabStops } from '../../utils/tabs'
+import { setUpTabs } from '../../utils/tabs'
 import { EVENT_KINDS, type TimelineEvent, captionAt, eventRecords, mergeEvents } from './timeline'
 
 /// One replay namespace, `<prefix>/<participant>/<content>/<session>`: a
@@ -579,19 +579,9 @@ element('toggle-sidebar').addEventListener('click', (event) => {
   const open = sidebar.classList.toggle('hidden') === false
   ;(event.currentTarget as HTMLElement).ariaPressed = String(open)
 })
-const sidebarTabs = element('sidebar-tabs')
-for (const tab of sidebarTabs.querySelectorAll<HTMLButtonElement>('[role="tab"]')) {
-  tab.addEventListener('click', () => {
-    for (const other of sidebarTabs.querySelectorAll<HTMLButtonElement>('[role="tab"]')) {
-      const selected = other === tab
-      other.ariaSelected = String(selected)
-      element(other.dataset.tab!).classList.toggle('hidden', !selected)
-    }
-    syncTabStops(sidebarTabs)
-  })
-}
-sidebarTabs.addEventListener('keydown', moveBetweenTabs)
-syncTabStops(sidebarTabs)
+setUpTabs(element('sidebar-tabs'), (tab) => {
+  for (const panel of ['chat', 'transcript']) element(panel).classList.toggle('hidden', panel !== tab)
+})
 window.addEventListener('pagehide', () => {
   opened?.recording.close()
   opened?.session.close()

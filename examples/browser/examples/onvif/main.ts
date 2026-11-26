@@ -8,7 +8,7 @@ import { LOAD_BALANCED_RELAY_PRESET, relayUrlFromQuery } from '../../utils/relay
 import { createRelayPicker } from '../../utils/relayPicker'
 import { icon } from '../../utils/icon'
 import { element, getErrorMessage, parseTrackNamespace } from '../../utils/page'
-import { moveBetweenTabs, syncTabStops } from '../../utils/tabs'
+import { setUpTabs } from '../../utils/tabs'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
 
@@ -230,24 +230,8 @@ function setUpController(): void {
   window.addEventListener('blur', () => releaseMove())
 }
 
-function setUpTabs<T extends string>(tablist: HTMLElement, onSelect: (tab: T) => void): (tab: T) => void {
-  const select = (tab: T) => {
-    tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((button) => {
-      button.setAttribute('aria-selected', String(button.dataset.tab === tab))
-    })
-    syncTabStops(tablist)
-    onSelect(tab)
-  }
-  tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((button) => {
-    button.addEventListener('click', () => select(button.dataset.tab as T))
-  })
-  tablist.addEventListener('keydown', moveBetweenTabs)
-  syncTabStops(tablist)
-  return select
-}
-
 function setUpPtzTabs(): void {
-  setUpTabs<'controller' | 'commands'>(element('ptz-tabs'), (tab) => {
+  setUpTabs(element('ptz-tabs'), (tab) => {
     releaseMove()
     element<HTMLElement>('ptz-panel-controller').hidden = tab !== 'controller'
     element<HTMLElement>('ptz-panel-commands').hidden = tab !== 'commands'

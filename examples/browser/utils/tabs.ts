@@ -30,3 +30,20 @@ export function syncTabStops(tablist: HTMLElement): void {
     tab.tabIndex = tab.getAttribute('aria-selected') === 'true' ? 0 : -1
   }
 }
+
+/**
+ * Makes the `role="tab"` buttons of `tablist` select themselves on click or arrow, Home, and End keys and calls
+ * `onSelect` with the selected button's `data-tab`.
+ */
+export function setUpTabs(tablist: HTMLElement, onSelect: (tab: string) => void): void {
+  const tabs = tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => {
+      for (const other of tabs) other.ariaSelected = String(other === tab)
+      syncTabStops(tablist)
+      onSelect(tab.dataset.tab!)
+    })
+  }
+  tablist.addEventListener('keydown', moveBetweenTabs)
+  syncTabStops(tablist)
+}

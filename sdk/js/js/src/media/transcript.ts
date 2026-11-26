@@ -1,7 +1,8 @@
-import type { MoqLocation, MoqSession, PublishDone, ReceivedObject } from '../core/session'
+import type { MoqSession, PublishDone } from '../core/session'
 import { sdkLog } from '../core/log'
 import { botNamespace } from './bots'
 import { callPage } from './internal/callPage'
+import { isAtOrBefore } from './internal/location'
 import { getErrorMessage } from './internal/status'
 import { TranscriptTimeline, type TranscriptRecord } from './internal/transcriptTimeline'
 
@@ -63,13 +64,4 @@ export async function subscribeTranscript(
       await subscription.close()
     }
   }
-}
-
-/// An object at or before `location` came from the joining FETCH, since the
-/// SUBSCRIBE starts after the largest object.
-function isAtOrBefore(object: ReceivedObject, location: MoqLocation | undefined): boolean {
-  return (
-    location !== undefined &&
-    (object.groupId < location.groupId || (object.groupId === location.groupId && object.objectId <= location.objectId))
-  )
 }

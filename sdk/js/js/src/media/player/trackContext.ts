@@ -1,5 +1,6 @@
-import type { MoqLocation, MoqSession, MoqSubscription, ReceivedObject } from '../../core/session'
+import type { MoqSession, MoqSubscription, ReceivedObject } from '../../core/session'
 import { readLocHeader } from '../internal/loc'
+import { isAtOrBefore } from '../internal/location'
 import type { DeliveryObserver } from './deliveryObserver'
 import type { MediaCatalogTrack } from '../catalog'
 
@@ -107,11 +108,4 @@ export async function readJoinedObjects(
   } catch (error) {
     context.log('warn', `subscription read failed: ${error}`)
   }
-}
-
-function isAtOrBefore(object: ReceivedObject, location: MoqLocation | undefined): boolean {
-  return (
-    location !== undefined &&
-    (object.groupId < location.groupId || (object.groupId === location.groupId && object.objectId <= location.objectId))
-  )
 }
