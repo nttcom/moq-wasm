@@ -86,6 +86,7 @@ from tests.fake_native import (
     FakeSubscription,
     FakeWriter,
     open_session,
+    until,
     within,
 )
 
@@ -94,16 +95,6 @@ pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 ROOM = ["anon", "room"]
 SAMPLE_RATE = 16_000
 SIZE = (64, 48)
-
-
-async def until(condition) -> None:
-    """Waits until `condition()` holds, for at most `TIMEOUT_SECONDS`."""
-
-    async def poll() -> None:
-        while not condition():
-            await asyncio.sleep(0.01)
-
-    await within(poll())
 
 
 def tone(seconds: float, sample_rate: int = SAMPLE_RATE) -> bytes:

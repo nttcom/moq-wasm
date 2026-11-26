@@ -7,9 +7,6 @@
 // room recording; the spec starts that room's robot and policy once it records,
 // and runs the recorder and bot-dispatcher this script builds.
 
-import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
-
 import { runCommand, spawnProcess, waitForOutput } from "./process.mjs";
 import {
   ensureLinuxEnvironment,
@@ -19,42 +16,31 @@ import {
 } from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
+  buildBinaries,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   jsDir,
-  robotTeleopIndexPath,
 } from "./helpers.mjs";
 import { startRelayAndPage } from "./relay-dev.mjs";
 
 async function main() {
   ensureLinuxEnvironment();
   assertE2EPrerequisites();
-  execFileSync(
-    "cargo",
-    [
-      "build",
-      "-p",
-      "moq-robot-sim",
-      "-p",
-      "moq-robot-policy",
-      "-p",
-      "recorder",
-      "-p",
-      "bot-dispatcher",
-    ],
-    {
-      cwd: repoRoot,
-      stdio: "inherit",
-    },
-  );
+  const [robotSim, robotPolicy] = buildBinaries([
+    "moq-robot-sim",
+    "moq-robot-policy",
+    "recorder",
+    "bot-dispatcher",
+  ]);
 
   const room =
     process.env.ROBOT_TELEOP_E2E_ROOM ?? `anon/robot-teleop-e2e/${Date.now()}`;
   const policyRoom = `${room}-policy`;
   const recordedRoom = `${room}-recorded`;
   const moqtUrl = getDefaultMoqtUrl();
-  const { childProcesses, cleanup, ready } =
-    startRelayAndPage(robotTeleopIndexPath);
+  const { childProcesses, cleanup, ready } = startRelayAndPage(
+    "/moq-wasm/examples/robot-teleop/index.html",
+  );
 
   try {
     await ready;
@@ -63,7 +49,7 @@ async function main() {
     const start = async (label, binary, args, ready) => {
       const child = spawnProcess(
         label,
-        resolve(repoRoot, "target/debug", binary),
+        binary,
         ["--url", relayUrl, "--insecure", ...args],
         {
           cwd: repoRoot,
@@ -72,16 +58,16 @@ async function main() {
       childProcesses.push(child);
       await waitForOutput(child, ready, label, 60_000);
     };
-    await start("robot", "moq-robot-sim", ["--room", room], /robot ready/);
+    await start("robot", robotSim, ["--room", room], /robot ready/);
     await start(
       "policy-robot",
-      "moq-robot-sim",
+      robotSim,
       ["--room", policyRoom, "--policy-episode", "go to the corner"],
       /robot ready/,
     );
     await start(
       "policy",
-      "moq-robot-policy",
+      robotPolicy,
       ["--room", policyRoom],
       /policy ready/,
     );

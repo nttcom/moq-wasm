@@ -7,6 +7,8 @@ from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from moq_wasm.pipecat import MoqWasmEventRecord
+from pipecat.frames.frames import OutputTransportMessageFrame
 
 READ_TIMEOUT_SECONDS = 2
 
@@ -22,6 +24,14 @@ class RecordingPublication:
 
     async def next_write(self, timeout: float = READ_TIMEOUT_SECONDS) -> tuple[bool, Any]:
         return await asyncio.wait_for(self._writes.get(), timeout)
+
+
+def records(frames) -> list[dict]:
+    return [
+        frame.message.record
+        for frame in frames
+        if isinstance(frame, OutputTransportMessageFrame) and isinstance(frame.message, MoqWasmEventRecord)
+    ]
 
 
 @dataclass

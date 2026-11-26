@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import { spawnProcess, waitForOutput } from "./process.mjs";
 import { repoRoot } from "../../scripts/dev-env.mjs";
-import { findFreePort } from "./helpers.mjs";
+import { buildBinaries, findFreePort } from "./helpers.mjs";
 import { answerQuestions, runSystemOneBotE2E } from "./system-one-bot-e2e.mjs";
-
-const moqCliBinary = resolve(repoRoot, "target/debug/moq-cli");
 
 async function startCamera({ botDir, moqtUrl, app, childProcesses }) {
   const cameraPort = await findFreePort();
@@ -40,10 +37,7 @@ async function startCamera({ botDir, moqtUrl, app, childProcesses }) {
   return { PTZ_TRACKING_E2E_CAMERA_ORIGIN: `http://127.0.0.1:${cameraPort}` };
 }
 
-execFileSync("cargo", ["build", "-p", "moq-cli"], {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
+const [moqCliBinary] = buildBinaries(["moq-cli"]);
 runSystemOneBotE2E({
   name: "ptz-tracking",
   answer: answerQuestions,
