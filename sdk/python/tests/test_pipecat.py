@@ -89,6 +89,7 @@ from tests.fake_native import (
     until,
     within,
 )
+from tests.virtual_time import VirtualTimeLoop
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -6112,11 +6113,20 @@ async def test_an_output_ending_gracefully_writes_the_still_it_was_given_last(ki
     await session.close()
 
 
+@pytest.fixture
+def virtual_room_clock(monkeypatch, virtual_clock) -> VirtualTimeLoop:
+    """The test's event loop; the room paces the speech on its clock too."""
+    monkeypatch.setattr(_room, "_now_micros", lambda: int(virtual_clock.unix_time() * 1_000_000))
+    return virtual_clock
+
+
 def slow_encodes(monkeypatch, seconds: float) -> None:
     encode = VideoEncoder.encode
+    loop = asyncio.get_running_loop()
+    sleep = loop.sleep_in_job if isinstance(loop, VirtualTimeLoop) else time.sleep
 
     def slow(self, image: bytes, size, color_format: str) -> list[bytes]:
-        time.sleep(seconds)
+        sleep(seconds)
         return encode(self, image, size, color_format)
 
     monkeypatch.setattr(VideoEncoder, "encode", slow)
@@ -7135,7 +7145,7 @@ async def test_an_assistant_image_drawn_before_the_next_one_queued_is_shown_unti
     await session.close()
 
 
-async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(monkeypatch):
+async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(monkeypatch, virtual_room_clock):
     # Arrange: a live output whose encodes take 100 ms, given 600 ms of speech in frames of 30 ms,
     # each followed by a synchronized picture, with no drain deadline but the test's
     relay = FakeRelay()
@@ -7147,7 +7157,7 @@ async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(mo
     push_audio = FakeMediaSource.push_audio
 
     def pushing(self, data: bytes, timestamp_micros: int, **level) -> None:
-        pushed_at.append(time.monotonic())
+        pushed_at.append(virtual_room_clock.time())
         push_audio(self, data, timestamp_micros, **level)
 
     monkeypatch.setattr(FakeMediaSource, "push_audio", pushing)
@@ -7167,7 +7177,7 @@ async def test_synchronized_pictures_slow_to_encode_do_not_hold_up_the_speech(mo
     await session.close()
 
 
-async def test_synchronized_pictures_past_two_seconds_of_them_waiting_are_dropped(monkeypatch):
+async def test_synchronized_pictures_past_two_seconds_of_them_waiting_are_dropped(monkeypatch, virtual_room_clock):
     # Arrange: a live output at 10 pictures a second, which holds 20 synchronized pictures at most,
     # whose encodes take 100 ms, given 900 ms of speech in frames of 30 ms, each followed by a
     # synchronized picture, with no drain deadline but the test's
