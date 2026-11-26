@@ -1,0 +1,101 @@
+name: OBS plugin release
+
+# `docs/architecture/obs-moqt/architecture.md` "Release".
+on:
+  push:
+    tags:
+      - "obs-moqt-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Check the tag names the crate version
+        id: version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('crates/obs-moqt/Cargo.toml', 'rb'))['package']['version'])")
+          if [ "${GITHUB_REF_NAME}" != "obs-moqt-v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not name the crate version ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Check the changelog has the version's section
+        run: node sdk/js/js/scripts/release-notes.mjs crates/obs-moqt/CHANGELOG.md "${{ steps.version.outputs.version }}"
+
+  installer:
+    needs: version
+    # Apple silicon.
+    runs-on: macos-15
+    env:
+      INSTALLER: obs-moqt-${{ needs.version.outputs.version }}-macos-arm64.pkg
+      # The Qt that OBS Studio 32.0 is built with (`deps.qt6` in its buildspec.json).
+      QT_DEPS_VERSION: "2025-08-23"
+      QT_DEPS_SHA256: 990f11638b80a4509e14e8c315f6e4caa0861e37fcd3113a256fbff835ffca29
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Download the Qt headers for the dock
+        run: |
+          archive="${RUNNER_TEMP}/qt6.tar.xz"
+          curl --fail --silent --show-error --location --output "${archive}" \
+            "https://github.com/obsproject/obs-deps/releases/download/${QT_DEPS_VERSION}/macos-deps-qt6-${QT_DEPS_VERSION}-universal.tar.xz"
+          echo "${QT_DEPS_SHA256}  ${archive}" | shasum --algorithm 256 --check
+          mkdir "${RUNNER_TEMP}/qt6"
+          tar -xJf "${archive}" -C "${RUNNER_TEMP}/qt6"
+      - name: Build the installer
+        run: make obs-plugin-pkg OBS_MOQT_QT_CFLAGS="-F${RUNNER_TEMP}/qt6/lib"
+      - name: Upload the installer
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-macos-arm64
+          path: target/obs-plugin-pkg/${{ env.INSTALLER }}
+          if-no-files-found: error
+
+  release:
+    needs: [version, installer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Download the installers
+        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/installers
+      - name: Take the release notes from the changelog
+        run: node sdk/js/js/scripts/release-notes.mjs crates/obs-moqt/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${RUNNER_TEMP}"/installers/*.pkg \
+            --verify-tag --latest=false \
+            --title "obs-moqt ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"

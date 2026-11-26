@@ -66,6 +66,19 @@ One tokio runtime per output instance runs the relay session.
 - **Keyframe interval**: `moqt_service` sets `keyint_sec` to 2 when the encoder settings leave it at 0, because OBS's simple output mode has no such setting and x264's default is 250 frames.
 - **Codecs**: `moqt_output` declares `h264` and `aac`.
 
+## Release
+A release is a macOS installer for Apple silicon on a GitHub Release; other platforms build from source.
+
+1. A release PR bumps `crates/obs-moqt/Cargo.toml` and adds the version's section to `crates/obs-moqt/CHANGELOG.md`.
+2. After merge, the tag `obs-moqt-v<version>` is pushed on that commit.
+3. `.github/workflows/obs-plugin-release.yml` checks the tag against the version and the changelog, downloads the Qt that OBS is built with (checksum-pinned, from OBS's `buildspec.json`), and runs `make obs-plugin-pkg` on a macOS arm64 runner.
+4. It creates the GitHub Release with the installer and the changelog section (not marked Latest). The tag is the source the GPL asks for.
+
+- **Installer**: `pkgbuild` wraps `obs-moqt.plugin` (the plugin and `LICENSE`), and `productbuild` with `macos/distribution.xml` limits it to the home directory domain, so it lands in `~/Library/Application Support/obs-studio/plugins` without an administrator password.
+- **No Info.plist**: The bundle has none, as with `make obs-plugin-install`; OBS loads it by path, and the installer then never relocates it onto another copy of the bundle on the disk.
+- **Unsigned**: Neither the installer nor the plugin has a Developer ID signature (the linker's ad-hoc signature is enough for OBS to load the plugin), so Gatekeeper asks the user to allow the installer once.
+- **Qt and OBS versions**: An installer serves the OBS versions that share its Qt minor version and libobs major version; a new OBS that changes either needs a new release with `QT_DEPS_VERSION` updated.
+
 ## Testing
 - Unit and property tests cover `media_input` and `publish_settings` ([proptest.md](proptest.md)).
 - The libobs callbacks are checked by running OBS itself: an isolated OBS (`CFFIXED_USER_HOME` on macOS) with a prepared profile, `--startstreaming`, obs-websocket for stop and start, and `moq-cli subscribe` decoding the received video.
