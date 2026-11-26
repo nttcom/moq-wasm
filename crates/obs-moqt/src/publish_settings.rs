@@ -14,10 +14,9 @@ pub(crate) struct PublishSettings {
 }
 
 impl PublishSettings {
-    /// Fails when the relay URL or the namespace is empty, unless exactly
-    /// one of the token and the token file is set, or when `with_token`
-    /// refuses the token. libobs gives an unset string setting as an empty
-    /// string.
+    /// Fails when the relay URL or the namespace is empty, when the token and
+    /// the token file are both set or both empty, or when `with_token` refuses
+    /// the token. libobs gives an unset string setting as an empty string.
     pub(crate) fn new(
         server: &str,
         namespace: &str,
@@ -94,18 +93,11 @@ mod tests {
     #[test]
     fn splits_the_namespace_and_verifies_the_certificate_by_default() {
         // Arrange / Act
-        let settings = PublishSettings::new(
-            "moqt://relay.example.com:4433",
-            "/app/obs/live/",
-            TOKEN,
-            "",
-            false,
-        )
-        .unwrap();
+        let settings = PublishSettings::new(SERVER, "/app/obs/live/", TOKEN, "", false).unwrap();
 
         // Assert
         assert_eq!(settings.namespace, ["app", "obs", "live"]);
-        assert_eq!(settings.target.url, "moqt://relay.example.com:4433");
+        assert_eq!(settings.target.url, SERVER);
         assert_eq!(settings.target.auth_token.as_deref(), Some(TOKEN));
         assert_eq!(settings.token_file, None);
         assert!(settings.target.verify_certificate);

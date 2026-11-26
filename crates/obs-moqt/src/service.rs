@@ -13,9 +13,9 @@ use crate::{
 
 const DEFAULT_KEYFRAME_INTERVAL_SECONDS: i64 = 2;
 
-/// Registers `moqt_service`. It holds no state of its own: the output reads
-/// the service's settings (`server`, `namespace`, `bearer_token`,
-/// `bearer_token_file`, `insecure_skip_tls_verify`) when a stream starts.
+/// `moqt_service` holds no state of its own: the output reads the service's
+/// settings (`server`, `namespace`, `bearer_token`, `bearer_token_file`,
+/// `insecure_skip_tls_verify`) when a stream starts.
 pub(crate) fn register() {
     let info = ObsServiceInfo {
         id: c"moqt_service".as_ptr(),

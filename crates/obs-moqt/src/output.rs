@@ -85,7 +85,6 @@ struct Publishing {
 }
 
 impl Publishing {
-    /// Connects to the relay and announces the namespace.
     async fn open(settings: PublishSettings) -> Result<Self> {
         let connection = RelayConnection::new(Some(settings.target));
         let broadcast = Broadcast::new(connection.clone(), settings.namespace);
@@ -144,7 +143,7 @@ impl MoqtOutput {
         true
     }
 
-    /// The service's settings, with the token of a token file read.
+    /// The service's settings, with the token read from the token file when one is set.
     fn read_settings(&self) -> Result<PublishSettings> {
         let settings = self.shared.read_settings()?;
         let Some(path) = &settings.token_file else {
