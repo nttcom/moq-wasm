@@ -9,6 +9,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 E2E_DIR="$ROOT_DIR/tests/sip-gateway-e2e"
 cd "$ROOT_DIR"
+source tests/compose-relays.sh
 
 APPS_FILE="$E2E_DIR/apps.json"
 KEYS="$E2E_DIR/keys"
@@ -24,16 +25,6 @@ cleanup() {
   echo "logs: $LOGS"
 }
 trap cleanup EXIT
-
-secret() {
-  jq -er --arg id "$1" '.[] | select(.appId == $id) | .secret' "$APPS_FILE"
-}
-
-mint() {
-  local app_id="$1"
-  shift
-  AUTH_TOKEN_SECRET="$(secret "$app_id")" ./target/debug/auth-token --app-id "$app_id" "$@"
-}
 
 # Waits `tries` times 0.2 s (100 by default) for `check` to pass.
 wait_for() {
@@ -75,7 +66,7 @@ PIDS+=($!)
 wait_for vts "curl -fsS http://127.0.0.1:8081/healthz"
 
 RELAY_PORT=4433 AUTH_VTS_URL=http://127.0.0.1:8081/verify OTEL_SDK_DISABLED=true \
-  AUTH_RELAY_TOKEN="$(mint sip-e2e-relay --publish "" --subscribe "" --ttl 1h --relay-id relay-local)" \
+  AUTH_RELAY_TOKEN="$(mint "$APPS_FILE" sip-e2e-relay --publish "" --subscribe "" --ttl 1h --relay-id relay-local)" \
   ./target/debug/relay >"$LOGS/relay.log" 2>&1 &
 PIDS+=($!)
 wait_for relay "grep -q 'Relay server started' '$LOGS/relay.log'"
@@ -105,15 +96,15 @@ wait_for sip-gateway "curl -fsS http://127.0.0.1:8099/healthz"
 
 E2E_RELAY_URL=moqt://localhost:4433 \
   E2E_GATEWAY_URL=http://127.0.0.1:8099 \
-  E2E_PAGE_TOKEN="$(mint sip-e2e --publish room --subscribe room --ttl 1h)" \
-  E2E_CALL_TOKEN="$(mint sip-e2e --calls room --ttl 5m)" \
-  E2E_APP_SECRET="$(secret sip-e2e)" \
+  E2E_PAGE_TOKEN="$(mint "$APPS_FILE" sip-e2e --publish room --subscribe room --ttl 1h)" \
+  E2E_CALL_TOKEN="$(mint "$APPS_FILE" sip-e2e --calls room --ttl 5m)" \
+  E2E_APP_SECRET="$(app_secret "$APPS_FILE" sip-e2e)" \
   E2E_WEBHOOK_ADDRESS=127.0.0.1:8097 \
   E2E_COMPOSE_FILE="$E2E_DIR/compose.yaml" \
   ./target/debug/sip-gateway-e2e
 
 # The webhook the Rust client served is gone; the app server takes its port.
-APP_ID=sip-e2e APP_SECRET="$(secret sip-e2e)" GATEWAY_URL=http://127.0.0.1:8099 PORT=8097 \
+APP_ID=sip-e2e APP_SECRET="$(app_secret "$APPS_FILE" sip-e2e)" GATEWAY_URL=http://127.0.0.1:8099 PORT=8097 \
   node "$E2E_DIR/app-server.mjs" >"$LOGS/app-server.log" 2>&1 &
 PIDS+=($!)
 wait_for app-server "grep -q 'listening' '$LOGS/app-server.log'"

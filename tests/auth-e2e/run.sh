@@ -23,13 +23,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mint() {
-  local app_id="$1"
-  shift
-  AUTH_TOKEN_SECRET="$(jq -er --arg id "$app_id" '.[] | select(.appId == $id) | .secret' "$APPS_FILE")" \
-    ./target/debug/auth-token --app-id "$app_id" "$@"
-}
-
 expect_passed() {
   if ! grep -q "auth e2e passed" "$RESULT_LOG"; then
     echo "auth e2e did not print passed marker" >&2
@@ -41,10 +34,10 @@ cargo build -p auth-token --features cli
 cargo build -p auth-e2e
 cargo build -p moq-cli
 
-APP_TOKEN="$(mint "$APP_ID" --publish site1 --subscribe site1 --ttl 1h)"
-OTHER_APP_TOKEN="$(mint "$OTHER_APP_ID" --publish "" --subscribe "" --ttl 1h)"
+APP_TOKEN="$(mint "$APPS_FILE" "$APP_ID" --publish site1 --subscribe site1 --ttl 1h)"
+OTHER_APP_TOKEN="$(mint "$APPS_FILE" "$OTHER_APP_ID" --publish "" --subscribe "" --ttl 1h)"
 export AUTH_RELAY_TOKEN
-AUTH_RELAY_TOKEN="$(mint "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
+AUTH_RELAY_TOKEN="$(mint "$APPS_FILE" "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
 
 start_compose_relays relay-a relay-b
 
@@ -53,7 +46,7 @@ RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
 echo "Using relay URLs: $RELAY_A_URL, $RELAY_B_URL"
 
 # Minted last so that its short lifetime starts as close to the run as possible.
-SHORT_TOKEN="$(mint "$APP_ID" --publish site1 --subscribe site1 --ttl "$SHORT_TOKEN_TTL")"
+SHORT_TOKEN="$(mint "$APPS_FILE" "$APP_ID" --publish site1 --subscribe site1 --ttl "$SHORT_TOKEN_TTL")"
 
 if ! AUTH_E2E_APP_ID="$APP_ID" \
   AUTH_E2E_APP_TOKEN="$APP_TOKEN" \
@@ -72,7 +65,7 @@ expect_passed
 MOQ_CLI_DIR="$(mktemp -d)"
 REFRESHED_TOKEN_FILE="$MOQ_CLI_DIR/refreshed-token"
 EXPIRING_TOKEN_FILE="$MOQ_CLI_DIR/expiring-token"
-mint "$APP_ID" --publish site1 --subscribe site1 --ttl "$SHORT_TOKEN_TTL" > "$REFRESHED_TOKEN_FILE"
+mint "$APPS_FILE" "$APP_ID" --publish site1 --subscribe site1 --ttl "$SHORT_TOKEN_TTL" > "$REFRESHED_TOKEN_FILE"
 cp "$REFRESHED_TOKEN_FILE" "$EXPIRING_TOKEN_FILE"
 # stdin for moq-cli is a FIFO whose only write end this script holds on fd 3:
 # it delivers no data and no EOF, so moq-cli stays idle until fd 3 is closed.
