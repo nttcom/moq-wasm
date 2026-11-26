@@ -77,17 +77,16 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           persist-credentials: false
       - name: Warn when moqt version/ changes together with transport or runtime/tasks
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           modules=crates/moqt/src/modules
-          version_files="$(git diff --name-only "$BASE_SHA...HEAD" -- \
+          # HEAD is the pull request's merge commit, whose first parent is the base.
+          version_files="$(git diff --name-only HEAD^1 HEAD -- \
             "$modules/moqt/version.rs" "$modules/moqt/version/")"
-          shared_files="$(git diff --name-only "$BASE_SHA...HEAD" -- \
+          shared_files="$(git diff --name-only HEAD^1 HEAD -- \
             "$modules/transport.rs" "$modules/transport/" \
             "$modules/moqt/runtime/tasks.rs" "$modules/moqt/runtime/tasks/")"
           if [[ -n "$version_files" && -n "$shared_files" ]]; then

@@ -1,0 +1,24 @@
+name: List changed files
+description: Write the paths a pull request or push changes to changed-files.txt, one per line (every tracked path when there is no base to diff against). Needs a checkout with fetch-depth 0.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BEFORE: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+
+        # A pull request checks out its merge commit, whose first parent is the base it merges into.
+        # The event's base.sha is not: when the base branch moves before the run starts, diffing
+        # against it would count the base branch's new commits as the pull request's changes.
+        base="$BEFORE"
+        [[ "$EVENT_NAME" == pull_request ]] && base=HEAD^1
+
+        if [[ -n "$base" && ! "$base" =~ ^0+$ ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+          git diff --name-only "$base" HEAD > changed-files.txt
+        else
+          git ls-tree -r --name-only HEAD > changed-files.txt
+        fi

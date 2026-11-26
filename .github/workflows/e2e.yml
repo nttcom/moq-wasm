@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/e2e.yml"
       - ".github/workflows/relay-image.yml"
+      - ".github/actions/list-changed-files/**"
       - ".github/actions/setup-wasm-pack/**"
       - ".github/actions/install-playwright-chromium/**"
       - "tests/browser-e2e/**"
@@ -64,6 +65,7 @@ on:
     paths:
       - ".github/workflows/e2e.yml"
       - ".github/workflows/relay-image.yml"
+      - ".github/actions/list-changed-files/**"
       - ".github/actions/setup-wasm-pack/**"
       - ".github/actions/install-playwright-chromium/**"
       - "tests/browser-e2e/**"
@@ -158,6 +160,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: List changed files
+        uses: ./.github/actions/list-changed-files
+
       - name: Detect changed E2E inputs
         id: filter
         shell: bash
@@ -179,14 +184,6 @@ jobs:
             compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup live-translate)
             cross_version=true
           else
-            base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
-
-            if [[ -n "$base" && ! "$base" =~ ^0+$ ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-              git diff --name-only "$base" HEAD > changed-files.txt
-            else
-              git ls-tree -r --name-only HEAD > changed-files.txt
-            fi
-
             media=false
             message=false
             robot_teleop=false
