@@ -418,10 +418,18 @@ impl SessionContext {
         lock(&self.publications).insert(request_id, publication);
     }
 
+    /// Removes the publication `request_id`, so no migration sends it again;
+    /// each connection it was on serves `request_id` until `stop_serving`.
     pub(crate) fn remove_publication(&self, request_id: u64) -> Option<Publication> {
-        let publication = lock(&self.publications).remove(&request_id);
-        self.served_changed.send_replace(());
-        publication
+        // `serves_on` reads both under this lock, so it never sees neither.
+        let mut publications = lock(&self.publications);
+        let publication = publications.remove(&request_id)?;
+        for target in &publication.targets {
+            if let Some(connection) = target.connection.upgrade() {
+                connection.serve(request_id);
+            }
+        }
+        Some(publication)
     }
 
     /// The live connections the publication `request_id` is on, with its
@@ -483,8 +491,9 @@ impl SessionContext {
     /// Whether the peer of `connection` still takes a track this side sends:
     /// a publication on it or a SUBSCRIBE it sent that it has not ended.
     pub(crate) fn serves_on(&self, connection: &Arc<Connection>) -> bool {
+        let publications = lock(&self.publications);
         connection.serves_subscriptions()
-            || lock(&self.publications).values().any(|publication| {
+            || publications.values().any(|publication| {
                 publication.targets.iter().any(|target| {
                     target
                         .connection

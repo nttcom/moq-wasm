@@ -883,15 +883,25 @@ pub(crate) async fn spawn_connected_native_sessions_following_go_away(
 pub(crate) async fn spawn_connected_draft18_sessions_following_go_away(
     name: &str,
 ) -> (Session, Session) {
-    let (port, accept) = spawn_server(name, Version::Draft18);
-    let client = client_with_config(
+    connected_sessions_following_go_away(name, Version::Draft18).await
+}
+
+/// A client following GOAWAY and its server, both offering only `version`,
+/// as (client, server).
+pub(crate) async fn connected_sessions_following_go_away(
+    name: &str,
+    version: Version,
+) -> (Session, Session) {
+    let (port, accept) = spawn_server(name, version);
+    let endpoint = client_with_config(
         ClientConfig {
+            certificate_verification: CertificateVerification::Disabled,
             follow_go_away: true,
-            ..insecure_client_config()
+            ..ClientConfig::default()
         },
-        Version::Draft18,
+        version,
     );
-    connect_sessions_from(&client, &format!("moqt://127.0.0.1:{port}"), accept)
+    connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
         .await
         .unwrap()
 }

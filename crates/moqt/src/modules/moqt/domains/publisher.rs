@@ -195,20 +195,25 @@ impl Publisher {
                 .collect(),
             None => self.session.connection_of(request_id).into_iter().collect(),
         };
+        // Served until PUBLISH_DONE is written, so no migration closes a
+        // connection before.
+        let mut sent = Ok(());
         for (connection, wire_request_id) in targets {
+            if sent.is_ok() {
+                sent = connection
+                    .control
+                    .notify_end(Notification::PublishDone {
+                        request_id: wire_request_id,
+                        code: status_code,
+                        stream_count,
+                        reason: error_reason.clone(),
+                    })
+                    .await;
+            }
             connection.stop_serving(request_id);
-            self.session.note_served_changed();
-            connection
-                .control
-                .notify_end(Notification::PublishDone {
-                    request_id: wire_request_id,
-                    code: status_code,
-                    stream_count,
-                    reason: error_reason.clone(),
-                })
-                .await?;
         }
-        Ok(())
+        self.session.note_served_changed();
+        Ok(sent?)
     }
 
     #[tracing::instrument(
@@ -441,6 +446,7 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
+    use futures::FutureExt;
     use tokio::task::JoinHandle;
 
     use crate::{
@@ -452,17 +458,18 @@ mod tests {
             },
             test_support::{
                 DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, capture_telemetry, connected_sessions,
-                data_receiver, first_subgroup_stream, mandatory_track_properties, next_event,
-                next_subgroup, object_with_extensions, read_subgroup_objects, send_subgroup_object,
-                send_without_waiting, spawn_connected_draft18_sessions,
+                connected_sessions_following_go_away, data_receiver, first_subgroup_stream,
+                mandatory_track_properties, next_event, next_subgroup, object_with_extensions,
+                read_subgroup_objects, send_subgroup_object, send_without_waiting,
+                spawn_connected_draft18_sessions,
                 spawn_connected_draft18_sessions_following_go_away,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 wait_for_control_delivery, within,
             },
         },
-        object::{Location, Object},
+        object::{ContentExists, Location, Object},
         publish::{PublishDoneCode, PublishHandler, PublishOption},
-        subscribe::FilterType,
+        subscribe::{FilterType, SubscribeOption},
     };
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -1242,5 +1249,72 @@ mod tests {
         assert!(spans[0].field("request_id").is_some());
         assert_eq!(spans[0].field("request_id"), logged[0].field("request_id"));
         assert_eq!(spans[0].field("outcome"), Some("ok"));
+    }
+
+    /// Starts `publish_done` for `subscription` while the client's control
+    /// stream is held; returns whether the connection was still served
+    /// before PUBLISH_DONE could be written.
+    async fn served_while_publish_done_is_unwritten(
+        client: &Session,
+        subscription: &Subscription,
+    ) -> bool {
+        let connection = client.context().connection();
+        let held = connection.control.hold_draft14_send_stream().await;
+        let publisher = client.publisher();
+        let mut done = Box::pin(publisher.publish_done(
+            subscription,
+            PublishDoneCode::TrackEnded,
+            0,
+            String::new(),
+        ));
+        assert!((&mut done).now_or_never().is_none());
+        let served = client.context().serves_on(&connection);
+        drop(held);
+        within(done).await.unwrap();
+        served
+    }
+
+    #[tokio::test]
+    async fn a_served_subscribe_holds_its_connection_until_publish_done_is_written() {
+        // Arrange
+        let (client, server) =
+            connected_sessions_following_go_away("publish-done-served", Version::Draft14).await;
+        let mut subscriber = server.subscriber();
+        let (_, served) = tokio::join!(
+            subscriber.subscribe(
+                "ns".to_string(),
+                "track".to_string(),
+                SubscribeOption::default()
+            ),
+            async {
+                let SessionEvent::Subscribe(handler) = next_event(&client).await else {
+                    panic!("expected SUBSCRIBE from the server");
+                };
+                let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+                handler.into_subscription(track_alias)
+            }
+        );
+
+        // Act
+        let served_unwritten = served_while_publish_done_is_unwritten(&client, &served).await;
+
+        // Assert: a migration cannot close the connection before PUBLISH_DONE reaches it
+        assert!(served_unwritten);
+        assert!(!client.context().serves_on(&client.context().connection()));
+    }
+
+    #[tokio::test]
+    async fn a_publication_holds_its_connection_until_publish_done_is_written() {
+        // Arrange
+        let (client, server) =
+            connected_sessions_following_go_away("publish-done-published", Version::Draft14).await;
+        let (published, _) = within(active_publish(&client, &server, "track")).await;
+
+        // Act
+        let served_unwritten = served_while_publish_done_is_unwritten(&client, &published).await;
+
+        // Assert: a migration cannot close the connection before PUBLISH_DONE reaches it
+        assert!(served_unwritten);
+        assert!(!client.context().serves_on(&client.context().connection()));
     }
 }

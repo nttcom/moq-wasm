@@ -27,10 +27,12 @@
 //   one `Disconnected` per closed connection. `Connection` holds the event
 //   sender (connection.rs:74), so a connection's events never end with
 //   `None` while the router keeps it.
-// - The served SUBSCRIBE: `SubscribeHandler::ok_with_track_alias` sends
-//   SUBSCRIBE_OK, then calls `serve()` (control_plane/handler/subscribe_handler.rs:120-126);
-//   `Publisher::publish_done` calls `stop_serving` + `note_served_changed`
-//   before writing PUBLISH_DONE (domains/publisher.rs:169-178), and
+// - The served SUBSCRIBE: `SubscribeHandler::new` calls `serve()` when the
+//   control receive task reads the SUBSCRIBE; a refusal or a handler dropped
+//   unanswered undoes it (control_plane/handler/subscribe_handler.rs);
+//   `Publisher::publish_done` writes PUBLISH_DONE, then calls `stop_serving`
+//   + `note_served_changed` (domains/publisher.rs; `remove_publication`
+//   counts a publication as served until then), and
 //   `notify_end` swallows `ConnectionLost` (version.rs:1055-1063);
 //   `Router::unsubscribed` calls `stop_serving` (migration_task.rs:296-303).
 //
@@ -497,15 +499,15 @@ module migration {
   }
 }
 
-// expect: violation
+// expect: ok
 module migration_current {
   import migration(
     CONNECTIONS = 0.to(2),
-    FIX_CLOSED_DURING_MIGRATION = false,
-    FIX_FINISH_CLOSES_PREVIOUS = false,
-    FIX_REPORT_STAYING_END = false,
-    FIX_DONE_BEFORE_STOP = false,
-    FIX_SERVE_ON_RECEIPT = false,
+    FIX_CLOSED_DURING_MIGRATION = true,
+    FIX_FINISH_CLOSES_PREVIOUS = true,
+    FIX_REPORT_STAYING_END = true,
+    FIX_DONE_BEFORE_STOP = true,
+    FIX_SERVE_ON_RECEIPT = true,
   ).*
 }
 

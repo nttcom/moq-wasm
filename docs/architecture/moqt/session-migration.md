@@ -57,6 +57,7 @@ Each connection allocates its own wire IDs (draft-14 §9.1), mapped to stable lo
 **Re-send & filters**
 - **Filter**: Carried subscriptions re-send with current Forward state and `NextGroupStart` (or `AbsoluteRange` starting after the newest handed-out group, keeping `End Group`).
 - **`SUBSCRIBE_UPDATE` state**: Updates replace carried Forward state and priority; setting `End Group` converts the carried filter into an `AbsoluteRange`.
+- **Refused re-sends**: A subscription the new server does not accept stays on the previous connection and ends with it: its receiver ends and the application gets a `PublishDone` event (`GOING_AWAY`), as for a `PUBLISH_DONE`.
 - **Skipped re-sends**: Not re-sent if `PUBLISH_DONE` already ended it, or if an `AbsoluteRange`'s `End Group` already started on the previous connection (kept open up to 10 s until its streams finish). A `PUBLISH_DONE` from the previous connection for a carried subscription only signals drain and is suppressed.
 
 **Deduplication & FETCH**
@@ -65,7 +66,7 @@ Each connection allocates its own wire IDs (draft-14 §9.1), mapped to stable lo
 - **In-flight & Joining `FETCH`**: In-flight `FETCH` keeps reading on the previous connection and resumes on the new connection from after the last received location through `FETCH_OK`'s End Location if cut off (descending `FETCH`es are not retried). `fetch_relative_joining` uses a Joining `FETCH` only on the subscription's original connection (draft-14 §9.16.2 requires `LargestObject`); after migration, it sends a Standalone `FETCH` for the same range.
 
 ### Publishing Side
-`PUBLISH_NAMESPACE` and `PUBLISH` re-send on the new connection. `StreamDataSenderFactory` and `DatagramSender` fan out streams/datagrams to every connection whose peer still takes the track—the new one from the next group, and the previous one until `UNSUBSCRIBE` (draft-22 §7.6.1). Covers both `PUBLISH`- and `SUBSCRIBE`-initiated tracks, transparently below `Origin`.
+`PUBLISH_NAMESPACE` and `PUBLISH` re-send on the new connection. `StreamDataSenderFactory` and `DatagramSender` fan out streams/datagrams to every connection whose peer still takes the track—the new one from the next group, and the previous one until `UNSUBSCRIBE` (draft-22 §7.6.1). Covers both `PUBLISH`- and `SUBSCRIBE`-initiated tracks, transparently below `Origin`. A track ending with `publish_done` keeps its connections from closing until its `PUBLISH_DONE` is written there.
 
 ### Events
 - `receive_event` delivers events from all connections translated to logical IDs.
@@ -80,9 +81,11 @@ When `follow_go_away` is `true`, `Session` also replaces an unexpectedly lost co
 - **Backoff & cap**: Retries starting at 0.5 s, doubling up to 10 s, for at most 60 s (~relay cache TTL). A `SETUP` token rejection (`UNAUTHORIZED`, `EXPIRED_AUTH_TOKEN`) allows only one retry. `Session::closed` stays pending and no `Disconnected` fires during retries.
 - **Cut-off requests**: `SUBSCRIBE_NAMESPACE`, `PUBLISH_NAMESPACE`, `PUBLISH`, or `SUBSCRIBE` interrupted before a response release the `carried` lock and retry on the new connection (failing only if the session ends). Namespace requests enter `carried` on send (rejection/timeout, or dropping an unanswered `PendingPublishNamespace`, removes only that record; `UNSUBSCRIBE_NAMESPACE`/`PUBLISH_NAMESPACE_DONE` and an incoming `PUBLISH_NAMESPACE_CANCEL` clear all records for the namespace). A `PUBLISH_NAMESPACE` refused or cancelled after a migration re-announced it is withdrawn with `PUBLISH_NAMESPACE_DONE` on the other live connections that announced it. Other requests and timeouts still fail normally.
 - **No gap fill**: Once the new connection takes over, the lost connection retires immediately; subscriptions resume from the next group start without filling missed objects.
+- **Closed during a GOAWAY move**: A move that completes after the current connection closed retires that connection at once, like a reconnect; when `Session::close` closed it, the move closes the new connection and the session ends.
 
 ### Closing the Previous Connection
-Closes with `NO_ERROR` once the peer takes no published tracks there and all carried subscriptions have zero open subgroup streams (`OpenSubgroups`), or when the server closes it:
+Closes with `NO_ERROR` once the peer takes no published tracks there and all carried subscriptions have zero open subgroup streams (`OpenSubgroups`), when the server closes it, or when the session ends:
+- A `SUBSCRIBE` the peer sent counts as taken from its receipt until its `UNSUBSCRIBE`, its `PUBLISH_DONE` is written, or the application refuses it or drops its handler unanswered.
 - A subscription with no open streams at move time cuts over immediately after its newest handed-out group.
 - Long-lived groups are capped by a **5 s** grace after all subscriptions cut over (**10 s** if a track receives nothing on the new connection).
 - Un-unsubscribed `SUBSCRIBE`s from the previous server, and `PUBLISH`es rejected by the new server, then emit an `Unsubscribe` event.
