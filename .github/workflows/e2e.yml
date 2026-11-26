@@ -57,6 +57,9 @@ on:
       - "Cargo.lock"
       - "rust-toolchain"
       - "!**.md"
+      # The SDKs' unit tests, which no E2E suite runs.
+      - "!sdk/python/tests/**"
+      - "!sdk/js/js/src/**/*.test.ts"
   push:
     branches:
       - master
@@ -117,6 +120,9 @@ on:
       - "Cargo.lock"
       - "rust-toolchain"
       - "!**.md"
+      # The SDKs' unit tests, which no E2E suite runs.
+      - "!sdk/python/tests/**"
+      - "!sdk/js/js/src/**/*.test.ts"
   workflow_dispatch:
 
 concurrency:
@@ -199,7 +205,9 @@ jobs:
             cross_version=false
 
             while IFS= read -r path; do
-              [[ "$path" == *.md ]] && continue
+              case "$path" in
+                *.md|sdk/python/tests/*|sdk/js/js/src/*.test.ts) continue ;;
+              esac
 
               # Shared by every browser example. A path under one example
               # selects only the jobs whose pages load its files.
