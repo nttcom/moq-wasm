@@ -811,7 +811,7 @@ dev = [
 
 [[package]]
 name = "moq-wasm"
-version = "0.0.1"
+version = "0.1.0"
 source = { directory = "../../../sdk/python" }
 
 [package.optional-dependencies]
@@ -839,7 +839,9 @@ dev = [
     { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "pytest-asyncio", specifier = ">=1.4" },
+    { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "pytest-xdist", specifier = ">=3.6" },
 ]
 
 [[package]]
