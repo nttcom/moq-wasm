@@ -153,26 +153,20 @@ pub(crate) struct SinkCutover {
     pub(crate) previous: bool,
 }
 
-/// A subgroup stream carries one group and is taken as starting at the
-/// group's first object: a subscription sent again starts at the next group
-/// start.
-fn location_of(object: &IncomingObject) -> (u64, u64) {
+fn group_of(object: &IncomingObject) -> u64 {
     match object {
-        IncomingObject::Subgroup(receiver) => (receiver.group_id(), 0),
-        IncomingObject::Datagram(datagram) => (
-            datagram.object.location.group_id,
-            datagram.object.location.object_id,
-        ),
+        IncomingObject::Subgroup(receiver) => receiver.group_id(),
+        IncomingObject::Datagram(datagram) => datagram.object.location.group_id,
     }
 }
 
 impl SinkCutover {
-    fn takes(&self, (group_id, object_id): (u64, u64)) -> bool {
+    fn takes(&self, group_id: u64) -> bool {
         let mut cutover = lock(&self.shared);
         if self.previous {
             return cutover.take_previous(group_id);
         }
-        cutover.take_current(group_id, object_id)
+        cutover.take_current(group_id)
     }
 }
 
@@ -181,17 +175,17 @@ impl SinkReceiver {
         if let IncomingObject::Subgroup(_) = object {
             self.arrived_streams.send_modify(|count| *count += 1);
         }
-        let location = location_of(&object);
+        let group_id = group_of(&object);
         if self
             .cutover
             .as_ref()
-            .is_some_and(|cutover| !cutover.takes(location))
+            .is_some_and(|cutover| !cutover.takes(group_id))
         {
             return IncomingObjectNotification::Discarded;
         }
         self.newest_group = Some(
             self.newest_group
-                .map_or(location.0, |newest| newest.max(location.0)),
+                .map_or(group_id, |newest| newest.max(group_id)),
         );
         if let IncomingObject::Subgroup(receiver) = &mut object {
             receiver.track_alias = self.logical_alias;

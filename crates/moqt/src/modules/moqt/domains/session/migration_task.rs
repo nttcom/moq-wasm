@@ -125,14 +125,12 @@ struct Previous {
     /// - no subscription that ends on this connection has a stream open, or
     ///   `CUTOVER_LIMIT` has passed.
     released: BoxFuture<()>,
-    cutovers: Vec<Arc<std::sync::Mutex<GroupCutover>>>,
 }
 
 struct Migrated {
     live: Live,
     url: String,
     released: BoxFuture<()>,
-    cutovers: Vec<Arc<std::sync::Mutex<GroupCutover>>>,
 }
 
 /// The move of the session to a new connection, together with whether the
@@ -299,7 +297,6 @@ impl Router {
                             let moved_from = Previous {
                                 live: std::mem::replace(&mut current, migrated.live),
                                 released: migrated.released,
-                                cutovers: migrated.cutovers,
                             };
                             if let Migration::Reconnecting(_) = ended {
                                 // A lost connection delivers nothing more.
@@ -357,10 +354,9 @@ impl Router {
         self.forward(SessionEvent::Unsubscribe(handler));
     }
 
-    /// Closes the previous connection with NO_ERROR; a subscription that has
-    /// not cut over takes its next group start from the current one, and a
-    /// SUBSCRIBE served on the previous connection, or a PUBLISH no other
-    /// connection took, ends as if its subscriber unsubscribed.
+    /// Closes the previous connection with NO_ERROR; a SUBSCRIBE served on
+    /// it, or a PUBLISH no other connection took, ends as if its subscriber
+    /// unsubscribed.
     fn retire(&self, previous: Previous) {
         previous
             .live
@@ -379,9 +375,6 @@ impl Router {
                 self.session.clone(),
                 request_id,
             )));
-        }
-        for cutover in previous.cutovers {
-            lock(&cutover).previous_ended();
         }
     }
 
@@ -577,7 +570,6 @@ async fn migrate(
     }))
     .await;
     let mut cut_overs = Vec::new();
-    let mut cutovers = Vec::new();
     let mut previous_open_subgroups = Vec::new();
     let mut ending_open_subgroups = Vec::new();
     for (request_id, outcome) in carried_over {
@@ -588,8 +580,7 @@ async fn migrate(
                 previous_open,
             } => {
                 cut_overs.push(cut_over);
-                previous_open_subgroups.push((cutover.clone(), previous_open));
-                cutovers.push(cutover);
+                previous_open_subgroups.push((cutover, previous_open));
             }
             Carried::Ends { previous_open } => ending_open_subgroups.push(previous_open),
             Carried::Stays => {}
@@ -632,7 +623,6 @@ async fn migrate(
             let _ = tokio::join!(moving, ending);
             session.unserved(&moved_from).await;
         }),
-        cutovers,
     })
 }
 

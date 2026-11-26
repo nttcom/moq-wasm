@@ -4,21 +4,23 @@
 //
 // Code mapping:
 // - `GroupCutover::{waiting_after, take_previous, take_current,
-//   release_previous, previous_ended}` (group_cutover.rs:64-130).
-// - `SinkCutover::takes` (domains/connection.rs:165-173) calls
+//   release_previous}` (group_cutover.rs:40-102). Before KEEP_NEWEST
+//   `previous_ended` forgot `newest` while waiting.
+// - `SinkCutover::takes` (domains/connection.rs:163-171) calls
 //   `take_previous`/`take_current` under the `GroupCutover` mutex with
-//   `location_of` (connection.rs:155-163): a datagram's own location, or
-//   `(group, 0)` for a whole subgroup stream, even one that starts mid-group.
-// - `current_start` is `first_whole_group` (session/migration_task.rs:772-783):
+//   `group_of` (connection.rs:156-161): the group of a datagram or of a
+//   subgroup stream, even one that starts mid-group. Before CUT_FROM_START
+//   `take_current` also took the object ID, `0` for a subgroup stream.
+// - `current_start` is `first_whole_group` (session/migration_task.rs:814-825):
 //   the first group the new subscription delivers whole.
-// - `release_when_idle` (session/migration_task.rs:587-608) calls
+// - `release_when_idle` (session/migration_task.rs:629-652) calls
 //   `release_previous` once no subgroup stream is open on the previous
-//   connection; `Router::retire` (migration_task.rs:312-334) calls
-//   `previous_ended` and closes the previous connection.
+//   connection; `Router::retire` (migration_task.rs:360-379) closes the
+//   previous connection.
 //
 // One action = one hold of the `GroupCutover` mutex: one object (datagram)
 // or one subgroup stream reaching a sink, one `release_previous` that
-// returned true, or one `previous_ended`. A subgroup stream is modeled as
+// returned true, or one `retire`. A subgroup stream is modeled as
 // arriving whole at once; `release_when_idle` only runs while no stream is
 // open, so it never interleaves with one.
 //
@@ -29,11 +31,15 @@
 //
 // Instances:
 // - group_cutover_{subgroups,datagrams}_current: today's code.
-// - *_keep_newest: KEEP_NEWEST only (previous_ended keeps `newest`).
+// - *_keep_newest: KEEP_NEWEST only (`retire` keeps `newest`).
 // - *_cut_from_start: CUT_FROM_START fixes the cutover at
 //   max(newest + 1, current_start) instead of at the group of the first
 //   object the current subscription happens to deliver.
-// - *_fixed: CUT_FROM_START and KEEP_NEWEST (previous_ended keeps `newest`).
+// - *_fixed: CUT_FROM_START and KEEP_NEWEST.
+//
+// KEEP_NEWEST relies on the publisher never reusing a location: one that
+// numbers the groups on the new connection lower has nothing taken from it
+// until its group IDs pass `newest`.
 //
 // Check (from docs/architecture/moqt/models):
 //   quint typecheck group_cutover.qnt
@@ -50,23 +56,23 @@ module group_cutover {
   const DATAGRAMS: bool
   // Fix: the cutover is max(newest + 1, current_start) whenever it is fixed.
   const CUT_FROM_START: bool
-  // Fix: `previous_ended` keeps `newest`.
+  // Fix: `retire` keeps `newest` (the code has no `previous_ended`).
   const KEEP_NEWEST: bool
 
-  // `Cutover` (group_cutover.rs:19).
+  // `Cutover` (group_cutover.rs:25).
   type Cutover = Waiting | At(int)
 
-  // The previous connection's side of the subscription; the code's
-  // `PreviousSide {Live, Ended}` (group_cutover.rs:32) while `Waiting`.
+  // The previous connection's side of the subscription: the peer and the
+  // router, not state of `GroupCutover`.
   type PreviousSide =
     | PLive      // delivering; the cutover may still be waiting for it
     | PReleased  // `release_previous` returned true
-    | PEnded     // `retire` closed the connection and called `previous_ended`
+    | PEnded     // `retire` closed the connection
 
   type Loc = (int, int)
 
   type State = {
-    // `PreviousSide::Live::newest`; -1 for `None` and for `Ended`.
+    // `Cutover::Waiting::newest`; -1 for `None`.
     newest: int,
     currentStart: int,
     cut: Cutover,
@@ -194,7 +200,7 @@ module group_cutover {
     },
   }
 
-  // `Router::retire` -> `previous_ended`: the grace timer, the peer closing
+  // `Router::retire`: the grace timer, the peer closing
   // the previous connection, or `released` resolving after the release.
   action previousEnds: bool = all {
     s.previous != PEnded,
@@ -278,19 +284,19 @@ module group_cutover {
   }
 }
 
-// expect: violation
+// expect: ok
 module group_cutover_subgroups_current {
   import group_cutover(
     GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = false,
-    CUT_FROM_START = false, KEEP_NEWEST = false,
+    CUT_FROM_START = true, KEEP_NEWEST = true,
   ).*
 }
 
-// expect: violation
+// expect: ok
 module group_cutover_datagrams_current {
   import group_cutover(
     GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = true,
-    CUT_FROM_START = false, KEEP_NEWEST = false,
+    CUT_FROM_START = true, KEEP_NEWEST = true,
   ).*
 }
 
