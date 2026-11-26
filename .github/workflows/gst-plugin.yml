@@ -21,7 +21,7 @@ env:
 
 jobs:
   macos:
-    # Apple silicon, against Homebrew's GStreamer.
+    # Apple silicon.
     runs-on: macos-15
     steps:
       - name: Checkout repository
@@ -49,7 +49,6 @@ jobs:
           plugins="${HOME}/.local/share/gstreamer-1.0/plugins"
           mkdir -p "${plugins}"
           tar -xzf gst-plugin-moqt-*-macos-arm64.tar.gz -C "${plugins}" ./libgstmoqt.dylib
-          otool -L "${plugins}/libgstmoqt.dylib"
           gst-inspect-1.0 moqtsink
       - name: Upload the archive
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
@@ -68,8 +67,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runner }}
-    # Ubuntu 22.04's glibc 2.35 and GStreamer 1.20 are the oldest the
-    # archive supports.
+    # The archive runs on glibc 2.35 and GStreamer 1.20 (Ubuntu 22.04) or newer.
     container: ubuntu:22.04
     steps:
       - name: Install GStreamer
@@ -114,7 +112,6 @@ jobs:
           if-no-files-found: error
 
   windows:
-    # Against the official MSVC GStreamer.
     runs-on: windows-2025
     defaults:
       run:
@@ -150,9 +147,7 @@ jobs:
           "$env:GSTREAMER_ROOT\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
           "PKG_CONFIG_PATH=$env:GSTREAMER_ROOT\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build the plugin
-        run: |
-          pkg-config --modversion gstreamer-1.0
-          cargo build -p gst-plugin-moqt --release --locked
+        run: cargo build -p gst-plugin-moqt --release --locked
       - name: Build the archive
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
