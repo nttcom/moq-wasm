@@ -257,7 +257,7 @@ pub(crate) struct ControlChannel {
     /// The Request ID of this side's next request (§10.1).
     next_request_id: tokio::sync::Mutex<RequestId>,
     /// The Request ID after the last one this side wrote.
-    written_request_id_end: AtomicU64,
+    pub(super) written_request_id_end: AtomicU64,
     synthetic_request_id: AtomicU64,
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
@@ -375,11 +375,6 @@ impl ControlChannel {
         *next_request_id += 2;
         self.written_request_id_end
             .store(*next_request_id, Ordering::Relaxed);
-    }
-
-    pub(super) fn wrote_request_id(&self, request_id: RequestId) -> bool {
-        let end = self.written_request_id_end.load(Ordering::Relaxed);
-        request_id % 2 == end % 2 && request_id < end
     }
 
     /// The Request ID after the largest one the peer has used, for GOAWAY.
