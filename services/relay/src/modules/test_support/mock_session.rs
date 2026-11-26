@@ -79,8 +79,6 @@ pub(crate) struct RecordedControlMessages {
     subscribed_track_names: Arc<Mutex<Vec<String>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
     go_aways: Arc<Mutex<Vec<String>>>,
-    publish_namespaces: Arc<Mutex<Vec<String>>>,
-    publish_namespace_dones: Arc<Mutex<Vec<String>>>,
     namespace_announcements: Arc<Mutex<Vec<String>>>,
     namespace_subscriptions: Arc<Mutex<Vec<String>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
@@ -104,8 +102,6 @@ impl Default for RecordedControlMessages {
             subscribed_track_names: Arc::default(),
             closes: Arc::default(),
             go_aways: Arc::default(),
-            publish_namespaces: Arc::default(),
-            publish_namespace_dones: Arc::default(),
             namespace_announcements: Arc::default(),
             namespace_subscriptions: Arc::default(),
             publishes: Arc::default(),
@@ -194,11 +190,21 @@ impl RecordedControlMessages {
     }
 
     pub(crate) fn publish_namespaces(&self) -> Vec<String> {
-        self.publish_namespaces.lock().unwrap().clone()
+        self.announcements_with_prefix("publish ")
     }
 
     pub(crate) fn publish_namespace_dones(&self) -> Vec<String> {
-        self.publish_namespace_dones.lock().unwrap().clone()
+        self.announcements_with_prefix("done ")
+    }
+
+    fn announcements_with_prefix(&self, prefix: &str) -> Vec<String> {
+        self.namespace_announcements
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|announcement| announcement.strip_prefix(prefix))
+            .map(str::to_string)
+            .collect()
     }
 
     /// `publish <namespace>` per PUBLISH_NAMESPACE and `done <namespace>` per
@@ -339,13 +345,8 @@ pub(crate) fn recorded_session_answering_subscribe(
 ) -> (Box<dyn Session>, RecordedControlMessages) {
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
-        recorded: recorded.clone(),
         answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
-        answer_fetch: FetchAnswer::Never,
-        transport_stats: moqt::TransportStats::default(),
-        answer_publish: None,
-        publish_namespace_gate: None,
-        publish_namespace_delay: None,
+        ..MockUpstreamSession::new(recorded.clone())
     });
     (session, recorded)
 }
@@ -383,13 +384,8 @@ pub(crate) fn mock_session_refusing_subscribe(code: RequestErrorCode) -> Box<dyn
 
 pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
-        recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(SubscribeAnswer::Never),
-        answer_fetch: FetchAnswer::Never,
-        transport_stats: moqt::TransportStats::default(),
-        answer_publish: None,
-        publish_namespace_gate: None,
-        publish_namespace_delay: None,
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
     })
 }
 
@@ -406,13 +402,8 @@ pub(crate) fn recorded_session_answering_fetch(
 
 pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
-        recorded: RecordedControlMessages::default(),
-        answer_subscribe: None,
         answer_fetch,
-        transport_stats: moqt::TransportStats::default(),
-        answer_publish: None,
-        publish_namespace_gate: None,
-        publish_namespace_delay: None,
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
     })
 }
 
@@ -700,11 +691,6 @@ impl Publisher for MockUpstreamPublisher {
             .lock()
             .unwrap()
             .push(format!("publish {namespaces}"));
-        self.recorded
-            .publish_namespaces
-            .lock()
-            .unwrap()
-            .push(namespaces);
         if let Some(gate) = &self.publish_namespace_gate {
             gate.acquire().await?.forget();
         }
@@ -724,11 +710,6 @@ impl Publisher for MockUpstreamPublisher {
             .lock()
             .unwrap()
             .push(format!("done {namespace}"));
-        self.recorded
-            .publish_namespace_dones
-            .lock()
-            .unwrap()
-            .push(namespace);
         Ok(())
     }
 

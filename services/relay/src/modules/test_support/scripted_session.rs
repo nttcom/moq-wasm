@@ -20,7 +20,7 @@ use moqt::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::modules::{
-    auth::verified_token::VerifiedToken,
+    auth::verified_token::{VerifiedToken, parse_namespace_path},
     domain::{
         publish_done_reason::PublishDoneReason,
         session_id::SessionId,
@@ -141,13 +141,6 @@ impl PeerState {
     }
 }
 
-fn tuple(track_namespace: &str) -> Vec<String> {
-    if track_namespace.is_empty() {
-        return Vec::new();
-    }
-    track_namespace.split('/').map(str::to_string).collect()
-}
-
 /// The test's hold on a scripted session: it sends the peer's messages,
 /// answers the relay's requests and reads what the relay sent.
 #[derive(Clone)]
@@ -232,7 +225,7 @@ impl ScriptedPeer {
                 state: self.state.clone(),
                 request_id: self.request_id(),
                 track_namespace: track_namespace.to_string(),
-                track_namespace_tuple: tuple(track_namespace),
+                track_namespace_tuple: parse_namespace_path(track_namespace),
             },
         )));
     }
@@ -244,7 +237,7 @@ impl ScriptedPeer {
         self.send(MoqtSessionEvent::PublishNamespaceDone(
             PublishNamespaceDoneHandler {
                 track_namespace: track_namespace.to_string(),
-                track_namespace_tuple: tuple(track_namespace),
+                track_namespace_tuple: parse_namespace_path(track_namespace),
                 request_id,
             },
         ));
@@ -262,7 +255,7 @@ impl ScriptedPeer {
             ScriptedSubscribeNamespace {
                 state: self.state.clone(),
                 prefix: prefix.to_string(),
-                prefix_tuple: tuple(prefix),
+                prefix_tuple: parse_namespace_path(prefix),
                 interest,
             },
         )));
@@ -287,7 +280,7 @@ impl ScriptedPeer {
             state: self.state.clone(),
             request_id,
             track_key: track_key.clone(),
-            track_namespace_tuple: tuple(&track_key.track_namespace),
+            track_namespace_tuple: parse_namespace_path(&track_key.track_namespace),
         })));
         request_id
     }
@@ -312,7 +305,7 @@ impl ScriptedPeer {
             state: self.state.clone(),
             request_id,
             track_key: track_key.clone(),
-            track_namespace_tuple: tuple(&track_key.track_namespace),
+            track_namespace_tuple: parse_namespace_path(&track_key.track_namespace),
         })));
         request_id
     }
