@@ -2,13 +2,25 @@
 
 OBS Studio plugin that publishes the stream OBS encodes (H.264 video, AAC audio) straight to a MoQT relay as an MSF broadcast (LOC + CMAF tracks via [`crates/broadcast`](../broadcast/README.md)). It registers the `moqt_output` output and the `moqt_service` streaming service, so **Start Streaming**, the encoder settings, the status bar, and automatic reconnect all work as they do for RTMP or SRT. A **MoQT** dock holds the settings.
 
-## Requirements & build
+## Install
 
-Requires OBS Studio 32.0 or newer (tested with 32.0.2 on macOS). Nothing from OBS is needed at build time: libobs and Qt symbols are resolved when OBS loads the plugin.
+Requires OBS Studio 32.0 or newer (tested with 32.0.2 on macOS). An installer exists for macOS on Apple silicon; on other platforms, [build from source](#build-from-source).
+
+1. Download `obs-moqt-<version>-macos-arm64.pkg` from the newest `obs-moqt` release on the [releases page](https://github.com/nttcom/moq-wasm/releases).
+2. Open it. The installer is not signed, so macOS refuses the first time: open **System Settings → Privacy & Security**, press **Open Anyway** next to the installer's name, and open it again.
+3. Follow the installer. It puts `obs-moqt.plugin` into `~/Library/Application Support/obs-studio/plugins` and asks for no administrator password.
+4. Restart OBS and tick **Docks → MoQT**.
+
+To uninstall, delete `~/Library/Application Support/obs-studio/plugins/obs-moqt.plugin`.
+
+## Build from source
+
+Nothing from OBS is needed at build time: libobs and Qt symbols are resolved when OBS loads the plugin.
 
 ```shell
 make obs-plugin            # cargo build -p obs-moqt --release
 make obs-plugin-install    # macOS: copies it into OBS's user plugin directory
+make obs-plugin-pkg        # macOS: builds the installer under target/obs-plugin-pkg
 ```
 
 The dock is C++ and needs a C++17 compiler and Qt 6 headers no newer than the Qt in OBS (6.8 in OBS 32.0). `make obs-plugin` takes the compiler flags that find them from `pkg-config --cflags Qt6Widgets`, or from `OBS_MOQT_QT_CFLAGS`:
