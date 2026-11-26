@@ -479,7 +479,7 @@ async fn migrate(
             })?;
         }
     }
-    for namespace in carried.published_namespaces.values() {
+    for namespace in carried.published_namespaces().values() {
         retry_until(deadline, || async {
             send_publish_namespace(
                 &connection,

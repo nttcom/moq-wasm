@@ -22,8 +22,9 @@
 //   `callerReturns` inserts the carried record (subscriber.rs:253) and calls
 //   `response.accept()`; `clientWraps` is `client::Subscription::new`
 //   (client/subscription.rs:95), which registers `routes.publish_done`.
-// - `PublishDoneExpiryTask` (moqt/runtime/tasks/publish_done_expiry_task.rs:38-84):
-//   `expiryLooksUp` is the `arrived_streams` lookup in the select branch,
+// - `PublishDoneExpiryTask` (moqt/runtime/tasks/publish_done_expiry_task.rs:41-82):
+//   `expiryLooksUp` is `Countdown::look_up` in the select branch (`ELooked`
+//   with `watch` = `Countdown::Counting`),
 //   `expiryForgets` the first poll of the pushed future
 //   (`forget_ended_subscription`), `expiryFires` the timeout or the
 //   `wait_for` ending and `SessionContext::cancel_subscription`

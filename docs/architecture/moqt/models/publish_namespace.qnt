@@ -1,21 +1,23 @@
 // A model of one namespace this side announces with PUBLISH_NAMESPACE, on a
 // session that follows GOAWAY (crates/moqt/src/modules/moqt):
 // - `Publisher::announce` / `begin_publish_namespace` (domains/publisher.rs):
-//   sends PUBLISH_NAMESPACE under the `carried` read lock, then inserts the
+//   sends PUBLISH_NAMESPACE under the `carried` read lock, then
+//   `PublishedNamespaceRecord::insert` (domains/session_context.rs) inserts the
 //   record into `SessionContext::published_namespaces` and
-//   `CarriedRequests::published_namespaces`.
+//   `CarriedRequests::published_namespaces`, and the handle's
+//   `NamespaceRecord` becomes `Recorded`.
 // - `PendingPublishNamespace::accepted` (domains/pending_publish_namespace.rs):
-//   on Rejected / Timeout / ProtocolViolation, `PublishedNamespaceRecord::forget`
-//   (domains/session_context.rs) removes the `published_namespaces` entry, then
+//   moves the handle to `NamespaceRecord::Answered`; on Rejected / Timeout /
+//   ProtocolViolation, `PublishedNamespaceRecord::forget` removes the `published_namespaces` entry, then
 //   awaits the `carried` read lock and removes the carried entry. A lost
 //   connection keeps the record. The type has no `Drop`.
 // - The draft-14 late-response path (version/draft14.rs `handle_late_response`):
 //   a PUBLISH_NAMESPACE_OK for a dropped `PendingPublishNamespace` is answered
 //   with PUBLISH_NAMESPACE_DONE.
-// - `Publisher::publish_namespace_done` (domains/publisher.rs): removes every
-//   local record of the namespace, awaits the `carried` read lock and removes
-//   the carried ones, then sends PUBLISH_NAMESPACE_DONE on every live
-//   connection.
+// - `Publisher::publish_namespace_done` (domains/publisher.rs):
+//   `SessionContext::withdraw_published_namespace` removes every local record
+//   of the namespace, awaits the `carried` read lock and removes the carried
+//   ones; then it sends PUBLISH_NAMESPACE_DONE on every live connection.
 // - An incoming PUBLISH_NAMESPACE_CANCEL (version/draft14/
 //   control_message_receive_task.rs, draft-18 `peer_ended` in
 //   version/draft18/request_streams.rs) only raises

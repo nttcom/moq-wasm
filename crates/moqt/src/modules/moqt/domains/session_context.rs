@@ -52,8 +52,10 @@ pub(crate) struct SessionContext {
     /// through the inner mutex, so they do not wait for one another's answers.
     pub(crate) carried: Option<tokio::sync::RwLock<std::sync::Mutex<CarriedRequests>>>,
     /// The namespaces this side sent PUBLISH_NAMESPACE for and has not
-    /// withdrawn, keyed as `CarriedRequests::published_namespaces`.
-    pub(crate) published_namespaces: std::sync::Mutex<BTreeMap<u64, String>>,
+    /// withdrawn, keyed as `CarriedRequests::published_namespaces`. Only
+    /// `PublishedNamespaceRecord` and `withdraw_published_namespace` change
+    /// it, each together with the carried map.
+    published_namespaces: std::sync::Mutex<BTreeMap<u64, String>>,
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read
     /// for every subgroup sent, so not behind `carried`.
@@ -127,8 +129,9 @@ pub(crate) struct CarriedRequests {
     /// failed request removes only its own record, not another request's for
     /// the same namespace.
     pub(crate) namespaces: BTreeMap<u64, (String, NamespaceInterest)>,
-    /// Keyed as `namespaces`.
-    pub(crate) published_namespaces: BTreeMap<u64, String>,
+    /// Keyed as `namespaces`; changed only with
+    /// `SessionContext::published_namespaces`.
+    published_namespaces: BTreeMap<u64, String>,
     /// Keyed by logical request id.
     pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,
 }
@@ -137,6 +140,13 @@ pub(crate) struct CarriedRequests {
 pub(crate) struct CarriedGuard<'a>(
     tokio::sync::RwLockReadGuard<'a, std::sync::Mutex<CarriedRequests>>,
 );
+
+impl CarriedRequests {
+    /// The namespaces a migration announces again, by logical request id.
+    pub(crate) fn published_namespaces(&self) -> &BTreeMap<u64, String> {
+        &self.published_namespaces
+    }
+}
 
 impl CarriedGuard<'_> {
     pub(crate) fn update<T>(&self, update: impl FnOnce(&mut CarriedRequests) -> T) -> T {
@@ -148,11 +158,30 @@ impl CarriedGuard<'_> {
 /// `SessionContext::published_namespaces` and
 /// `CarriedRequests::published_namespaces`, which `forget` removes.
 pub(crate) struct PublishedNamespaceRecord {
-    pub(crate) session: Arc<SessionContext>,
-    pub(crate) request_id: u64,
+    session: Arc<SessionContext>,
+    request_id: u64,
 }
 
 impl PublishedNamespaceRecord {
+    /// Records the namespace of the PUBLISH_NAMESPACE `request_id` in both
+    /// maps. `carried` is the read lock the request was sent under, `None` for
+    /// a session that does not follow GOAWAY.
+    pub(crate) fn insert(
+        session: &Arc<SessionContext>,
+        carried: Option<&CarriedGuard>,
+        request_id: u64,
+        namespace: String,
+    ) -> Self {
+        lock(&session.published_namespaces).insert(request_id, namespace.clone());
+        if let Some(carried) = carried {
+            carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
+        }
+        Self {
+            session: session.clone(),
+            request_id,
+        }
+    }
+
     pub(crate) async fn forget(self) {
         lock(&self.session.published_namespaces).remove(&self.request_id);
         if let Some(carried) = self.session.read_carried().await {
@@ -255,6 +284,19 @@ impl SessionContext {
         lock(&self.published_namespaces)
             .values()
             .any(|published| published == namespace)
+    }
+
+    /// Removes every record of `namespace` from both maps, awaiting the
+    /// `carried` read lock between the two.
+    pub(crate) async fn withdraw_published_namespace(&self, namespace: &str) {
+        lock(&self.published_namespaces).retain(|_, published| published != namespace);
+        if let Some(carried) = self.read_carried().await {
+            carried.update(|carried| {
+                carried
+                    .published_namespaces
+                    .retain(|_, carried| carried != namespace)
+            });
+        }
     }
 
     pub(crate) async fn read_carried(&self) -> Option<CarriedGuard<'_>> {

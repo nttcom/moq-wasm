@@ -1,4 +1,3 @@
-use crate::modules::extensions::mutex::lock;
 use crate::modules::telemetry::current_trace_context;
 use std::sync::Arc;
 
@@ -21,7 +20,7 @@ use crate::{
         domains::{
             connection::{Connection, logical_id},
             elapsed_ms, namespace_tuple,
-            pending_publish_namespace::PendingPublishNamespace,
+            pending_publish_namespace::{NamespaceRecord, PendingPublishNamespace},
             request_failure::record_outcome,
             send_targets::SendTargets,
             session_context::{
@@ -124,32 +123,24 @@ impl Publisher {
             }
         };
         let request_id = logical_id(connection.generation, pending.request_id);
-        lock(&self.session.published_namespaces).insert(request_id, namespace.clone());
         // Announced on a subscription of this connection, the namespace is
         // not resent as PUBLISH_NAMESPACE on the next one.
-        if announcement == NamespaceAnnouncement::Publication
-            && let Some(carried) = &carried
-        {
-            carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
-        }
-        pending.record = Some(PublishedNamespaceRecord {
-            session: self.session.clone(),
+        let carried = carried
+            .as_ref()
+            .filter(|_| announcement == NamespaceAnnouncement::Publication);
+        pending.recorded(PublishedNamespaceRecord::insert(
+            &self.session,
+            carried,
             request_id,
-        });
+            namespace,
+        ));
         Ok((connection, pending))
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
-        lock(&self.session.published_namespaces).retain(|_, published| *published != namespace);
-        if let Some(carried) = self.session.read_carried().await {
-            carried.update(|carried| {
-                carried
-                    .published_namespaces
-                    .retain(|_, carried| *carried != namespace)
-            });
-        }
+        self.session.withdraw_published_namespace(&namespace).await;
         let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
             connection
@@ -367,7 +358,7 @@ pub(crate) async fn send_publish_namespace(
         request_id,
         track_namespace: namespace,
         pending,
-        record: None,
+        record: NamespaceRecord::Unrecorded,
     })
 }
 
@@ -641,7 +632,7 @@ mod tests {
             .read_carried()
             .await
             .unwrap()
-            .update(|carried| carried.published_namespaces.clone());
+            .update(|carried| carried.published_namespaces().clone());
         assert!(carried.is_empty(), "{carried:?}");
     }
 
@@ -678,8 +669,39 @@ mod tests {
             .read_carried()
             .await
             .unwrap()
-            .update(|carried| carried.published_namespaces.clone());
+            .update(|carried| carried.published_namespaces().clone());
         assert!(carried.is_empty(), "{carried:?}");
+    }
+
+    #[tokio::test]
+    async fn a_withdrawn_namespace_is_not_carried_into_a_migration() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("carried-withdrawn-namespace").await;
+        let publisher = client.publisher();
+        let session = publisher.session.clone();
+        let published = tokio::spawn(async move { publisher.publish_namespace("a".into()).await });
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+        handler.ok().await.unwrap();
+        within(published).await.unwrap().unwrap();
+
+        // Act
+        client
+            .publisher()
+            .publish_namespace_done("a".to_string())
+            .await
+            .unwrap();
+
+        // Assert
+        let carried = session
+            .read_carried()
+            .await
+            .unwrap()
+            .update(|carried| carried.published_namespaces().clone());
+        assert!(carried.is_empty(), "{carried:?}");
+        assert!(!session.publishes_namespace("a"));
     }
 
     #[tokio::test]
