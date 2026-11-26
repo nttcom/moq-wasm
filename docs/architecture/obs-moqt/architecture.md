@@ -30,7 +30,7 @@ flowchart LR
 `media_input` and `publish_settings` hold no libobs calls and are the only modules built for unit tests, because libobs symbols exist only inside OBS.
 
 ## libobs Boundary
-- **No build-time dependency on OBS**: `libobs.rs` declares only the structs and functions the plugin uses, following the OBS Studio 32.0 headers; `build.rs` lets the macOS linker leave them undefined until OBS loads the plugin. `obs_module_ver` reports 32.0, the oldest libobs that loads it (tested with 32.0.2).
+- **No build-time dependency on OBS**: `libobs.rs` declares only the structs and functions the plugin uses, following the OBS Studio 32.0 headers; the symbols are resolved when OBS loads the plugin. The Linux linker allows that as is, `build.rs` tells the macOS linker to, and on Windows, where every import names its DLL at build time, `libobs.rs` marks its declarations `raw-dylib` so that rustc makes the import library for `obs.dll`. `obs_module_ver` reports 32.0, the oldest libobs that loads it (tested with 32.0.2).
 - **Struct sizes**: `obs_register_output_s` and `obs_register_service_s` take the struct size, so a newer libobs with longer structs still accepts these.
 - **Panics**: A panic leaving an `extern "C"` callback aborts OBS and any recording in progress, so `start`, `stop`, `encoded_packet`, and `destroy` catch it and report failure instead.
 
@@ -41,8 +41,9 @@ OBS's **Settings → Stream** page lists only its built-in services, so the plug
 
 ## Dock
 - **One C++ file**: A dock is a `QWidget`, so `dock.cpp` is the plugin's only C++. It declares the libobs and obs-frontend-api functions it calls by hand, as `libobs.rs` does, and has no signals or slots of its own, so the build needs Qt's headers but neither OBS sources nor `moc`.
-- **Optional at build time**: `build.rs` compiles it with `cc` ([cc.md](cc.md)) only when `OBS_MOQT_QT_CFLAGS` gives the flags that find Qt 6, and then sets `cfg(dock)` so that `obs_module_load` adds the dock. A plain `cargo build` (CI included) builds the plugin without it.
-- **Qt version**: Qt's symbols are resolved against the Qt that OBS has loaded, so the headers must not be newer than that Qt (6.8 in OBS 32.0).
+- **Optional at build time**: `build.rs` compiles it with `cc` ([cc.md](cc.md)) only when `OBS_MOQT_QT_CFLAGS` gives the flags that find Qt 6, and then sets `cfg(dock)` so that `obs_module_load` adds the dock. A plain `cargo build` (the lint workflow included) builds the plugin without it; `.github/workflows/obs-plugin.yml` builds it with the dock on each platform.
+- **Qt version**: Qt's symbols are resolved against the Qt that OBS has loaded, so the headers must not be newer than that Qt: 6.8 in the OBS 32.0 builds for macOS and Windows, and the distribution's Qt on Linux (6.4 on Ubuntu 24.04).
+- **Windows imports**: Qt's import libraries come from `OBS_MOQT_QT_LIB_DIR`. OBS ships none, so `build.rs` makes those for the libobs and obs-frontend-api functions `dock.cpp` declares with MSVC's `lib.exe`, from a list of their names (`DOCK_IMPORTS`) that repeats the declarations in `dock.cpp`.
 - **Lifecycle**: The dock reads the profile's service when the frontend finishes loading and when the profile changes. It refuses to change the destination while a stream runs, because OBS keeps the service of a running stream.
 - **Input**: The dock removes whitespace from the URL, the namespace, and the token (pasted values carry line breaks) and refuses the input `PublishSettings::new` would refuse, naming the field, so the mistake shows where it is made instead of at **Start Streaming**.
 - **Setting names and rules**: `dock.cpp` names the same five settings as `output.rs` and repeats the required-field rules of `publish_settings.rs`; a change to one is made to the other.
@@ -65,6 +66,26 @@ One tokio runtime per output instance runs the relay session.
 - **Clock**: Packet timestamps are converted from the encoder timebase to microseconds and shifted so the first video packet's DTS is zero (B-frame reordering makes it negative). Audio uses the same shift; audio before the first video packet is left out.
 - **Keyframe interval**: `moqt_service` sets `keyint_sec` to 2 when the encoder settings leave it at 0, because OBS's simple output mode has no such setting and x264's default is 250 frames.
 - **Codecs**: `moqt_output` declares `h264` and `aac`.
+
+## Release
+A release is a GitHub Release with one package per platform.
+
+| Platform | Package | Built on | Installs into |
+| --- | --- | --- | --- |
+| macOS (Apple silicon) | `.pkg` installer | `macos-15`, obs-deps Qt 6.8 | `~/Library/Application Support/obs-studio/plugins/obs-moqt.plugin` |
+| Windows (x64) | `.zip` | `windows-2025`, obs-deps Qt 6.8 | `C:\ProgramData\obs-studio\plugins\obs-moqt` |
+| Linux (x86_64) | `.tar.gz` | `ubuntu-24.04`, its Qt 6.4 | `~/.config/obs-studio/plugins/obs-moqt` |
+
+1. A release PR bumps `crates/obs-moqt/Cargo.toml` and adds the version's section to `crates/obs-moqt/CHANGELOG.md`.
+2. After merge, the tag `obs-moqt-v<version>` is pushed on that commit.
+3. `.github/workflows/obs-plugin-release.yml` checks the tag against the version and the changelog and calls `.github/workflows/obs-plugin.yml`, which also runs on pull requests that touch the crate.
+4. It creates the GitHub Release with the packages and the changelog section (not marked Latest). The tag is the source the GPL asks for.
+
+- **Checks in the build**: The Linux job installs OBS from the `obsproject` PPA and the Windows job unpacks OBS 32.0.2 (checksum-pinned); each installs its package where a user would, starts OBS (under Xvfb on Linux, on the software renderer on Windows), and requires `obs-moqt` among the loaded modules. Nothing is streamed, and the macOS installer is not started.
+- **macOS installer**: `pkgbuild` wraps `obs-moqt.plugin` (the plugin and `LICENSE`), and `productbuild` with `macos/distribution.xml` limits it to the home directory domain, so it lands in the user's plugin directory without an administrator password.
+- **No Info.plist**: The bundle has none, as with `make obs-plugin-install`; OBS loads it by path, and the installer then never relocates it onto another copy of the bundle on the disk.
+- **Unsigned**: Neither the installer nor the plugin has a Developer ID signature (the linker's ad-hoc signature is enough for OBS to load the plugin), so Gatekeeper asks the user to allow the installer once.
+- **Qt and OBS versions**: A package serves the OBS versions that share its libobs major version and whose Qt is not older than the one it was built with; a new OBS that breaks either needs a new release (`QT_DEPS_VERSION` for macOS and Windows, the runner's Ubuntu for Linux).
 
 ## Testing
 - Unit and property tests cover `media_input` and `publish_settings` ([proptest.md](proptest.md)).

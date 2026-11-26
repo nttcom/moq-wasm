@@ -1,0 +1,177 @@
+name: OBS plugin
+
+# `docs/architecture/obs-moqt/architecture.md` "Release". The lint workflow
+# builds the plugin without its dock, which needs Qt.
+on:
+  pull_request:
+    paths:
+      - "crates/obs-moqt/**"
+      - "!crates/obs-moqt/**.md"
+      - ".github/workflows/obs-plugin.yml"
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  # The Qt that OBS Studio 32.0 is built with on macOS and Windows (`deps.qt6`
+  # in its buildspec.json).
+  QT_DEPS_VERSION: "2025-08-23"
+
+jobs:
+  macos:
+    # Apple silicon.
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Download the Qt headers for the dock
+        env:
+          QT_DEPS_SHA256: 990f11638b80a4509e14e8c315f6e4caa0861e37fcd3113a256fbff835ffca29
+        run: |
+          archive="${RUNNER_TEMP}/qt6.tar.xz"
+          curl --fail --silent --show-error --location --output "${archive}" \
+            "https://github.com/obsproject/obs-deps/releases/download/${QT_DEPS_VERSION}/macos-deps-qt6-${QT_DEPS_VERSION}-universal.tar.xz"
+          echo "${QT_DEPS_SHA256}  ${archive}" | shasum --algorithm 256 --check
+          mkdir "${RUNNER_TEMP}/qt6"
+          tar -xJf "${archive}" -C "${RUNNER_TEMP}/qt6"
+      - name: Build the installer
+        run: make obs-plugin-pkg OBS_MOQT_QT_CFLAGS="-F${RUNNER_TEMP}/qt6/lib"
+      - name: Upload the installer
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: obs-plugin-macos-arm64
+          path: target/obs-plugin-pkg/obs-moqt-*-macos-arm64.pkg
+          if-no-files-found: error
+
+  linux:
+    # The archive is built against this Ubuntu's Qt, the one its OBS uses.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Install the Qt headers and OBS Studio
+        run: |
+          sudo add-apt-repository --yes ppa:obsproject/obs-studio
+          sudo apt-get update
+          sudo apt-get install --yes qt6-base-dev obs-studio xvfb
+      - name: Build the plugin
+        run: |
+          OBS_MOQT_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets)"
+          make obs-plugin OBS_MOQT_QT_CFLAGS="${OBS_MOQT_QT_CFLAGS}"
+      - name: Build the archive
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/obs-moqt/Cargo.toml)
+          mkdir -p package/obs-moqt/bin/64bit
+          cp target/release/libobs_moqt.so package/obs-moqt/bin/64bit/obs-moqt.so
+          cp crates/obs-moqt/LICENSE package/obs-moqt/LICENSE
+          tar -czf "obs-moqt-${version}-linux-x86_64.tar.gz" -C package obs-moqt
+      - name: Check OBS loads the plugin
+        run: |
+          mkdir -p ~/.config/obs-studio/plugins
+          tar -xzf obs-moqt-*-linux-x86_64.tar.gz -C ~/.config/obs-studio/plugins
+          xvfb-run --auto-servernum obs --multi --disable-updater --disable-shutdown-check > "${RUNNER_TEMP}/obs.log" 2>&1 &
+          for _ in $(seq 60); do
+            grep -q "Loaded Modules" "${RUNNER_TEMP}/obs.log" && break
+            sleep 1
+          done
+          sleep 2
+          pkill -x obs || true
+          cat "${RUNNER_TEMP}/obs.log"
+          grep -E ": +obs-moqt\.so$" "${RUNNER_TEMP}/obs.log"
+      - name: Upload the archive
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: obs-plugin-linux-x86_64
+          path: obs-moqt-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Download the Qt headers and import libraries for the dock
+        env:
+          QT_DEPS_SHA256: c62e82483bc7c0bf199e8ac3220c66a85a6e8a0cd69a05b6d44f873b830e415f
+        run: |
+          curl --fail --silent --show-error --location --output qt6.zip \
+            "https://github.com/obsproject/obs-deps/releases/download/${QT_DEPS_VERSION}/windows-deps-qt6-${QT_DEPS_VERSION}-x64.zip"
+          echo "${QT_DEPS_SHA256}  qt6.zip" | sha256sum --check
+          7z x -bso0 -oqt6 qt6.zip
+      - name: Build the plugin
+        run: |
+          OBS_MOQT_QT_CFLAGS="-I$(cygpath --mixed "${PWD}/qt6/include")" \
+            OBS_MOQT_QT_LIB_DIR="$(cygpath --mixed "${PWD}/qt6/lib")" \
+            cargo build -p obs-moqt --release --locked
+      - name: Build the archive
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/obs-moqt/Cargo.toml)
+          mkdir -p package/obs-moqt/bin/64bit
+          cp target/release/obs_moqt.dll package/obs-moqt/bin/64bit/obs-moqt.dll
+          cp crates/obs-moqt/LICENSE package/obs-moqt/LICENSE
+          (cd package && 7z a -bso0 "../obs-moqt-${version}-windows-x64.zip" obs-moqt)
+      # The runner has no GPU; OBS starts on Windows' software renderer.
+      - name: Check OBS loads the plugin
+        env:
+          OBS_SHA256: 60b4510590140bd83625cc694d4ccd56b34fb499fc41d18c9558636a53ceabfa
+        run: |
+          curl --fail --silent --show-error --location --output obs.zip \
+            "https://github.com/obsproject/obs-studio/releases/download/32.0.2/OBS-Studio-32.0.2-Windows-x64.zip"
+          echo "${OBS_SHA256}  obs.zip" | sha256sum --check
+          7z x -bso0 -oobs obs.zip
+          plugins="$(cygpath --mixed "${ALLUSERSPROFILE}")/obs-studio/plugins"
+          mkdir -p "${plugins}"
+          7z x -bso0 "-o${plugins}" obs-moqt-*-windows-x64.zip
+          ls -l "${plugins}/obs-moqt/bin/64bit/obs-moqt.dll"
+          (cd obs/bin/64bit && ./obs64.exe --multi --disable-updater --disable-shutdown-check) &
+          logs="${APPDATA}/obs-studio/logs"
+          for _ in $(seq 60); do
+            grep -qs "Loaded Modules" "${logs}"/*.txt && break
+            sleep 1
+          done
+          sleep 2
+          taskkill //F //IM obs64.exe || true
+          cat "${logs}"/*.txt
+          grep -E ": +obs-moqt\.dll" "${logs}"/*.txt
+      - name: Upload the archive
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: obs-plugin-windows-x64
+          path: obs-moqt-*-windows-x64.zip
+          if-no-files-found: error

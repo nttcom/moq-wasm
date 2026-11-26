@@ -112,6 +112,9 @@ pub(crate) struct ObsServiceInfo {
     pub(crate) can_try_to_connect: Unused,
 }
 
+// Windows links every import at build time and OBS ships no import library,
+// so rustc makes one from these declarations.
+#[cfg_attr(windows, link(name = "obs", kind = "raw-dylib"))]
 unsafe extern "C" {
     pub(crate) fn obs_register_output_s(info: *const ObsOutputInfo, size: usize);
     pub(crate) fn obs_register_service_s(info: *const ObsServiceInfo, size: usize);
