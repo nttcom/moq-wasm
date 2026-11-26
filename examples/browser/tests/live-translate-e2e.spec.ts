@@ -129,6 +129,11 @@ test('a broadcast of a temporary app is translated once the streamer hands its t
   // Arrange: the examples' temporary mode, which a page on this machine does not start in
   const context = await browser.newContext()
   await context.addInitScript(() => localStorage.setItem('moqt.accessMode', 'temporary'))
+  // Arrange: a slow temporary-apps service, so the start button is clicked only once the page script ran
+  await context.route('**/tokens', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+    await route.continue()
+  })
   const viewerHref = await startStreamer(context)
 
   try {

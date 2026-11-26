@@ -28,7 +28,10 @@ element<HTMLButtonElement>('copyViewerLinkBtn').addEventListener(
   'click',
   (event) => void copyText(event.currentTarget as HTMLButtonElement, element<HTMLAnchorElement>('viewer-link').href)
 )
-element<HTMLButtonElement>('startBtn').addEventListener('click', () => void startBroadcast())
+const startButton = element<HTMLButtonElement>('startBtn')
+startButton.addEventListener('click', () => void startBroadcast())
+// Disabled in the markup: this module runs only once `access` has a token, and a click before that is lost.
+startButton.disabled = false
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopBroadcast())
 
 async function startBroadcast(): Promise<void> {
