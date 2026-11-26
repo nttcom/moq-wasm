@@ -297,7 +297,7 @@ impl RelayConnection {
 
 /// The `appId` claim of a JWT, read without verifying the token: the relay
 /// verifies it. Fails when `token` is not a JWT or has no `appId` claim.
-pub fn token_app_id(token: &str) -> Result<String> {
+fn token_app_id(token: &str) -> Result<String> {
     let claims = token
         .split('.')
         .nth(1)
