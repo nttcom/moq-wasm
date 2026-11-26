@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- The delay a viewer shows, such as Live Viewer's **pub to sub delay**, now
+  includes the time a frame spends inside OBS before the plugin gets it
+  (encoding, audio buffering, the stream delay setting). It was left out
+  before, so the shown delay grows by that time while the real delay stays
+  the same. The plugin logs the measured time as `obs_delay_ms` when a
+  stream starts.
+
 ## 0.1.1
 
 - Every package now carries `COPYRIGHT` (the plugin's copyright notice and
