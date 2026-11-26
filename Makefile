@@ -40,6 +40,7 @@ OBS_PLUGIN_DIR ?= $(HOME)/Library/Application Support/obs-studio/plugins/obs-moq
 OBS_MOQT_QT_CFLAGS ?= $(shell pkg-config --cflags Qt6Widgets 2>/dev/null)
 OBS_PLUGIN_VERSION = $(shell sed -n 's/^version = "\(.*\)"/\1/p' crates/obs-moqt/Cargo.toml)
 OBS_PLUGIN_PKG_DIR := target/obs-plugin-pkg
+OBS_PLUGIN_NOTICES := target/obs-plugin-notices/THIRD-PARTY-LICENSES.txt
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
 .PHONY: relay browser chrome chrome\:linux ingest-gateway ingest-gateway-transcode ingest-gateway-stats ingest-gateway-rtp egress-gateway gst-plugin gst-srt-publish obs-plugin obs-plugin-install obs-plugin-pkg onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
@@ -120,14 +121,25 @@ obs-plugin-install: obs-plugin
 	mkdir -p "$(OBS_PLUGIN_DIR)"
 	cp target/release/libobs_moqt.dylib "$(OBS_PLUGIN_DIR)/obs-moqt"
 
+# Licenses of the libraries built into the plugin, for every package.
+# AWS-LC's own license file follows the list, because the list names no
+# copyright holder for that library's ISC and BSD code.
+$(OBS_PLUGIN_NOTICES): Cargo.lock crates/obs-moqt/about.toml crates/obs-moqt/about.hbs
+	mkdir -p $(dir $@)
+	cargo about generate --locked --fail --manifest-path crates/obs-moqt/Cargo.toml \
+		--config crates/obs-moqt/about.toml --output-file $@.tmp crates/obs-moqt/about.hbs
+	printf '\n%s\nAWS-LC (aws-lc-sys): the license file of the library itself\n\n' "$$(printf '=%.0s' $$(seq 80))" >> $@.tmp
+	cat "$$(dirname "$$(cargo metadata --locked --format-version 1 | python3 -c 'import json, sys; print(next(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"] == "aws-lc-sys"))')")/LICENSE" >> $@.tmp
+	mv $@.tmp $@
+
 # macOS installer of the plugin, built on Apple silicon:
 # $(OBS_PLUGIN_PKG_DIR)/obs-moqt-<version>-macos-arm64.pkg.
-obs-plugin-pkg: obs-plugin
+obs-plugin-pkg: obs-plugin $(OBS_PLUGIN_NOTICES)
 	@test -n "$(OBS_MOQT_QT_CFLAGS)" || { echo "OBS_MOQT_QT_CFLAGS is empty: the installer needs the dock" >&2; exit 1; }
 	rm -rf $(OBS_PLUGIN_PKG_DIR)
 	mkdir -p $(OBS_PLUGIN_PKG_DIR)/root/obs-moqt.plugin/Contents/MacOS $(OBS_PLUGIN_PKG_DIR)/root/obs-moqt.plugin/Contents/Resources
 	cp target/release/libobs_moqt.dylib $(OBS_PLUGIN_PKG_DIR)/root/obs-moqt.plugin/Contents/MacOS/obs-moqt
-	cp crates/obs-moqt/LICENSE $(OBS_PLUGIN_PKG_DIR)/root/obs-moqt.plugin/Contents/Resources/LICENSE
+	cp crates/obs-moqt/LICENSE crates/obs-moqt/COPYRIGHT $(OBS_PLUGIN_NOTICES) $(OBS_PLUGIN_PKG_DIR)/root/obs-moqt.plugin/Contents/Resources/
 	pkgbuild --root $(OBS_PLUGIN_PKG_DIR)/root --identifier com.github.nttcom.moq-wasm.obs-moqt \
 		--version $(OBS_PLUGIN_VERSION) --install-location "/Library/Application Support/obs-studio/plugins" \
 		$(OBS_PLUGIN_PKG_DIR)/obs-moqt.pkg

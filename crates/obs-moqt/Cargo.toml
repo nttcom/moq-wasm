@@ -5,6 +5,7 @@ edition = "2024"
 description = "OBS Studio output that publishes H.264 video and AAC audio into a MoQT relay"
 repository = "https://github.com/nttcom/moq-wasm"
 license = "GPL-3.0-or-later"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
