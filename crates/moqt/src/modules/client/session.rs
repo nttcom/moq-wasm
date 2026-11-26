@@ -172,7 +172,7 @@ impl Session {
     }
 
     /// Hands the session's events to `handler` before the `Origin`, after
-    /// the handlers added earlier.
+    /// the handlers added earlier, until the session ends.
     pub fn add_handler(&self, handler: Arc<dyn EventHandler>) -> HandlerId {
         self.routes.add_handler(handler)
     }

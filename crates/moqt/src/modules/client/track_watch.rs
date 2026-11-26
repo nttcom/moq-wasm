@@ -405,6 +405,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_track_watch_ends_with_the_session() {
+        // Arrange
+        let (session, _publisher) = connected_client_sessions("watch-tracks-session-end").await;
+        let watch = within(session.watch_tracks(ROOM)).await.unwrap();
+
+        // Act
+        within(session.close()).await;
+        let event = within(watch.next()).await;
+
+        // Assert
+        assert!(event.is_none());
+    }
+
+    #[tokio::test]
     async fn a_closed_track_watch_does_not_take_later_publishes() {
         // Arrange
         let (session, publisher) = connected_client_sessions("watch-tracks-closed-publish").await;
