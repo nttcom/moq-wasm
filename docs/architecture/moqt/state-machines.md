@@ -97,7 +97,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current` and `response_guard_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
+Every `*_current` instance except `origin_current`, `response_guard_current`, and `draft14_requests_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
 
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
@@ -107,7 +107,6 @@ Every `*_current` instance except `origin_current` and `response_guard_current` 
 | `object_sinks` | `install` drains a buffer older than `UNKNOWN_TRACK_ALIAS_PERIOD` (expiry runs only in `notify`/`cancel`) | `EXPIRE_ON_INSTALL` |
 | `subscription` | PUBLISH_DONE right behind SUBSCRIBE_OK is processed before the receiver registers: full 10 s grace, stale carried record, or a receiver that never ends; expiry removes an unclaimed receiver (objects lost); client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves; updates sent for an ended request | `ACCEPT_BEFORE_NEXT`, `DONE_BEFORE_SUBSCRIBE`, `KEEP_UNCLAIMED_RECEIVER`, `END_TRACKED` |
 | `publish_namespace` | Dropped `PendingPublishNamespace` keeps its record; PUBLISH_NAMESPACE_CANCEL changes no state; a namespace refused during a migration is re-announced on the new connection | `FORGET_ON_DROP`, `FORGET_ON_CANCEL`, `WITHDRAW_ELSEWHERE` |
-| `draft14_requests` | A request whose write failed or was cancelled is counted as abandoned; a cancelled partial `write_all` leaves a torn control message | `UNREGISTER_UNSENT`, `FINISH_CANCELLED_WRITE` |
 | `draft18_outgoing_request` | PUBLISH_NAMESPACE answered locally does not consume its Request ID (two requests share it); a SUBSCRIBE_OK dropped before `accept` leaves its track alias sink; a malformed or missing first response reports `SessionClosed` instead of closing the session | `CONSUME_LOCAL`, `CLEAN_ABANDONED_ALIAS`, `FIX_FIRST_MESSAGE` |
 | `draft18_request_update` | A REQUEST_UPDATE send cancelled mid-await leaves its waiter queued, so later REQUEST_OKs reach the wrong update (or a torn message) | `WRITE_DETACHED` |
 | `draft18_fetch` | REQUEST_ERROR after the response stream is attached leaves that stream open (also after the peer's STOP_SENDING, §5.2) | `RESET_RESPONSE_ON_ERROR` |

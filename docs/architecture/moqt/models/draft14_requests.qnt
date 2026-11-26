@@ -11,13 +11,16 @@
 //   the peer's limit, `send_request` registers the request in
 //   `inflight_requests` (`InflightRequests::register`) before writing it.
 // - `writeSome` / `writeDone` / `writeFail` / `cancelWrite`: the
-//   `send_with_request_id` await. quinn's `write_all` may write part of the
-//   message and then wait for flow control; dropping the caller's future
-//   there leaves those bytes on the stream. `writeDone` advances
-//   `OutgoingRequestIds::next` and drops the reservation. A failed or
-//   cancelled write drops `RegisteredSender`, whose `Drop` turns the entry
-//   `Abandoned` (`InflightRequests::abandon`) and closes the session past
-//   MAX_ABANDONED_REQUESTS.
+//   `queue_with_request_id` write. quinn's `write_all` may write part of the
+//   message and then wait for flow control. `BiStreamSender::queue` takes
+//   the control stream and advances `OutgoingRequestIds::next`;
+//   `QueuedMessage::write` runs in its own task holding the stream, so a
+//   cancelled caller neither tears the message nor lets the next request
+//   write before it (one `cancelWrite` step stands for that completion).
+//   `RegisteredSender` stays `Unsent` until the write is queued, and
+//   returns to it when the write fails: its `Drop` then removes the entry;
+//   otherwise it turns the entry `Abandoned` (`InflightRequests::abandon`)
+//   and closes the session past MAX_ABANDONED_REQUESTS.
 // - `dropReceiver` / `dropRegistration`: the caller times out or drops
 //   `PendingResponse` (`response()`): the receiver goes first, then
 //   `RegisteredSender::drop` locks `inflight_requests`. Another thread may run
@@ -33,9 +36,9 @@
 // Request IDs step by 1 here (the implementation steps by 2 from 0 or 1).
 // MAX_ABANDONED scales MAX_ABANDONED_REQUESTS (100) down.
 //
-// `draft14_requests_current` is the implementation; it violates
-// `abandonedOnlySent` and `noTornRequest`. `draft14_requests_fixed` switches
-// on UNREGISTER_UNSENT and FINISH_CANCELLED_WRITE and passes.
+// `draft14_requests_current` is the implementation: UNREGISTER_UNSENT and
+// FINISH_CANCELLED_WRITE are on, and it passes, as `draft14_requests_fixed`
+// does. Without them it violates `abandonedOnlySent` and `noTornRequest`.
 // `draft14_requests_release_before_write` drops the reservation before the
 // write (HOLD_RESERVATION = false) and fails `wireIdsInOrder`.
 //
@@ -53,7 +56,7 @@ module draft14_requests {
   // Abandoned entries tolerated before the session closes.
   const MAX_ABANDONED: int
   // The reservation (the `request_ids` mutex) is held across the write, as
-  // `send_with_request_id` does; false advances the ID and releases it first.
+  // `send_request` does; false advances the ID and releases it first.
   const HOLD_RESERVATION: bool
   // Fix: a request whose write failed or was cancelled is removed from
   // `inflight_requests` instead of being marked `Abandoned`.
@@ -466,7 +469,7 @@ module draft14_requests {
   }
 }
 
-// expect: violation
+// expect: ok
 module draft14_requests_current {
   import draft14_requests(
     CALLERS = Set("c1", "c2"),
@@ -474,8 +477,8 @@ module draft14_requests_current {
     INITIAL_LIMIT = 1,
     MAX_ABANDONED = 1,
     HOLD_RESERVATION = true,
-    UNREGISTER_UNSENT = false,
-    FINISH_CANCELLED_WRITE = false,
+    UNREGISTER_UNSENT = true,
+    FINISH_CANCELLED_WRITE = true,
   ).*
 }
 

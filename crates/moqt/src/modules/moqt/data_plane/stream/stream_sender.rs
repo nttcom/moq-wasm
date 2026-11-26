@@ -42,6 +42,10 @@ impl StreamSender {
         self.send_stream.lock().await
     }
 
+    pub(crate) async fn lock_owned(&self) -> tokio::sync::OwnedMutexGuard<BoxedSendStream> {
+        self.send_stream.clone().lock_owned().await
+    }
+
     pub async fn send(&self, bytes: &BytesMut) -> Result<(), TransportSendError> {
         self.send_stream.lock().await.send(bytes).await
     }

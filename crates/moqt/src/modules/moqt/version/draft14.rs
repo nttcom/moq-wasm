@@ -341,7 +341,7 @@ impl ControlChannel {
     pub(super) async fn send_request(
         &self,
         connection: &Arc<Connection>,
-        reservation: RequestIdReservation<'_>,
+        mut reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let (request_id, message_type, payload, on_late_response) = match request {
@@ -395,9 +395,17 @@ impl ControlChannel {
             .map_err(|_| RequestFailure::ProtocolViolation("request could not be encoded"))?;
         debug_assert_eq!(request_id, reservation.request_id());
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let registered = self.register(connection, request_id, sender, on_late_response);
-        self.send_with_request_id(reservation, message_type, payload)
+        // Declared after `reservation`, so it drops first: an unsent entry is
+        // removed before the next request can take its Request ID.
+        let mut registered = self.register(connection, request_id, sender, on_late_response);
+        let write = self
+            .queue_with_request_id(&mut reservation, message_type, payload)
             .await?;
+        registered.write = RequestWrite::Sent;
+        if let Err(error) = write.await {
+            registered.write = RequestWrite::Unsent;
+            return Err(error.into());
+        }
         Ok(PendingResponse {
             receiver,
             _registered: registered,
@@ -406,27 +414,35 @@ impl ControlChannel {
 
     pub(super) async fn send_subscribe_update(
         &self,
-        reservation: RequestIdReservation<'_>,
+        mut reservation: RequestIdReservation<'_>,
         subscribe_update: SubscribeUpdate,
     ) -> Result<(), TransportSendError> {
         debug_assert_eq!(subscribe_update.request_id, reservation.request_id());
         let payload = subscribe_update.encode().map_err(encode_error)?;
-        self.send_with_request_id(reservation, ControlMessageType::SubscribeUpdate, payload)
-            .await
+        self.queue_with_request_id(
+            &mut reservation,
+            ControlMessageType::SubscribeUpdate,
+            payload,
+        )
+        .await?
+        .await
     }
 
-    async fn send_with_request_id(
+    /// Waits for the control stream and consumes the Request ID. The
+    /// returned write completes even if dropped, so the peer receives every
+    /// consumed Request ID, in order.
+    async fn queue_with_request_id(
         &self,
-        reservation: RequestIdReservation<'_>,
+        reservation: &mut RequestIdReservation<'_>,
         message_type: ControlMessageType,
         payload: BytesMut,
-    ) -> Result<(), TransportSendError> {
-        let RequestIdReservation(mut next_request_id) = reservation;
-        self.send_stream.send(message_type, payload).await?;
-        *next_request_id += 2;
+    ) -> Result<impl Future<Output = Result<(), TransportSendError>>, TransportSendError> {
+        let RequestIdReservation(next_request_id) = reservation;
+        let queued = self.send_stream.queue(message_type, payload).await?;
+        **next_request_id += 2;
         self.written_request_id_end
-            .store(*next_request_id, Ordering::Relaxed);
-        Ok(())
+            .store(**next_request_id, Ordering::Relaxed);
+        Ok(queued.write())
     }
 
     pub(super) async fn respond(
@@ -555,6 +571,7 @@ impl ControlChannel {
             inflight_requests: self.inflight_requests.clone(),
             connection: Arc::downgrade(connection),
             request_id,
+            write: RequestWrite::Unsent,
         }
     }
 
@@ -592,15 +609,24 @@ fn error_message_type(kind: RequestKind) -> ControlMessageType {
 }
 
 /// Holds the `inflight_requests` registration for an in-flight request. On
-/// drop, a still-waiting entry is downgraded to `Abandoned` (not removed):
-/// the caller gave up, but a late response must still find the entry so it
-/// triggers the registered action instead of a session close. The drop that
-/// takes the `Abandoned` entries past `MAX_ABANDONED_REQUESTS` closes the
-/// session with CONTROL_MESSAGE_TIMEOUT.
+/// drop, a request never written is removed, since no response can come.
+/// A written request's still-waiting entry is downgraded to `Abandoned` (not
+/// removed): the caller gave up, but a late response must still find the
+/// entry so it triggers the registered action instead of a session close.
+/// The drop that takes the `Abandoned` entries past `MAX_ABANDONED_REQUESTS`
+/// closes the session with CONTROL_MESSAGE_TIMEOUT.
 struct RegisteredSender {
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
     connection: Weak<Connection>,
     request_id: RequestId,
+    write: RequestWrite,
+}
+
+/// Whether the peer is to receive the request.
+enum RequestWrite {
+    Unsent,
+    /// The write is under way and completes even if the caller is dropped.
+    Sent,
 }
 
 impl Drop for RegisteredSender {
@@ -608,6 +634,10 @@ impl Drop for RegisteredSender {
         let Ok(mut inflight) = self.inflight_requests.lock() else {
             return;
         };
+        if let RequestWrite::Unsent = self.write {
+            inflight.take(self.request_id);
+            return;
+        }
         let too_many = inflight.abandon(self.request_id);
         drop(inflight);
         if too_many && let Some(connection) = self.connection.upgrade() {
@@ -853,10 +883,13 @@ mod tests {
     use std::{
         pin::Pin,
         sync::{Arc, atomic::Ordering},
+        task::{Context, Poll},
         time::Duration,
     };
 
-    use tokio::sync::mpsc::error::TryRecvError;
+    use async_trait::async_trait;
+    use bytes::BytesMut;
+    use tokio::sync::{Notify, mpsc::error::TryRecvError};
 
     use futures::FutureExt;
 
@@ -879,9 +912,11 @@ mod tests {
                         subscribe::Subscribe,
                         subscribe_namespace::SubscribeNamespace,
                         subscribe_ok::SubscribeOk,
+                        subscribe_update::SubscribeUpdate,
                     },
                     enums::ResponseMessage,
                 },
+                data_plane::stream::bi_stream_sender::BiStreamSender,
                 domains::{
                     connection::{Connection, IncomingObjectNotification},
                     session_events::MAX_UNREAD_EVENTS,
@@ -894,11 +929,13 @@ mod tests {
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
             },
+            transport::transport_send_stream::TransportSendStream,
         },
         namespace::NamespaceInterest,
         object::{GroupOrder, Location},
         publish::{PublishDoneCode, PublishOption},
         subscribe::TrackStatusHandler,
+        wire::encode_control_message,
     };
 
     const REQUEST_ID: u64 = 1;
@@ -1360,6 +1397,122 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE, got {announced:?}");
         };
         assert_eq!(announced.track_namespace, "live/room");
+    }
+
+    #[tokio::test]
+    async fn request_dropped_before_it_is_written_is_not_counted_as_abandoned() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-unsent-dropped").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let held_stream = channel.send_stream.hold().await;
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::TrackStatus(track_status(reservation.request_id()));
+
+        // Act
+        let send = channel
+            .send_request(&connection, reservation, request)
+            .now_or_never();
+        drop(held_stream);
+
+        // Assert
+        assert!(send.is_none(), "wrote past the held control stream");
+        let inflight = channel.inflight_requests.lock().unwrap();
+        assert!(
+            matches!(&*inflight, InflightRequests::Open(requests) if requests.is_empty()),
+            "an unsent request stayed registered"
+        );
+    }
+
+    /// Writes the first half of each message, then waits for `release`
+    /// before the rest, as `write_all` does when flow control blocks it.
+    #[derive(Debug)]
+    struct StallingSendStream {
+        written: Arc<std::sync::Mutex<Vec<u8>>>,
+        half_written: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl TransportSendStream for StallingSendStream {
+        async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError> {
+            let (first, rest) = buffer.split_at(buffer.len() / 2);
+            self.written.lock().unwrap().extend_from_slice(first);
+            self.half_written.notify_one();
+            self.release.notified().await;
+            self.written.lock().unwrap().extend_from_slice(rest);
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), TransportSendError> {
+            Ok(())
+        }
+
+        async fn reset(&mut self, _error_code: u64) -> Result<(), TransportSendError> {
+            Ok(())
+        }
+
+        fn set_priority(&mut self, _priority: i32) -> Result<(), TransportSendError> {
+            Ok(())
+        }
+
+        fn poll_stopped(&mut self, _cx: &mut Context<'_>) -> Poll<Option<u64>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_cancelled_mid_write_is_written_whole_and_uses_its_request_id() {
+        // Arrange
+        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let half_written = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let stream = StallingSendStream {
+            written: written.clone(),
+            half_written: half_written.clone(),
+            release: release.clone(),
+        };
+        let channel = ControlChannel::new(
+            BiStreamSender::new(Box::new(stream)),
+            0,
+            REQUEST_ID_WINDOW,
+            false,
+        );
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let update = SubscribeUpdate {
+            request_id: reservation.request_id(),
+            subscription_request_id: REQUEST_ID,
+            start_location: Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_group: 0,
+            subscriber_priority: 128,
+            forward: true,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            new_group_request: None,
+        };
+        let message = encode_control_message(
+            ControlMessageType::SubscribeUpdate,
+            update.encode().unwrap(),
+        )
+        .unwrap();
+        let mut send = Box::pin(channel.send_subscribe_update(reservation, update));
+        tokio::select! {
+            _ = &mut send => panic!("wrote past the stalled stream"),
+            () = half_written.notified() => {}
+        }
+
+        // Act
+        drop(send);
+        release.notify_one();
+
+        // Assert
+        let next = within(channel.reserve_request_id()).await.unwrap();
+        assert_eq!(next.request_id(), 2);
+        drop(within(channel.send_stream.hold()).await);
+        assert_eq!(*written.lock().unwrap(), message[..]);
     }
 
     #[tokio::test]
