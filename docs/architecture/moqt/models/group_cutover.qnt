@@ -30,12 +30,11 @@
 // `first` (draft-14 §9.7: nothing up to SUBSCRIBE_OK's Largest Object).
 //
 // Instances:
-// - group_cutover_{subgroups,datagrams}_current: today's code.
-// - *_keep_newest: KEEP_NEWEST only (`retire` keeps `newest`).
-// - *_cut_from_start: CUT_FROM_START fixes the cutover at
-//   max(newest + 1, current_start) instead of at the group of the first
-//   object the current subscription happens to deliver.
-// - *_fixed: CUT_FROM_START and KEEP_NEWEST.
+// - group_cutover_{subgroups,datagrams}_current: today's code, with
+//   CUT_FROM_START (the cutover is fixed at max(newest + 1, current_start),
+//   not at the group of the first object the current subscription happens to
+//   deliver) and KEEP_NEWEST (`retire` keeps `newest`).
+// - *_keep_newest: KEEP_NEWEST only; *_cut_from_start: CUT_FROM_START only.
 //
 // KEEP_NEWEST relies on the publisher never reusing a location: one that
 // numbers the groups on the new connection lower has nothing taken from it
@@ -45,7 +44,7 @@
 //   quint typecheck group_cutover.qnt
 //   quint run --main group_cutover_subgroups_current --invariant safety --max-samples 5000 --max-steps 12 group_cutover.qnt
 //   quint verify --backend tlc --main group_cutover_subgroups_current --invariant safety group_cutover.qnt
-//   (same for group_cutover_datagrams_current, *_cut_from_start, *_fixed)
+//   (same for group_cutover_datagrams_current, *_cut_from_start, *_keep_newest)
 module group_cutover {
   // Group IDs of the track.
   const GROUPS: Set[int]
@@ -305,22 +304,6 @@ module group_cutover_subgroups_cut_from_start {
   import group_cutover(
     GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = false,
     CUT_FROM_START = true, KEEP_NEWEST = false,
-  ).*
-}
-
-// expect: ok
-module group_cutover_subgroups_fixed {
-  import group_cutover(
-    GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = false,
-    CUT_FROM_START = true, KEEP_NEWEST = true,
-  ).*
-}
-
-// expect: ok
-module group_cutover_datagrams_fixed {
-  import group_cutover(
-    GROUPS = 0.to(3), OBJECTS = 0.to(1), DATAGRAMS = true,
-    CUT_FROM_START = true, KEEP_NEWEST = true,
   ).*
 }
 

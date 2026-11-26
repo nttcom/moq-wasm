@@ -37,16 +37,16 @@
 // MAX_ABANDONED scales MAX_ABANDONED_REQUESTS (100) down.
 //
 // `draft14_requests_current` is the implementation: UNREGISTER_UNSENT and
-// FINISH_CANCELLED_WRITE are on, and it passes, as `draft14_requests_fixed`
-// does. Without them it violates `abandonedOnlySent` and `noTornRequest`.
+// FINISH_CANCELLED_WRITE are on, and it passes. Without them it violates
+// `abandonedOnlySent` and `noTornRequest` (`draft14_requests_without_*`).
 // `draft14_requests_release_before_write` drops the reservation before the
 // write (HOLD_RESERVATION = false) and fails `wireIdsInOrder`.
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft14_requests.qnt
 //   quint verify --backend tlc --main draft14_requests_current --invariant safety draft14_requests.qnt
-//   quint verify --backend tlc --main draft14_requests_fixed --invariant safety draft14_requests.qnt
 //   quint verify --backend tlc --main draft14_requests_release_before_write --invariant safety draft14_requests.qnt
+//   (likewise for the `draft14_requests_without_*` instances)
 module draft14_requests {
   const CALLERS: Set[str]
   // Request IDs 0 .. MAX_ID - 1 may be used.
@@ -482,18 +482,6 @@ module draft14_requests_current {
   ).*
 }
 
-// expect: ok
-module draft14_requests_fixed {
-  import draft14_requests(
-    CALLERS = Set("c1", "c2"),
-    MAX_ID = 3,
-    INITIAL_LIMIT = 1,
-    MAX_ABANDONED = 1,
-    HOLD_RESERVATION = true,
-    UNREGISTER_UNSENT = true,
-    FINISH_CANCELLED_WRITE = true,
-  ).*
-}
 
 // expect: violation
 module draft14_requests_release_before_write {
@@ -505,5 +493,31 @@ module draft14_requests_release_before_write {
     HOLD_RESERVATION = false,
     UNREGISTER_UNSENT = true,
     FINISH_CANCELLED_WRITE = true,
+  ).*
+}
+
+// expect: violation
+module draft14_requests_without_unregister_unsent {
+  import draft14_requests(
+    CALLERS = Set("c1", "c2"),
+    MAX_ID = 3,
+    INITIAL_LIMIT = 1,
+    MAX_ABANDONED = 1,
+    HOLD_RESERVATION = true,
+    UNREGISTER_UNSENT = false,
+    FINISH_CANCELLED_WRITE = true,
+  ).*
+}
+
+// expect: violation
+module draft14_requests_without_finish_cancelled_write {
+  import draft14_requests(
+    CALLERS = Set("c1", "c2"),
+    MAX_ID = 3,
+    INITIAL_LIMIT = 1,
+    MAX_ABANDONED = 1,
+    HOLD_RESERVATION = true,
+    UNREGISTER_UNSENT = true,
+    FINISH_CANCELLED_WRITE = false,
   ).*
 }

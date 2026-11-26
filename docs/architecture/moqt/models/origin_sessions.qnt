@@ -43,6 +43,9 @@
 //   and keeps it as Released. Needed because a SUBSCRIBE sent while the
 //   PUBLISH was in flight can also be handled after `publish` registered.
 // - REFRESH_ON_RELEASE: `release` calls `refresh_demand` (the code does).
+// Both halves of the fix are off in the code: the relay ends one of the two
+// subscriptions itself, and an `Origin` that ends one too can end both
+// (docs/todos/medium/relay-keep-first-of-publish-and-subscribe.md).
 //
 // Commands (from docs/architecture/moqt/models, Java 21+ on PATH):
 //   quint typecheck origin_sessions.qnt

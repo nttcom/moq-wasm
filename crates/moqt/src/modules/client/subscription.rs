@@ -2,12 +2,10 @@ use std::{future::Future, sync::Arc};
 
 use anyhow::bail;
 use bytes::Bytes;
-use futures::{FutureExt, future::Shared};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::Mutex;
 
 use crate::{
     Session, Subscription as MoqtSubscription, TrackObject, TrackReader,
-    modules::client::routes::Routes,
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, Location, MalformedTrackError,
         Object, ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
@@ -73,10 +71,8 @@ pub struct PublishDone {
 /// subgroup stream (`next_group`), whichever is called first.
 pub struct Subscription {
     session: Arc<Session>,
-    routes: Arc<Routes>,
     subscription: MoqtSubscription,
     reading: Mutex<Reading>,
-    done: Shared<oneshot::Receiver<PublishDone>>,
 }
 
 pub(super) enum Reading {
@@ -88,17 +84,13 @@ pub(super) enum Reading {
 impl Subscription {
     pub(super) fn new(
         session: Arc<Session>,
-        routes: Arc<Routes>,
         subscription: MoqtSubscription,
         reading: Reading,
     ) -> Self {
-        let done = routes.publish_done(subscription.request_id()).shared();
         Self {
             session,
-            routes,
             subscription,
             reading: Mutex::new(reading),
-            done,
         }
     }
 
@@ -110,8 +102,13 @@ impl Subscription {
     /// Resolves once the publisher ends the subscription with PUBLISH_DONE,
     /// or to `None` once the session ends or `close` is called without one.
     pub fn done(&self) -> impl Future<Output = Option<PublishDone>> + 'static {
-        let done = self.done.clone();
-        async move { done.await.ok() }
+        let done = self.subscription.done();
+        async move {
+            done.await.map(|done| PublishDone {
+                code: done.status_code(),
+                reason: done.error_reason().to_string(),
+            })
+        }
     }
 
     /// The next object; `None` once the track has no more streams. Objects
@@ -201,7 +198,6 @@ impl Subscription {
 
     /// UNSUBSCRIBE (draft-14 §9.11); `done` resolves to `None`.
     pub async fn close(&self) -> anyhow::Result<()> {
-        self.routes.forget(self.subscription.request_id());
         self.session
             .subscriber()
             .unsubscribe(&self.subscription)

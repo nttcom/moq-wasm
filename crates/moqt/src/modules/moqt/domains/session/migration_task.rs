@@ -1573,13 +1573,18 @@ mod tests {
                 .await
                 .unwrap();
             let event = next_event(&client).await;
+            let ended = within(subscription.done()).await;
 
-            // Assert: only B's PUBLISH_DONE arrives, under the first request id
+            // Assert: only B's PUBLISH_DONE arrives, under the first request id, and ends the subscription
             let SessionEvent::PublishDone(done) = event else {
                 panic!("expected PUBLISH_DONE, got {event:?}");
             };
             assert_eq!(done.request_id(), subscription.request_id());
             assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
+            assert_eq!(
+                ended.map(|ended| ended.status_code()),
+                Some(PublishDoneCode::TrackEnded)
+            );
         }
     }
 
@@ -2159,6 +2164,7 @@ mod tests {
             tokio::time::timeout(MIGRATION_TIMEOUT + HANDSHAKE_TIMEOUT, client.moved_past(0)).await;
         let event = next_event(&client).await;
         let read = within(reader.next_object()).await;
+        let ended = within(subscription.done()).await;
 
         // Assert
         assert_eq!(moved, Ok(true));
@@ -2166,6 +2172,10 @@ mod tests {
             panic!("expected PUBLISH_DONE, got {event:?}");
         };
         assert_eq!(done.request_id(), subscription.request_id());
+        assert_eq!(
+            ended.map(|ended| ended.status_code()),
+            Some(PublishDoneCode::GoingAway)
+        );
         assert!(matches!(read, Ok(None)), "the track must end, got {read:?}");
         refuse.abort();
     }

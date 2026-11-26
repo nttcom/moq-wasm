@@ -35,8 +35,8 @@
 //   quint run --main new_group_requests_current --invariant safety --max-samples 5000 --max-steps 30 new_group_requests.qnt
 //   quint verify --backend tlc --main new_group_requests_current --invariant safety new_group_requests.qnt
 //   (likewise for new_group_requests_as_documented, new_group_requests_late_enable,
-//   new_group_requests_without_throttle, new_group_requests_reenable_seeded,
-//   new_group_requests_fixed; `--invariant requestedGroupsFollowLongGroups` for the
+//   new_group_requests_without_throttle, new_group_requests_reenable_seeded;
+//   `--invariant requestedGroupsFollowLongGroups` for the
 //   permit carried across groups)
 module new_group_requests {
   const MIN_DURATION: int
@@ -315,14 +315,6 @@ module new_group_requests_without_throttle {
   ).*
 }
 
-// expect: ok
-module new_group_requests_fixed {
-  import new_group_requests(
-    MIN_DURATION = 2, MIN_OBJECTS = 2, MAX_TIME = 4,
-    ENABLE_AFTER_WRITES = true, REENABLE = true, THROTTLE = true,
-    KEEP_ON_REENABLE = true, SEED_OPEN_GROUP = true,
-  ).*
-}
 
 // Re-enabling with the late-enable half of the fix only: what replacing the
 // `NewGroupRequests` alone does.

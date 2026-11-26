@@ -89,7 +89,7 @@ session.close().await;
 
 | `moqt::client` | JS | 役割 |
 | --- | --- | --- |
-| `Session` | `MoqSession` | `Arc<moqt::Session>`・`Origin`・`NamespaceWatchers`・`PUBLISH_DONE` 待ち手・イベントループの `JoinHandle` を保持。`close` でループ停止と `moqt::Session::close` |
+| `Session` | `MoqSession` | `Arc<moqt::Session>`・`Origin`・`NamespaceWatchers`・イベントループの `JoinHandle` を保持。`close` でループ停止と `moqt::Session::close` |
 | `Subscription` | `MoqSubscription` | `next` / `next_group` / `largest` / `done` / `set_forward` / `set_priority` / `request_new_group` / `end_before_group` / `close` |
 | `Group` | `MoqGroup` | 1本の subgroup stream |
 | `Fetch` | `MoqFetch` | 1つの `FETCH` 応答 |

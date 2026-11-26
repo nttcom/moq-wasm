@@ -72,7 +72,6 @@ impl TrackWatch {
             Watched::Namespace(event) => WatchEvent::Namespace(event),
             Watched::Publish(handler) => WatchEvent::Track(PublishRequest {
                 session: self.session.clone(),
-                routes: self.routes.clone(),
                 handler,
             }),
         })
@@ -100,7 +99,6 @@ impl Drop for TrackWatch {
 /// Dropping it unanswered rejects it.
 pub struct PublishRequest {
     session: Arc<Session>,
-    routes: Arc<Routes>,
     handler: Box<PublishHandler>,
 }
 
@@ -137,7 +135,6 @@ impl PublishRequest {
             TrackReader::fetching_current_group(self.session.subscriber(), subscription.clone());
         Ok(Subscription::new(
             self.session,
-            self.routes,
             subscription,
             Reading::Objects(reader),
         ))

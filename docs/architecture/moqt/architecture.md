@@ -145,7 +145,7 @@ Language-independent client entry point (`modules/client/`, API mapping in [`sdk
 | `track_watch.rs` | `TrackWatch` (`watch_tracks`): single `SUBSCRIBE_NAMESPACE` streaming ordered namespaces + `PublishRequest`s (`accept_current_group`) |
 | `request_error.rs` | `RequestError` (`RequestKind`, `RequestFailure`, wire code), `FetchError` |
 
-**Event dispatch order**: custom `EventHandler`s (in `add_handler` order, e.g., `broadcast::RelayConnection`) → `Origin` (also notifies `TrackWriter::next_subscriber`) → `NamespaceWatchers` → `Routes::answer` (resolves `PUBLISH_DONE`, acks `SUBSCRIBE_NAMESPACE`, rejects unknown `SUBSCRIBE` with `TRACK_DOES_NOT_EXIST` and `PUBLISH` with `UNINTERESTED` under `moqt.client.*` root spans joining peer trace).
+**Event dispatch order**: custom `EventHandler`s (in `add_handler` order, e.g., `broadcast::RelayConnection`) → `Origin` (also notifies `TrackWriter::next_subscriber`) → `NamespaceWatchers` → `Routes::answer` (acks `SUBSCRIBE_NAMESPACE`, rejects unknown `SUBSCRIBE` with `TRACK_DOES_NOT_EXIST` and `PUBLISH` with `UNINTERESTED` under `moqt.client.*` root spans joining peer trace).
 
 **Invariants**: `Send + Sync` natively (`MaybeSend`/`MaybeSync` on `wasm32`; `std::sync::Mutex` tables never held across `.await`); session end terminates all watches/`done`/`next_subscriber`; `Subscription` locks into `next` or `next_group` on first call; GOAWAY/reconnect stay in `moqt::Session`.
 
@@ -207,6 +207,7 @@ Each outbound request runs in an `INFO` span (`moqt.subscriber.{subscribe,subscr
 - **Buffer-before-subscribe**: `object_sinks` buffers up to 256 objects/alias (`MAX_PENDING_OBJECTS_PER_TRACK_ALIAS`) and 1,024 total across unknown aliases (`MAX_PENDING_OBJECTS`), expiring after 10 s (`UNKNOWN_TRACK_ALIAS_PERIOD`, also checked on install), drained atomically on `register_data_receiver`.
 - **Bounded queues**: Unread datagrams cap at 1,024/subscription (`MAX_QUEUED_DATAGRAMS`, drop-newest); unread `SessionEvent`s cap at 1,024 (`MAX_UNREAD_EVENTS`, backpressuring transport).
 - **Cancelled & `PUBLISH_DONE` subscriptions**: Unsubscribe/rejected `PUBLISH` installs a 10 s `Cancelled` sink marker discarding late objects. `PublishDoneExpiryTask` cancels the sinks of subscriptions once `Stream Count` streams arrive or after 10 s (always 10 s for `Stream Count == 0` / datagrams); an unclaimed `receiver_map` entry stays, readable to its end, until claimed or the session is dropped.
+- **Subscription end**: A subscription this side receives (`subscribe*` or an accepted `PUBLISH`) holds a `SubscriptionEnd`, registered on the session's `SessionEventSender` before its `SUBSCRIBE_OK` / `PUBLISH_OK` is accepted or written. The session's `PublishDone` event (a received `PUBLISH_DONE` under its logical ID, or the `GOING_AWAY` a refused re-send reports) resolves it when sent, read or not; `UNSUBSCRIBE` and the session's `Disconnected` end it without one. `client::Subscription::done` reads it.
 
 **Scheduling, teardown & runtime**
 - **Priority before data**: Stream transport priority is set before writing the header.

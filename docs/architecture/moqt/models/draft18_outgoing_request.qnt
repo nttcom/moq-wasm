@@ -65,15 +65,15 @@
 // removes it under another (`removerEnd`).
 //
 // `draft18_outgoing_request_current` is the implementation, with every fix
-// switch on, and passes, as does `draft18_outgoing_request_fixed`.
+// switch on, and passes.
 // `draft18_outgoing_request_take_split` turns TAKE_ATOMIC off and fails
 // `streamEndedOnce`.
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft18_outgoing_request.qnt
 //   quint verify --backend tlc --main draft18_outgoing_request_current --invariant safety draft18_outgoing_request.qnt   # passes
-//   quint verify --backend tlc --main draft18_outgoing_request_fixed --invariant safety draft18_outgoing_request.qnt     # passes
 //   quint verify --backend tlc --main draft18_outgoing_request_take_split --invariant safety draft18_outgoing_request.qnt
+//   (likewise for the `draft18_outgoing_request_without_*` instances)
 module draft18_outgoing_request {
   const NAMESPACES: Set[str]
   const CONSUME_LOCAL: bool
@@ -398,16 +398,6 @@ module draft18_outgoing_request_current {
   ).*
 }
 
-// expect: ok
-module draft18_outgoing_request_fixed {
-  import draft18_outgoing_request(
-    NAMESPACES = Set("a", "b"),
-    CONSUME_LOCAL = true,
-    CLEAN_ABANDONED_ALIAS = true,
-    FIX_FIRST_MESSAGE = true,
-    TAKE_ATOMIC = true,
-  ).*
-}
 
 // expect: violation
 module draft18_outgoing_request_take_split {
@@ -417,5 +407,38 @@ module draft18_outgoing_request_take_split {
     CLEAN_ABANDONED_ALIAS = true,
     FIX_FIRST_MESSAGE = true,
     TAKE_ATOMIC = false,
+  ).*
+}
+
+// expect: violation
+module draft18_outgoing_request_without_consume_local {
+  import draft18_outgoing_request(
+    NAMESPACES = Set("a", "b"),
+    CONSUME_LOCAL = false,
+    CLEAN_ABANDONED_ALIAS = true,
+    FIX_FIRST_MESSAGE = true,
+    TAKE_ATOMIC = true,
+  ).*
+}
+
+// expect: violation
+module draft18_outgoing_request_without_clean_abandoned_alias {
+  import draft18_outgoing_request(
+    NAMESPACES = Set("a", "b"),
+    CONSUME_LOCAL = true,
+    CLEAN_ABANDONED_ALIAS = false,
+    FIX_FIRST_MESSAGE = true,
+    TAKE_ATOMIC = true,
+  ).*
+}
+
+// expect: violation
+module draft18_outgoing_request_without_fix_first_message {
+  import draft18_outgoing_request(
+    NAMESPACES = Set("a", "b"),
+    CONSUME_LOCAL = true,
+    CLEAN_ABANDONED_ALIAS = true,
+    FIX_FIRST_MESSAGE = false,
+    TAKE_ATOMIC = true,
   ).*
 }

@@ -20,15 +20,15 @@
 //   before either ran `dropField`.
 //
 // `response_guard_current` is the implementation (both switches on) and
-// passes. `response_guard_fixed` switches on ANSWER_ONCE and
-// LAST_DROP_ATOMIC and passes; `response_guard_answer_once` switches on only
-// ANSWER_ONCE and still fails `everyRequestAnswered`.
+// passes. `response_guard_without_answer_once` turns ANSWER_ONCE off and
+// fails; `response_guard_answer_once` switches on only ANSWER_ONCE and
+// still fails `everyRequestAnswered`.
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck response_guard.qnt
 //   quint verify --backend tlc --main response_guard_current --invariant safety response_guard.qnt
-//   quint verify --backend tlc --main response_guard_fixed --invariant safety response_guard.qnt
 //   quint verify --backend tlc --main response_guard_answer_once --invariant safety response_guard.qnt
+//   quint verify --backend tlc --main response_guard_without_answer_once --invariant safety response_guard.qnt
 module response_guard {
   const CLONES: Set[str]
   // The clone the session event hands to the application.
@@ -151,12 +151,12 @@ module response_guard_answer_once {
   ).*
 }
 
-// expect: ok
-module response_guard_fixed {
+// expect: violation
+module response_guard_without_answer_once {
   import response_guard(
     CLONES = Set("g1", "g2"),
     FIRST = "g1",
-    ANSWER_ONCE = true,
+    ANSWER_ONCE = false,
     LAST_DROP_ATOMIC = true,
   ).*
 }

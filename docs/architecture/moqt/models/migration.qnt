@@ -48,12 +48,12 @@
 // publish_done, UNSUBSCRIBE), the router. Connections 0..2: one GOAWAY
 // migration or reconnect per connection.
 //
-// Instances: `migration_current` (today's code) and `migration_fixed` (all
-// FIX_* switches on). Check (from docs/architecture/moqt/models):
+// Instances: `migration_current` (today's code, every FIX_* switch on) and
+// `migration_without_fix_*` (one FIX_* switch off). Check (from docs/architecture/moqt/models):
 //   quint typecheck migration.qnt
 //   quint run --main migration_current --invariant safety --max-samples 5000 --max-steps 30 migration.qnt
 //   quint verify --backend tlc --main migration_current --invariant safety migration.qnt
-//   quint verify --backend tlc --main migration_fixed --invariant safety migration.qnt
+//   (likewise for the `migration_without_fix_*` instances)
 // (`--invariant <name>` for one property).
 module migration {
   // Connection ids; the session starts on 0 and each migration opens the next.
@@ -511,14 +511,62 @@ module migration_current {
   ).*
 }
 
-// expect: ok
-module migration_fixed {
+// expect: violation
+module migration_without_fix_closed_during_migration {
+  import migration(
+    CONNECTIONS = 0.to(2),
+    FIX_CLOSED_DURING_MIGRATION = false,
+    FIX_FINISH_CLOSES_PREVIOUS = true,
+    FIX_REPORT_STAYING_END = true,
+    FIX_DONE_BEFORE_STOP = true,
+    FIX_SERVE_ON_RECEIPT = true,
+  ).*
+}
+
+// expect: violation
+module migration_without_fix_finish_closes_previous {
+  import migration(
+    CONNECTIONS = 0.to(2),
+    FIX_CLOSED_DURING_MIGRATION = true,
+    FIX_FINISH_CLOSES_PREVIOUS = false,
+    FIX_REPORT_STAYING_END = true,
+    FIX_DONE_BEFORE_STOP = true,
+    FIX_SERVE_ON_RECEIPT = true,
+  ).*
+}
+
+// expect: violation
+module migration_without_fix_report_staying_end {
+  import migration(
+    CONNECTIONS = 0.to(2),
+    FIX_CLOSED_DURING_MIGRATION = true,
+    FIX_FINISH_CLOSES_PREVIOUS = true,
+    FIX_REPORT_STAYING_END = false,
+    FIX_DONE_BEFORE_STOP = true,
+    FIX_SERVE_ON_RECEIPT = true,
+  ).*
+}
+
+// expect: violation
+module migration_without_fix_done_before_stop {
+  import migration(
+    CONNECTIONS = 0.to(2),
+    FIX_CLOSED_DURING_MIGRATION = true,
+    FIX_FINISH_CLOSES_PREVIOUS = true,
+    FIX_REPORT_STAYING_END = true,
+    FIX_DONE_BEFORE_STOP = false,
+    FIX_SERVE_ON_RECEIPT = true,
+  ).*
+}
+
+// expect: violation
+module migration_without_fix_serve_on_receipt {
   import migration(
     CONNECTIONS = 0.to(2),
     FIX_CLOSED_DURING_MIGRATION = true,
     FIX_FINISH_CLOSES_PREVIOUS = true,
     FIX_REPORT_STAYING_END = true,
     FIX_DONE_BEFORE_STOP = true,
-    FIX_SERVE_ON_RECEIPT = true,
+    FIX_SERVE_ON_RECEIPT = false,
   ).*
 }

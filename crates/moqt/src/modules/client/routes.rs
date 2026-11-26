@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::Semaphore;
 use tracing::Instrument;
 
 use crate::modules::extensions::mutex::lock;
@@ -14,10 +14,7 @@ use crate::modules::moqt::domains::namespace_watchers::NamespaceWatchers;
 use crate::{
     RequestErrorCode, Session, SessionEvent,
     modules::{
-        client::{
-            event_handler::{EventHandler, HandlerId},
-            subscription::PublishDone,
-        },
+        client::event_handler::{EventHandler, HandlerId},
         telemetry::join_trace,
     },
     publish::Origin,
@@ -29,8 +26,7 @@ type TrackKey = (String, String);
 /// order they were added, then to `origin`, which answers the peer's
 /// SUBSCRIBE, FETCH and TRACK_STATUS for the tracks the session publishes,
 /// then to the namespace watchers. A SUBSCRIBE for any other track is
-/// rejected with TRACK_DOES_NOT_EXIST and every PUBLISH with UNINTERESTED;
-/// PUBLISH_DONE goes to the waiter of its subscription.
+/// rejected with TRACK_DOES_NOT_EXIST and every PUBLISH with UNINTERESTED.
 ///
 /// The tables are `std::sync::Mutex`es, never held across an `.await`.
 #[derive(Default)]
@@ -39,7 +35,6 @@ pub(super) struct Routes {
     handlers: Mutex<Vec<(HandlerId, Arc<dyn EventHandler>)>>,
     next_handler_id: AtomicU64,
     pub(super) watchers: NamespaceWatchers,
-    publish_done: Mutex<HashMap<u64, oneshot::Sender<PublishDone>>>,
     /// One permit per answered SUBSCRIBE `next_subscriber` has not taken.
     subscriber_watchers: Mutex<HashMap<TrackKey, Arc<Semaphore>>>,
 }
@@ -53,17 +48,6 @@ impl Routes {
 
     pub(super) fn remove_handler(&self, id: HandlerId) {
         lock(&self.handlers).retain(|(added, _)| *added != id);
-    }
-
-    /// Fails once the session ends or `forget` drops it.
-    pub(super) fn publish_done(&self, request_id: u64) -> oneshot::Receiver<PublishDone> {
-        let (sender, receiver) = oneshot::channel();
-        lock(&self.publish_done).insert(request_id, sender);
-        receiver
-    }
-
-    pub(super) fn forget(&self, request_id: u64) {
-        lock(&self.publish_done).remove(&request_id);
     }
 
     /// Returns a semaphore that gains a permit per SUBSCRIBE `origin` answers
@@ -132,7 +116,6 @@ impl Routes {
     pub(super) fn end(&self) {
         self.watchers.close();
         lock(&self.handlers).clear();
-        lock(&self.publish_done).clear();
         for (_, subscribers) in lock(&self.subscriber_watchers).drain() {
             subscribers.close();
         }
@@ -153,15 +136,6 @@ impl Routes {
     /// Answers what nothing before took; `false` once the session ended.
     async fn answer(&self, event: SessionEvent) -> bool {
         match event {
-            SessionEvent::PublishDone(handler) => {
-                let sender = lock(&self.publish_done).remove(&handler.request_id());
-                if let Some(sender) = sender {
-                    let _ = sender.send(PublishDone {
-                        code: handler.status_code(),
-                        reason: handler.error_reason().to_string(),
-                    });
-                }
-            }
             SessionEvent::SubscribeNameSpace(handler) => {
                 let span = tracing::info_span!(
                     parent: None,
@@ -238,16 +212,14 @@ mod tests {
     use super::*;
     use crate::{
         RequestFailure, Subscription,
-        client::{PublishTrackOptions, Session as ClientSession, SubscribeOptions},
+        client::{PublishTrackOptions, Session as ClientSession},
         modules::{
             moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT,
             test_support::{
-                capture_telemetry, next_event, provide_trace_context,
-                spawn_connected_native_sessions, within,
+                capture_telemetry, provide_trace_context, spawn_connected_native_sessions, within,
             },
         },
-        object::ContentExists,
-        publish::{PublishDoneCode, PublishOption},
+        publish::PublishOption,
         set_trace_context_joiner,
         subscribe::SubscribeOption,
     };
@@ -297,45 +269,6 @@ mod tests {
             self.0.fetch_add(1, Ordering::Relaxed);
             Some(event)
         }
-    }
-
-    #[tokio::test]
-    async fn publish_done_reaches_the_subscription_s_done() {
-        // Arrange
-        let (client, server) = routed_sessions("client-publish-done").await;
-        let (subscription, served) = tokio::join!(
-            within(client.subscribe(&["ns"], "track", SubscribeOptions::default())),
-            async {
-                let SessionEvent::Subscribe(handler) = next_event(&server).await else {
-                    panic!("expected SUBSCRIBE");
-                };
-                let alias = handler.ok(0, ContentExists::False).await.unwrap();
-                handler.into_subscription(alias)
-            }
-        );
-        let subscription = subscription.unwrap();
-
-        // Act
-        server
-            .publisher()
-            .publish_done(
-                &served,
-                PublishDoneCode::TrackEnded,
-                0,
-                "finished".to_string(),
-            )
-            .await
-            .unwrap();
-        let done = within(subscription.done()).await;
-
-        // Assert
-        assert_eq!(
-            done,
-            Some(PublishDone {
-                code: PublishDoneCode::TrackEnded,
-                reason: "finished".to_string(),
-            })
-        );
     }
 
     #[tokio::test]

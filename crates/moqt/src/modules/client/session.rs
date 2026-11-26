@@ -252,12 +252,7 @@ impl Session {
     }
 
     fn subscription(&self, subscription: MoqtSubscription, reading: Reading) -> Subscription {
-        Subscription::new(
-            self.session.clone(),
-            self.routes.clone(),
-            subscription,
-            reading,
-        )
+        Subscription::new(self.session.clone(), subscription, reading)
     }
 
     /// A Standalone FETCH (draft-14 §9.16.1). `end`'s object is the last
@@ -474,6 +469,7 @@ mod tests {
         },
         namespace::NamespaceEvent,
         object::{DataReceiver, ExtensionHeaders, ForwardingPreference, Subgroup},
+        publish::PublishDoneCode,
     };
 
     const NAMESPACE: &[&str] = &["room", "alice"];
@@ -517,6 +513,94 @@ mod tests {
     fn assert_send_sync<T: Send + Sync>(_: &T) {}
 
     fn assert_send<T: Send>(_: T) {}
+
+    #[tokio::test]
+    async fn done_resolves_to_the_publish_done_that_ends_the_track() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-publish-done").await;
+        server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+
+        // Act
+        within(
+            server
+                .origin()
+                .end_track(&join_namespace(NAMESPACE), "chat"),
+        )
+        .await
+        .unwrap();
+        let done = within(subscription.done()).await;
+
+        // Assert
+        assert_eq!(
+            done.map(|done| done.code),
+            Some(PublishDoneCode::TrackEnded)
+        );
+    }
+
+    #[tokio::test]
+    async fn done_resolves_to_a_publish_done_routed_before_the_subscription_was_wrapped() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-done-before-wrap").await;
+        server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.session.subscriber().subscribe(
+            join_namespace(NAMESPACE),
+            "chat".to_string(),
+            SubscribeOption::default(),
+        ))
+        .await
+        .unwrap();
+        within(
+            server
+                .origin()
+                .end_track(&join_namespace(NAMESPACE), "chat"),
+        )
+        .await
+        .unwrap();
+        // The client's event loop answers this SUBSCRIBE after it routed the
+        // PUBLISH_DONE sent before it on the control stream.
+        let missing =
+            within(server.subscribe(NAMESPACE, "missing", SubscribeOptions::default())).await;
+        assert!(missing.is_err());
+
+        // Act
+        let subscription = client.subscription(subscription, Reading::Unstarted);
+        let done = within(subscription.done()).await;
+
+        // Assert
+        assert_eq!(
+            done.map(|done| done.code),
+            Some(PublishDoneCode::TrackEnded)
+        );
+    }
+
+    #[tokio::test]
+    async fn done_resolves_to_none_once_the_session_ends() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-done-session-end").await;
+        server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+
+        // Act
+        server.close().await;
+        let done = within(subscription.done()).await;
+
+        // Assert
+        assert_eq!(done, None);
+    }
 
     #[tokio::test]
     async fn the_session_and_what_it_returns_can_be_used_from_other_threads() {

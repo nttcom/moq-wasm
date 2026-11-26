@@ -35,7 +35,7 @@
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck object_sinks.qnt
 //   quint verify --backend tlc --main object_sinks_current --invariant safety object_sinks.qnt    # passes
-//   quint verify --backend tlc --main object_sinks_fixed --invariant safety object_sinks.qnt      # passes
+//   quint verify --backend tlc --main object_sinks_without_expire_on_install --invariant safety object_sinks.qnt  # violates noStaleDrain
 //   quint verify --backend tlc --main object_sinks_no_total_check --invariant safety object_sinks.qnt  # violates bufferBounded
 module object_sinks {
   const ALIASES: Set[str]
@@ -238,18 +238,6 @@ module object_sinks_current {
   ).*
 }
 
-// expect: ok
-module object_sinks_fixed {
-  import object_sinks(
-    ALIASES = Set("a1", "a2"),
-    PERIOD = 2,
-    MAX_TIME = 3,
-    PER_ALIAS = 2,
-    TOTAL = 3,
-    EXPIRE_ON_INSTALL = true,
-    CHECK_TOTAL = true,
-  ).*
-}
 
 // expect: violation
 module object_sinks_no_total_check {
@@ -261,5 +249,18 @@ module object_sinks_no_total_check {
     TOTAL = 3,
     EXPIRE_ON_INSTALL = true,
     CHECK_TOTAL = false,
+  ).*
+}
+
+// expect: violation
+module object_sinks_without_expire_on_install {
+  import object_sinks(
+    ALIASES = Set("a1", "a2"),
+    PERIOD = 2,
+    MAX_TIME = 3,
+    PER_ALIAS = 2,
+    TOTAL = 3,
+    EXPIRE_ON_INSTALL = false,
+    CHECK_TOTAL = true,
   ).*
 }

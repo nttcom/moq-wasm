@@ -43,7 +43,7 @@
 //   takes the entry and resets the request stream and an attached response.
 //
 // `draft18_fetch_current` is the implementation, with RESET_RESPONSE_ON_ERROR
-// on, and passes, as does `draft18_fetch_fixed`. Guards the implementation
+// on, and passes. Guards the implementation
 // relies on:
 // - `draft18_fetch_attach_unchecked`: ATTACH_CHECKS_ENTRY off fails
 //   `noOrphanResponse`.
@@ -58,10 +58,10 @@
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft18_fetch.qnt
 //   quint verify --backend tlc --main draft18_fetch_current --invariant safety draft18_fetch.qnt   # passes
-//   quint verify --backend tlc --main draft18_fetch_fixed --invariant safety draft18_fetch.qnt     # passes
 //   quint verify --backend tlc --main draft18_fetch_attach_unchecked --invariant safety draft18_fetch.qnt
 //   quint verify --backend tlc --main draft18_fetch_fin_at_ok --invariant safety draft18_fetch.qnt
 //   quint verify --backend tlc --main draft18_fetch_close_may_fail --invariant safety draft18_fetch.qnt
+//   quint verify --backend tlc --main draft18_fetch_without_reset_response_on_error --invariant safety draft18_fetch.qnt
 module draft18_fetch {
   const RESET_RESPONSE_ON_ERROR: bool
   const ATTACH_CHECKS_ENTRY: bool
@@ -312,15 +312,6 @@ module draft18_fetch_current {
   ).*
 }
 
-// expect: ok
-module draft18_fetch_fixed {
-  import draft18_fetch(
-    RESET_RESPONSE_ON_ERROR = true,
-    ATTACH_CHECKS_ENTRY = true,
-    WAIT_FOR_RESPONSE = true,
-    CLOSE_MAY_FAIL = false,
-  ).*
-}
 
 // expect: violation
 module draft18_fetch_attach_unchecked {
@@ -349,5 +340,15 @@ module draft18_fetch_close_may_fail {
     ATTACH_CHECKS_ENTRY = true,
     WAIT_FOR_RESPONSE = true,
     CLOSE_MAY_FAIL = true,
+  ).*
+}
+
+// expect: violation
+module draft18_fetch_without_reset_response_on_error {
+  import draft18_fetch(
+    RESET_RESPONSE_ON_ERROR = false,
+    ATTACH_CHECKS_ENTRY = true,
+    WAIT_FOR_RESPONSE = true,
+    CLOSE_MAY_FAIL = false,
   ).*
 }

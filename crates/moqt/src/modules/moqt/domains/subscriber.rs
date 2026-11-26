@@ -271,12 +271,18 @@ impl Subscriber {
             track_alias: logical_alias,
             ..message
         };
+        let end = self
+            .session
+            .event_sender
+            .subscription_ends()
+            .register(request_id);
         response.accept();
         let subscription = Subscription::SubscriberInitiated(SubscriberInitiatedSubscription::new(
             track_namespace,
             track_name,
             message,
             &option,
+            end,
         ));
         Ok((subscription, joining_fetch))
     }
@@ -835,6 +841,10 @@ impl Subscriber {
         fields(request_id = %subscription.request_id())
     )]
     pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
+        self.session
+            .event_sender
+            .subscription_ends()
+            .forget(subscription.request_id());
         if let Some(carried) = self.session.read_carried().await {
             carried.update(|carried| carried.subscriptions.remove(&subscription.request_id()));
         }

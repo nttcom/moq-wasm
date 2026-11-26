@@ -236,13 +236,9 @@ struct Outlet {
     state: OutletState,
 }
 
-// Only 64-bit pointers make `Serving` large enough for the lint.
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    expect(
-        clippy::large_enum_variant,
-        reason = "nearly every outlet is serving; boxing would only add an allocation per outlet"
-    )
+#[expect(
+    clippy::large_enum_variant,
+    reason = "nearly every outlet is serving; boxing would only add an allocation per outlet"
 )]
 enum OutletState {
     Serving(Serving),

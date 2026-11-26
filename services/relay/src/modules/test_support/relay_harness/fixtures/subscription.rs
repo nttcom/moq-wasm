@@ -36,6 +36,7 @@ fn subscriber_initiated(
         filter_type,
         track_properties: moqt::TrackProperties::default(),
         last_update: moqt::LastSubscribeUpdate::default(),
+        end: moqt::SubscriptionEnd::default(),
     })
 }
 

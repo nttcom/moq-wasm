@@ -57,7 +57,6 @@
 // @informalsystems/quint 0.34):
 //   quint typecheck publish_namespace.qnt
 //   quint verify --backend tlc --main publish_namespace_current --invariant safety publish_namespace.qnt
-//   quint verify --backend tlc --main publish_namespace_fixed --invariant safety publish_namespace.qnt
 // and likewise for the other instances at the end of the file.
 module publish_namespace {
   const FORGET_ON_DROP: bool
@@ -328,15 +327,6 @@ module publish_namespace_current {
   ).*
 }
 
-// expect: ok
-module publish_namespace_fixed {
-  import publish_namespace(
-    FORGET_ON_DROP = true,
-    FORGET_ON_CANCEL = true,
-    WITHDRAW_ELSEWHERE = true,
-    DONE_DURING_BEGIN = false,
-  ).*
-}
 
 // Each fix but one: shows the remaining bug on its own.
 // expect: violation

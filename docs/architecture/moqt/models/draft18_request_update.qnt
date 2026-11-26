@@ -52,7 +52,7 @@
 //
 // `draft18_request_update_current` is the implementation, with
 // WRITE_DETACHED on (the write runs to completion even when the caller drops
-// its future), and passes, as does `draft18_request_update_fixed`.
+// its future), and passes.
 // The other instances turn off one guard the implementation relies on:
 // - `draft18_request_update_push_after_write`: PUSH_BEFORE_WRITE off fails
 //   `outAnswerReachesItsUpdate` (the answer can beat the push).
@@ -64,10 +64,10 @@
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck draft18_request_update.qnt
 //   quint verify --backend tlc --main draft18_request_update_current --invariant safety draft18_request_update.qnt   # passes
-//   quint verify --backend tlc --main draft18_request_update_fixed --invariant safety draft18_request_update.qnt     # passes
 //   quint verify --backend tlc --main draft18_request_update_push_after_write --invariant safety draft18_request_update.qnt
 //   quint verify --backend tlc --main draft18_request_update_unordered --invariant safety draft18_request_update.qnt
 //   quint verify --backend tlc --main draft18_request_update_racy_timeout --invariant safety draft18_request_update.qnt
+//   quint verify --backend tlc --main draft18_request_update_without_write_detached --invariant safety draft18_request_update.qnt
 module draft18_request_update {
   // Number of REQUEST_UPDATEs each side sends on the stream.
   const N_OUT: int
@@ -369,14 +369,6 @@ module draft18_request_update_current {
   ).*
 }
 
-// expect: ok
-module draft18_request_update_fixed {
-  import draft18_request_update(
-    N_OUT = 3, N_IN = 3,
-    PUSH_BEFORE_WRITE = true, WRITE_DETACHED = true,
-    ORDERED_ANSWERS = true, ATOMIC_TIMEOUT = true,
-  ).*
-}
 
 // expect: violation
 module draft18_request_update_push_after_write {
@@ -402,5 +394,14 @@ module draft18_request_update_racy_timeout {
     N_OUT = 3, N_IN = 3,
     PUSH_BEFORE_WRITE = true, WRITE_DETACHED = true,
     ORDERED_ANSWERS = true, ATOMIC_TIMEOUT = false,
+  ).*
+}
+
+// expect: violation
+module draft18_request_update_without_write_detached {
+  import draft18_request_update(
+    N_OUT = 3, N_IN = 3,
+    PUSH_BEFORE_WRITE = true, WRITE_DETACHED = false,
+    ORDERED_ANSWERS = true, ATOMIC_TIMEOUT = true,
   ).*
 }
