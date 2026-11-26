@@ -24,7 +24,43 @@ env:
   QT_DEPS_VERSION: "2025-08-23"
 
 jobs:
+  # One list for every package: it covers the libraries of all three platforms.
+  notices:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_ABOUT_VERSION: 0.9.3
+      CARGO_ABOUT_SHA256: 3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.100.0
+      - name: Install cargo-about
+        run: |
+          name="cargo-about-${CARGO_ABOUT_VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --silent --show-error --location --output "${RUNNER_TEMP}/cargo-about.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-about/releases/download/${CARGO_ABOUT_VERSION}/${name}.tar.gz"
+          echo "${CARGO_ABOUT_SHA256}  ${RUNNER_TEMP}/cargo-about.tar.gz" | sha256sum --check
+          tar -xzf "${RUNNER_TEMP}/cargo-about.tar.gz" -C "${RUNNER_TEMP}"
+          install "${RUNNER_TEMP}/${name}/cargo-about" "${CARGO_HOME:-${HOME}/.cargo}/bin/"
+      - name: List the licenses of the libraries built into the plugin
+        run: make target/obs-plugin-notices/THIRD-PARTY-LICENSES.txt
+      - name: Upload the list
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: license-list
+          path: target/obs-plugin-notices/THIRD-PARTY-LICENSES.txt
+          if-no-files-found: error
+
   macos:
+    needs: notices
     # Apple silicon.
     runs-on: macos-15
     steps:
@@ -38,6 +74,12 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: 1.100.0
+      - name: Download the license list
+        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: license-list
+          path: target/obs-plugin-notices
       - name: Download the Qt headers for the dock
         env:
           QT_DEPS_SHA256: 990f11638b80a4509e14e8c315f6e4caa0861e37fcd3113a256fbff835ffca29
@@ -59,6 +101,7 @@ jobs:
           if-no-files-found: error
 
   linux:
+    needs: notices
     # The archive is built against this Ubuntu's Qt, the one its OBS uses.
     runs-on: ubuntu-24.04
     steps:
@@ -72,6 +115,12 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: 1.100.0
+      - name: Download the license list
+        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: license-list
+          path: target/obs-plugin-notices
       - name: Install the Qt headers and OBS Studio
         run: |
           sudo add-apt-repository --yes ppa:obsproject/obs-studio
@@ -86,7 +135,7 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/obs-moqt/Cargo.toml)
           mkdir -p package/obs-moqt/bin/64bit
           cp target/release/libobs_moqt.so package/obs-moqt/bin/64bit/obs-moqt.so
-          cp crates/obs-moqt/LICENSE package/obs-moqt/LICENSE
+          cp crates/obs-moqt/LICENSE crates/obs-moqt/COPYRIGHT target/obs-plugin-notices/THIRD-PARTY-LICENSES.txt package/obs-moqt/
           tar -czf "obs-moqt-${version}-linux-x86_64.tar.gz" -C package obs-moqt
       - name: Check OBS loads the plugin
         run: |
@@ -110,6 +159,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: notices
     runs-on: windows-2025
     defaults:
       run:
@@ -125,6 +175,12 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: 1.100.0
+      - name: Download the license list
+        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: license-list
+          path: target/obs-plugin-notices
       - name: Download the Qt headers and import libraries for the dock
         env:
           QT_DEPS_SHA256: c62e82483bc7c0bf199e8ac3220c66a85a6e8a0cd69a05b6d44f873b830e415f
@@ -143,7 +199,7 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/obs-moqt/Cargo.toml)
           mkdir -p package/obs-moqt/bin/64bit
           cp target/release/obs_moqt.dll package/obs-moqt/bin/64bit/obs-moqt.dll
-          cp crates/obs-moqt/LICENSE package/obs-moqt/LICENSE
+          cp crates/obs-moqt/LICENSE crates/obs-moqt/COPYRIGHT target/obs-plugin-notices/THIRD-PARTY-LICENSES.txt package/obs-moqt/
           (cd package && 7z a -bso0 "../obs-moqt-${version}-windows-x64.zip" obs-moqt)
       # The runner has no GPU; OBS starts on Windows' software renderer.
       - name: Check OBS loads the plugin

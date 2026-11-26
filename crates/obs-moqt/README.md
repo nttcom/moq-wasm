@@ -94,7 +94,8 @@ GPL-3.0-or-later ([LICENSE](LICENSE)). The rest of this repository is MIT.
 - **Why GPL**: OBS Studio is GPL (version 2 or later), and a plugin that OBS loads and that calls libobs is distributed under the GPL too.
 - **Why version 3**: The TLS library built into the plugin (`aws-lc-sys`) contains Apache-2.0 code, which the GPL accepts from version 3 on.
 - **What it covers**: The plugin binary as a whole, including the workspace crates built into it (`broadcast`, `moqt`, `mediapack`, `msf`). Those crates stay MIT for every other use, and the relay and the other programs the plugin reaches over the network are not covered.
-- **Distributing a build**: Ship [LICENSE](LICENSE) with the binary and offer the source of everything built into it, local changes to the workspace crates included.
+- **What a package carries**: [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT) (the plugin's copyright notice and where its source is), and `THIRD-PARTY-LICENSES.txt`, the licenses of the libraries built into the plugin. `make target/obs-plugin-notices/THIRD-PARTY-LICENSES.txt` generates that list with [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) and fails on a library whose license [`about.toml`](about.toml) does not allow.
+- **Distributing a build**: Ship those three files with the binary and offer the source of everything built into it, local changes to the workspace crates included.
 
 ## Further reading
 
