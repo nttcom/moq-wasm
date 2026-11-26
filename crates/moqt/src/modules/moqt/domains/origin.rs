@@ -426,8 +426,12 @@ impl Origin {
     /// the open group is younger than 2 s and holds fewer
     /// than `MIN_GROUP_OBJECTS` objects, the notification waits until the
     /// group reaches either, and is not sent when the caller starts a group
-    /// before that. Call this before `publish` and before the track is
-    /// subscribed to; fails for a track that is not registered.
+    /// before that; a group written before this call counts as beginning at
+    /// it. Calling it again keeps the requests outstanding and has later
+    /// notifications go to `requested`; a request already held back still
+    /// notifies the `requested` it was accepted with. Call this before
+    /// `publish` and before the track is subscribed to for them to say it
+    /// has dynamic groups; fails for a track that is not registered.
     pub async fn accept_new_group_requests(
         &self,
         namespace: &str,
@@ -435,8 +439,18 @@ impl Origin {
         requested: Arc<Notify>,
     ) -> Result<()> {
         let key = track_key(namespace, track_name);
-        self.state.lock().await.track_mut(&key)?.new_group_requests =
-            Some(NewGroupRequests::new(requested));
+        let mut state = self.state.lock().await;
+        let track = state.track_mut(&key)?;
+        match &mut track.new_group_requests {
+            Some(requests) => requests.notify_on(requested),
+            None => {
+                track.new_group_requests = Some(NewGroupRequests::new(
+                    requested,
+                    track.numbering.largest(),
+                    executor::now(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -3561,6 +3575,49 @@ mod tests {
         // Assert: the objects made the group long enough before its age did
         assert!(!in_short_group);
         assert!(in_long_group);
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_held_back_survives_accepting_requests_again() {
+        // Arrange: a request waits for the short group to be long enough
+        let (peers, requested) = origin_with_dynamic_groups("origin-new-group-reenable").await;
+        let accepted = publish(&peers).await;
+        write_objects(&peers, GroupBoundary::Next, 1).await;
+        request_new_group(&peers, &accepted, None).await;
+
+        // Act
+        peers
+            .origin
+            .accept_new_group_requests(NAMESPACE, TRACK, requested.clone())
+            .await
+            .unwrap();
+        write_objects(&peers, GroupBoundary::Within, MIN_GROUP_OBJECTS - 1).await;
+        let in_long_group = tokio::time::timeout(MIN_GROUP_DURATION / 2, requested.notified())
+            .await
+            .is_ok();
+
+        // Assert
+        assert!(in_long_group);
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_in_a_short_group_written_before_accepting_requests_waits() {
+        // Arrange: the track's group began before it had dynamic groups
+        let peers = origin_with_track("origin-new-group-late", RETENTION, Version::Draft18).await;
+        write_objects(&peers, GroupBoundary::Next, 1).await;
+        let requested = Arc::new(Notify::new());
+        peers
+            .origin
+            .accept_new_group_requests(NAMESPACE, TRACK, requested.clone())
+            .await
+            .unwrap();
+        let accepted = publish(&peers).await;
+
+        // Act
+        request_new_group(&peers, &accepted, None).await;
+
+        // Assert
+        assert!(!is_notified(&requested));
     }
 
     #[tokio::test]
