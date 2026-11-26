@@ -56,6 +56,7 @@ export class LivePlayout {
   private readonly video: VideoPlayout
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
   private newestAudioCaptureMicros: number | undefined
+  private audioChunkMs = 0
   /// Audio that joins a playing picture is dropped while it is older than the
   /// picture (`beforeMicros`), so it cannot push the clock, and the picture
   /// with it, back. The drop ends at `untilMs` so that audio that is always
@@ -138,6 +139,7 @@ export class LivePlayout {
       audioData.close()
       return
     }
+    this.audioChunkMs = audioData.duration / MICROS_PER_MILLI
     if (!this.clock.anchored) {
       this.hold({ kind: 'audio', audioData, captureMicros, arrivedAtMs: performance.now() })
       return
@@ -202,7 +204,8 @@ export class LivePlayout {
   }
 
   targetBufferMs(): number {
-    return this.jitterBuffer.targetMs(this.audioActive() ? this.audio.scheduleAheadMs() : 0)
+    const audio = this.audioActive()
+    return this.jitterBuffer.targetMs(audio ? this.audio.scheduleAheadMs() : 0, audio ? this.audioFloorMs() : 0)
   }
 
   /// Capture-to-arrival delay of the window's fastest sample; plus `bufferMs`
@@ -372,6 +375,17 @@ export class LivePlayout {
     return this.audio.positionMicrosAt(performance.now()) !== undefined
   }
 
+  /// The least buffer the audio output plays without running out. The buffer
+  /// counts from the fastest arrival of the window, which the audio is behind
+  /// when the picture arrives sooner; a chunk is then scheduled
+  /// `scheduleAheadMs` before it is heard, and the next one follows a chunk
+  /// later at the soonest.
+  private audioFloorMs(): number {
+    const fastestAudioMs = this.jitterBuffer.fastestDelayMs('audio')
+    const behindMs = fastestAudioMs === undefined ? 0 : fastestAudioMs - this.jitterBuffer.fastestDelayMs()!
+    return behindMs + this.audio.scheduleAheadMs() + this.audioChunkMs
+  }
+
   /// A master sample that misses its time is presented at once and pushes
   /// the clock back by the miss so the samples behind it stay contiguous.
   private playoutTime(captureMicros: number, nowMs: number, master: boolean): number {
@@ -410,7 +424,9 @@ export class LivePlayout {
     }
     const nowMs = performance.now()
     const newest = Math.max(...held.map((sample) => sample.captureMicros))
-    this.clock.anchor(newest, nowMs + this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), openingSpreadMs(held)))
+    const floorMs = held.some((sample) => sample.kind === 'audio') ? this.audioFloorMs() : 0
+    const targetMs = this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), floorMs, openingSpreadMs(held))
+    this.clock.anchor(newest, nowMs + targetMs)
     const audioLeadMs = this.audio.outputLatencyMs()
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs

@@ -182,7 +182,7 @@ stateDiagram-v2
 - Trials step-up after 10 s calm; failing within 20 s doubles cooldown up to 120 s (halved per calm minute).
 
 ### Audio / Video Synchronisation (LOC)
-- **Adaptive jitter buffer**: Target = audio capture-to-arrival jitter over last 10 s (peak-to-peak, or 95th percentile via `arrivalQuantile` in meeting) + `AudioContext` output latency + 20 ms concealment margin, clamped to `[Min buffer, Max buffer]`.
+- **Adaptive jitter buffer**: Target = audio capture-to-arrival jitter over last 10 s (peak-to-peak, or 95th percentile via `arrivalQuantile` in meeting) + `AudioContext` output latency + 20 ms concealment margin, clamped to `[Min buffer, Max buffer]`. While audio plays, a `Max buffer` too small for it gives way to the least the output plays without running out: how far the fastest audio arrives behind the fastest sample + output latency + 20 ms + one audio chunk (a lower target makes every chunk miss its time, so the sound is concealed and shed in turns).
 - **Warm-up & master clock**: Holds samples until `AudioContext` reports output latency (up to 400 ms without audio), then anchors on the newest sample. Audio is clock master (chunks append contiguously at a write head; write-head drift steers the clock; secondary `addAudioTrack` lanes follow without steering). Video holds frames until due.
 - **Decoder worker ordering**: Both workers tag outputs with input chunk capture timestamps (surviving gaps/loops). Audio worker reorders interleaved groups (releasing 50 ms before due, or 100 ms unanchored); video worker immediately jumps to any newer group's keyframe and drops older partial groups.
 

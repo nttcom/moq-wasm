@@ -6,6 +6,10 @@ const MICROS_PER_MILLI = 1_000
 /// `arrivalQuantile` is the share of the window's arrivals the buffer is in
 /// time for: 1, the default, covers the slowest of them, and a lower one
 /// leaves the rarest delays to the audio concealment for less latency.
+/// While audio plays, a `maximumMs` below what the audio output needs is
+/// raised to it. From a chunk's arrival the output needs its latency, the
+/// 20 ms a chunk is scheduled ahead of that, and one more chunk. With less,
+/// every chunk would miss its time.
 export type BufferPolicy = { minimumMs: number; maximumMs: number; arrivalQuantile?: number }
 
 type Arrival = { atMs: number; delayMs: number; kind: MediaKind }
@@ -45,8 +49,9 @@ export class JitterBuffer {
     return this.fixed || newest.atMs - this.observingSinceMs >= WINDOW_MS
   }
 
-  fastestDelayMs(): number | undefined {
-    return this.arrivals.length === 0 ? undefined : Math.min(...this.arrivals.map((arrival) => arrival.delayMs))
+  fastestDelayMs(kind?: MediaKind): number | undefined {
+    const arrivals = kind === undefined ? this.arrivals : this.arrivals.filter((arrival) => arrival.kind === kind)
+    return arrivals.length === 0 ? undefined : Math.min(...arrivals.map((arrival) => arrival.delayMs))
   }
 
   medianDelayMs(kind: MediaKind): number | undefined {
@@ -58,10 +63,11 @@ export class JitterBuffer {
   }
 
   /// Playback opens before any spread has been observed, so the caller
-  /// passes a stand-in for it then.
-  targetMs(outputLatencyMs: number, spreadMs = this.spreadMs() ?? 0): number {
-    const { minimumMs, maximumMs } = this.policy
-    return Math.max(minimumMs, Math.min(maximumMs, spreadMs + outputLatencyMs))
+  /// passes a stand-in for it then. `outputFloorMs` is the least buffer the
+  /// audio output plays without running out; it overrides a smaller maximum.
+  targetMs(outputLatencyMs: number, outputFloorMs: number, spreadMs = this.spreadMs() ?? 0): number {
+    const maximumMs = Math.max(this.policy.maximumMs, outputFloorMs)
+    return Math.max(this.policy.minimumMs, Math.min(maximumMs, spreadMs + outputLatencyMs))
   }
 
   spreadMs(): number | undefined {

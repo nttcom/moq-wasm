@@ -130,6 +130,20 @@ test('a buffer below its target grows by stretching the audio without a break', 
   expect(playout.audioBreaks()).toBe(0)
 })
 
+test('a maximum below the audio output latency plays the sound without concealing or shedding it', () => {
+  // Arrange
+  const playout = new LivePlayout((frame) => frame.close())
+  playout.setBufferPolicy({ minimumMs: 0, maximumMs: OUTPUT_LATENCY_MS / 2 })
+
+  // Act: stream on after the buffer has settled, which is when one above its target is shed
+  streamLive(playout, SETTLE_MS + 10_000, LIVE_VIDEO_DELAY_MS)
+
+  // Assert
+  expect(playout.audioConcealedMs()).toBe(0)
+  expect(playout.shedMs()).toBe(0)
+  expect(playout.audioBreaks()).toBe(0)
+})
+
 const OUTPUT_START_UP_MS = 50
 
 test('audio is held until the output reports its latency and then opens the clock on it', () => {
