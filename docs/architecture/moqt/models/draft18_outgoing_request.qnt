@@ -18,10 +18,11 @@
 //   in between).
 //
 // Part B, one SUBSCRIBE from `send_request` on (draft18.rs `send_request`,
-// `PendingResponse`, `RequestCancel`, `ReceivedResponse`, `end_outgoing`,
-// `take_outgoing`; draft18/request_streams.rs `OutgoingRequestTask::read`,
-// `abandoned`, `peer_ended`; domains/subscriber.rs `subscribe_ok` /
-// `register_data_receiver` / `accept`; domains/connection.rs `ObjectSinks`).
+// `PendingResponse`, `RequestCancel(CallerState)`, `ReceivedResponse`,
+// `end_outgoing`, `take_outgoing`; draft18/request_streams.rs
+// `OutgoingRequestTask::read`, `FirstMessage`, `abandoned`, `peer_ended`;
+// domains/subscriber.rs `subscribe_ok` / `register_data_receiver` /
+// `accept`; domains/connection.rs `ObjectSinks`).
 // The request is written and `outgoing[id]` inserted before the first
 // action. Actions:
 // - `peerRespond`: the publisher answers SUBSCRIBE_OK, REQUEST_ERROR, a
@@ -31,21 +32,27 @@
 // - `taskFirst`: `OutgoingRequestTask::read` up to its first message. Its
 //   `receive_unless_cancelled` races the response against `reader_stop`
 //   (notified by this side's cancel); tokio::select! may take either when
-//   both are ready. A SUBSCRIBE_OK whose `response.send` fails (the caller
-//   dropped `PendingResponse`) runs `abandoned` (`cancel_unclaimed_track_alias`).
+//   both are ready (`FirstMessage::Cancelled` / `Received` / `Finished` /
+//   `Closed` / `Malformed`). A SUBSCRIBE_OK whose `response.send` fails
+//   (the caller dropped `PendingResponse`) runs `abandoned`
+//   (`cancel_unclaimed_track_alias`).
 //   A FIN, reset or decode error removes the entry, FINs the stream and drops
 //   the response sender.
-// - `callerReceive`: `PendingResponse::response` takes the oneshot. An
-//   error response leaves `RequestCancel` armed, which resets the stream.
+// - `callerReceive`: `PendingResponse::response` takes the oneshot
+//   (`RequestCancel::deliver`): a success response moves `CallerState` to
+//   `Delivered`; an error response resets the stream from
+//   `AwaitingResponse`, as does a dropped sender.
 // - `callerDrop`: the caller drops `PendingResponse` (or times out), or
 //   drops `ReceivedResponse` before `accept`, or its future inside
 //   `register_data_receiver` (between `install_receiver` and the
-//   `receiver_map` insert). The armed `RequestCancel` runs `end_outgoing`:
-//   takes the entry and resets the stream, notifying `reader_stop`. With
+//   `receiver_map` insert). `RequestCancel` dropped in `AwaitingResponse`
+//   or `Delivered` runs `end_outgoing`: takes the entry and resets the
+//   stream, notifying `reader_stop`. With
 //   CLEAN_ABANDONED_ALIAS it also does what draft-14's `handle_late_response`
 //   does: `cancel_unclaimed_track_alias` and `cancel_subscription`.
 // - `callerInstall` / `callerAccept`: `register_data_receiver`
-//   (`install_receiver`, then the `receiver_map` lock), then `accept`.
+//   (`install_receiver`, then the `receiver_map` lock), then `accept`
+//   (`CallerState::Ended`).
 // - `appUnsubscribe` / `peerEnds`: `notify(Unsubscribe)` (take + reset, and
 //   the subscription's sink is cancelled) and `peer_ended` after
 //   SUBSCRIBE_OK (take + FIN): the other removers of the entry.

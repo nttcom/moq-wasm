@@ -6,27 +6,30 @@
 //
 // Each action is one atomic step of the implementation:
 // - `reserve`: `wait_for_request_id` takes the `request_ids` mutex (and keeps
-//   it while blocked, sending one REQUESTS_BLOCKED per limit), and, once the
-//   next Request ID is below the peer's limit, `send_request` registers the
-//   request in `inflight_requests` (`register`) before writing it.
+//   it while blocked, sending one REQUESTS_BLOCKED per limit via
+//   `OutgoingRequestIds::block_on`), and, once the next Request ID is below
+//   the peer's limit, `send_request` registers the request in
+//   `inflight_requests` (`InflightRequests::register`) before writing it.
 // - `writeSome` / `writeDone` / `writeFail` / `cancelWrite`: the
 //   `send_with_request_id` await. quinn's `write_all` may write part of the
 //   message and then wait for flow control; dropping the caller's future
 //   there leaves those bytes on the stream. `writeDone` advances
 //   `OutgoingRequestIds::next` and drops the reservation. A failed or
 //   cancelled write drops `RegisteredSender`, whose `Drop` turns the entry
-//   `Abandoned` and closes the session past MAX_ABANDONED_REQUESTS.
+//   `Abandoned` (`InflightRequests::abandon`) and closes the session past
+//   MAX_ABANDONED_REQUESTS.
 // - `dropReceiver` / `dropRegistration`: the caller times out or drops
 //   `PendingResponse` (`response()`): the receiver goes first, then
 //   `RegisteredSender::drop` locks `inflight_requests`. Another thread may run
 //   the receive task in between.
 // - `receive`: the receive task takes the entry under the lock
-//   (`take_inflight_request`) and sends it to the caller (a failed send hands
+//   (`InflightRequests::take`) and sends it to the caller (a failed send hands
 //   back a `ReceivedResponse` whose drop withdraws), or runs
 //   `handle_late_response`, or closes the session on an unknown Request ID.
 // - `accept` / `dropResponse`: `ReceivedResponse::accept` or its `Drop`
 //   (withdrawal of a success response).
-// - `streamEnd`: `fail_inflight_requests` when the control stream ends.
+// - `streamEnd`: `fail_inflight_requests` (`InflightRequests::close`) when
+//   the control stream ends.
 // Request IDs step by 1 here (the implementation steps by 2 from 0 or 1).
 // MAX_ABANDONED scales MAX_ABANDONED_REQUESTS (100) down.
 //
@@ -69,7 +72,7 @@ module draft14_requests {
     | CDropping(int)             // receiver dropped, `RegisteredSender` not yet
     | CHasResponse({ id: int, ok: bool }) // `ReceivedResponse` not yet accepted
 
-  // `InflightRequest`
+  // `Entry`
   type Entry = Waiting(str) | Abandoned
 
   type State = {
@@ -80,13 +83,13 @@ module draft14_requests {
     holder: str,
     // The peer's Maximum Request ID (exclusive).
     peerLimit: int,
-    // `OutgoingRequestIds::blocked_on`, -1 for None.
+    // `OutgoingRequestIds::blocked` (`RequestsBlockedSent`), -1 for None.
     blockedOn: int,
     // Limits REQUESTS_BLOCKED was sent for, in order.
     blockedSent: List[int],
-    // `InflightRequests::requests`
+    // `InflightRequests::Open`
     inflight: int -> Entry,
-    // `InflightRequests::control_stream_closed`
+    // `InflightRequests::Closed`
     streamClosed: bool,
     // The send side failed; every later write fails.
     sendBroken: bool,

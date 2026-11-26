@@ -14,7 +14,8 @@ pub(crate) mod request_streams;
 pub(crate) mod setup;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
+    mem,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
@@ -41,7 +42,7 @@ use crate::{
             version::{
                 self, Notification, OutgoingRequest, OutgoingResponse, RequestIdReservation,
                 UpdateAnswer,
-                update_answer::{UpdateAnswerSender, UpdateOutcome},
+                update_answer::{UpdateOutcome, UpdateWaiters},
             },
         },
         transport::{
@@ -129,10 +130,7 @@ struct RequestStream {
     /// one, from its SUBSCRIBE_OK or PUBLISH (§12.4).
     default_publisher_priority: u8,
     /// For a FETCH the peer sent: how far its response has come.
-    fetch_end: FetchEnd,
-    /// For a FETCH the peer sent: its response stream once opened, reset
-    /// with the request stream when the FETCH is cancelled (§5.2).
-    fetch_response: Option<Arc<StreamSender>>,
+    fetch: ServedFetch,
     /// Notified when this side cancels the request: the task reading the
     /// stream then stops the peer's half with STOP_SENDING (§3.3.2).
     reader_stop: Arc<tokio::sync::Notify>,
@@ -140,10 +138,7 @@ struct RequestStream {
     /// namespaces to send as NAMESPACE after its REQUEST_OK, as the first
     /// message of the response is REQUEST_OK or REQUEST_ERROR (§10.18).
     held_namespaces: Option<HashSet<Vec<String>>>,
-    /// The waiters of this side's REQUEST_UPDATEs on the stream, oldest
-    /// first: the peer answers each with exactly one REQUEST_OK or
-    /// REQUEST_ERROR, in order (§10.9).
-    update_waiters: Arc<std::sync::Mutex<VecDeque<UpdateAnswerSender>>>,
+    update_waiters: Arc<UpdateWaiters>,
     /// For a SUBSCRIBE_TRACKS the peer sent: the tracks PUBLISH_BLOCKED went
     /// out for on it. No PUBLISH for them follows while the stream lives
     /// (§6.1), whatever prefix it moves to (§10.9.2).
@@ -159,8 +154,7 @@ impl RequestStream {
             kind,
             sender,
             default_publisher_priority: messages::DEFAULT_PUBLISHER_PRIORITY,
-            fetch_end: FetchEnd::default(),
-            fetch_response: None,
+            fetch: ServedFetch::Open,
             reader_stop: Arc::default(),
             held_namespaces: None,
             update_waiters: Arc::default(),
@@ -170,13 +164,69 @@ impl RequestStream {
     }
 }
 
-/// §5.2: a publisher destroys the state of a FETCH after closing its
-/// response stream, so the request stream ends with FIN once the FETCH_OK
-/// is sent too.
-#[derive(Debug, Clone, Copy, Default)]
-struct FetchEnd {
-    fetch_ok_sent: bool,
-    response_ended: bool,
+/// How far this side has served a FETCH the peer sent. §5.2: a publisher
+/// destroys the state of a FETCH after closing its response stream, so once
+/// both FETCH_OK is sent and the response stream has ended, the transitions
+/// return `None`: the entry goes and the request stream ends with FIN. The
+/// response stream, once opened, is reset with the request stream when the
+/// FETCH is cancelled (§5.2). `R` is the response stream, a parameter so
+/// the transitions can be checked without a transport.
+#[derive(Debug, Clone, Default)]
+enum ServedFetch<R = Arc<StreamSender>> {
+    /// Neither FETCH_OK sent nor a response stream opened.
+    #[default]
+    Open,
+    /// The response stream is open; FETCH_OK not sent yet.
+    ResponseAttached(R),
+    /// FETCH_OK sent; the response stream, if opened, has not ended.
+    OkSent { response: Option<R> },
+    /// The response stream ended (FIN or reset); FETCH_OK not sent yet. A
+    /// cancel still resets the stream it holds.
+    ResponseEnded { response: Option<R> },
+}
+
+impl<R> ServedFetch<R> {
+    fn attach(self, response: R) -> Self {
+        match self {
+            Self::Open | Self::ResponseAttached(_) => Self::ResponseAttached(response),
+            Self::OkSent { .. } => Self::OkSent {
+                response: Some(response),
+            },
+            Self::ResponseEnded { .. } => Self::ResponseEnded {
+                response: Some(response),
+            },
+        }
+    }
+
+    fn ok_sent(self) -> Option<Self> {
+        match self {
+            Self::Open => Some(Self::OkSent { response: None }),
+            Self::ResponseAttached(response) => Some(Self::OkSent {
+                response: Some(response),
+            }),
+            Self::OkSent { .. } => Some(self),
+            Self::ResponseEnded { .. } => None,
+        }
+    }
+
+    fn response_ended(self) -> Option<Self> {
+        match self {
+            Self::Open => Some(Self::ResponseEnded { response: None }),
+            Self::ResponseAttached(response) => Some(Self::ResponseEnded {
+                response: Some(response),
+            }),
+            Self::ResponseEnded { .. } => Some(self),
+            Self::OkSent { .. } => None,
+        }
+    }
+
+    fn response(&self) -> Option<&R> {
+        match self {
+            Self::Open => None,
+            Self::ResponseAttached(response) => Some(response),
+            Self::OkSent { response } | Self::ResponseEnded { response } => response.as_ref(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -532,21 +582,21 @@ impl ControlChannel {
         }
     }
 
-    /// Records `progress` on the FETCH the peer sent as `request_id`, and
-    /// ends its request stream with FIN once both FETCH_OK and the end of
-    /// the response stream are done.
+    /// Applies `progress` to the FETCH the peer sent as `request_id`, and
+    /// ends its request stream with FIN once it returns `None` (both
+    /// FETCH_OK and the end of the response stream are done).
     async fn advance_fetch(
         &self,
         request_id: RequestId,
-        progress: impl FnOnce(&mut FetchEnd),
+        progress: impl FnOnce(ServedFetch) -> Option<ServedFetch>,
     ) -> Result<(), TransportSendError> {
         let ended = {
             let mut requests = self.requests();
             let Some(stream) = requests.incoming.get_mut(&request_id) else {
                 return Ok(());
             };
-            progress(&mut stream.fetch_end);
-            if !(stream.fetch_end.fetch_ok_sent && stream.fetch_end.response_ended) {
+            if let Some(fetch) = progress(mem::take(&mut stream.fetch)) {
+                stream.fetch = fetch;
                 return Ok(());
             }
             requests.incoming.remove(&request_id)
@@ -570,7 +620,7 @@ impl ControlChannel {
         &self,
         request_id: RequestId,
     ) -> Result<(), TransportSendError> {
-        self.advance_fetch(request_id, |end| end.response_ended = true)
+        self.advance_fetch(request_id, ServedFetch::response_ended)
             .await
     }
 
@@ -581,7 +631,7 @@ impl ControlChannel {
     ) -> bool {
         match self.requests().incoming.get_mut(&request_id) {
             Some(stream) if stream.kind == RequestStreamKind::Fetch => {
-                stream.fetch_response = Some(response.clone());
+                stream.fetch = mem::take(&mut stream.fetch).attach(response.clone());
                 true
             }
             _ => false,
@@ -595,7 +645,7 @@ impl ControlChannel {
         let Some(stream) = self.take_incoming(request_id) else {
             return false;
         };
-        let response = stream.fetch_response.clone();
+        let response = stream.fetch.response().cloned();
         if let Err(error) = cancel(Some(stream)).await {
             tracing::debug!(%error, "could not reset the request stream of a cancelled FETCH");
         }
@@ -857,7 +907,10 @@ impl ControlChannel {
         .run();
         Ok(PendingResponse {
             receiver,
-            cancel: RequestCancel(Some((Arc::downgrade(connection), request_id))),
+            cancel: RequestCancel(CallerState::AwaitingResponse(SentRequest {
+                connection: Arc::downgrade(connection),
+                request_id,
+            })),
         })
     }
 
@@ -908,24 +961,13 @@ impl ControlChannel {
         let Some(stream) = stream else {
             return Err(TransportSendError::ClosedStream);
         };
-        // The reservation keeps the waiters in the order the updates are
-        // written.
-        let (answer_sender, answer) = tokio::sync::oneshot::channel();
-        stream
-            .update_waiters
-            .lock()
-            .expect("draft-18 update waiters poisoned")
-            .push_back(answer_sender);
+        let update = stream.update_waiters.enqueue();
         if let Err(error) = stream.sender.send(&message).await {
-            stream
-                .update_waiters
-                .lock()
-                .expect("draft-18 update waiters poisoned")
-                .pop_back();
+            update.withdraw_unwritten();
             return Err(error);
         }
         self.consume(reservation);
-        Ok(UpdateAnswer(Some(answer)))
+        Ok(update.written())
     }
 
     /// Hands the peer's REQUEST_OK or REQUEST_ERROR on `request_id`'s stream
@@ -941,14 +983,8 @@ impl ControlChannel {
                 .or_else(|| requests.incoming.get(&request_id))
                 .map(|stream| stream.update_waiters.clone())
         };
-        let waiter = waiters.and_then(|waiters| {
-            waiters
-                .lock()
-                .expect("draft-18 update waiters poisoned")
-                .pop_front()
-        });
-        if let Some(waiter) = waiter {
-            let _ = waiter.send(outcome);
+        if let Some(waiters) = waiters {
+            waiters.answer_front(outcome);
         }
     }
 
@@ -1000,7 +1036,7 @@ impl ControlChannel {
             OutgoingResponse::FetchOk(ok) => {
                 let message = messages::encode_fetch_ok(&ok);
                 self.send_on_incoming(ok.request_id, message, false).await?;
-                self.advance_fetch(ok.request_id, |end| end.fetch_ok_sent = true)
+                self.advance_fetch(ok.request_id, ServedFetch::ok_sent)
                     .await
             }
             OutgoingResponse::PublishNamespaceOk(ok) => {
@@ -1214,14 +1250,64 @@ pub(crate) struct PendingResponse {
     cancel: RequestCancel,
 }
 
-/// The request whose stream is reset when this is dropped armed; that
-/// withdraws the request (§3.3.2).
-struct RequestCancel(Option<(Weak<Connection>, RequestId)>);
+/// A request this side sent on its own stream.
+struct SentRequest {
+    connection: Weak<Connection>,
+    request_id: RequestId,
+}
+
+impl SentRequest {
+    fn cancel(self) {
+        end_outgoing(&self.connection, self.request_id, false);
+    }
+}
+
+/// Where the caller of a request this side sent is.
+enum CallerState {
+    /// `PendingResponse` waits for the response.
+    AwaitingResponse(SentRequest),
+    /// `ReceivedResponse` holds a success response not yet accepted.
+    Delivered(SentRequest),
+    /// Answered without asking the peer, rejected, or accepted.
+    Ended,
+}
+
+/// Resets the request stream when dropped `AwaitingResponse` or
+/// `Delivered`; that withdraws the request (§3.3.2).
+struct RequestCancel(CallerState);
+
+impl RequestCancel {
+    fn take(&mut self) -> CallerState {
+        mem::replace(&mut self.0, CallerState::Ended)
+    }
+
+    /// The caller took a response: a success one is `Delivered` until
+    /// `accept`, an error one cancels the request.
+    fn deliver(&mut self, success: bool) -> Self {
+        match self.take() {
+            CallerState::AwaitingResponse(request) if success => {
+                Self(CallerState::Delivered(request))
+            }
+            CallerState::AwaitingResponse(request) => {
+                request.cancel();
+                Self(CallerState::Ended)
+            }
+            state => Self(state),
+        }
+    }
+
+    fn accept(&mut self) {
+        self.take();
+    }
+}
 
 impl Drop for RequestCancel {
     fn drop(&mut self) {
-        if let Some((connection, request_id)) = self.0.take() {
-            end_outgoing(&connection, request_id, false);
+        match self.take() {
+            CallerState::AwaitingResponse(request) | CallerState::Delivered(request) => {
+                request.cancel();
+            }
+            CallerState::Ended => {}
         }
     }
 }
@@ -1233,7 +1319,7 @@ impl PendingResponse {
         let _ = sender.send(Some(response));
         Self {
             receiver,
-            cancel: RequestCancel(None),
+            cancel: RequestCancel(CallerState::Ended),
         }
     }
 
@@ -1247,11 +1333,7 @@ impl PendingResponse {
         .await
         {
             Ok(Ok(Some(message))) => {
-                let cancel = if is_success(&message) {
-                    RequestCancel(self.cancel.0.take())
-                } else {
-                    RequestCancel(None)
-                };
+                let cancel = self.cancel.deliver(is_success(&message));
                 Ok(ReceivedResponse { message, cancel })
             }
             Ok(Ok(None)) => Err(RequestFailure::Withdrawn),
@@ -1274,7 +1356,7 @@ impl ReceivedResponse {
     }
 
     pub(super) fn accept(mut self) -> ResponseMessage {
-        self.cancel.0 = None;
+        self.cancel.accept();
         self.message
     }
 }
@@ -1298,7 +1380,8 @@ mod tests {
     use bytes::{Bytes, BytesMut};
 
     use super::{
-        ControlChannel, Scope, codec,
+        CallerState, Connection, ControlChannel, RequestCancel, RequestStream, RequestStreamKind,
+        Scope, SentRequest, codec,
         message_stream::{MessageDecoder, MessageReceiver},
         messages, parameters,
         request_streams::OutgoingRequestTask,
@@ -1465,6 +1548,97 @@ mod tests {
             matches!(notification, IncomingObjectNotification::Discarded),
             "{notification:?}"
         );
+    }
+
+    /// A `RequestCancel` awaiting the response of a SUBSCRIBE registered as
+    /// `client`'s outgoing request 0.
+    async fn awaiting_response(client: &crate::Session) -> (Arc<Connection>, RequestCancel) {
+        let connection = client.subscriber().session.connection();
+        let (send_stream, _) = connection.transport.open_bi().await.unwrap();
+        let stream = RequestStream::new(
+            RequestStreamKind::Subscribe,
+            Arc::new(StreamSender::new(send_stream)),
+        );
+        ControlChannel::of(&connection)
+            .requests()
+            .outgoing
+            .insert(0, stream);
+        let cancel = RequestCancel(CallerState::AwaitingResponse(SentRequest {
+            connection: Arc::downgrade(&connection),
+            request_id: 0,
+        }));
+        (connection, cancel)
+    }
+
+    fn is_open(connection: &Connection) -> bool {
+        ControlChannel::of(connection)
+            .requests()
+            .outgoing
+            .contains_key(&0)
+    }
+
+    #[tokio::test]
+    async fn a_dropped_pending_response_cancels_its_request() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-pending-dropped", "moqt").await;
+        let (connection, cancel) = awaiting_response(&client).await;
+
+        // Act
+        drop(cancel);
+
+        // Assert
+        assert!(!is_open(&connection));
+    }
+
+    #[tokio::test]
+    async fn an_error_response_cancels_its_request() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-error-delivered", "moqt").await;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+
+        // Act
+        let delivered = cancel.deliver(false);
+
+        // Assert
+        assert!(!is_open(&connection));
+        assert!(matches!(delivered.0, CallerState::Ended));
+    }
+
+    #[tokio::test]
+    async fn an_accepted_success_response_keeps_its_request_open() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-success-accepted", "moqt").await;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+
+        // Act
+        let mut delivered = cancel.deliver(true);
+        drop(cancel);
+        delivered.accept();
+        drop(delivered);
+
+        // Assert
+        assert!(is_open(&connection));
+    }
+
+    #[tokio::test]
+    async fn a_success_response_dropped_before_accept_cancels_its_request() {
+        // Arrange
+        let (client, _server) =
+            spawn_connected_draft18_sessions("draft18-success-dropped", "moqt").await;
+        let (connection, mut cancel) = awaiting_response(&client).await;
+        let delivered = cancel.deliver(true);
+        drop(cancel);
+        let open_while_delivered = is_open(&connection);
+
+        // Act
+        drop(delivered);
+
+        // Assert
+        assert!(open_while_delivered);
+        assert!(!is_open(&connection));
     }
 
     /// Spawns a SUBSCRIBE from `client` and returns it with the handler
@@ -2335,7 +2509,7 @@ mod tests {
             .unwrap();
         let request_stream = incoming_stream(server, handler.request_id);
         drop(receiver);
-        let response_stream = request_stream.fetch_response.clone().unwrap();
+        let response_stream = request_stream.fetch.response().cloned().unwrap();
         let stopped = tokio::time::timeout(HANDSHAKE_TIMEOUT, response_stream.stopped()).await;
         assert!(matches!(stopped, Ok(Some(_))), "{stopped:?}");
         (sender, request_stream)
@@ -5171,5 +5345,71 @@ mod tests {
 
         // Assert: the rest arrives once the application reads
         assert_eq!((unread, read), (MAX_UNREAD_EVENTS, NAMESPACES));
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::ServedFetch;
+
+        /// Steps of serving a FETCH; `Attach` carries a stand-in for the
+        /// response stream.
+        #[derive(Debug, Clone, Copy)]
+        enum Op {
+            Attach(u8),
+            OkSent,
+            ResponseEnded,
+        }
+
+        fn ops() -> impl Strategy<Value = Vec<Op>> {
+            let op = prop_oneof![
+                (0..4u8).prop_map(Op::Attach),
+                Just(Op::OkSent),
+                Just(Op::ResponseEnded),
+            ];
+            vec(op, 0..12)
+        }
+
+        proptest! {
+            /// `ServedFetch` follows the flags it stands for: the FETCH ends
+            /// exactly when FETCH_OK is sent and the response stream has
+            /// ended, in either order and with repeats
+            /// (`requestFinOnlyAfterResponse`), and the response stream to
+            /// reset on cancel is the last one attached.
+            #[test]
+            fn ends_once_both_ok_and_response_are_done(ops in ops()) {
+                // Arrange
+                let mut fetch = Some(ServedFetch::<u8>::Open);
+                let (mut ok_sent, mut response_ended, mut response) = (false, false, None);
+
+                for op in ops {
+                    let Some(current) = fetch.take() else {
+                        break;
+                    };
+
+                    // Act
+                    fetch = match op {
+                        Op::Attach(stream) => {
+                            response = Some(stream);
+                            Some(current.attach(stream))
+                        }
+                        Op::OkSent => {
+                            ok_sent = true;
+                            current.ok_sent()
+                        }
+                        Op::ResponseEnded => {
+                            response_ended = true;
+                            current.response_ended()
+                        }
+                    };
+
+                    // Assert
+                    prop_assert_eq!(fetch.is_none(), ok_sent && response_ended);
+                    if let Some(fetch) = &fetch {
+                        prop_assert_eq!(fetch.response(), response.as_ref());
+                    }
+                }
+            }
+        }
     }
 }

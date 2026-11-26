@@ -6,14 +6,16 @@
 //
 // One request; its handler clones are actors that may run on different
 // threads. Each action is one atomic step:
-// - `cloneHandler`: `Clone` adds a strong reference to `responded`.
+// - `cloneHandler`: `Clone` adds a strong reference to `answer`.
 // - `ok` / `error`: `accept` / `reject` (`&self`, callable any number of
-//   times): `mark_responded`, then the response is sent. Merged into one
-//   step: another clone's `Drop` between the two sees `responded` already.
-// - `dropCheck`: `Drop::drop` loads `responded` and `Arc::strong_count`
-//   and decides whether to spawn the NOT_SUPPORTED rejecter.
+//   times): `mark_responded` (`Answer::Answered`), then the response is
+//   sent. Merged into one step: another clone's `Drop` between the two sees
+//   `Answered` already.
+// - `dropCheck`: `Drop::drop` calls `auto_reject_if_last`, which reads
+//   `answer` and `Arc::strong_count` and decides whether to spawn the
+//   NOT_SUPPORTED rejecter (`Answer::AutoRejected`).
 // - `dropField`: after `Drop::drop` returns, the drop glue drops the
-//   `responded` field, decrementing the strong count; a spawned rejecter
+//   `answer` field, decrementing the strong count; a spawned rejecter
 //   sends NOT_SUPPORTED. Two clones dropped on two threads can both run
 //   `dropCheck` before either runs `dropField`.
 //
@@ -31,7 +33,7 @@ module response_guard {
   const CLONES: Set[str]
   // The clone the session event hands to the application.
   const FIRST: str
-  // Fix J: `accept` / `reject` send only when `responded.swap(true)` was false.
+  // Fix J: `accept` / `reject` send only when `answer` was `Unanswered`.
   const ANSWER_ONCE: bool
   // Fix K: the last strong reference's drop itself decides (e.g. a `Drop` on
   // the `Arc`'s inner value), so the check and the decrement are one step.
@@ -47,9 +49,9 @@ module response_guard {
 
   type State = {
     clones: str -> Clone,
-    // `ResponseGuard::responded`
+    // `ResponseGuard::answer != Unanswered`
     responded: bool,
-    // `Arc::strong_count(&responded)`
+    // `Arc::strong_count(&answer)`
     strongCount: int,
     // Responses sent for the request, in order.
     sent: List[Response],
@@ -81,7 +83,7 @@ module response_guard {
 
   def rejects: bool = not(s.responded) and s.strongCount == 1
 
-  // The dropped clone's `responded` reference goes; a spawned rejecter
+  // The dropped clone's `answer` reference goes; a spawned rejecter
   // sends NOT_SUPPORTED.
   def released(g: str, spawned: bool): State = {
     ...s,

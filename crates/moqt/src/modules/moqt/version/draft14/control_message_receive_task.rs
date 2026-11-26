@@ -36,7 +36,7 @@ use crate::{
         version::{
             Notification,
             draft14::{
-                ControlChannel, InflightRequest, ReceivedResponse, RequestIdViolation, error_codes,
+                ControlChannel, Entry, ReceivedResponse, RequestIdViolation, error_codes,
                 handle_late_response,
             },
         },
@@ -132,7 +132,7 @@ impl ControlMessageReceiveTask {
                                     let inflight_request = ControlChannel::of(&connection)
                                         .take_inflight_request(request_id);
                                     match inflight_request {
-                                        Some(InflightRequest::Waiting {
+                                        Some(Entry::Waiting {
                                             sender,
                                             on_late_response,
                                         }) => {
@@ -146,7 +146,7 @@ impl ControlMessageReceiveTask {
                                                 on_late_response,
                                             ));
                                         }
-                                        Some(InflightRequest::Abandoned(action)) => {
+                                        Some(Entry::Abandoned(action)) => {
                                             handle_late_response(
                                                 &session, &connection, request_id, action,
                                                 message,

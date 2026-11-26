@@ -968,6 +968,35 @@ fn apply_update(
     (baseline.clone(), updated_filter)
 }
 
+/// How the stream of a request this side sent began.
+enum FirstMessage {
+    /// This side cancelled the request (`reader_stop`) before reading it.
+    Cancelled,
+    Received(Message),
+    /// The peer ended its half with FIN before a message.
+    Finished,
+    /// The stream was reset, or the connection lost, before a message.
+    Closed,
+    /// The first bytes do not decode as a message of the stream.
+    Malformed,
+}
+
+impl FirstMessage {
+    fn of(received: Option<Result<Option<Message>, StreamReceiveError>>) -> Self {
+        match received {
+            None => Self::Cancelled,
+            Some(Ok(Some(message))) => Self::Received(message),
+            Some(Ok(None)) => Self::Finished,
+            Some(Err(StreamReceiveError::Closed(_))) => Self::Closed,
+            Some(Err(
+                StreamReceiveError::Decode(_)
+                | StreamReceiveError::ProtocolViolation(_)
+                | StreamReceiveError::MalformedTrack(_),
+            )) => Self::Malformed,
+        }
+    }
+}
+
 pub(crate) struct OutgoingRequestTask {
     pub(super) connection: Weak<Connection>,
     pub(super) request_id: RequestId,
@@ -1012,17 +1041,19 @@ impl OutgoingRequestTask {
         } = stream;
         // The first message answers this side's request and raises no event.
         let no_wait = std::future::ready(());
-        let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop, no_wait).await
-        else {
+        let first =
+            FirstMessage::of(receive_unless_cancelled(&mut receiver, &reader_stop, no_wait).await);
+        if let FirstMessage::Cancelled = first {
             let _ = response.send(None);
             return;
-        };
+        }
         let Some(context) = Scope::of(&connection) else {
             return;
         };
         let message = match first {
-            Ok(Some(message)) => message,
-            Ok(None) | Err(_) => {
+            FirstMessage::Cancelled => return,
+            FirstMessage::Received(message) => message,
+            FirstMessage::Finished | FirstMessage::Closed | FirstMessage::Malformed => {
                 if let Some(stream) = context.channel().take_outgoing(request_id)
                     && let Err(error) = stream.sender.close().await
                 {

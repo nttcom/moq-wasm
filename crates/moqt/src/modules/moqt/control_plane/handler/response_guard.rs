@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     TrackProperties,
@@ -16,6 +13,18 @@ use crate::{
     },
 };
 
+/// Whether a request has been answered, shared by all clones of its
+/// `ResponseGuard`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    Unanswered,
+    /// `accept`, `reject` or a session close answered the request.
+    Answered,
+    /// The last clone was dropped unanswered and spawned the NOT_SUPPORTED
+    /// rejecter.
+    AutoRejected,
+}
+
 /// Sends and logs the reply of one request, and auto-answers NOT_SUPPORTED
 /// when the last handler clone is dropped without responding. An application
 /// that ignores the session event would otherwise leave the requester waiting
@@ -25,7 +34,7 @@ pub(crate) struct ResponseGuard {
     /// The connection the request arrived on; every answer goes there.
     connection: Arc<Connection>,
     request: RequestSummary,
-    responded: Arc<AtomicBool>,
+    answer: Arc<Mutex<Answer>>,
 }
 
 impl ResponseGuard {
@@ -33,7 +42,7 @@ impl ResponseGuard {
         Self {
             connection,
             request,
-            responded: Arc::new(AtomicBool::new(false)),
+            answer: Arc::new(Mutex::new(Answer::Unanswered)),
         }
     }
 
@@ -46,8 +55,22 @@ impl ResponseGuard {
         self.request.request_id()
     }
 
+    /// Records that the request is answered. Answering again is not refused.
     pub(crate) fn mark_responded(&self) {
-        self.responded.store(true, Ordering::Relaxed);
+        *self.answer.lock().expect("answer lock") = Answer::Answered;
+    }
+
+    /// Moves an unanswered request to `AutoRejected` when `self` is the last
+    /// clone, and returns whether it did. The strong count drops only after
+    /// `Drop::drop` returns, so two clones dropped concurrently can both see
+    /// the other one alive.
+    fn auto_reject_if_last(&self) -> bool {
+        let mut answer = self.answer.lock().expect("answer lock");
+        if *answer != Answer::Unanswered || Arc::strong_count(&self.answer) > 1 {
+            return false;
+        }
+        *answer = Answer::AutoRejected;
+        true
     }
 
     /// Refuses the request with UNSUPPORTED_EXTENSION, NOT_SUPPORTED on
@@ -127,9 +150,8 @@ async fn send_request_error(
 
 impl Drop for ResponseGuard {
     fn drop(&mut self) {
-        // strong_count == 1 limits this to the last clone; a single
-        // fire-and-forget send needs no owned JoinHandle.
-        if self.responded.load(Ordering::Relaxed) || Arc::strong_count(&self.responded) > 1 {
+        // A single fire-and-forget send needs no owned JoinHandle.
+        if !self.auto_reject_if_last() {
             return;
         }
         let connection = self.connection.clone();
@@ -210,6 +232,29 @@ mod tests {
         assert_eq!(sent[0].field("track_namespace"), Some("a/b"));
         assert_eq!(sent[0].field("error_code"), Some("Unauthorized"));
         assert_eq!(sent[0].field("reason_phrase"), Some("denied"));
+    }
+
+    #[tokio::test]
+    async fn dropping_a_clone_while_another_lives_does_not_auto_reject() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = spawn_connected_native_sessions("response-guard-clone-drop").await;
+        let publisher = client.publisher();
+        let request =
+            tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+        let clone = handler.clone();
+
+        // Act
+        drop(handler);
+        clone.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+
+        // Assert
+        assert_eq!(telemetry.events("PUBLISH_NAMESPACE_OK sent").len(), 1);
+        assert!(telemetry.events("PUBLISH_NAMESPACE_ERROR sent").is_empty());
     }
 
     #[tokio::test]

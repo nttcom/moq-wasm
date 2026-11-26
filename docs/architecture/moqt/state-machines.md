@@ -13,7 +13,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | `Publication {Subscribed, Published, Released}` | `moqt/domains/origin.rs` |
 | `ObjectSink {Buffer, Receiver, Cancelled}` | `moqt/domains/connection.rs` |
 | `Cutover {Waiting, At}` | `moqt/domains/group_cutover.rs` |
-| `InflightRequest {Waiting, Abandoned}`, `LateResponseAction` | `moqt/version/draft14.rs` |
+| `Entry {Waiting, Abandoned}` (draft-14 inflight request), `LateResponseAction` | `moqt/version/draft14.rs` |
 | `AnswerSlot {Waiting, Answered, TimedOut}` | `moqt/control_plane/handler/update_answer.rs` |
 | `Outstanding {PassedOn, Delayed}` | `moqt/domains/origin/new_group_requests.rs` |
 | `Carried {Moved, Ends, Stays, Gone}` (outcome, not stored) | `moqt/domains/session/migration_task.rs` |
@@ -53,8 +53,8 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Machine | Encoding | Explicit states | Model |
 | --- | --- | --- | --- |
-| Outgoing request | `inflight_requests[id]`, `control_stream_closed`, `RegisteredSender` / `ReceivedResponse` drop guards | `Unregistered`, `Waiting`, `Abandoned`, `Delivered`, `Accepted`, `Withdrawing`, `Failed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
-| Outbound Request ID credit | `OutgoingRequestIds{next, blocked_on}`, `peer_request_id_limit`, reservation guard | `Free`, `WaitingForCredit`, `BlockedNotified`, `Reserved`, `Consumed`, `Closed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
+| Outgoing request | `InflightRequests` (`Open(id → Entry)` / `Closed`) and `Entry` (`Waiting` / `Abandoned`) in `version/draft14.rs`, `RegisteredSender` / `ReceivedResponse` drop guards | `Unregistered`, `Waiting`, `Abandoned`, `Delivered`, `Accepted`, `Withdrawing`, `Failed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
+| Outbound Request ID credit | `OutgoingRequestIds{next, blocked: RequestsBlockedSent}` in `version/draft14.rs`, `peer_request_id_limit`, reservation guard | `Free`, `WaitingForCredit`, `BlockedNotified`, `Reserved`, `Consumed`, `Closed` | [`draft14_requests.qnt`](models/draft14_requests.qnt) |
 | Inbound Request ID window | `next_peer_request_id`, `request_id_limit` | `InWindow`, `NeedsRaise`, `Violation` | — |
 | GOAWAY received | `Connection.go_away_received` | `NotReceived`, `Received`, `Violation` | — |
 
@@ -62,10 +62,10 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Machine | Encoding | Explicit states | Model |
 | --- | --- | --- | --- |
-| Outgoing request stream | `requests.outgoing[id]`, task, `RequestCancel` guards | `Opening`, `AwaitingResponse`, `Established`, `Rejected`, `Ended` | [`draft18_outgoing_request.qnt`](models/draft18_outgoing_request.qnt) |
+| Outgoing request stream | `requests.outgoing[id]`; caller side `RequestCancel(CallerState)` (`AwaitingResponse` / `Delivered` / `Ended`) in `version/draft18.rs`; task side `FirstMessage` in `version/draft18/request_streams.rs` | `Opening`, `AwaitingResponse`, `Established`, `Rejected`, `Ended` | [`draft18_outgoing_request.qnt`](models/draft18_outgoing_request.qnt) |
 | Incoming request stream | task locals `reading`, `watching_stop`, `go_away_received`, `kind`/`updated_kind`; `requests.incoming[id]` | `Accepting`, `Open`, `AnsweredReading`, `HalfClosed`, `Ended` | — |
-| Serving FETCH | `fetch_end{fetch_ok_sent, response_ended}`, `fetch_response`, entry presence | `Open`, `ResponseAttached`, `OkSent`, `ResponseEnded`, `Done`, `Cancelled`, `Rejected` | [`draft18_fetch.qnt`](models/draft18_fetch.qnt) |
-| REQUEST_UPDATE | outbound `update_waiters` queue; inbound `FuturesOrdered` + `AnswerSlot` | per update: `Queued`, `Written`, `Answered`, `TimedOut` | [`draft18_request_update.qnt`](models/draft18_request_update.qnt) |
+| Serving FETCH | `ServedFetch` (`Open` / `ResponseAttached` / `OkSent` / `ResponseEnded`) in `version/draft18.rs`, entry presence | `Open`, `ResponseAttached`, `OkSent`, `ResponseEnded`, `Done`, `Cancelled`, `Rejected` | [`draft18_fetch.qnt`](models/draft18_fetch.qnt) |
+| REQUEST_UPDATE | outbound `UpdateWaiters` queue (`enqueue` / `withdraw_unwritten` / `answer_front`) and per-update typestate `QueuedUpdate` → `UpdateAnswer` in `version/update_answer.rs`; inbound `FuturesOrdered` + `AnswerSlot` | per update: `Queued`, `Written`, `Answered`, `TimedOut` | [`draft18_request_update.qnt`](models/draft18_request_update.qnt) |
 | Namespace subscription / advertisement | `held_namespaces`, `accepted`, `advertised`, `blocked_tracks` | `Unanswered{held}`, `Accepted`, `Removed`; per track `Blocked` | — |
 | Registry binding | `binding: OnceLock` | `Unbound`, `Bound` | — |
 
@@ -73,7 +73,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Machine | Encoding | Explicit states | Model |
 | --- | --- | --- | --- |
-| Handler answer (`ResponseGuard`) | `responded: Arc<AtomicBool>` + `Arc::strong_count` | `Unanswered`, `Answered`, `AutoRejected` | [`response_guard.qnt`](models/response_guard.qnt) |
+| Handler answer (`ResponseGuard`) | `Answer` enum in `answer: Arc<Mutex<Answer>>` + `Arc::strong_count` (`handler/response_guard.rs`) | `Unanswered`, `Answered`, `AutoRejected` | [`response_guard.qnt`](models/response_guard.qnt) |
 
 ## Session, migration and client
 
@@ -110,7 +110,7 @@ Every `*_current` instance except `origin_current` violates `safety`: TLC found 
 | `subscription` | PUBLISH_DONE right behind SUBSCRIBE_OK is processed before the receiver registers: full 10 s grace, stale carried record, or a receiver that never ends; expiry removes an unclaimed receiver (objects lost); client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves; updates sent for an ended request | `ACCEPT_BEFORE_NEXT`, `DONE_BEFORE_SUBSCRIBE`, `KEEP_UNCLAIMED_RECEIVER`, `END_TRACKED` |
 | `publish_namespace` | Dropped `PendingPublishNamespace` keeps its record; PUBLISH_NAMESPACE_CANCEL changes no state; a namespace refused during a migration is re-announced on the new connection | `FORGET_ON_DROP`, `FORGET_ON_CANCEL`, `WITHDRAW_ELSEWHERE` |
 | `draft14_requests` | A request whose write failed or was cancelled is counted as abandoned; a cancelled partial `write_all` leaves a torn control message | `UNREGISTER_UNSENT`, `FINISH_CANCELLED_WRITE` |
-| `response_guard` | `accept`/`reject` do not check `responded` (two answers); two clones dropped concurrently both skip the NOT_SUPPORTED auto-reject (no answer) | `ANSWER_ONCE`, `LAST_DROP_ATOMIC` |
+| `response_guard` | `accept`/`reject` do not check `answer` (two answers); two clones dropped concurrently both skip the NOT_SUPPORTED auto-reject (no answer) | `ANSWER_ONCE`, `LAST_DROP_ATOMIC` |
 | `draft18_outgoing_request` | PUBLISH_NAMESPACE answered locally does not consume its Request ID (two requests share it); a SUBSCRIBE_OK dropped before `accept` leaves its track alias sink; a malformed or missing first response reports `SessionClosed` instead of closing the session | `CONSUME_LOCAL`, `CLEAN_ABANDONED_ALIAS`, `FIX_FIRST_MESSAGE` |
 | `draft18_request_update` | A REQUEST_UPDATE send cancelled mid-await leaves its waiter queued, so later REQUEST_OKs reach the wrong update (or a torn message) | `WRITE_DETACHED` |
 | `draft18_fetch` | REQUEST_ERROR after the response stream is attached leaves that stream open (also after the peer's STOP_SENDING, §5.2) | `RESET_RESPONSE_ON_ERROR` |
