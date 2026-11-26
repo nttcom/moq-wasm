@@ -64,6 +64,7 @@ class LivePlayer {
   setBufferPolicy(policy: BufferPolicy): void
   setCatchUp(catchUp: CatchUp): void
   setLateSamples(lateSamples: LateSamples): void
+  setAudioVideoSync(audioVideoSync: AudioVideoSync): void
   readonly state: LivePlayerState
   stats(): LivePlayerStats
   elapsedMsAt(captureMicros: number): number | undefined
@@ -184,6 +185,7 @@ stateDiagram-v2
 ### Audio / Video Synchronisation (LOC)
 - **Adaptive jitter buffer**: Target = audio capture-to-arrival jitter over last 10 s (peak-to-peak, or 95th percentile via `arrivalQuantile` in meeting) + `AudioContext` output latency + 20 ms concealment margin, clamped to `[Min buffer, Max buffer]`. While audio plays, a `Max buffer` too small for it gives way to the least the output plays without running out: how far the fastest audio arrives behind the fastest sample + output latency + 20 ms + one audio chunk (a lower target makes every chunk miss its time, so the sound is concealed and shed in turns).
 - **Warm-up & master clock**: Holds samples until `AudioContext` reports output latency (up to 400 ms without audio), then anchors on the newest sample. Audio is clock master (chunks append contiguously at a write head; write-head drift steers the clock; secondary `addAudioTrack` lanes follow without steering). Video holds frames until due.
+- **Video ahead (`setAudioVideoSync('video-ahead')`, default `'synced'`)**: For games and remote control. A frame's time is the clock's minus what the audio is scheduled ahead of being heard (output latency + 20 ms), so the picture waits for the arrival spread only and the sound follows it by that lead. The lead holds while no audio plays, and waiting frames move with it when it changes (setting, or the output reporting its latency as audio joins).
 - **Decoder worker ordering**: Both workers tag outputs with input chunk capture timestamps (surviving gaps/loops). Audio worker reorders interleaved groups (releasing 50 ms before due, or 100 ms unanchored); video worker immediately jumps to any newer group's keyframe and drops older partial groups.
 
 **Concealment & catch-up** (within 20 ms of underrun: NetEq expand repeating last pitch period, fading out over 300 ms; after 10 s settle, shrinks excess buffer):

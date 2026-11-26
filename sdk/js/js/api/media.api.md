@@ -64,6 +64,9 @@ export type AudioPublishStats = EncodedRateStats & {
 };
 
 // @public (undocumented)
+export type AudioVideoSync = 'synced' | 'video-ahead';
+
+// @public (undocumented)
 export function botNamespace(room: string[], botType: string): string[];
 
 // @public (undocumented)
@@ -202,6 +205,8 @@ export class LivePlayer {
     selectVideoTrack(name: string): Promise<void>;
     // (undocumented)
     setAdaptiveVideo(enabled: boolean): void;
+    // (undocumented)
+    setAudioVideoSync(audioVideoSync: AudioVideoSync): void;
     // (undocumented)
     setBufferPolicy(policy: BufferPolicy): void;
     // (undocumented)

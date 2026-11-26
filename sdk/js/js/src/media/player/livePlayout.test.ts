@@ -274,6 +274,131 @@ test('audio joining a playing picture from a second behind leaves the picture ru
   expect(playout.audioBreaks()).toBe(0)
 })
 
+function recordingPlayout(): { playout: LivePlayout; shownAtMs: number[]; shownDelaysMs: number[] } {
+  const shownAtMs: number[] = []
+  const shownDelaysMs: number[] = []
+  const playout = new LivePlayout((frame) => {
+    shownAtMs.push(environment.nowMs)
+    shownDelaysMs.push(environment.nowMs - frame.timestamp / MICROS_PER_MILLI)
+    frame.close()
+  })
+  return { playout, shownAtMs, shownDelaysMs }
+}
+
+/// As slow as a wireless audio output.
+const LONG_OUTPUT_LATENCY_MS = 500
+
+function reinstallWithOutputLatency(outputLatencyMs: number): void {
+  environment.uninstall()
+  environment = FakeMediaEnvironment.install({ outputLatencySeconds: outputLatencyMs / 1_000 })
+}
+
+test('with the video ahead, a frame is shown the schedule-ahead before its sound is heard', () => {
+  // Arrange
+  const synced = recordingPlayout()
+  const ahead = recordingPlayout()
+  ahead.playout.setAudioVideoSync('video-ahead')
+
+  // Act
+  streamLive(synced.playout, SETTLE_MS, AUDIO_DELAY_MS)
+  streamLive(ahead.playout, SETTLE_MS, AUDIO_DELAY_MS)
+
+  // Assert
+  expect(Math.max(...ahead.shownDelaysMs)).toBeCloseTo(synced.shownDelaysMs.at(-1)! - SCHEDULE_AHEAD_MS)
+  expect(ahead.playout.syncOffsetMs()).toBeCloseTo(SCHEDULE_AHEAD_MS)
+  expect(ahead.playout.bufferMs()).toBeCloseTo(synced.playout.bufferMs()!)
+  expect(ahead.playout.audioConcealedMs()).toBe(0)
+})
+
+test('with the video ahead, the frames held for the audio output open ahead of their sound', () => {
+  // Arrange: an output that reports its latency late, and a picture that arrives sooner than the sound
+  environment.outputStartUpMs = OUTPUT_START_UP_MS
+  const aheadOfSoundMs: number[] = []
+  const playout = new LivePlayout((frame) => {
+    aheadOfSoundMs.push(playout.dueAt(frame.timestamp)! - environment.nowMs)
+    frame.close()
+  })
+  playout.setAudioVideoSync('video-ahead')
+
+  // Act
+  streamLive(playout, 4 * OUTPUT_START_UP_MS, LIVE_VIDEO_DELAY_MS)
+
+  // Assert
+  expect(aheadOfSoundMs[0]).toBeCloseTo(SCHEDULE_AHEAD_MS)
+})
+
+test('with the video ahead, audio joining a playing picture does not hold the picture for the output latency', () => {
+  // Arrange
+  reinstallWithOutputLatency(LONG_OUTPUT_LATENCY_MS)
+  const { playout, shownAtMs } = recordingPlayout()
+  playout.setAudioVideoSync('video-ahead')
+  streamLiveVideo(playout, 3_000)
+  const joinedAtMs = environment.nowMs
+
+  // Act
+  playout.joinAudio()
+  streamLive(playout, 2_000, LIVE_VIDEO_DELAY_MS)
+
+  // Assert
+  const shownAfterJoin = shownAtMs.filter((atMs) => atMs >= joinedAtMs - VIDEO_FRAME_MS)
+  const longestGapMs = Math.max(...shownAfterJoin.slice(1).map((atMs, index) => atMs - shownAfterJoin[index]))
+  expect(longestGapMs).toBeLessThanOrEqual(2 * VIDEO_FRAME_MS)
+  expect(playout.syncOffsetMs()).toBeCloseTo(LONG_OUTPUT_LATENCY_MS + 20)
+  expect(playout.audioBreaks()).toBe(0)
+})
+
+test('with the video ahead, audio joining again plays as soon as the picture does not lead it', () => {
+  // Arrange: a picture whose sound stopped, so the output latency is known when the audio joins
+  reinstallWithOutputLatency(LONG_OUTPUT_LATENCY_MS)
+  const { playout } = recordingPlayout()
+  playout.setAudioVideoSync('video-ahead')
+  streamLive(playout, 2_000, AUDIO_DELAY_MS)
+  streamLiveVideo(playout, 2_000)
+
+  // Act: within the warm-up limit, during which audio older than the picture is dropped
+  playout.joinAudio()
+  streamLive(playout, WARMUP_LIMIT_MS / 2, LIVE_VIDEO_DELAY_MS)
+
+  // Assert
+  expect(playout.audioPositionMicros()).toBeDefined()
+})
+
+test('with the video ahead, a picture whose sound has stopped keeps its pace and is not shed', () => {
+  // Arrange: the lead is longer than the excess a picture alone sheds
+  reinstallWithOutputLatency(LONG_OUTPUT_LATENCY_MS)
+  const { playout, shownDelaysMs } = recordingPlayout()
+  playout.setAudioVideoSync('video-ahead')
+  streamLive(playout, 2_000, LIVE_VIDEO_DELAY_MS)
+  const shownWithSound = shownDelaysMs.length
+
+  // Act
+  streamLiveVideo(playout, SETTLE_MS)
+
+  // Assert
+  const delaysMs = shownDelaysMs.slice(shownWithSound - 1)
+  expect(Math.max(...delaysMs) - Math.min(...delaysMs)).toBeCloseTo(0)
+  expect(playout.shedMs()).toBe(0)
+})
+
+test('with the video ahead and late samples dropped, a frame past its earlier time is discarded', () => {
+  // Arrange: a frame due after now, but by less than the lead
+  const { playout } = recordingPlayout()
+  playout.setAudioVideoSync('video-ahead')
+  playout.setLateSamples('drop')
+  streamLive(playout, SETTLE_MS, LIVE_VIDEO_DELAY_MS)
+  const newestCaptureMicros = (environment.nowMs - LIVE_VIDEO_DELAY_MS) * MICROS_PER_MILLI
+  const untilDueMs = playout.dueAt(newestCaptureMicros)! - environment.nowMs
+  const captureMicros = newestCaptureMicros - (untilDueMs - SCHEDULE_AHEAD_MS / 2) * MICROS_PER_MILLI
+  const { droppedLateVideo } = playout
+
+  // Act
+  playout.presentVideo(fakeVideoFrame(captureMicros), environment.nowMs)
+
+  // Assert
+  expect(playout.dueAt(captureMicros)! - environment.nowMs).toBeCloseTo(SCHEDULE_AHEAD_MS / 2)
+  expect(playout.droppedLateVideo).toBe(droppedLateVideo + 1)
+})
+
 test('with late samples dropped, a sample whose time has passed is discarded and the clock stays', () => {
   // Arrange: a settled playout that then receives nothing for a while
   const shown: number[] = []

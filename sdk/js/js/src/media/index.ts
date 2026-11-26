@@ -58,7 +58,7 @@ export {
 export { type PlaybackGroupCallbacks, type PlaybackGroupState, PlaybackGroup } from './player/playbackGroup'
 export type { LatencyTolerance } from './player/adaptiveBitrate'
 export type { BufferPolicy } from './player/jitterBuffer'
-export type { CatchUp, LateSamples } from './player/livePlayout'
+export type { AudioVideoSync, CatchUp, LateSamples } from './player/livePlayout'
 export type { LivePictureKind } from './player/livePictureSink'
 export { type LiveStats, formatLiveStats } from './player/locLive'
 export type { DeliveryObserver, Playhead, StreamKind } from './player/deliveryObserver'

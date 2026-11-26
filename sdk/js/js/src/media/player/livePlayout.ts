@@ -9,6 +9,11 @@ export type CatchUp = 'speed-up' | 'skip' | 'off'
 /// What a sample whose time has passed does: moves the clock back by its
 /// miss, or is dropped so a fixed delay never grows.
 export type LateSamples = 'move-clock' | 'drop'
+/// When a frame is presented: `synced` as the sound captured with it is
+/// heard, `video-ahead` as that sound is handed to the audio output, which is
+/// the output's latency and 20 ms sooner. The sound follows the picture by
+/// that much.
+export type AudioVideoSync = 'synced' | 'video-ahead'
 /// How long playback waits for the audio output before it opens without it.
 const WARMUP_MS = 400
 const CATCH_UP_COMPRESSION_RATE = 1.1
@@ -27,8 +32,10 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// misses it takes, so the sound never has to skip for the picture; the
 /// picture takes over only while no audio is playing. Every move of the clock
 /// applies from the sample that caused it on, so the frames waiting for their
-/// time move with the sound they belong to. A sample without a capture
-/// timestamp is presented at once and leaves the clock alone.
+/// time move with the sound they belong to. With the video ahead, a frame's
+/// time is earlier than the clock's by how long the audio is scheduled
+/// before it is heard. A sample without a capture timestamp is presented at
+/// once and leaves the clock alone.
 ///
 /// Playback opens with a warm-up: samples are held until the audio output
 /// reports its latency, and the clock is then anchored on the newest of them.
@@ -65,6 +72,9 @@ export class LivePlayout {
   private paused = false
   private catchUp: CatchUp = 'skip'
   private lateSamples: LateSamples = 'move-clock'
+  private audioVideoSync: AudioVideoSync = 'synced'
+  /// How long before its sound is heard the picture is presented.
+  private videoLeadMs = 0
   private videoShedMs = 0
   droppedLateAudio = 0
   droppedLateVideo = 0
@@ -100,20 +110,21 @@ export class LivePlayout {
     }
     this.jitterBuffer.observe('video', captureMicros, arrivedAtMs)
     const nowMs = performance.now()
+    const leadMs = this.updateVideoLead()
     const master = !this.audioActive()
     if (master) {
-      const excessMs = this.excessMs()
-      if (excessMs !== undefined && excessMs > MAX_CATCH_UP_MS) {
+      const excessMs = (this.excessMs() ?? 0) - leadMs
+      if (excessMs > MAX_CATCH_UP_MS) {
         this.shiftClock(-excessMs, captureMicros)
         this.videoShedMs += excessMs
       }
     }
-    if (this.lateSamples === 'drop' && this.isLate(captureMicros, nowMs, 0)) {
+    if (this.lateSamples === 'drop' && this.isLate(captureMicros, nowMs, leadMs)) {
       frame.close()
       this.droppedLateVideo += 1
       return
     }
-    this.video.present(frame, this.playoutTime(captureMicros, nowMs, master))
+    this.video.present(frame, this.playoutTime(captureMicros, nowMs, master, leadMs))
   }
 
   /// A frame the relay had cached before the subscription started is shown at
@@ -155,7 +166,7 @@ export class LivePlayout {
   /// warming up again.
   joinAudio(): void {
     const nowMs = performance.now()
-    const beforeMicros = this.video.positionMicrosAt(nowMs + this.audio.scheduleAheadMs())
+    const beforeMicros = this.video.positionMicrosAt(nowMs + this.audio.scheduleAheadMs() - this.videoLeadMs)
     this.audioJoin = beforeMicros === undefined ? undefined : { beforeMicros, untilMs: nowMs + WARMUP_MS }
     this.newestAudioCaptureMicros = undefined
   }
@@ -191,6 +202,10 @@ export class LivePlayout {
 
   setLateSamples(lateSamples: LateSamples): void {
     this.lateSamples = lateSamples
+  }
+
+  setAudioVideoSync(audioVideoSync: AudioVideoSync): void {
+    this.audioVideoSync = audioVideoSync
   }
 
   /// When a sample captured at `captureMicros` is due, on the page clock;
@@ -386,10 +401,23 @@ export class LivePlayout {
     return behindMs + this.audio.scheduleAheadMs() + this.audioChunkMs
   }
 
+  /// The lead does not depend on whether audio is playing, so a pause in the
+  /// sound does not move the picture. It changes with the setting and when
+  /// the audio output reports its latency, and the frames waiting for their
+  /// time move with it.
+  private updateVideoLead(): number {
+    const leadMs = this.audioVideoSync === 'video-ahead' ? this.audio.scheduleAheadMs() : 0
+    if (leadMs !== this.videoLeadMs) {
+      this.video.shift(this.videoLeadMs - leadMs)
+      this.videoLeadMs = leadMs
+    }
+    return leadMs
+  }
+
   /// A master sample that misses its time is presented at once and pushes
   /// the clock back by the miss so the samples behind it stay contiguous.
-  private playoutTime(captureMicros: number, nowMs: number, master: boolean): number {
-    const due = this.clock.dueAt(captureMicros) ?? nowMs
+  private playoutTime(captureMicros: number, nowMs: number, master: boolean, leadMs = 0): number {
+    const due = (this.clock.dueAt(captureMicros) ?? nowMs) - leadMs
     if (due >= nowMs) {
       return due
     }
@@ -427,13 +455,13 @@ export class LivePlayout {
     const floorMs = held.some((sample) => sample.kind === 'audio') ? this.audioFloorMs() : 0
     const targetMs = this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), floorMs, openingSpreadMs(held))
     this.clock.anchor(newest, nowMs + targetMs)
-    const audioLeadMs = this.audio.outputLatencyMs()
+    const leadMs = { audio: this.audio.outputLatencyMs(), video: this.updateVideoLead() }
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
-      if (due < nowMs + (sample.kind === 'audio' ? audioLeadMs : 0)) {
+      if (due < nowMs + leadMs[sample.kind]) {
         close(sample)
       } else if (sample.kind === 'video') {
-        this.video.present(sample.frame, due)
+        this.video.present(sample.frame, due - leadMs.video)
       } else {
         this.scheduleAudio(sample.audioData, sample.captureMicros)
       }
