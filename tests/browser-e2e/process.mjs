@@ -141,6 +141,11 @@ export async function runCommand(command, args, options) {
   });
 }
 
+/// Terminates `children` in reverse start order and waits for all of them.
+export async function terminateAll(children) {
+  await Promise.allSettled([...children].reverse().map(terminateProcess));
+}
+
 export async function terminateProcess(child) {
   if (!child || child.exitCode !== null) {
     return;

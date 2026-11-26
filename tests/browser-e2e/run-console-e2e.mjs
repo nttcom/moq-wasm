@@ -8,7 +8,7 @@ import {
   registerSignalHandlers,
   runCommand,
   spawnProcess,
-  terminateProcess,
+  terminateAll,
 } from "./process.mjs";
 import {
   getErrorMessage,
@@ -27,9 +27,7 @@ async function main() {
   copyFileSync(resolve(repoRoot, vtsAppsFile), registryFile);
 
   const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
+    await terminateAll(childProcesses);
     rmSync(workDir, { recursive: true, force: true });
   };
   registerSignalHandlers(cleanup);

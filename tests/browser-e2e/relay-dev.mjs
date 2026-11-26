@@ -6,7 +6,7 @@ import {
   runCommand,
   spawnProcess,
   spawnViteServer,
-  terminateProcess,
+  terminateAll,
   waitForOutput,
 } from "./process.mjs";
 import {
@@ -32,9 +32,7 @@ import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
 export function startRelayAndPage(pagePath, { timeoutMs, onCleanup } = {}) {
   const childProcesses = [];
   const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
+    await terminateAll(childProcesses);
     onCleanup?.();
   };
   registerSignalHandlers(cleanup);

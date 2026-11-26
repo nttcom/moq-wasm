@@ -14,7 +14,7 @@ import {
   runCommand,
   spawnProcess,
   spawnViteServer,
-  terminateProcess,
+  terminateAll,
   waitForOutput,
 } from "./process.mjs";
 import {
@@ -94,9 +94,7 @@ async function main() {
   const namespace = `anon/goaway/${Date.now()}`;
 
   const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
+    await terminateAll(childProcesses);
     try {
       execFileSync("docker", ["rm", "-f", redisContainer], { stdio: "ignore" });
     } catch {
