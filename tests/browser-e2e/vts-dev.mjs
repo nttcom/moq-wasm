@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 
 import { spawnProcess } from "./process.mjs";
 import { repoRoot } from "../../scripts/dev-env.mjs";
-import { waitForHttpOk } from "./helpers.mjs";
+import { buildBinaries, waitForHttpOk } from "./helpers.mjs";
 
 export const vtsAppsFile = "services/vts/apps.example.json";
 const relayAppId = "11111111-2222-3333-4444-555555555555";
@@ -22,10 +22,7 @@ let binariesBuilt = false;
 
 function ensureBinariesBuilt() {
   if (!binariesBuilt) {
-    execFileSync("cargo", ["build", "-p", "vts"], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
+    buildBinaries(["vts"]);
     execFileSync("cargo", ["build", "-p", "auth-token", "--features", "cli"], {
       cwd: repoRoot,
       stdio: "inherit",
