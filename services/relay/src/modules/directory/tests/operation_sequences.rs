@@ -6,7 +6,7 @@
 //! other sessions' calls interleave with them.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     sync::Arc,
 };
 
@@ -529,20 +529,43 @@ impl Harness {
                     on_demand,
                     ..active_upstream(ProducerOrigin::Publish)
                 });
-                let (_, replaced) = self.directory.register_published_subscription(
+                let registration = self.directory.register_published_subscription(
                     track_key(track),
                     session_id,
                     producer,
                 );
-                let expected = self
-                    .producers
-                    .insert((track, session_id), (request_id, ProducerOrigin::Publish))
-                    .map(|(request_id, _)| request_id);
-                prop_assert_eq!(
-                    replaced.map(|replaced| replaced.state.subscription.request_id()),
-                    expected,
-                    "PUBLISH replaced another upstream subscription than the session's earlier one"
-                );
+                let model = self.producers.entry((track, session_id));
+                match (registration, model) {
+                    (None, Entry::Occupied(mut kept))
+                        if kept.get().1 == ProducerOrigin::Subscribe =>
+                    {
+                        kept.get_mut().1 = ProducerOrigin::Publish;
+                    }
+                    (Some((_, replaced)), model) => {
+                        let expected = match model {
+                            Entry::Occupied(mut earlier) => {
+                                prop_assert_eq!(
+                                    earlier.get().1,
+                                    ProducerOrigin::Publish,
+                                    "PUBLISH replaced this relay's SUBSCRIBE"
+                                );
+                                Some(earlier.insert((request_id, ProducerOrigin::Publish)).0)
+                            }
+                            Entry::Vacant(vacant) => {
+                                vacant.insert((request_id, ProducerOrigin::Publish));
+                                None
+                            }
+                        };
+                        prop_assert_eq!(
+                            replaced.map(|replaced| replaced.state.subscription.request_id()),
+                            expected,
+                            "PUBLISH replaced another upstream subscription than the session's earlier one"
+                        );
+                    }
+                    (None, _) => {
+                        prop_assert!(false, "PUBLISH kept a SUBSCRIBE the session does not feed");
+                    }
+                }
                 self.slots[slot].publishing = true;
             }
             Operation::Subscribe {

@@ -233,6 +233,9 @@ enum State {
 struct Subscription {
     track: usize,
     state: State,
+    /// Set on the relay's SUBSCRIBE when the relay kept it over the peer's
+    /// later PUBLISH of the track; it then serves the track as that PUBLISH.
+    published: bool,
 }
 
 impl Subscription {
@@ -240,6 +243,7 @@ impl Subscription {
         Self {
             track,
             state: State::Pending,
+            published: false,
         }
     }
 }
@@ -315,9 +319,9 @@ impl Slot {
     }
 
     fn publishes(&self, track: usize) -> bool {
-        self.upstreams
-            .iter()
-            .any(|(request_id, upstream)| request_id % 2 == 0 && upstream.track == track)
+        self.upstreams.iter().any(|(request_id, upstream)| {
+            (request_id % 2 == 0 || upstream.published) && upstream.track == track
+        })
     }
 
     /// The interest of the peer's subscription that is offered the track.
@@ -680,11 +684,29 @@ impl Harness {
                     .insert(*request_id, Subscription::pending(track));
             }
             Sent::Unsubscribe { request_id } => {
-                let ended = self.slots[slot].upstreams.remove(request_id);
+                let slot = &mut self.slots[slot];
+                let ended = slot.upstreams.remove(request_id);
                 prop_assert!(
                     ended.is_some_and(|ended| ended.state == State::Live),
                     "session {session_id} got UNSUBSCRIBE for {request_id}, which it does not serve"
                 );
+                // The relay UNSUBSCRIBEs a peer's PUBLISH only when its own
+                // SUBSCRIBE of the track went live first; that SUBSCRIBE then
+                // serves the track as published.
+                if let Some(ended) = ended.filter(|_| request_id % 2 == 0) {
+                    let kept = slot.upstreams.iter_mut().find(|(request_id, upstream)| {
+                        *request_id % 2 == 1
+                            && upstream.track == ended.track
+                            && upstream.state == State::Live
+                    });
+                    prop_assert!(
+                        kept.is_some(),
+                        "session {session_id} got UNSUBSCRIBE for its PUBLISH {request_id}, whose track it serves no SUBSCRIBE of"
+                    );
+                    if let Some((_, kept)) = kept {
+                        kept.published = true;
+                    }
+                }
             }
             Sent::Publish {
                 request_id,
@@ -786,7 +808,10 @@ impl Harness {
             );
             let subscribed = self.slots.iter().find(|slot| {
                 slot.upstreams.iter().any(|(request_id, upstream)| {
-                    request_id % 2 == 1 && upstream.track == track && upstream.state == State::Live
+                    request_id % 2 == 1
+                        && !upstream.published
+                        && upstream.track == track
+                        && upstream.state == State::Live
                 })
             });
             prop_assert!(
@@ -823,7 +848,9 @@ impl Harness {
             .slots
             .iter()
             .flat_map(|slot| slot.upstreams.iter())
-            .filter(|(request_id, upstream)| *request_id % 2 == 0 && upstream.state == State::Live)
+            .filter(|(request_id, upstream)| {
+                (*request_id % 2 == 0 || upstream.published) && upstream.state == State::Live
+            })
             .map(|(_, upstream)| track_key(upstream.track))
             .collect();
         prop_assert_eq!(routes.track_publishers, track_publishers, "track routes");

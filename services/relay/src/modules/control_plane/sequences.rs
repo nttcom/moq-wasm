@@ -193,21 +193,21 @@ pub(crate) async fn release_upstream(
     }
 }
 
-/// Unsubscribes the subscription from the same publisher that this one
-/// replaces, e.g. the SUBSCRIBE this relay sent before the publisher sent
-/// PUBLISH for the track; dropping the replaced producer stops its ingest.
-/// Returns the Forward State the producer starts in.
+/// Returns the Forward State for the PUBLISH_OK and unsubscribes the
+/// publisher's earlier PUBLISH it replaces. `None` when this relay's
+/// SUBSCRIBE already feeds the track: the caller answers the PUBLISH in
+/// Forward State 0, then unsubscribes it.
 pub(crate) async fn register_published_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
     track_key: TrackKey,
     publisher_session_id: SessionId,
     producer: Producer,
-) -> bool {
+) -> Option<bool> {
     let (forward, replaced) =
-        table.register_published_subscription(track_key, publisher_session_id, producer);
+        table.register_published_subscription(track_key, publisher_session_id, producer)?;
     let Some(replaced) = replaced else {
-        return forward;
+        return Some(forward);
     };
     if let Err(error) = forwarder
         .unsubscribe(publisher_session_id, &replaced.state.subscription)
@@ -220,7 +220,7 @@ pub(crate) async fn register_published_subscription(
             "failed to unsubscribe the replaced upstream subscription"
         );
     }
-    forward
+    Some(forward)
 }
 
 pub(crate) struct IngestRequest {
@@ -398,12 +398,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_publish_of_a_subscribed_track_unsubscribes_the_subscribe() {
+    async fn a_publish_of_a_subscribed_track_keeps_the_subscribe_as_published() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
 
         // Act
-        register_published_subscription(
+        let forward = register_published_subscription(
             &ctx.table,
             &ctx.forwarder,
             track_key(),
@@ -412,7 +412,39 @@ mod tests {
         )
         .await;
 
-        // Assert: the SUBSCRIBE the relay sent first is unsubscribed, and its ingest stops with it
+        // Assert: nothing is unsubscribed or stopped, and the track counts as the client's published track
+        assert_eq!(forward, None);
+        assert!(ctx.recorded.unsubscribed_request_ids().is_empty());
+        assert!(
+            !ctx.recorded
+                .ingests_stopped()
+                .contains(&UPSTREAM_REQUEST_ID)
+        );
+        assert!(ctx.table.has_upstream_subscription(
+            &track_key(),
+            PUBLISHER_SESSION,
+            UPSTREAM_REQUEST_ID
+        ));
+        assert!(ctx.table.has_client_published_track(&track_key()));
+    }
+
+    #[tokio::test]
+    async fn a_second_publish_of_a_track_unsubscribes_the_first() {
+        // Arrange
+        let ctx = upstream_release_context(ProducerOrigin::Publish).await;
+
+        // Act
+        let forward = register_published_subscription(
+            &ctx.table,
+            &ctx.forwarder,
+            track_key(),
+            PUBLISHER_SESSION,
+            published(),
+        )
+        .await;
+
+        // Assert
+        assert_eq!(forward, Some(true));
         assert_eq!(
             ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
@@ -421,7 +453,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_last_subscriber_leaving_a_draining_relay_leaves_the_publisher_unsubscribed() {
+    async fn the_last_subscriber_leaving_a_draining_relay_releases_the_kept_subscribe() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
         register_downstream(
@@ -445,24 +477,22 @@ mod tests {
 
         // Act
         let removed = ctx.table.remove_downstream_subscription(100, 10).unwrap();
-        for released in removed.released_upstream_subscriptions {
-            ctx.forwarder
-                .unsubscribe(released.publisher_session_id, &released.subscription)
-                .await
-                .unwrap();
-        }
 
-        // Assert: both the SUBSCRIBE the relay sent first and the PUBLISH are unsubscribed
-        assert_eq!(
-            ctx.recorded.unsubscribed_request_ids(),
-            vec![UPSTREAM_REQUEST_ID, PUBLISH_REQUEST_ID]
-        );
+        // Assert: the track leaves no route owner
+        let released: Vec<_> = removed
+            .released_upstream_subscriptions
+            .iter()
+            .map(|released| released.subscription.request_id())
+            .collect();
+        assert_eq!(released, vec![UPSTREAM_REQUEST_ID]);
+        assert!(ctx.table.upstream_tracks.get(&track_key()).is_none());
+        assert!(!ctx.table.has_client_published_track(&track_key()));
     }
 
     #[tokio::test]
     async fn a_publish_racing_the_last_subscriber_of_a_draining_relay_leaves_no_route_owner() {
-        // Arrange: the PUBLISH replaces the relay's SUBSCRIBE to the publisher, whose UNSUBSCRIBE it awaits
-        let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
+        // Arrange: the PUBLISH replaces the session's earlier PUBLISH, whose UNSUBSCRIBE it awaits
+        let ctx = upstream_release_context(ProducerOrigin::Publish).await;
         register_downstream(
             &ctx.table,
             100,

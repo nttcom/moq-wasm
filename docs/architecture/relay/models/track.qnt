@@ -472,7 +472,7 @@ module track {
     t.phase == Joined,
     val track = st.track
     val gone = not(st.connected.contains(t.pub))
-    val ownProducer = track.live and track.producers.contains({ pub: t.pub, request: t.id, origin: BySubscribe })
+    val ownProducer = track.live and track.producers.exists(pr => pr.pub == t.pub and pr.request == t.id)
     st' =
       if (gone and ownProducer) finish(endPublisherSubscription(st, t.pub), t, true)
       else finish(st, t, true),
@@ -528,13 +528,20 @@ module track {
     st' = { ...st, publishing: st.publishing.union(Set(p)) },
   }
 
-  // `start_ingest`, then `register_published_subscription`, which replaces
-  // the publisher's SUBSCRIBE-initiated producer and unsubscribes it.
+  // `start_ingest`, then `register_published_subscription`. A live
+  // SUBSCRIBE-initiated producer of the publisher stays and becomes
+  // ByPublish; the PUBLISH never feeds the track and is unsubscribed once
+  // answered. Otherwise the PUBLISH's producer replaces the publisher's
+  // earlier one, which is unsubscribed.
   action publishRegister(p: str): bool = all {
     st.publishing.contains(p),
     val done = { ...st, publishing: st.publishing.exclude(Set(p)) }
+    val subscribed = done.track.producers.filter(pr => pr.pub == p and pr.origin == BySubscribe)
     st' =
       if (not(st.connected.contains(p))) done
+      else if (done.track.live and subscribed != Set())
+        val promoted = subscribed.map(pr => { ...pr, origin: ByPublish })
+        { ...done, track: { ...done.track, producers: done.track.producers.exclude(subscribed).union(promoted) } }
       else
         val t = if (done.track.live) done.track else { ...noTrack, live: true, gen: done.nextGen }
         val replaced = t.producers.filter(pr => pr.pub == p)

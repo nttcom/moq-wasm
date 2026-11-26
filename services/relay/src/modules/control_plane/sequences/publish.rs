@@ -117,9 +117,23 @@ impl Publish {
         )
         .await;
 
+        let subscribe_kept = forward.is_none();
+        let forward = forward.unwrap_or(false);
         if handler.ok(&upstream_subscription, forward).await.is_err() {
             tracing::error!("failed to send PUBLISH_OK. close session.");
             return;
+        }
+        if subscribe_kept
+            && let Err(error) = forwarder
+                .unsubscribe(session_id, &upstream_subscription)
+                .await
+        {
+            tracing::warn!(
+                ?error,
+                publisher_session_id = %session_id,
+                request_id = upstream_subscription.request_id(),
+                "failed to unsubscribe the PUBLISH of a subscribed track"
+            );
         }
         tracing::info!(
             session_id = %session_id,
@@ -257,7 +271,7 @@ impl Publish {
         cache_store: &TrackCacheStore,
         handler: &dyn PublishHandler,
         subscription: &UpstreamSubscription,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<Option<bool>> {
         let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
         let state = ProducerState {
             subscription: subscription.clone(),
@@ -342,5 +356,78 @@ impl Publish {
                 published_forward,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use moqt::{
+        publish::{GroupBoundary, Origin, OutgoingObject, PublishOption, Retention},
+        subscribe::SubscribeOption,
+    };
+
+    use crate::modules::{
+        auth::test_support::{app_token, connect_client, spawn_relay_with_verifier},
+        test_support::{
+            relay_clients::{NAMESPACE, TRACK, publish_namespace, subscribe_track},
+            within,
+        },
+    };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_publish_after_the_relay_s_subscribe_keeps_the_open_group_flowing() {
+        // Arrange: the relay's SUBSCRIBE carries group 0 to the subscriber
+        let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
+        let publisher = Arc::new(connect_client(&relay).await);
+        let origin = Origin::default();
+        origin
+            .ensure_track(NAMESPACE, TRACK, 0, Retention::NewestOnly)
+            .await;
+        publish_namespace(&publisher, NAMESPACE).await;
+        let events = tokio::spawn({
+            let (publisher, origin) = (publisher.clone(), origin.clone());
+            async move {
+                while let Ok(event) = publisher.receive_event().await {
+                    origin.handle(event).await;
+                }
+            }
+        });
+        let subscriber = connect_client(&relay).await;
+        let subscription = subscribe_track(&subscriber, SubscribeOption::default()).await;
+        let mut reader = subscriber.subscriber().track_reader(&subscription);
+        let write = |group, payload: &'static str| {
+            origin.write(
+                NAMESPACE,
+                TRACK,
+                OutgoingObject::plain(group, payload.into()),
+            )
+        };
+        write(GroupBoundary::Next, "a").await.unwrap();
+        let first = within(reader.next_object()).await.unwrap().unwrap();
+
+        // Act: the publisher sends PUBLISH for the track after the SUBSCRIBE_OK, then writes the next object of group 0
+        within(publisher.publisher().publish(
+            NAMESPACE.to_string(),
+            TRACK.to_string(),
+            PublishOption::default(),
+        ))
+        .await
+        .unwrap();
+        write(GroupBoundary::Within, "b").await.unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(2), reader.next_object()).await;
+        events.abort();
+
+        // Assert: the rest of group 0 still reaches the subscriber
+        assert_eq!((first.group_id, first.object_id), (0, 0));
+        let second = second
+            .expect("the rest of group 0 was cut")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (second.group_id, second.object_id, second.payload),
+            (0, 1, "b".into())
+        );
     }
 }
