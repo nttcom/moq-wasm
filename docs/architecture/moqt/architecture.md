@@ -166,7 +166,7 @@ Each outbound request runs in an `INFO` span (`moqt.subscriber.{subscribe,subscr
 - **`error_codes.rs` & `constants.rs`**: Typed `RequestErrorCode`, `PublishDoneCode`, `DataStreamResetCode`, `TerminationErrorCode`; unknown/unmappable codes fall back to `INTERNAL_ERROR`.
 
 **Handlers & receive task**
-- **`handler/` & `ResponseGuard`**: Inbound facades pinned to their arriving `Connection`; expose authoritative `track_namespace_tuple` and `/`-joined `track_namespace`. `ResponseGuard` sends `*_OK`, `*_ERROR`, or drop-time `NOT_SUPPORTED` and logs `*_OK sent` / `*_ERROR sent`.
+- **`handler/` & `ResponseGuard`**: Inbound facades pinned to their arriving `Connection`; expose authoritative `track_namespace_tuple` and `/`-joined `track_namespace`. `ResponseGuard` sends `*_OK`, `*_ERROR`, or drop-time `NOT_SUPPORTED` and logs `*_OK sent` / `*_ERROR sent`; the first answer wins, and a later `ok`/`error` sends nothing and returns `Ok`.
 - **Draft-14 `ControlMessageReceiveTask`**: Routes (1) requests & passthrough notifications (`GOAWAY`, `SUBSCRIBE_UPDATE`, `PUBLISH_DONE`, `FETCH_CANCEL`, `PUBLISH_NAMESPACE_CANCEL`) → `SessionEvent`, (2) responses → `inflight_requests` (`PendingResponse` / `ReceivedResponse` drop-guards guarantee cancel-safety via `LateResponseAction` withdrawals), (3) malformed/unexpected messages → session close.
 - **`TRACK_STATUS`** (§9.20–9.21): Uses SUBSCRIBE shape with Track Alias 0; late `TRACK_STATUS_OK` is discarded; unhandled `TrackStatusHandler` replies `NOT_SUPPORTED`.
 

@@ -6,21 +6,21 @@
 //
 // One request; its handler clones are actors that may run on different
 // threads. Each action is one atomic step:
-// - `cloneHandler`: `Clone` adds a strong reference to `answer`.
+// - `cloneHandler`: `Clone` adds a strong reference to the shared request.
 // - `ok` / `error`: `accept` / `reject` (`&self`, callable any number of
-//   times): `mark_responded` (`Answer::Answered`), then the response is
-//   sent. Merged into one step: another clone's `Drop` between the two sees
-//   `Answered` already.
-// - `dropCheck`: `Drop::drop` calls `auto_reject_if_last`, which reads
-//   `answer` and `Arc::strong_count` and decides whether to spawn the
-//   NOT_SUPPORTED rejecter (`Answer::AutoRejected`).
-// - `dropField`: after `Drop::drop` returns, the drop glue drops the
-//   `answer` field, decrementing the strong count; a spawned rejecter
-//   sends NOT_SUPPORTED. Two clones dropped on two threads can both run
-//   `dropCheck` before either runs `dropField`.
+//   times): `mark_responded` moves `Unanswered` to `Answered`, then the
+//   response is sent; an answered request sends nothing. Merged into one
+//   step: another clone's `Drop` between the two sees `Answered` already.
+// - `dropCheck`: a clone's drop decrements the strong count of the shared
+//   `Arc<Request>`; the last one runs `Request`'s `Drop`, which spawns the
+//   NOT_SUPPORTED rejecter when `answer` is `Unanswered` (LAST_DROP_ATOMIC).
+// - `dropField`: the unfixed variant, where a guard's own `Drop::drop`
+//   read `answer` and `Arc::strong_count` before the drop glue decremented
+//   the count; two clones dropped on two threads could both run `dropCheck`
+//   before either ran `dropField`.
 //
-// `response_guard_current` is the implementation; it violates both
-// invariants. `response_guard_fixed` switches on ANSWER_ONCE and
+// `response_guard_current` is the implementation (both switches on) and
+// passes. `response_guard_fixed` switches on ANSWER_ONCE and
 // LAST_DROP_ATOMIC and passes; `response_guard_answer_once` switches on only
 // ANSWER_ONCE and still fails `everyRequestAnswered`.
 //
@@ -51,7 +51,7 @@ module response_guard {
     clones: str -> Clone,
     // `ResponseGuard::answer != Unanswered`
     responded: bool,
-    // `Arc::strong_count(&answer)`
+    // `Arc::strong_count` of the shared `Arc<Request>`
     strongCount: int,
     // Responses sent for the request, in order.
     sent: List[Response],
@@ -131,13 +131,13 @@ module response_guard {
   }
 }
 
-// expect: violation
+// expect: ok
 module response_guard_current {
   import response_guard(
     CLONES = Set("g1", "g2"),
     FIRST = "g1",
-    ANSWER_ONCE = false,
-    LAST_DROP_ATOMIC = false,
+    ANSWER_ONCE = true,
+    LAST_DROP_ATOMIC = true,
   ).*
 }
 
