@@ -384,6 +384,7 @@ mod tests {
     use super::*;
     use crate::{
         mp4::Demuxer,
+        parameter_sets::NalDecoderConfig,
         sample::MediaEvent,
         test_support::{FIXTURE_MP3_MP4, FIXTURE_PROGRESSIVE_MP4},
     };

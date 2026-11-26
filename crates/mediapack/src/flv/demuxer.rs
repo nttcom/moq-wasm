@@ -5,6 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     flv::tag::{Tag, TagType, parse_file_header, parse_tag},
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
+    parameter_sets::NalDecoderConfig,
     sample::{AudioConfig, AudioSample, MediaEvent, Timestamp, VideoConfig, VideoSample},
 };
 

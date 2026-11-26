@@ -1,15 +1,14 @@
-mod relay_session;
 mod rtp;
 
 use std::{net::IpAddr, path::PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mediapack::rtp::{
     Destination, MuxerOptions,
     muxer::{AUDIO_PAYLOAD_TYPE, VIDEO_PAYLOAD_TYPE},
 };
-use moqt::{CertificateVerification, ClientConfig, Session};
+use moqt::{CertificateVerification, ClientConfig, Endpoint, NATIVE, Session};
 
 use broadcast::{BroadcastReader, selection::TrackChoice};
 
@@ -94,17 +93,20 @@ async fn main() -> Result<()> {
 
     let namespace = normalize_namespace(&args.namespace)?;
     let output = args.rtp_output();
-    let session = relay_session::connect(
-        &args.moqt_url,
-        &ClientConfig {
-            certificate_verification: CertificateVerification::native_roots_or_disabled(
-                !args.insecure_skip_tls_verify,
-            ),
-            authorization_token: args.auth_token.map(Into::into),
-            ..ClientConfig::default()
-        },
-    )
-    .await?;
+    let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
+        certificate_verification: CertificateVerification::native_roots_or_disabled(
+            !args.insecure_skip_tls_verify,
+        ),
+        authorization_token: args.auth_token.map(Into::into),
+        ..ClientConfig::default()
+    })?;
+    tracing::info!(relay = %args.moqt_url, "connecting to relay");
+    let session = endpoint
+        .connect(&args.moqt_url)
+        .await
+        .context("connect moqt transport")?
+        .await
+        .context("establish moqt session")?;
     let result = run(&session, &namespace, &output).await;
     session.close().await;
     result
