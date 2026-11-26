@@ -4,8 +4,8 @@ Quint models of the state machines listed in [`../state-machines.md`](../state-m
 
 ## Conventions
 - The first module of a file is the parameterized model; the modules after it are instances.
-- `<model>_current` models today's code. Switches (`const FIX_*`, `const *: bool`) stand for a code change; `<model>_fixed` turns on the smallest set that makes `safety` hold.
-- Other instances turn off one guard the code relies on, or one fix, and must fail: they show the invariant is not vacuous and which switch it depends on.
+- Switches (`const FIX_*`, `const *: bool`) stand for a code change. `<model>_current` models today's code with every fix switch on.
+- `<model>_without_<switch>` turns one fix off and must fail; other instances turn off one guard the code relies on and must fail too. They show the invariant is not vacuous and which switch it depends on.
 - Instances are small (2 actors, ids 0..3) so that TLC explores **every** reachable state.
 
 ## Running

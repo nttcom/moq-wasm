@@ -97,6 +97,6 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance holds `safety`: TLC found no counterexample in today's code. Each model's fix switches are on in its `*_current`, and the single-switch instances show the defect each switch fixes. `check.sh` reproduces this.
+Every `*_current` instance holds `safety`: TLC found no counterexample in today's code. Each model's fix switches are on in its `*_current`, and each `*_without_<switch>` instance turns one off and shows the defect it fixes. `check.sh` reproduces this.
 
 Refuted by the models: Origin outlets surviving a disconnect (one `Origin` per client session; `retire` releases them), Forward State demand drift, `group` and `abandoned` both set in `TrackWriter`, `ended` before a failing `close()` leaking a FETCH entry (quinn's `finish` does not fail there), and PUBLISH_NAMESPACE_DONE racing an in-flight PUBLISH_NAMESPACE (the peer sees them in order).

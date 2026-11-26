@@ -60,7 +60,7 @@
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck subscription.qnt
 //   quint verify --backend tlc --main subscription_current --invariant safety subscription.qnt   # passes
-//   quint verify --backend tlc --main subscription_fixed --invariant safety subscription.qnt     # passes
+//   (likewise for the other instances at the end of the file)
 module subscription {
   const MAX_STREAMS: int
   const ACCEPT_BEFORE_NEXT: bool
@@ -421,16 +421,6 @@ module subscription_current {
   ).*
 }
 
-// expect: ok
-module subscription_fixed {
-  import subscription(
-    MAX_STREAMS = 2,
-    ACCEPT_BEFORE_NEXT = true,
-    DONE_BEFORE_SUBSCRIBE = true,
-    KEEP_UNCLAIMED_RECEIVER = true,
-    END_TRACKED = true,
-  ).*
-}
 
 // Each instance below turns on one fix; check it with the invariants that
 // fix guards.

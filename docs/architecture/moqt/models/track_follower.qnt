@@ -32,7 +32,6 @@
 // @informalsystems/quint 0.34):
 //   quint typecheck track_follower.qnt
 //   quint verify --backend tlc --main track_follower_current --invariant safety track_follower.qnt
-//   quint verify --backend tlc --main track_follower_fixed --invariant safety track_follower.qnt
 // and likewise for the other instances at the end of the file.
 module track_follower {
   const CLEAR_ON_WITHDRAWAL: bool
@@ -254,14 +253,6 @@ module track_follower_current {
   ).*
 }
 
-// expect: ok
-module track_follower_fixed {
-  import track_follower(
-    CLEAR_ON_WITHDRAWAL = true,
-    END_DROPS_HANDLERS = true,
-    END_CLOSES_WATCHERS = true,
-  ).*
-}
 
 // Each fix but one: shows the remaining bug on its own.
 // expect: violation

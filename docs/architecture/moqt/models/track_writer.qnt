@@ -45,7 +45,7 @@
 //   quint run --main track_writer_current --invariant safety --max-samples 5000 --max-steps 30 track_writer.qnt
 //   quint verify --backend tlc --main track_writer_current --invariant safety track_writer.qnt
 //   (likewise for track_writer_always_forward, track_writer_advance_on_open_failure,
-//   track_writer_advance_on_open_failure_with_forward, track_writer_fixed)
+//   track_writer_advance_on_open_failure_with_forward)
 module track_writer {
   const MAX_GROUP: int
   const MAX_OBJECT: int
@@ -316,18 +316,5 @@ module track_writer_advance_on_open_failure_with_forward {
     WRITE_CAN_FAIL = true,
     ADVANCE_ON_OPEN_FAILURE = true,
     GAP_FROM_NUMBERING = false,
-  ).*
-}
-
-// expect: ok
-module track_writer_fixed {
-  import track_writer(
-    MAX_GROUP = 3,
-    MAX_OBJECT = 1,
-    FORWARD_TOGGLES = true,
-    OPEN_CAN_FAIL = true,
-    WRITE_CAN_FAIL = true,
-    ADVANCE_ON_OPEN_FAILURE = false,
-    GAP_FROM_NUMBERING = true,
   ).*
 }
