@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Every package now carries `COPYRIGHT` (the plugin's copyright notice and
+  its license, GPL-3.0-or-later) and `THIRD-PARTY-LICENSES.txt` (the licenses
+  of the libraries built into the plugin), next to `LICENSE`. The plugin
+  itself is unchanged.
+
 ## 0.1.0
 
 - The first release of `obs-moqt` for OBS Studio 32: an unsigned installer
