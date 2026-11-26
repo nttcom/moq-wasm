@@ -10,7 +10,6 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Enum | Location |
 | --- | --- |
-| `Publication {Subscribed, Published, Released}` | `moqt/domains/origin.rs` |
 | `ObjectSink {Buffer, Receiver, Cancelled}` | `moqt/domains/connection.rs` |
 | `Cutover {Waiting, At}` | `moqt/domains/group_cutover.rs` |
 | `Entry {Waiting, Abandoned}` (draft-14 inflight request), `LateResponseAction` | `moqt/version/draft14.rs` |
@@ -25,13 +24,13 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 | Machine | Encoding | Explicit states | Model |
 | --- | --- | --- | --- |
-| Track | `OriginState.tracks[key]` presence, `ended`, `datagrams` + `numbering.largest()` | `Unregistered`, `Live{delivery: Undecided \| Subgroup \| Datagram}`, `Ended` | [`origin.qnt`](models/origin.qnt) |
-| Outlet (per subscription) | `Outlet{publication, start, forward, send_task}` + `state.subscriptions` membership | `Serving{Subscribed \| Published, forward, start}`, `Released`, `Gone` | [`origin.qnt`](models/origin.qnt), [`origin_sessions.qnt`](models/origin_sessions.qnt) |
+| Track | `OriginState.tracks[key]` presence; `OriginTrack.lifecycle: Lifecycle` (`Live` / `Ended`) and `OriginTrack.delivery: Delivery` (`Undecided{datagrams}` / `Subgroup` / `Datagram`, decided by `OriginTrack::place`) in `moqt/domains/origin.rs` | `Unregistered`, `Live{delivery: Undecided \| Subgroup \| Datagram}`, `Ended` | [`origin.qnt`](models/origin.qnt) |
+| Outlet (per subscription) | `OutletState` (`Serving(Serving{publication: Subscribed \| Published, start, forward, send_task})` / `Released`; `Outlet::release`) in `moqt/domains/origin.rs`; `state.subscriptions` stores the serving outlets' requests | `Serving{Subscribed \| Published, forward, start}`, `Released`, `Gone` | [`origin.qnt`](models/origin.qnt), [`origin_sessions.qnt`](models/origin_sessions.qnt) |
 | Outlet send task | channel open/closed, `CancellationToken`, task position | `Idle`, `Sending`, `Ending`, `Cancelling`, `Exited` | — |
-| `TrackWriter` group | `group`, `abandoned`, `next_group_id`, `first_group_id`, `pending_group_gap` | `Fresh`, `Open(g)`, `Abandoned(g)`, `Between`, `Exhausted`, `Consumed` × `PendingGap(n)` | [`track_writer.qnt`](models/track_writer.qnt) |
-| Forward State per outlet | `Outlet.forward`, `start`, writer `abandoned` | `InGroup`, `LeftGroup(g)`, `WaitingNextGroup`, `NotStarted` | [`origin_sessions.qnt`](models/origin_sessions.qnt) |
+| `TrackWriter` group | `GroupSlot` (`NoGroup` / `Open` / `Abandoned`) and `GroupNumbering{first, next, pending_gap}` (`next: None` = exhausted) in `moqt/domains/track_writer.rs` | `Fresh`, `Open(g)`, `Abandoned(g)`, `Between`, `Exhausted`, `Consumed` × `PendingGap(n)` | [`track_writer.qnt`](models/track_writer.qnt) |
+| Forward State per outlet | `Serving.forward`, `start`, writer `abandoned` | `InGroup`, `LeftGroup(g)`, `WaitingNextGroup`, `NotStarted` | [`origin_sessions.qnt`](models/origin_sessions.qnt) |
 | Demand (on-demand publishing) | `demand: Option<Demand{reported}>` | `NotOnDemand`, `OnDemand{Wanted \| Unwanted}` | [`origin_sessions.qnt`](models/origin_sessions.qnt) |
-| NEW_GROUP_REQUEST throttle | `new_group_requests: Option<_>`, `open_group`, `outstanding`, delay task | `Disabled`, `NoGroupSeen`, `Idle`, `Delayed`, `PassedOn` | [`new_group_requests.qnt`](models/new_group_requests.qnt) |
+| NEW_GROUP_REQUEST throttle | explicit, the model's types field by field: `OriginTrack.new_group_requests: Option<NewGroupRequests>` (`None` = `Disabled`) in `moqt/domains/origin.rs`; `NewGroupRequests{open_group: Option<OpenGroup>, outstanding: Option<Outstanding>}` in `moqt/domains/origin/new_group_requests.rs` (independent: a request before the first group, or after a late enable, is `PassedOn` with no open group); `DelayEnded` / `DelayDone` are `NewGroupDelayTask` progress | `Disabled`, `Enabled{NoGroup \| Open(g)} × {NotOutstanding \| PassedOn \| Delayed}` | [`new_group_requests.qnt`](models/new_group_requests.qnt) |
 | Cache expiry | `cache.entries`, `cache_expiry: Option<CacheExpiryTask>` | `Empty`, `Holding{Armed(at) \| Unarmed}` | — |
 | FETCH serve task | `OriginState.fetches[key]` presence | `Serving`, `Absent` | — |
 | `TrackReader` read task | task position, channel closed | `AwaitingReceiver`, `FetchingPrefix`, `Reading`, `Draining`, `Done`; `awaiting_new_group`: `Waiting{held}`, `FetchingFallback`, `Live` | — |

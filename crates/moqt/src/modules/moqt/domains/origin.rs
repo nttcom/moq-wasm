@@ -115,7 +115,9 @@ struct OriginSubscription {
 
 impl OriginState {
     fn live_track_mut(&mut self, key: &TrackKey) -> Option<&mut OriginTrack> {
-        self.tracks.get_mut(key).filter(|track| !track.ended)
+        self.tracks
+            .get_mut(key)
+            .filter(|track| track.lifecycle == Lifecycle::Live)
     }
 
     fn track_mut(&mut self, key: &TrackKey) -> Result<&mut OriginTrack> {
@@ -130,13 +132,60 @@ impl OriginState {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Publication {
-    /// A SUBSCRIBE the peer sent is being served.
+    /// A SUBSCRIBE the peer sent.
     Subscribed,
-    /// A PUBLISH this endpoint sent is being served.
+    /// A PUBLISH this endpoint sent.
     Published,
-    /// A PUBLISH the peer unsubscribed from; kept so that `publish` does not
-    /// send it again.
-    Released,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    Live,
+    /// Set by `end_track`, left by `ensure_track` and `publish`; a SUBSCRIBE
+    /// or TRACK_STATUS finds no track.
+    Ended,
+}
+
+/// The track's Object Forwarding Preference (draft-14 §10), which its first
+/// placed object decides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delivery {
+    /// No object was placed yet, so `set_delivery` may still change it.
+    Undecided {
+        datagrams: bool,
+    },
+    Subgroup,
+    Datagram,
+}
+
+impl Delivery {
+    fn datagrams(self) -> bool {
+        matches!(
+            self,
+            Delivery::Undecided { datagrams: true } | Delivery::Datagram
+        )
+    }
+
+    /// Fails with the decided preference when it is the other one.
+    fn set(&mut self, datagrams: bool) -> Result<(), Delivery> {
+        match *self {
+            Delivery::Undecided { .. } => *self = Delivery::Undecided { datagrams },
+            decided if decided.datagrams() != datagrams => return Err(decided),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Call when the track places an object.
+    fn decide(&mut self) {
+        if let Delivery::Undecided { datagrams } = *self {
+            *self = if datagrams {
+                Delivery::Datagram
+            } else {
+                Delivery::Subgroup
+            };
+        }
+    }
 }
 
 struct OriginTrack {
@@ -150,12 +199,9 @@ struct OriginTrack {
     new_group_requests: Option<NewGroupRequests>,
     /// Set for a track published on demand.
     demand: Option<Demand>,
-    /// The track's Object Forwarding Preference is Datagram (draft-14 §10).
-    datagrams: bool,
+    delivery: Delivery,
     publisher_priority: u8,
-    /// Set by `end_track`, cleared by `ensure_track` and `publish`; while set,
-    /// a SUBSCRIBE or TRACK_STATUS finds no track.
-    ended: bool,
+    lifecycle: Lifecycle,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -187,6 +233,27 @@ struct Demand {
 /// One subscription to the track: a SUBSCRIBE served or a PUBLISH sent.
 struct Outlet {
     request: RequestKey,
+    state: OutletState,
+}
+
+// Only 64-bit pointers make `Serving` large enough for the lint.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        clippy::large_enum_variant,
+        reason = "nearly every outlet is serving; boxing would only add an allocation per outlet"
+    )
+)]
+enum OutletState {
+    Serving(Serving),
+    /// A PUBLISH the peer unsubscribed from; kept so that `publish` does not
+    /// send it again. Holds the session so that its key is not reused.
+    Released {
+        _session: Arc<SessionContext>,
+    },
+}
+
+struct Serving {
     publication: Publication,
     /// The Start Location (draft-14 §9.7); objects before it are not sent,
     /// and none is while it is `None`.
@@ -208,9 +275,9 @@ impl OriginTrack {
             outlets: Vec::new(),
             new_group_requests: None,
             demand: None,
-            datagrams: false,
+            delivery: Delivery::Undecided { datagrams: false },
             publisher_priority: DEFAULT_PRIORITY,
-            ended: false,
+            lifecycle: Lifecycle::Live,
         }
     }
 
@@ -232,7 +299,8 @@ impl OriginTrack {
     fn wanted(&self) -> bool {
         self.outlets
             .iter()
-            .any(|outlet| outlet.serving() && outlet.forward)
+            .filter_map(Outlet::serving)
+            .any(|serving| serving.forward)
     }
 
     /// Call after the outlets or their Forward State changed.
@@ -257,6 +325,15 @@ impl OriginTrack {
         if new_group_request == 0 || current_group.is_none_or(|group| new_group_request > group) {
             requests.request(executor::now());
         }
+    }
+
+    /// Numbers the object; the first one placed decides the track's delivery.
+    fn place(&mut self, group: GroupBoundary) -> Result<Option<Placement>> {
+        let placement = self.numbering.place(group)?;
+        if placement.is_some() {
+            self.delivery.decide();
+        }
+        Ok(placement)
     }
 
     /// `state` and `key` locate this track for its cache expiry task.
@@ -297,8 +374,29 @@ impl OriginTrack {
 }
 
 impl Outlet {
-    fn serving(&self) -> bool {
-        self.publication != Publication::Released
+    fn serving(&self) -> Option<&Serving> {
+        match &self.state {
+            OutletState::Serving(serving) => Some(serving),
+            OutletState::Released { .. } => None,
+        }
+    }
+
+    /// Stops sending; returns whether the outlet is kept, as a released
+    /// PUBLISH.
+    fn release(&mut self) -> bool {
+        let OutletState::Serving(serving) = &self.state else {
+            return true;
+        };
+        serving.send_task.cancel();
+        match serving.publication {
+            Publication::Subscribed => false,
+            Publication::Published => {
+                self.state = OutletState::Released {
+                    _session: serving.publisher.session.clone(),
+                };
+                true
+            }
+        }
     }
 }
 
@@ -318,7 +416,7 @@ impl Origin {
             .tracks
             .entry(track_key(namespace, track_name))
             .or_insert_with(|| OriginTrack::new(first_group_id, retention))
-            .ended = false;
+            .lifecycle = Lifecycle::Live;
     }
 
     /// Gives the track dynamic groups (draft-18 §12.6): its PUBLISH and
@@ -357,16 +455,14 @@ impl Origin {
         let key = track_key(namespace, track_name);
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
-        if track.datagrams != datagrams && track.numbering.largest().is_some() {
-            return Err(PublishTrackError::OtherDelivery {
+        track.delivery.set(datagrams).map_err(|decided| {
+            PublishTrackError::OtherDelivery {
                 namespace: namespace.to_string(),
                 track: track_name.to_string(),
-                datagram: track.datagrams,
+                datagram: decided.datagrams(),
             }
-            .into());
-        }
-        track.datagrams = datagrams;
-        Ok(())
+            .into()
+        })
     }
 
     /// Sets the priority the track's subgroups, datagrams and FETCH responses
@@ -461,16 +557,18 @@ impl Origin {
         };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
-        track.ended = false;
+        track.lifecycle = Lifecycle::Live;
         let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         track.outlets.push(Outlet {
             request,
-            publication: Publication::Published,
-            start,
-            forward,
-            send_task: track.outlet_send_task(&publisher, &subscription),
-            publisher,
-            subscription,
+            state: OutletState::Serving(Serving {
+                publication: Publication::Published,
+                start,
+                forward,
+                send_task: track.outlet_send_task(&publisher, &subscription),
+                publisher,
+                subscription,
+            }),
         });
         track.refresh_demand();
         if let Some(new_group_request) = new_group_request {
@@ -506,7 +604,7 @@ impl Origin {
         let (placement, sends) = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
-            let Some(placement) = track.numbering.place(object.group)? else {
+            let Some(placement) = track.place(object.group)? else {
                 return Ok(WriteOutcome::NotSent);
             };
             track.store(
@@ -516,7 +614,7 @@ impl Origin {
                 object.extension_headers.clone(),
                 object.payload.clone(),
             );
-            if track.datagrams {
+            if track.delivery.datagrams() {
                 let senders = datagram_senders(track, placement);
                 let priority = track.publisher_priority;
                 drop(state);
@@ -540,7 +638,6 @@ impl Origin {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             let placement = track
-                .numbering
                 .place(GroupBoundary::Next)?
                 .context("a new group always places its first object")?;
             track.store(
@@ -550,7 +647,7 @@ impl Origin {
                 ExtensionHeaders::default(),
                 payload.clone(),
             );
-            if track.datagrams {
+            if track.delivery.datagrams() {
                 let senders = datagram_senders(track, placement);
                 let priority = track.publisher_priority;
                 drop(state);
@@ -625,8 +722,10 @@ impl Origin {
         let Some(track) = state.tracks.get_mut(&key) else {
             return;
         };
-        if let Some(outlet) = track.outlet_mut(request) {
-            outlet.forward = handler.forward();
+        if let Some(OutletState::Serving(serving)) =
+            track.outlet_mut(request).map(|outlet| &mut outlet.state)
+        {
+            serving.forward = handler.forward();
         }
         track.refresh_demand();
         if let Some(new_group_request) = handler.new_group_request() {
@@ -672,12 +771,14 @@ impl Origin {
         let request = (session_key(context), handler.request_id());
         track.outlets.push(Outlet {
             request,
-            publication: Publication::Subscribed,
-            start,
-            forward: handler.forward,
-            send_task: track.outlet_send_task(&publisher, &subscription),
-            publisher,
-            subscription,
+            state: OutletState::Serving(Serving {
+                publication: Publication::Subscribed,
+                start,
+                forward: handler.forward,
+                send_task: track.outlet_send_task(&publisher, &subscription),
+                publisher,
+                subscription,
+            }),
         });
         track.refresh_demand();
         state.subscriptions.insert(
@@ -735,17 +836,9 @@ impl Origin {
         let mut state = self.lock_state_knowing(request).await;
         let key = state.subscriptions.remove(&request)?.track;
         if let Some(track) = state.tracks.get_mut(&key) {
-            track.outlets.retain_mut(|outlet| {
-                if outlet.request != request {
-                    return true;
-                }
-                outlet.send_task.cancel();
-                if outlet.publication != Publication::Published {
-                    return false;
-                }
-                outlet.publication = Publication::Released;
-                true
-            });
+            track
+                .outlets
+                .retain_mut(|outlet| outlet.request != request || outlet.release());
             track.refresh_demand();
         }
         Some(key)
@@ -771,14 +864,14 @@ impl Origin {
             let mut requests = Vec::new();
             for outlet in std::mem::take(&mut track.outlets) {
                 requests.push(outlet.request);
-                if outlet.serving() {
-                    ended.push(outlet.send_task.end());
+                if let Some(serving) = outlet.serving() {
+                    ended.push(serving.send_task.end());
                 }
             }
             // A producer that publishes the track again must produce its first
             // objects whatever a SUBSCRIBE to the ended track asks for.
             track.demand = None;
-            track.ended = true;
+            track.lifecycle = Lifecycle::Ended;
             for request in requests {
                 state.subscriptions.remove(&request);
             }
@@ -989,11 +1082,11 @@ fn queue_sends(
     payload: Payload,
 ) -> Vec<impl Future<Output = Result<bool>> + use<>> {
     let mut sends = Vec::new();
-    for outlet in track.outlets.iter().filter(|outlet| outlet.serving()) {
-        if !outlet.forward {
-            outlet.send_task.leave_group();
-        } else if starts_at_or_before(outlet.start, placement.location) {
-            sends.push(outlet.send_task.send(placement, payload.clone()));
+    for serving in track.outlets.iter().filter_map(Outlet::serving) {
+        if !serving.forward {
+            serving.send_task.leave_group();
+        } else if starts_at_or_before(serving.start, placement.location) {
+            sends.push(serving.send_task.send(placement, payload.clone()));
         }
     }
     sends
@@ -1003,12 +1096,9 @@ fn datagram_senders(track: &OriginTrack, placement: Placement) -> Vec<DatagramSe
     track
         .outlets
         .iter()
-        .filter(|outlet| {
-            outlet.serving()
-                && outlet.forward
-                && starts_at_or_before(outlet.start, placement.location)
-        })
-        .map(|outlet| outlet.publisher.create_datagram(&outlet.subscription))
+        .filter_map(Outlet::serving)
+        .filter(|serving| serving.forward && starts_at_or_before(serving.start, placement.location))
+        .map(|serving| serving.publisher.create_datagram(&serving.subscription))
         .collect()
 }
 
@@ -3501,5 +3591,59 @@ mod tests {
 
         // Assert
         assert!(!accepted.track_properties().dynamic_groups());
+    }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::super::Delivery;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Step {
+            Set(bool),
+            Place,
+        }
+
+        fn step() -> impl Strategy<Value = Step> {
+            prop_oneof![any::<bool>().prop_map(Step::Set), Just(Step::Place)]
+        }
+
+        proptest! {
+            /// `Delivery` behaves as the preference flag guarded by "an object was
+            /// placed" that it encodes, and is undecided exactly until then.
+            #[test]
+            fn delivery_matches_a_flag_fixed_by_the_first_placed_object(
+                steps in prop::collection::vec(step(), 0..12),
+            ) {
+                // Arrange
+                let mut delivery = Delivery::Undecided { datagrams: false };
+                let (mut datagrams, mut placed) = (false, false);
+                for step in steps {
+                    // Act
+                    let result = match step {
+                        Step::Set(wanted) => delivery.set(wanted).map_err(Delivery::datagrams),
+                        Step::Place => {
+                            delivery.decide();
+                            Ok(())
+                        }
+                    };
+                    let expected = match step {
+                        Step::Set(wanted) if placed && wanted != datagrams => Err(datagrams),
+                        Step::Set(wanted) => {
+                            datagrams = wanted;
+                            Ok(())
+                        }
+                        Step::Place => {
+                            placed = true;
+                            Ok(())
+                        }
+                    };
+                    // Assert
+                    prop_assert_eq!(result, expected);
+                    prop_assert_eq!(delivery.datagrams(), datagrams);
+                    prop_assert_eq!(matches!(delivery, Delivery::Undecided { .. }), !placed);
+                }
+            }
+        }
     }
 }

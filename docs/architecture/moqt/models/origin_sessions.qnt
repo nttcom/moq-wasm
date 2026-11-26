@@ -5,23 +5,25 @@
 // PUBLISH peers apart; here one session is both.
 //
 // Code mapping (origin.rs):
-// - `publish` (:414-498) is two actions: `publish` checks that the session
-//   has no outlet (:427-433) under `state`, then `state` is unlocked while
-//   `publishing` stays held across the PUBLISH_OK await (:443-447);
+// - `OutletState` is the code's `OutletState`, whose `Serving` holds the
+//   Forward State; `Demand` is `OriginTrack::demand`.
+// - `publish` (:515-591) is two actions: `publish` checks that the session
+//   has no outlet (:526-534) under `state`, then `state` is unlocked while
+//   `publishing` stays held across the PUBLISH_OK await (:543-547);
 //   `registerPublish` pushes the Published outlet and calls `refresh_demand`
-//   (:458-478).
-// - `accept_subscribe` (:640-693) is one action, `handleSubscribe`: it holds
+//   (:558-576).
+// - `accept_subscribe` (:739-798) is one action, `handleSubscribe`: it holds
 //   `state` from the check to the outlet push, but never takes `publishing`.
-// - `apply_update` (:609-634) through `lock_state_knowing` (:712-724): an
+// - `apply_update` (:709-734) through `lock_state_knowing` (:817-825): an
 //   update of a SUBSCRIBE is known at once; the model lets the peer update a
 //   PUBLISH only once `publish` registered it, which is where the lock wait
 //   puts it.
-// - `release` (:730-751): a Subscribed outlet is removed, a Published one
-//   becomes Released; `refresh_demand`.
-// - `end_track` (:761-788): waits for `publishing`, takes every outlet
-//   (Released ones too), sets `demand` to None and `ended`.
-// - `publish_on_demand` (:394-412): reports `wanted()` (:232-236) and keeps it.
-// - `refresh_demand` (:239-249): sends `wanted()` when it changed.
+// - `release` (:831-845) through `Outlet::release` (:386-402): a Subscribed
+//   outlet is removed, a Published one becomes Released; `refresh_demand`.
+// - `end_track` (:855-882): waits for `publishing`, takes every outlet
+//   (Released ones too), sets `demand` to None and `lifecycle` to Ended.
+// - `publish_on_demand` (:490-509): reports `wanted()` (:299-304) and keeps it.
+// - `refresh_demand` (:307-316): sends `wanted()` when it changed.
 // Session disconnect is not modeled: the Origin is never told of a closed
 // connection, but a client session's migration task turns every request of a
 // connection it retires into an UNSUBSCRIBE the Origin releases

@@ -6,7 +6,7 @@
 //
 // `origin_current` is the implementation. Each other instance turns off one
 // switch the implementation relies on, and fails the invariant it guards:
-// - CHECK_ENDED: a SUBSCRIBE consults `ended` (`endedTrackTakesNoSubscribe`).
+// - CHECK_ENDED: a SUBSCRIBE consults `lifecycle` (`endedTrackTakesNoSubscribe`).
 // - ATOMIC_HANDLE: `accept_subscribe` checks the track under the lock it
 //   registers the outlet with, instead of `handle` checking it under a lock
 //   of its own first (`originAnswersEverySubscribe`).
@@ -22,7 +22,7 @@ module origin {
   const CHECK_ENDED: bool
   const ATOMIC_HANDLE: bool
 
-  // `Publication` of an outlet.
+  // An outlet's `OutletState`: `Serving` with its `Publication`, or `Released`.
   type Publication = Subscribed | Published | Released
 
   // A SUBSCRIBE as its sender and the origin's handler see it.

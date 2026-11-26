@@ -1,4 +1,6 @@
-use anyhow::{Context, ensure};
+use std::mem;
+
+use anyhow::{Context, bail, ensure};
 use bytes::Bytes;
 
 use crate::{
@@ -16,13 +18,8 @@ const NO_GROUP_AFTER_MAX: &str = "no group follows group u64::MAX";
 
 pub struct TrackWriter {
     factory: StreamDataSenderFactory,
-    first_group_id: u64,
-    /// `None` once group u64::MAX opened: no group follows it.
-    next_group_id: Option<u64>,
-    group: Option<GroupSender>,
-    /// A group left by `abandon_group`.
-    abandoned: Option<GroupSender>,
-    pending_group_gap: Option<u64>,
+    numbering: GroupNumbering,
+    slot: GroupSlot,
     opened_streams: u64,
     subscriber_priority: u8,
     publisher_priority: u8,
@@ -32,11 +29,8 @@ impl TrackWriter {
     pub fn new(factory: StreamDataSenderFactory, first_group_id: u64) -> Self {
         Self {
             factory,
-            first_group_id,
-            next_group_id: Some(first_group_id),
-            group: None,
-            abandoned: None,
-            pending_group_gap: None,
+            numbering: GroupNumbering::new(first_group_id),
+            slot: GroupSlot::NoGroup,
             opened_streams: 0,
             subscriber_priority: DEFAULT_PRIORITY,
             publisher_priority: DEFAULT_PRIORITY,
@@ -56,13 +50,11 @@ impl TrackWriter {
     /// stream opens or the writer ends: a FIN would tell the receiver it has
     /// the whole subgroup (draft-14 §10.4.3).
     pub(crate) fn abandon_group(&mut self) {
-        if let Some(group) = self.group.take() {
-            self.abandoned = Some(group);
-        }
+        self.slot.abandon();
     }
 
     pub(crate) fn abandoned_group_id(&self) -> Option<u64> {
-        self.abandoned.as_ref().map(|group| group.group_id)
+        self.slot.abandoned_id()
     }
 
     /// Takes the group left by `abandon_group` up again on a new stream
@@ -73,16 +65,16 @@ impl TrackWriter {
             return Ok(());
         };
         self.reset_abandoned_group().await;
-        self.next_group_id = Some(group_id);
+        self.numbering.rewind_to(group_id);
         let mut group = self.open_group().await?;
         group.next_object_id = object_id;
-        self.group = Some(group);
+        self.slot = GroupSlot::Open(group);
         Ok(())
     }
 
     pub async fn start_group(&mut self) -> anyhow::Result<()> {
         self.finish_current_group().await;
-        self.group = Some(self.open_group().await?);
+        self.slot = GroupSlot::Open(self.open_group().await?);
         Ok(())
     }
 
@@ -92,7 +84,7 @@ impl TrackWriter {
     /// draft-ietf-moq-transport-14; a writer that has not opened a group yet
     /// may start anywhere.
     pub async fn start_group_at(&mut self, group_id: u64) -> anyhow::Result<()> {
-        self.skip_to_group(group_id)?;
+        self.numbering.skip_to(group_id)?;
         self.start_group().await
     }
 
@@ -104,10 +96,10 @@ impl TrackWriter {
         group_id: u64,
         object_id: u64,
     ) -> anyhow::Result<()> {
-        self.skip_to_group(group_id)?;
+        self.numbering.skip_to(group_id)?;
         let mut group = self.open_group().await?;
         group.next_object_id = object_id;
-        self.group = Some(group);
+        self.slot = GroupSlot::Open(group);
         Ok(())
     }
 
@@ -116,25 +108,8 @@ impl TrackWriter {
         group_id: u64,
         payload: Bytes,
     ) -> anyhow::Result<()> {
-        self.skip_to_group(group_id)?;
+        self.numbering.skip_to(group_id)?;
         self.write_group(payload).await
-    }
-
-    fn skip_to_group(&mut self, group_id: u64) -> anyhow::Result<()> {
-        if self.groups() == 0 {
-            self.first_group_id = group_id;
-        } else {
-            let next_group_id = self.next_group_id.context(NO_GROUP_AFTER_MAX)?;
-            ensure!(
-                group_id >= next_group_id,
-                "group {group_id} precedes the next group {next_group_id}"
-            );
-            if group_id > next_group_id {
-                self.pending_group_gap = Some(group_id - next_group_id);
-            }
-        }
-        self.next_group_id = Some(group_id);
-        Ok(())
     }
 
     /// Each of `immutable_extensions` is the Key-Value-Pairs of one
@@ -158,14 +133,12 @@ impl TrackWriter {
         extension_headers: ExtensionHeaders,
     ) -> anyhow::Result<()> {
         let extension_headers = self.with_pending_group_gap(extension_headers);
-        let result = self
-            .group
-            .as_mut()
-            .context("write before start_group")?
-            .write_object(payload, extension_headers)
-            .await;
+        let GroupSlot::Open(group) = &mut self.slot else {
+            bail!("write before start_group");
+        };
+        let result = group.write_object(payload, extension_headers).await;
         if result.is_err() {
-            self.group = None;
+            self.slot = GroupSlot::NoGroup;
         }
         result
     }
@@ -188,7 +161,7 @@ impl TrackWriter {
     }
 
     async fn reset_abandoned_group(&mut self) {
-        if let Some(mut group) = self.abandoned.take()
+        if let Some(mut group) = self.slot.take_abandoned()
             && let Err(error) = group.sender.reset(DataStreamResetCode::Cancelled).await
         {
             tracing::debug!(?error, "open group could not be reset");
@@ -197,7 +170,7 @@ impl TrackWriter {
 
     pub async fn finish(mut self) -> anyhow::Result<()> {
         self.reset_abandoned_group().await;
-        match self.group.take() {
+        match self.slot.take_open() {
             Some(group) => group.finish().await,
             None => Ok(()),
         }
@@ -211,21 +184,18 @@ impl TrackWriter {
     /// The number of Group IDs from the first group to the last one opened,
     /// saturating at u64::MAX when that span is all 2^64 of them.
     pub fn groups(&self) -> u64 {
-        match self.next_group_id {
-            Some(next_group_id) => next_group_id - self.first_group_id,
-            None => (u64::MAX - self.first_group_id).saturating_add(1),
-        }
+        self.numbering.groups()
     }
 
     pub fn current_group_id(&self) -> Option<u64> {
-        self.group.as_ref().map(|group| group.group_id)
+        self.slot.open_id()
     }
 
     fn with_pending_group_gap(
         &mut self,
         mut extension_headers: ExtensionHeaders,
     ) -> ExtensionHeaders {
-        if let Some(gap) = self.pending_group_gap.take() {
+        if let Some(gap) = self.numbering.take_gap() {
             extension_headers.push_prior_group_id_gap(gap);
         }
         extension_headers
@@ -236,7 +206,7 @@ impl TrackWriter {
     /// on a new stream regardless.
     async fn finish_current_group(&mut self) {
         self.reset_abandoned_group().await;
-        if let Some(group) = self.group.take()
+        if let Some(group) = self.slot.take_open()
             && let Err(error) = group.finish().await
         {
             tracing::debug!(?error, "previous group could not be finished");
@@ -244,7 +214,7 @@ impl TrackWriter {
     }
 
     async fn open_group(&mut self) -> anyhow::Result<GroupSender> {
-        let group_id = self.next_group_id.context(NO_GROUP_AFTER_MAX)?;
+        let group_id = self.numbering.next()?;
         let stream = self.factory.next().await?;
         self.opened_streams += 1;
         stream
@@ -263,13 +233,129 @@ impl TrackWriter {
                 ends_group: false,
             })
             .await?;
-        self.next_group_id = group_id.checked_add(1);
+        self.numbering.opened(group_id);
         Ok(GroupSender {
             sender,
             group_id,
             next_object_id: 0,
             publisher_priority: self.publisher_priority,
         })
+    }
+}
+
+/// The group a writer holds (track_writer.qnt `Slot`): at most one, open or
+/// abandoned.
+enum GroupSlot {
+    NoGroup,
+    Open(GroupSender),
+    /// Left by `abandon_group`; its stream is reset, never finished.
+    Abandoned(GroupSender),
+}
+
+impl GroupSlot {
+    fn open_id(&self) -> Option<u64> {
+        match self {
+            Self::Open(group) => Some(group.group_id),
+            Self::NoGroup | Self::Abandoned(_) => None,
+        }
+    }
+
+    fn abandoned_id(&self) -> Option<u64> {
+        match self {
+            Self::Abandoned(group) => Some(group.group_id),
+            Self::NoGroup | Self::Open(_) => None,
+        }
+    }
+
+    fn abandon(&mut self) {
+        *self = match mem::replace(self, Self::NoGroup) {
+            Self::Open(group) => Self::Abandoned(group),
+            other => other,
+        };
+    }
+
+    fn take_open(&mut self) -> Option<GroupSender> {
+        match mem::replace(self, Self::NoGroup) {
+            Self::Open(group) => Some(group),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    fn take_abandoned(&mut self) -> Option<GroupSender> {
+        match mem::replace(self, Self::NoGroup) {
+            Self::Abandoned(group) => Some(group),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+}
+
+/// The Group IDs a writer opened and the Prior Group ID Gap its next object
+/// carries (track_writer.qnt `Writer` `first`, `next`, `pendingGap`).
+struct GroupNumbering {
+    first: u64,
+    /// `None` once group u64::MAX opened: no group follows it.
+    next: Option<u64>,
+    /// Never `Some(0)`.
+    pending_gap: Option<u64>,
+}
+
+impl GroupNumbering {
+    fn new(first: u64) -> Self {
+        Self {
+            first,
+            next: Some(first),
+            pending_gap: None,
+        }
+    }
+
+    /// Moves the next group to `group_id`, keeping a gap past the next id
+    /// for the next object; before any group opened it moves the first one
+    /// too. Fails, changing nothing, when `group_id` precedes the next group.
+    fn skip_to(&mut self, group_id: u64) -> anyhow::Result<()> {
+        if self.groups() == 0 {
+            self.first = group_id;
+        } else {
+            let next = self.next()?;
+            ensure!(
+                group_id >= next,
+                "group {group_id} precedes the next group {next}"
+            );
+            if group_id > next {
+                self.pending_gap = Some(group_id - next);
+            }
+        }
+        self.next = Some(group_id);
+        Ok(())
+    }
+
+    fn next(&self) -> anyhow::Result<u64> {
+        self.next.context(NO_GROUP_AFTER_MAX)
+    }
+
+    fn opened(&mut self, group_id: u64) {
+        self.next = group_id.checked_add(1);
+    }
+
+    /// Makes an abandoned group the next one again to reopen it.
+    fn rewind_to(&mut self, group_id: u64) {
+        self.next = Some(group_id);
+    }
+
+    fn take_gap(&mut self) -> Option<u64> {
+        self.pending_gap.take()
+    }
+
+    fn groups(&self) -> u64 {
+        match self.next {
+            Some(next) => next - self.first,
+            None => (u64::MAX - self.first).saturating_add(1),
+        }
     }
 }
 
@@ -589,6 +675,118 @@ mod tests {
                 panic!("expected the next group's first object");
             };
             assert_eq!(object.payload, Bytes::from_static(b"b"));
+        }
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::*;
+
+        /// Group IDs clustered at 0 and at u64::MAX, so a writer skips
+        /// forward, steps back and runs out of IDs.
+        fn group_id() -> impl Strategy<Value = u64> {
+            prop_oneof![0..4u64, u64::MAX - 3..=u64::MAX]
+        }
+
+        #[derive(Clone, Debug)]
+        enum Step {
+            SkipTo(u64),
+            Open,
+            /// `rejoin_group_at`: back to the group opened last, which only
+            /// an abandoned group still open since the last skip can be.
+            Rewind,
+            TakeGap,
+        }
+
+        fn step() -> impl Strategy<Value = Step> {
+            prop_oneof![
+                group_id().prop_map(Step::SkipTo),
+                Just(Step::Open),
+                Just(Step::Rewind),
+                Just(Step::TakeGap),
+            ]
+        }
+
+        /// track_writer.qnt `skipTo` / `opened` / `written` under
+        /// `track_writer_current`, in u128 so the id after u64::MAX exists.
+        struct Model {
+            first: u128,
+            next: u128,
+            pending_gap: u128,
+        }
+
+        const EXHAUSTED: u128 = 1 << 64;
+
+        impl Model {
+            fn skip_to(&mut self, group_id: u128) -> bool {
+                if self.next == self.first {
+                    self.first = group_id;
+                } else if self.next == EXHAUSTED || group_id < self.next {
+                    return false;
+                } else if group_id > self.next {
+                    self.pending_gap = group_id - self.next;
+                }
+                self.next = group_id;
+                true
+            }
+
+            fn groups(&self) -> u64 {
+                u64::try_from(self.next - self.first).unwrap_or(u64::MAX)
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn group_numbering_follows_the_model(
+                first_group_id in group_id(),
+                steps in vec(step(), 1..32),
+            ) {
+                // Arrange
+                let mut numbering = GroupNumbering::new(first_group_id);
+                let mut model = Model { first: first_group_id.into(), next: first_group_id.into(), pending_gap: 0 };
+                let mut rejoinable = None;
+
+                for step in steps {
+                    // Act
+                    let (succeeded, expected) = match step {
+                        Step::SkipTo(group_id) => {
+                            rejoinable = None;
+                            (numbering.skip_to(group_id).is_ok(), model.skip_to(group_id.into()))
+                        }
+                        Step::Open => {
+                            let opened = numbering.next().map(|group_id| {
+                                numbering.opened(group_id);
+                                rejoinable = Some(group_id);
+                            });
+                            let expected = model.next < EXHAUSTED;
+                            if expected {
+                                model.next += 1;
+                            }
+                            (opened.is_ok(), expected)
+                        }
+                        Step::Rewind => {
+                            if let Some(group_id) = rejoinable.take() {
+                                numbering.rewind_to(group_id);
+                                model.next = group_id.into();
+                            }
+                            (true, true)
+                        }
+                        Step::TakeGap => {
+                            let gap = numbering.take_gap();
+                            let expected = (model.pending_gap > 0).then(|| u64::try_from(model.pending_gap).unwrap());
+                            model.pending_gap = 0;
+                            (gap == expected, true)
+                        }
+                    };
+
+                    // Assert: same outcome, Group IDs and gap as the model; a gap is never `Some(0)`
+                    prop_assert_eq!(succeeded, expected, "{:?}", step);
+                    prop_assert_eq!(numbering.groups(), model.groups());
+                    prop_assert_eq!(numbering.next, u64::try_from(model.next).ok());
+                    prop_assert_eq!(numbering.pending_gap, (model.pending_gap > 0).then(|| u64::try_from(model.pending_gap).unwrap()));
+                }
+            }
         }
     }
 }
