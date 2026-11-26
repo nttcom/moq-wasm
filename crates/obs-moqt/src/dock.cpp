@@ -1,6 +1,6 @@
 // The MoQT dock: edits the `moqt_service` settings and makes that service
 // OBS's stream destination. OBS's own Settings -> Stream page lists only its
-// built-in services, so this is where a user enters them.
+// built-in services, so the dock is where a user enters these settings.
 //
 // The class has no signals or slots of its own, so the file needs no moc.
 
@@ -94,7 +94,8 @@ private:
 			static_cast<MoqtDock *>(data)->load();
 	}
 
-	// Shows the profile's stream destination: its settings when it is MoQT.
+	// Shows whether the profile's stream destination is MoQT and, when it
+	// is, its settings.
 	void load()
 	{
 		obs_service *service = obs_frontend_get_streaming_service();
