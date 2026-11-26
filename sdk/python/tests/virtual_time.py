@@ -50,11 +50,12 @@ class VirtualTimeLoop(asyncio.SelectorEventLoop):
         future.add_done_callback(self._job_ended)
         return future
 
-    async def shutdown_default_executor(self, timeout: float | None = None) -> None:
+    async def shutdown_default_executor(self, *args) -> None:
         # Joins the executor's threads on a thread of its own, which the loop's clock waits for.
+        # `*args`: Python 3.12 added the `timeout` parameter.
         self.running_jobs += 1
         try:
-            await super().shutdown_default_executor(timeout)
+            await super().shutdown_default_executor(*args)
         finally:
             self.running_jobs -= 1
 
