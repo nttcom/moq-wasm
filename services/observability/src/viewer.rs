@@ -1,11 +1,8 @@
-use auth_token::Access;
+use auth_token::{Access, VtsVerifyError};
 use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
 
-use crate::{
-    ANONYMOUS_APP_ID,
-    app_verifier::{AppVerifier, VerifyError},
-};
+use crate::{ANONYMOUS_APP_ID, app_verifier::AppVerifier};
 
 /// Why a request may not read stats.
 #[derive(Debug, PartialEq, Eq)]
@@ -46,11 +43,11 @@ pub(crate) async fn viewer_app(
     let token = bearer_token(headers).ok_or(Refusal::Unauthorized)?;
     let verifier = verifier.ok_or(Refusal::Unavailable)?;
     let signed = verifier.verify(token).await.map_err(|error| match error {
-        VerifyError::Unauthorized(_) => {
+        VtsVerifyError::Unauthorized(_) => {
             tracing::debug!(%error, "stats request rejected");
             Refusal::Unauthorized
         }
-        VerifyError::Unavailable(_) => {
+        _ => {
             tracing::warn!(%error, "stats request was not verified");
             Refusal::Unavailable
         }
