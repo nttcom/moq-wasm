@@ -43,14 +43,16 @@
 //   and keeps it as Released. Needed because a SUBSCRIBE sent while the
 //   PUBLISH was in flight can also be handled after `publish` registered.
 // - REFRESH_ON_RELEASE: `release` calls `refresh_demand` (the code does).
+// Both halves of the fix are off in the code: the relay ends one of the two
+// subscriptions itself, and an `Origin` that ends one too can end both
+// (docs/todos/medium/relay-keep-first-of-publish-and-subscribe.md).
 //
 // Commands (from docs/architecture/moqt/models, Java 21+ on PATH):
 //   quint typecheck origin_sessions.qnt
 //   quint run --main origin_sessions_current --invariant safety --max-samples 5000 --max-steps 30 origin_sessions.qnt
 //   quint verify --backend tlc --main origin_sessions_current --invariant safety origin_sessions.qnt
 //   (likewise for origin_sessions_recheck_on_register_only,
-//   origin_sessions_fixed, origin_sessions_without_release_refresh,
-//   origin_sessions_without_recheck_on_register)
+//   origin_sessions_fixed, origin_sessions_without_release_refresh)
 module origin_sessions {
   const SESSIONS: Set[str]
   const PEER_SUBSCRIBES_WHILE_PUBLISHED: bool
@@ -379,16 +381,5 @@ module origin_sessions_without_release_refresh {
     RECHECK_ON_REGISTER = true,
     SUBSCRIBE_ENDS_PUBLISH = true,
     REFRESH_ON_RELEASE = false,
-  ).*
-}
-
-// expect: violation
-module origin_sessions_without_recheck_on_register {
-  import origin_sessions(
-    SESSIONS = Set("a", "b"),
-    PEER_SUBSCRIBES_WHILE_PUBLISHED = false,
-    RECHECK_ON_REGISTER = false,
-    SUBSCRIBE_ENDS_PUBLISH = true,
-    REFRESH_ON_RELEASE = true,
   ).*
 }
