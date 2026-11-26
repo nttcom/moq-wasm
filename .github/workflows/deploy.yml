@@ -4,13 +4,34 @@ on:
   push:
     branches:
       - master
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths:
+      - ".github/workflows/deploy.yml"
+      - ".github/actions/setup-wasm-pack/**"
+      - "examples/browser/**"
+      - "sdk/**"
+      # The crates the three SDKs build from.
+      - "crates/auth-token/**"
+      - "crates/broadcast/**"
+      - "crates/mediapack/**"
+      - "crates/moqt/**"
+      - "crates/msf/**"
+      - "crates/robotics/**"
+      - "crates/telemetry/**"
+      - "crates/telemetry-report/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+      - ".cargo/config.toml"
+      - "!examples/browser/tests/**"
+      - "!sdk/python/tests/**"
+      - "!sdk/js/js/src/**/*.test.ts"
+      - "!**.md"
       # The SDK docs render these READMEs.
-      - "!sdk/js/js/README.md"
-      - "!sdk/python/README.md"
-      - "!sdk/rust/README.md"
+      - "sdk/js/js/README.md"
+      - "sdk/python/README.md"
+      - "sdk/rust/README.md"
 
 permissions:
   contents: read
