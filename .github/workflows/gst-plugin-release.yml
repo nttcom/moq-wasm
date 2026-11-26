@@ -23,14 +23,14 @@ jobs:
       - name: Check the tag names the crate version
         id: version
         run: |
-          version=$(python3 -c "import tomllib; print(tomllib.load(open('crates/gst-plugin-moqt/Cargo.toml', 'rb'))['package']['version'])")
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('sdk/gstreamer/Cargo.toml', 'rb'))['package']['version'])")
           if [ "${GITHUB_REF_NAME}" != "gst-plugin-moqt-v${version}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not name the crate version ${version}"
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
       - name: Check the changelog has the version's section
-        run: node sdk/js/js/scripts/release-notes.mjs crates/gst-plugin-moqt/CHANGELOG.md "${{ steps.version.outputs.version }}"
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/gstreamer/CHANGELOG.md "${{ steps.version.outputs.version }}"
 
   packages:
     needs: version
@@ -57,7 +57,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/packages
       - name: Take the release notes from the changelog
-        run: node sdk/js/js/scripts/release-notes.mjs crates/gst-plugin-moqt/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/gstreamer/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

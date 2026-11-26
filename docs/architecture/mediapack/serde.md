@@ -20,4 +20,4 @@ Add optional `serde` (`derive`) behind a `serde` feature on `mediapack`, enablin
 
 ## Decision
 
-Derive `serde` behind an opt-in `serde` feature so native consumers (`ingest-gateway`, `transcode`, `crates/gst-plugin-moqt`) do not compile it. `serde` and `serde_json` are already in the workspace lock, adding no new crate to the dependency tree.
+Derive `serde` behind an opt-in `serde` feature so native consumers (`ingest-gateway`, `transcode`, `sdk/gstreamer`) do not compile it. `serde` and `serde_json` are already in the workspace lock, adding no new crate to the dependency tree.

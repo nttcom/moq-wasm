@@ -1,8 +1,9 @@
 # Workspace crates
 
-Reusable Rust libraries and plugins under `crates/`.
+Reusable Rust libraries under `crates/`.
 
 - **Building an app, bot, or robot?** Start with an SDK: [JavaScript](../sdk/js/js/README.md) · [Python](../sdk/python/README.md) · [Rust (`moq-wasm`)](../sdk/rust/README.md). `sdk/rust` wraps `moqt`, `broadcast`, and `robotics` with automatic reconnects and JWT refresh.
+- **Publishing from GStreamer?** Use the [`gst-plugin-moqt`](../sdk/gstreamer/README.md) plugin.
 - **Self-hosting a relay or gateway?** See [`services/`](../README.md#self-hostable-server--gateway-stack).
 - **Embedding a crate directly or exploring the codebase?** Pick a crate below.
 
@@ -18,7 +19,6 @@ flowchart BT
     broadcast["broadcast<br/>MSF broadcasts over MoQT"]
     robotics["robotics<br/>Teleoperation & arbiter"]
     transcode["transcode<br/>GStreamer ABR & compositor"]
-    gst["gst-plugin-moqt<br/>moqtsink plugin"]
 
     mediapack -. "moqt feature" .-> moqt
     broadcast --> moqt
@@ -28,8 +28,6 @@ flowchart BT
     robotics --> moqt
     robotics --> msf
     transcode --> mediapack
-    gst --> broadcast
-    gst --> mediapack
 ```
 
 ## Protocol & media
@@ -47,7 +45,6 @@ flowchart BT
 | Crate | Audience | Targets | Role |
 | --- | --- | --- | --- |
 | [`transcode`](transcode/README.md) | External / Workspace | native (GStreamer) | In-process GStreamer H.264 ABR ladder transcoder and offline multi-participant MP4 compositor |
-| [`gst-plugin-moqt`](gst-plugin-moqt/README.md) | External | native (`cdylib`) | GStreamer `moqtsink` plugin for publishing H.264/AAC pipelines directly to a MoQT relay |
 
 ## Auth & service infrastructure
 

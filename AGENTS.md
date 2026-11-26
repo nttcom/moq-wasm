@@ -9,11 +9,12 @@ This repository implements Media over QUIC Transport (MoQT), a low-latency QUIC-
 
 ### Workspace Layout
 - `services/` — standalone deployed processes (servers and bridges: `relay`, `vts`, `ingest-gateway`).
-- `crates/` — libraries and plugins linked by other crates, SDKs, or GStreamer (`moqt`, `broadcast`, `gst-plugin-moqt`), including libraries with an optional CLI (`auth-token`).
-- `sdk/` — installable language SDKs:
+- `crates/` — libraries linked by other crates and SDKs (`moqt`, `broadcast`), including libraries with an optional CLI (`auth-token`).
+- `sdk/` — SDKs and plugins released to external users:
   - `sdk/js`: crate `wasm`, npm package under `js/`.
   - `sdk/python`: crate `python` and Python package.
   - `sdk/rust`: crate `moq-wasm` (matches the other SDKs' install name for git dependencies).
+  - `sdk/gstreamer`: crate `gst-plugin-moqt` (GStreamer `moqtsink` plugin).
 - `moqt` is the central crate; all other crates depend on it, so changes there affect the entire workspace.
 
 ### Crate Naming

@@ -27,7 +27,7 @@ on:
       - "sdk/js/**"
       - "services/ingest-gateway/**"
       - "services/recorder/**"
-      - "crates/gst-plugin-moqt/**"
+      - "sdk/gstreamer/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - ".github/actions/install-apt-packages/**"
       - "services/relay/**"
@@ -90,7 +90,7 @@ on:
       - "sdk/js/**"
       - "services/ingest-gateway/**"
       - "services/recorder/**"
-      - "crates/gst-plugin-moqt/**"
+      - "sdk/gstreamer/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - ".github/actions/install-apt-packages/**"
       - "services/relay/**"
@@ -311,7 +311,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/gst-plugin-moqt/*|tests/moqtsink-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|sdk/gstreamer/*|tests/moqtsink-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(moqtsink)
                   ;;
               esac
