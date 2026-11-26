@@ -1,7 +1,7 @@
 use std::future::Future;
 
-use anyhow::{Result, bail};
-use mediapack::{AudioSample, MediaEvent, Timestamp, VideoSample};
+use anyhow::Result;
+use mediapack::{AudioSample, MediaEvent, VideoSample};
 use moqt::executor::{self, JoinHandle};
 
 use crate::{
@@ -36,17 +36,6 @@ impl BroadcastWriter {
                 publish_queued_events(consumer, tracks),
             ),
         }
-    }
-
-    /// Declares `origin` as the wall-clock time (Unix µs) of presentation time
-    /// zero, for a source that knows when its samples were captured. Without
-    /// it the first pushed sample counts as captured when it is pushed. Fails
-    /// once a sample was pushed or an origin was set.
-    pub fn set_capture_origin(&mut self, origin: Timestamp) -> Result<()> {
-        if !self.timing.seed_capture_origin(origin) {
-            bail!("the capture origin is already taken");
-        }
-        Ok(())
     }
 
     /// Queues `event` for the publish task without waiting for the relay,
@@ -145,6 +134,8 @@ async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPub
 mod tests {
     use std::time::Duration;
 
+    use mediapack::Timestamp;
+
     use super::*;
     use crate::relay_connection::{MoqtTarget, RelayConnection};
     use crate::test_support::keyframe_at;
@@ -176,45 +167,6 @@ mod tests {
         assert!(
             (before..=after).contains(&captured),
             "{before} <= {captured} <= {after}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_capture_origin_set_before_the_first_sample_replaces_the_arrival_time() {
-        // Arrange
-        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
-        let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
-        let origin = Timestamp::from_micros(1_000_000);
-
-        // Act
-        writer.set_capture_origin(origin).unwrap();
-        writer.push(keyframe_at(1_500_000)).unwrap();
-
-        // Assert
-        assert_eq!(writer.shared_timing().seeded_capture_origin(), Some(origin));
-    }
-
-    #[tokio::test]
-    async fn setting_the_capture_origin_fails_once_a_sample_was_pushed_or_an_origin_was_set() {
-        // Arrange
-        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
-        let mut pushed = BroadcastWriter::run(broadcast.clone(), SourceTracks::default());
-        pushed.push(keyframe_at(0)).unwrap();
-        let taken = pushed.shared_timing().seeded_capture_origin();
-        let mut set = BroadcastWriter::run(broadcast, SourceTracks::default());
-        set.set_capture_origin(Timestamp::from_micros(1)).unwrap();
-
-        // Act
-        let after_a_push = pushed.set_capture_origin(Timestamp::from_micros(2));
-        let after_a_set = set.set_capture_origin(Timestamp::from_micros(2));
-
-        // Assert: the origin taken first stays
-        assert!(after_a_push.is_err());
-        assert!(after_a_set.is_err());
-        assert_eq!(pushed.shared_timing().seeded_capture_origin(), taken);
-        assert_eq!(
-            set.shared_timing().seeded_capture_origin(),
-            Some(Timestamp::from_micros(1))
         );
     }
 
