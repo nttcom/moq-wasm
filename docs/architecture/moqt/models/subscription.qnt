@@ -11,9 +11,11 @@
 //   `ObjectSinks::notify` under `Connection::object_sinks`).
 // - `controlTask`: one message handled by the control receive task
 //   (moqt/version/draft14/control_message_receive_task.rs): SUBSCRIBE_OK is
-//   handed to the caller through a oneshot (:132-148) and the task reads the
-//   next message at once; PUBLISH_DONE is pushed to `PublishDoneExpiryTask`
-//   and to the session's events (:122).
+//   handed to the caller through a oneshot and the task reads the next
+//   message once the caller accepted or dropped it; PUBLISH_DONE is pushed
+//   to `PublishDoneExpiryTask` and to the session's events. draft-18's
+//   request stream task (version/draft18/request_streams.rs) orders a
+//   PUBLISH_DONE behind its SUBSCRIBE_OK the same way.
 // - The caller of `Subscriber::subscribe_joining`
 //   (moqt/domains/subscriber.rs:187-275): `callerGotOk` takes the response
 //   from the oneshot; `callerRegisters` is
@@ -27,10 +29,9 @@
 //   with `watch` = `Countdown::Counting`),
 //   `expiryForgets` the first poll of the pushed future
 //   (`forget_ended_subscription`), `expiryFires` the timeout or the
-//   `wait_for` ending and `SessionContext::cancel_subscription`
-//   (session_context.rs:539-544). Time is not modeled: the 10 s grace may
-//   end at any point, so `expiryFires` is enabled whenever the wait could
-//   end; `graceOnlyWhenNeeded` states when it must not be the only way out.
+//   `wait_for` ending and `SessionContext::end_subscription`. Time is not
+//   modeled: the 10 s grace may end at any point, so `expiryFires` is
+//   enabled whenever the wait could end; `graceOnlyWhenNeeded` states when it must not be the only way out.
 // - The client event loop (`eventLoopRoutes`, client/routes.rs:154): a
 //   PUBLISH_DONE event resolves the `done` waiter registered for the
 //   request, or is dropped. `sessionEnds` is `Routes::end` (routes.rs:130).
@@ -40,16 +41,17 @@
 //   `update_forward`/`end_before_group`/`request_new_group`; `appUnsubscribes`
 //   is `Subscriber::unsubscribe` (subscriber.rs:837-851).
 //
-// Switches (all off in `subscription_current`):
+// Switches (`subscription_current` turns on the ones the code implements):
 // - ACCEPT_BEFORE_NEXT: the control receive task reads the next message only
 //   once the caller accepted (or dropped) the SUBSCRIBE_OK it handed over.
 // - DONE_BEFORE_SUBSCRIBE: the `done` waiter is registered before SUBSCRIBE is
 //   sent, so it exists before any PUBLISH_DONE or `Routes::end`.
-// - KEEP_UNCLAIMED_RECEIVER: `cancel_subscription` from the expiry leaves an
+// - KEEP_UNCLAIMED_RECEIVER: the expiry's `end_subscription` leaves an
 //   unclaimed `receiver_map` entry; dropping the sink's sender ends it once
 //   the application has read what it holds.
 // - END_TRACKED: the subscriber records a request as ended on PUBLISH_DONE or
-//   UNSUBSCRIBE and sends nothing more for it.
+//   UNSUBSCRIBE (`Connection::end_subscription`) and sends nothing more for
+//   it.
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck subscription.qnt
@@ -272,9 +274,9 @@ module subscription {
     s' = { ...s, expiry: EWaiting(wait), carriedRecord: false, forgotten: true },
   }
 
-  // `SessionContext::cancel_subscription`: a no-op unless a receiver is
-  // installed; otherwise the sink is cancelled and `receiver_map` loses the
-  // subscription's entry.
+  // `SessionContext::cancel_subscription` (`end_subscription` from the
+  // expiry): a no-op unless a receiver is installed; otherwise the sink is
+  // cancelled and `receiver_map` loses the subscription's entry.
   def cancelled(st: State, byExpiry: bool): State = match st.sink {
     | SReceiver(_) => {
       ...st,
@@ -409,10 +411,10 @@ module subscription {
 module subscription_current {
   import subscription(
     MAX_STREAMS = 2,
-    ACCEPT_BEFORE_NEXT = false,
+    ACCEPT_BEFORE_NEXT = true,
     DONE_BEFORE_SUBSCRIBE = false,
-    KEEP_UNCLAIMED_RECEIVER = false,
-    END_TRACKED = false,
+    KEEP_UNCLAIMED_RECEIVER = true,
+    END_TRACKED = true,
   ).*
 }
 

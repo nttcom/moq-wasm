@@ -701,6 +701,23 @@ pub(crate) async fn send_without_waiting<F: Future + Unpin>(
     }
 }
 
+/// Returns once `session`'s control receive task handed the response of its
+/// draft-14 request `request_id` to the caller, who need not take it. A
+/// marker sent behind a SUBSCRIBE_OK cannot tell: it waits for the caller's
+/// accept.
+pub(crate) async fn wait_for_draft14_response(session: &SessionContext, request_id: u64) {
+    within(async {
+        while session
+            .connection()
+            .control
+            .awaits_draft14_response(request_id)
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+}
+
 /// Returns once `receiver` has dispatched every control message `sender`
 /// sent before the call: the control stream is ordered, so a later
 /// PUBLISH_NAMESPACE reaching `receiver` means the earlier ones were handled.
