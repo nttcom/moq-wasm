@@ -112,7 +112,7 @@ flowchart LR
 *Late-joining publishers (§8.4)*: After answering `PUBLISH_NAMESPACE` (from client, or from relay for client-watched tracks), the relay spawns `PendingProducerTask`s to subscribe that publisher for all active watched tracks under the namespace.
 
 ### `PUBLISH` Sequence
-1. Start ingest and add `Producer` of origin `Publish` (survives with 0 consumers; replaces any `Subscribe` producer of the same publisher).
+1. Start ingest and add `Producer` of origin `Publish` (survives with 0 consumers; replaces the publisher's earlier `Publish` producer). When this relay's `SUBSCRIBE` to the same publisher already feeds the track, its `Subscribe` producer stays and becomes origin `Publish` instead, since the publisher starts a `PUBLISH` at the next group and switching would cut the open group; the PUBLISH's ingest stops, and step 4 answers it in Forward State 0 and then `UNSUBSCRIBE`s it. A `SUBSCRIBE_OK` arriving after the `PUBLISH` registered is unsubscribed instead, so whichever completes first feeds the track.
 2. Reconcile the Redis track-publisher route (client-origin only, `NamespaceRoutes::reconcile_track`). Running it after step 1 lets a concurrent withdrawal see the new producer and keep the route. If registration fails, remove the producer and reply `PUBLISH_ERROR`.
 3. Fan out `DownstreamPublishTask` to local `SUBSCRIBE_TRACKS` subscribers (respecting draft-18 self-echo exclusion §6.1 and `PublishBlocked` refusal) and remote subscriber relays (preserving on-demand Forward State). Each accepted `PUBLISH_OK` registers a normal downstream `Consumer` starting at `PUBLISH_OK`'s Forward State.
 4. Reply `PUBLISH_OK` with desired upstream Forward State.

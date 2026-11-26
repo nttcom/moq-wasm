@@ -225,6 +225,21 @@ impl Track {
         self.creation.subscribe()
     }
 
+    /// The producer starts in the Forward State `upstream_forward` gives,
+    /// which is returned with the producer of the same publisher it replaces;
+    /// the replaced producer's ingest stops when the caller drops it.
+    pub(crate) fn insert_producer(
+        &mut self,
+        publisher_session_id: SessionId,
+        mut producer: Producer,
+    ) -> (bool, Option<Producer>) {
+        let forward = self.upstream_forward(&producer.state);
+        producer.state.forward = forward;
+        let replaced = self.producers.insert(publisher_session_id, producer);
+        self.mark_created();
+        (forward, replaced)
+    }
+
     pub(crate) fn mark_created(&self) {
         self.creation.send_if_modified(|state| {
             let was_creating = *state == CreationState::Creating;

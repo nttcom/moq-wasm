@@ -1093,25 +1093,33 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
-    /// The producer starts in the Forward State `Track::upstream_forward`
-    /// gives, which is returned for the PUBLISH_OK. Also returns the producer
-    /// from the same publisher that this one replaces; its ingest stops when
-    /// the caller drops it.
+    /// Registers the producer of a PUBLISH and returns the Forward State it
+    /// starts in, with the publisher's earlier PUBLISH producer it replaces.
+    /// `None` when this relay's SUBSCRIBE to the same publisher already feeds
+    /// the track: that producer stays and becomes origin `Publish`, and the
+    /// PUBLISH's producer is dropped, stopping its ingest. Switching would cut
+    /// the open group, since the publisher starts a PUBLISH at the next group.
     pub(crate) fn register_published_subscription(
         &self,
         track_key: TrackKey,
         publisher_session_id: SessionId,
-        mut producer: Producer,
-    ) -> (bool, Option<Producer>) {
+        producer: Producer,
+    ) -> Option<(bool, Option<Producer>)> {
         let mut track = self
             .upstream_tracks
-            .entry(track_key)
+            .entry(track_key.clone())
             .or_insert_with(|| self.new_track(CreationState::Created));
-        let forward = track.upstream_forward(&producer.state);
-        producer.state.forward = forward;
-        let replaced = track.producers.insert(publisher_session_id, producer);
-        track.mark_created();
-        (forward, replaced)
+        let Some(subscribed) = track
+            .producers
+            .get_mut(&publisher_session_id)
+            .filter(|kept| kept.state.origin == ProducerOrigin::Subscribe)
+        else {
+            return Some(track.insert_producer(publisher_session_id, producer));
+        };
+        subscribed.state.origin = ProducerOrigin::Publish;
+        subscribed.state.on_demand = producer.state.on_demand;
+        track.report_upstream_forward(&track_key);
+        None
     }
 
     /// Inserts a producer of either origin.
@@ -1122,7 +1130,10 @@ impl InMemoryLocalPubSubDirectory {
         publisher_session_id: SessionId,
         producer: Producer,
     ) -> (bool, Option<Producer>) {
-        self.register_published_subscription(track_key, publisher_session_id, producer)
+        self.upstream_tracks
+            .entry(track_key)
+            .or_insert_with(|| self.new_track(CreationState::Created))
+            .insert_producer(publisher_session_id, producer)
     }
 
     pub(crate) fn take_upstream_forward_update(
