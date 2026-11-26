@@ -18,6 +18,9 @@ tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, default-features = true, features = ["env-filter"] }
 
+[build-dependencies]
+cc = "1.8.0"
+
 [dev-dependencies]
 proptest = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros"] }

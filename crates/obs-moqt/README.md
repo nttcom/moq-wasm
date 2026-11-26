@@ -1,21 +1,41 @@
 # obs-moqt
 
-OBS Studio plugin that publishes the stream OBS encodes (H.264 video, AAC audio) straight to a MoQT relay as an MSF broadcast (LOC + CMAF tracks via [`crates/broadcast`](../broadcast/README.md)). It registers the `moqt_output` output and the `moqt_service` streaming service, so **Start Streaming**, the encoder settings, the status bar, and automatic reconnect all work as they do for RTMP or SRT.
+OBS Studio plugin that publishes the stream OBS encodes (H.264 video, AAC audio) straight to a MoQT relay as an MSF broadcast (LOC + CMAF tracks via [`crates/broadcast`](../broadcast/README.md)). It registers the `moqt_output` output and the `moqt_service` streaming service, so **Start Streaming**, the encoder settings, the status bar, and automatic reconnect all work as they do for RTMP or SRT. A **MoQT** dock holds the settings.
 
 ## Requirements & build
 
-Requires OBS Studio 32.0 or newer (tested with 32.0.2 on macOS). Nothing from OBS is needed at build time: libobs symbols are resolved when OBS loads the plugin.
+Requires OBS Studio 32.0 or newer (tested with 32.0.2 on macOS). Nothing from OBS is needed at build time: libobs and Qt symbols are resolved when OBS loads the plugin.
 
 ```shell
 make obs-plugin            # cargo build -p obs-moqt --release
 make obs-plugin-install    # macOS: copies it into OBS's user plugin directory
 ```
 
+The dock is C++ and needs a C++17 compiler and Qt 6 headers no newer than the Qt in OBS (6.8 in OBS 32.0). `make obs-plugin` takes the compiler flags that find them from `pkg-config --cflags Qt6Widgets`, or from `OBS_MOQT_QT_CFLAGS`:
+
+```shell
+# macOS, with the Qt package OBS itself is built with
+# (obs-deps release named in OBS's buildspec.json, unpacked to $QT):
+make obs-plugin-install OBS_MOQT_QT_CFLAGS="-F$QT/lib"
+```
+
+Without those flags, and in a plain `cargo build`, the plugin builds without the dock and the service is selected as in [Without the dock](#without-the-dock).
+
 `make obs-plugin-install` creates `~/Library/Application Support/obs-studio/plugins/obs-moqt.plugin/Contents/MacOS/obs-moqt`. On Linux (not tested yet), copy `target/release/libobs_moqt.so` to `~/.config/obs-studio/plugins/obs-moqt/bin/64bit/obs-moqt.so`. Restart OBS afterwards; **Help → Log Files → View Current Log** lists `obs-moqt` among the loaded modules.
 
 ## Select the MoQT service
 
-OBS does not yet list services that plugins register under **Settings → Stream**, so the service is selected in one of two other ways. Both keep the choice in the profile.
+OBS does not yet list services that plugins register under **Settings → Stream**, so the plugin adds its own dock:
+
+1. Open **Docks → MoQT**.
+2. Fill in the [service settings](#service-settings) and press **Use for streaming**. The dock saves them in the profile as its stream destination, or says which field is missing.
+3. Press **Start Streaming** and watch the namespace in **Live Viewer**.
+
+The destination cannot be changed while a stream runs. The **Settings → Stream** page does not show the service, and saving a change there replaces it with the one chosen on the page.
+
+### Without the dock
+
+The same settings can be written in one of two other ways. Both keep the choice in the profile.
 
 - **Profile file**: quit OBS and write the profile's `service.json` (`~/Library/Application Support/obs-studio/basic/profiles/<profile>/service.json` on macOS, `~/.config/obs-studio/basic/profiles/<profile>/service.json` on Linux):
 
@@ -33,13 +53,13 @@ OBS does not yet list services that plugins register under **Settings → Stream
 
 - **obs-websocket** (**Tools → WebSocket Server Settings**), while OBS runs: send `SetStreamServiceSettings` with `streamServiceType` `moqt_service` and the same settings as `streamServiceSettings`.
 
-Then press **Start Streaming** and watch the namespace in **Live Viewer**. The **Settings → Stream** page does not show the service, and saving a change there replaces it with the one chosen on the page.
-
 ## Service settings
+
+The dock's fields, in order, are `server`, `namespace`, `bearer_token`, `bearer_token_file`, and `insecure_skip_tls_verify`.
 
 | Setting | Required | Default | Description |
 | --- | --- | --- | --- |
-| `server` | Yes | — | `moqt://host:port` (QUIC) or `https://host:port` (WebTransport) |
+| `server` | Yes | — | `moqt://host:port` (QUIC) or `https://host:port` (WebTransport). Without a port, `moqt://` goes to 4433 and `https://` to 443; the hosted evaluation relay listens on 443 (`moqt://relay.moqt.research.skyway.io:443`) |
 | `namespace` | Yes | — | `/`-separated MoQT namespace under the token's app (e.g. `obs/live`). The plugin puts the token's `appId` in front, so viewers find the stream at `<appId>/obs/live`; a namespace that already starts with the `appId` is used as written |
 | `bearer_token` | One of the two | — | JWT sent in `CLIENT_SETUP`, with a `publish` claim that covers the namespace (mint one with [`auth-token`](../auth-token/README.md)) |
 | `bearer_token_file` | One of the two | — | Path of a file that holds the JWT. It is read at each start and every 10 s while streaming, so a stream can outlast its first token |
