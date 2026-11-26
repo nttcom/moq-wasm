@@ -279,6 +279,7 @@ module origin {
   }
 }
 
+// expect: ok
 module origin_current {
   import origin(
     SUBSCRIBERS = Set("s1", "s2"),
@@ -288,6 +289,7 @@ module origin_current {
   ).*
 }
 
+// expect: violation
 module origin_without_ended_check {
   import origin(
     SUBSCRIBERS = Set("s1", "s2"),
@@ -297,6 +299,7 @@ module origin_without_ended_check {
   ).*
 }
 
+// expect: violation
 module origin_check_then_accept {
   import origin(
     SUBSCRIBERS = Set("s1", "s2"),
