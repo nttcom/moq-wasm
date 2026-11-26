@@ -1209,6 +1209,7 @@ mod tests {
         WriteOutcome::Sent(Placement {
             location: location(group_id, object_id),
             starts_group,
+            prior_group_id_gap: 0,
         })
     }
 
@@ -1608,6 +1609,42 @@ mod tests {
             assert_eq!(received_c.payload, Bytes::from_static(b"c"));
             assert_eq!(received_d.location, location(FIRST_GROUP_ID + 1, 0));
             assert_eq!(received_d.payload, Bytes::from_static(b"d"));
+        }
+    }
+
+    #[tokio::test]
+    async fn only_groups_the_numbering_skipped_are_announced_as_a_prior_group_id_gap() {
+        for version in DRAFTS {
+            // Arrange: the subscription misses a group in Forward State 0
+            let peers = origin_with_track("origin-prior-group-gap", RETENTION, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
+            let mut streams = data_receiver(&peers.server, &accepted).await;
+            let write = |group, payload| origin.write(NAMESPACE, TRACK, plain(group, payload));
+            write(GroupBoundary::Next, b"a").await.unwrap();
+            receive_subgroup_with_object(&mut streams).await;
+            update_forward(&peers, &accepted, false).await;
+            write(GroupBoundary::Next, b"b").await.unwrap();
+            update_forward(&peers, &accepted, true).await;
+
+            // Act
+            write(GroupBoundary::Next, b"c").await.unwrap();
+            let (_, after_missed) = receive_subgroup_with_object(&mut streams).await;
+            write(GroupBoundary::At(FIRST_GROUP_ID + 5), b"d")
+                .await
+                .unwrap();
+            let (_, after_skipped) = receive_subgroup_with_object(&mut streams).await;
+
+            // Assert: the missed group exists; the two skipped ids never will
+            assert_eq!(after_missed.location, location(FIRST_GROUP_ID + 2, 0));
+            assert!(
+                after_missed
+                    .extension_headers
+                    .prior_group_id_gap()
+                    .is_empty()
+            );
+            assert_eq!(after_skipped.location, location(FIRST_GROUP_ID + 5, 0));
+            assert_eq!(after_skipped.extension_headers.prior_group_id_gap(), [2]);
         }
     }
 
@@ -3171,6 +3208,7 @@ mod tests {
         let placement = Placement {
             location: location(FIRST_GROUP_ID, 0),
             starts_group: true,
+            prior_group_id_gap: 0,
         };
         let lost = Err::<bool, _>(TransportSendError::ConnectionLost {
             reason: "lost".into(),

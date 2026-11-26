@@ -157,7 +157,11 @@ async fn send(writer: &mut TrackWriter, placement: Placement, payload: Payload) 
         Payload::Object(object) => send_placed(writer, placement, object).await,
         Payload::Group(payload) => {
             writer
-                .write_group_at(placement.location.group_id, payload)
+                .write_group_at(
+                    placement.location.group_id,
+                    placement.prior_group_id_gap,
+                    payload,
+                )
                 .await
                 .context("send group")?;
             Ok(true)
@@ -179,7 +183,7 @@ async fn send_placed(
     } = placement.location;
     if placement.starts_group {
         writer
-            .start_group_at(group_id)
+            .start_numbered_group(group_id, placement.prior_group_id_gap)
             .await
             .context("start group")?;
     } else if writer.abandoned_group_id() == Some(group_id) {

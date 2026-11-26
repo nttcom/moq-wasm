@@ -105,6 +105,7 @@ mod tests {
         Placement {
             location: location(group_id, object_id),
             starts_group: object_id == 0,
+            prior_group_id_gap: 0,
         }
     }
 
