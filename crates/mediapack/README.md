@@ -2,7 +2,7 @@
 
 Pure-Rust media container demuxer/muxer and codec bitstream toolkit—no FFmpeg or GStreamer required.
 
-Every demuxer emits `MediaEvent`s and every muxer consumes them back. Compiles on native targets and `wasm32`. Used by [`broadcast`](../broadcast/README.md), [`transcode`](../transcode/README.md), [`gst-plugin-moqt`](../gst-plugin-moqt/README.md), the SDKs, and the media/SIP/recorder services.
+Every demuxer emits `MediaEvent`s and every muxer consumes them back. Compiles on native targets and `wasm32`. Used by [`broadcast`](../broadcast/README.md), [`transcode`](../transcode/README.md), [`gst-plugin-moqt`](../../sdk/gstreamer/README.md), the SDKs, and the media/SIP/recorder services.
 
 ## Supported formats
 

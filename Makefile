@@ -93,7 +93,7 @@ egress-gateway:
 		--video-port $(EGRESS_GATEWAY_VIDEO_PORT) --audio-port $(EGRESS_GATEWAY_AUDIO_PORT) \
 		--sdp-out $(EGRESS_GATEWAY_SDP)
 
-# GStreamer plugin (crates/gst-plugin-moqt): `moqtsink` publishes H.264/AAC into MoQT.
+# GStreamer plugin (sdk/gstreamer): `moqtsink` publishes H.264/AAC into MoQT.
 gst-plugin:
 	cargo build -p gst-plugin-moqt
 

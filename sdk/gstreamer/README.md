@@ -1,6 +1,6 @@
 # gst-plugin-moqt
 
-GStreamer sink plugin (`moqtsink`) that publishes H.264 video and AAC audio from a GStreamer pipeline to a MoQT relay as an MSF broadcast (LOC + CMAF tracks via [`crates/broadcast`](../broadcast/README.md)).
+GStreamer sink plugin (`moqtsink`) that publishes H.264 video and AAC audio from a GStreamer pipeline to a MoQT relay as an MSF broadcast (LOC + CMAF tracks via [`crates/broadcast`](../../crates/broadcast/README.md)).
 
 ## Requirements
 
@@ -98,4 +98,4 @@ Configure all properties before transitioning out of `READY`:
 ```
 
 - GStreamer usage note: [docs/architecture/gst-plugin-moqt/gstreamer.md](../../docs/architecture/gst-plugin-moqt/gstreamer.md)
-- Underlying broadcast publisher: [`crates/broadcast`](../broadcast/README.md)
+- Underlying broadcast publisher: [`crates/broadcast`](../../crates/broadcast/README.md)

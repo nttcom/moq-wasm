@@ -4,8 +4,8 @@ name: GStreamer plugin
 on:
   pull_request:
     paths:
-      - "crates/gst-plugin-moqt/**"
-      - "!crates/gst-plugin-moqt/**.md"
+      - "sdk/gstreamer/**"
+      - "!sdk/gstreamer/**.md"
       - ".github/workflows/gst-plugin.yml"
   workflow_call:
 
@@ -40,7 +40,7 @@ jobs:
         run: cargo build -p gst-plugin-moqt --release --locked
       - name: Build the archive
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' sdk/gstreamer/Cargo.toml)
           mkdir package
           cp target/release/libgstmoqt.dylib LICENSE package/
           tar -czf "gst-plugin-moqt-${version}-macos-arm64.tar.gz" -C package .
@@ -93,7 +93,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' sdk/gstreamer/Cargo.toml)
           mkdir package
           cp target/release/libgstmoqt.so LICENSE package/
           tar -czf "gst-plugin-moqt-${version}-linux-${ARCH}.tar.gz" -C package .
@@ -150,7 +150,7 @@ jobs:
         run: cargo build -p gst-plugin-moqt --release --locked
       - name: Build the archive
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/gst-plugin-moqt/Cargo.toml)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' sdk/gstreamer/Cargo.toml)
           mkdir package
           cp target/release/gstmoqt.dll LICENSE package/
           (cd package && 7z a -bso0 "../gst-plugin-moqt-${version}-windows-x64.zip" .)

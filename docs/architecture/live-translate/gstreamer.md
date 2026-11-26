@@ -11,7 +11,7 @@ Use `gstreamer` and `gstreamer-app` in `live-translate`:
 
 ## Context
 
-The translator bridges Opus on MoQT and raw PCM on the Gemini Live API in both directions. The workspace already depends on GStreamer 0.25 (`crates/transcode`, `crates/gst-plugin-moqt`), and CI installs `gstreamer1.0-plugins-base`, which provides `opusdec`, `opusenc`, `audioconvert`, and `audioresample`.
+The translator bridges Opus on MoQT and raw PCM on the Gemini Live API in both directions. The workspace already depends on GStreamer 0.25 (`crates/transcode`, `sdk/gstreamer`), and CI installs `gstreamer1.0-plugins-base`, which provides `opusdec`, `opusenc`, `audioconvert`, and `audioresample`.
 
 ## Alternatives
 

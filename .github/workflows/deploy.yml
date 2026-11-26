@@ -25,6 +25,7 @@ on:
       - "rust-toolchain"
       - ".cargo/config.toml"
       - "!examples/browser/tests/**"
+      - "!sdk/gstreamer/**"
       - "!sdk/python/tests/**"
       - "!sdk/js/js/src/**/*.test.ts"
       - "!**.md"

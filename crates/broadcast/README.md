@@ -2,7 +2,7 @@
 
 Publishes and reads **MSF broadcasts** (`catalog`, LOC/CMAF media tracks, media timelines, and event timelines) over [`moqt`](../moqt/README.md) using [`mediapack`](../mediapack/README.md) `MediaEvent`s.
 
-Shared by `ingest-gateway`, `egress-gateway`, `sip-gateway`, `recorder`, [`gst-plugin-moqt`](../gst-plugin-moqt/README.md), [`robotics`](../robotics/README.md), and all three SDKs so every publisher works with every player. Compiles on native targets and `wasm32`.
+Shared by `ingest-gateway`, `egress-gateway`, `sip-gateway`, `recorder`, [`gst-plugin-moqt`](../../sdk/gstreamer/README.md), [`robotics`](../robotics/README.md), and all three SDKs so every publisher works with every player. Compiles on native targets and `wasm32`.
 
 > **Building a standalone Rust app?** Use [`sdk/rust`](../../sdk/rust/README.md) (`moq-wasm`) for automatic reconnects, token refresh, and a simpler broadcast API. Use `broadcast` directly for custom `mediapack` pipelines, gateways, or plugins.
 
