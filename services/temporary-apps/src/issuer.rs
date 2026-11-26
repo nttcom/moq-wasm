@@ -5,7 +5,6 @@ use auth_token::{
     Claims, TEMPORARY_APP_ID_PREFIX, TemporaryAppTokenError, sign_token, temporary_app_id,
     verify_signature,
 };
-use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 
 pub(crate) const TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -89,8 +88,7 @@ impl TemporaryApps {
 
 fn random_app_id() -> anyhow::Result<String> {
     let mut bytes = [0; 16];
-    SystemRandom::new()
-        .fill(&mut bytes)
+    aws_lc_rs::rand::fill(&mut bytes)
         .ok()
         .context("the system random generator failed")?;
     let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();

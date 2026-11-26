@@ -16,6 +16,7 @@ use crate::{
     broadcast_namespace::translated_namespace,
     catalog_publication::CatalogPublication,
     language_translation::{LanguageTranslation, WriterUpdate},
+    root_translation::TranslationPolicy,
     root_translation::TranslationResources,
     source_audio::SourceAudio,
     source_catalog::SourceCatalog,
@@ -24,7 +25,6 @@ use crate::{
     },
     translated_catalog::{build_translated_catalog, source_audio_track},
     translation_engine::TranslationEngine,
-    translation_policy::TranslationPolicy,
 };
 
 const SUBSCRIPTION_NEVER_EXPIRES: u64 = 0;

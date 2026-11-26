@@ -53,7 +53,6 @@ struct BotTypeEntry {
     grace_seconds: u64,
     max_seconds: u64,
     max_running: usize,
-    #[serde(default)]
     options: Option<BTreeMap<String, Vec<Value>>>,
 }
 

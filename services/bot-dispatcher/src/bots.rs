@@ -2,7 +2,6 @@ use anyhow::Result;
 use aws_lc_rs::{
     constant_time::verify_slices_are_equal,
     digest::{SHA256, digest},
-    rand::{SecureRandom, SystemRandom},
 };
 use google_cloud::IdTokenVerifier;
 use serde::{Deserialize, Serialize};
@@ -72,7 +71,6 @@ pub(crate) struct BotView {
 #[derive(Debug, Deserialize)]
 pub(crate) struct StartRequest {
     pub(crate) namespace_prefix: String,
-    #[serde(default)]
     pub(crate) options: Option<Value>,
     /// Keeps the bot in a room without human members until its longest run,
     /// for an app server that ends the bot itself.
@@ -83,11 +81,9 @@ pub(crate) struct StartRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct Heartbeat {
     pub(crate) state: BotState,
-    #[serde(default)]
     pub(crate) error: Option<String>,
     /// What the bot produces, specific to its type. It replaces what the
     /// last heartbeat reported, so `None` leaves the bot with none.
-    #[serde(default)]
     pub(crate) output: Option<Map<String, Value>>,
 }
 
@@ -423,9 +419,7 @@ fn is_active(record: &BotRecord, now_ms: u64) -> bool {
 
 fn random_hex() -> String {
     let mut bytes = [0u8; 16];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .expect("the system random number generator works");
+    aws_lc_rs::rand::fill(&mut bytes).expect("the system random number generator works");
     hex(&bytes)
 }
 
