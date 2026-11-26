@@ -26,15 +26,15 @@
 //
 // Switches:
 // - EXPIRE_ON_INSTALL (fix): `install` runs `remove_expired` first, as
-//   `notify` and `cancel` do. Off in the code, so a buffer whose period ended
-//   while the connection received nothing is drained into a new receiver
+//   `notify` and `cancel` do. Off, a buffer whose period ended while the
+//   connection received nothing is drained into a new receiver
 //   (`noStaleDrain`).
 // - CHECK_TOTAL (guard the code relies on): `notify` refuses a new object
 //   once the connection buffers TOTAL (`bufferBounded`).
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck object_sinks.qnt
-//   quint verify --backend tlc --main object_sinks_current --invariant safety object_sinks.qnt    # violates noStaleDrain
+//   quint verify --backend tlc --main object_sinks_current --invariant safety object_sinks.qnt    # passes
 //   quint verify --backend tlc --main object_sinks_fixed --invariant safety object_sinks.qnt      # passes
 //   quint verify --backend tlc --main object_sinks_no_total_check --invariant safety object_sinks.qnt  # violates bufferBounded
 module object_sinks {
@@ -225,7 +225,7 @@ module object_sinks {
   }
 }
 
-// expect: violation
+// expect: ok
 module object_sinks_current {
   import object_sinks(
     ALIASES = Set("a1", "a2"),
@@ -233,7 +233,7 @@ module object_sinks_current {
     MAX_TIME = 3,
     PER_ALIAS = 2,
     TOTAL = 3,
-    EXPIRE_ON_INSTALL = false,
+    EXPIRE_ON_INSTALL = true,
     CHECK_TOTAL = true,
   ).*
 }

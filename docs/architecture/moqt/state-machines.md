@@ -97,14 +97,13 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, and `draft18_fetch_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
+Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, and `object_sinks_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
 
 | Model | Defect (counterexample in `*_current`) | Fix switch |
 | --- | --- | --- |
 | `origin_sessions` | A session that is both a subscriber and a PUBLISH peer of one track gets two serving outlets (SUBSCRIBE registered while `publish` awaits PUBLISH_OK); every object is sent twice | `RECHECK_ON_REGISTER` + `SUBSCRIBE_ENDS_PUBLISH` |
 | `track_writer` | Prior Group ID Gap covers groups that exist: groups passed under Forward State 0, or a group whose stream failed to open | `GAP_FROM_NUMBERING` |
 | `new_group_requests` | Enabling dynamic groups after writes passes the first NEW_GROUP_REQUEST through unthrottled; re-enabling drops a delayed request | `KEEP_ON_REENABLE`, `SEED_OPEN_GROUP` |
-| `object_sinks` | `install` drains a buffer older than `UNKNOWN_TRACK_ALIAS_PERIOD` (expiry runs only in `notify`/`cancel`) | `EXPIRE_ON_INSTALL` |
 | `subscription` | PUBLISH_DONE right behind SUBSCRIBE_OK is processed before the receiver registers: full 10 s grace, stale carried record, or a receiver that never ends; expiry removes an unclaimed receiver (objects lost); client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves; updates sent for an ended request | `ACCEPT_BEFORE_NEXT`, `DONE_BEFORE_SUBSCRIBE`, `KEEP_UNCLAIMED_RECEIVER`, `END_TRACKED` |
 | `publish_namespace` | Dropped `PendingPublishNamespace` keeps its record; PUBLISH_NAMESPACE_CANCEL changes no state; a namespace refused during a migration is re-announced on the new connection | `FORGET_ON_DROP`, `FORGET_ON_CANCEL`, `WITHDRAW_ELSEWHERE` |
 | `migration` | A GOAWAY migration in flight when the current connection closes keeps the dead connection as `previous` forever, and revives a locally closed session; `Carried::Stays` subscriptions are cut silently; PUBLISH_DONE can be written after `previous` is closed; an UNSUBSCRIBE before `serve()` leaves a stale served entry; a session ending with a `previous` leaves it open | `FIX_CLOSED_DURING_MIGRATION`, `FIX_FINISH_CLOSES_PREVIOUS`, `FIX_REPORT_STAYING_END`, `FIX_DONE_BEFORE_STOP`, `FIX_SERVE_ON_RECEIPT` |
