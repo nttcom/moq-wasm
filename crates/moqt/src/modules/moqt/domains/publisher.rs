@@ -870,7 +870,7 @@ mod tests {
             let SessionEvent::PublishNamespaceDone(done) = event else {
                 panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
             };
-            assert_eq!(done.track_namespace(), "live/room");
+            assert_eq!(done.track_namespace, "live/room");
         }
     }
 
@@ -908,7 +908,7 @@ mod tests {
                 Version::Draft14 => None,
                 Version::Draft18 => Some(handler.request_id()),
             };
-            assert_eq!(done.request_id(), expected);
+            assert_eq!(done.request_id, expected);
         }
     }
 

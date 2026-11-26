@@ -109,7 +109,7 @@ impl RootTranslation {
                     self.start_broadcast(namespace);
                 }
                 SessionEvent::PublishNamespaceDone(handler) => {
-                    self.stop_broadcast(handler.track_namespace());
+                    self.stop_broadcast(&handler.track_namespace);
                 }
                 SessionEvent::Subscribe(handler) => self.route_subscribe(handler).await,
                 SessionEvent::Unsubscribe(handler) => {

@@ -3230,7 +3230,7 @@ mod tests {
         let SessionEvent::UnsubscribeNamespace(handler) = event else {
             panic!("expected UNSUBSCRIBE_NAMESPACE, got {event:?}");
         };
-        assert_eq!(handler.track_namespace_prefix(), "room/a");
+        assert_eq!(handler.track_namespace_prefix, "room/a");
     }
 
     #[tokio::test]

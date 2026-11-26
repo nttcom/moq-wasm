@@ -1153,7 +1153,7 @@ mod tests {
         let SessionEvent::UnsubscribeNamespace(unsubscribe) = next_event(&client).await else {
             panic!("expected UNSUBSCRIBE_NAMESPACE");
         };
-        assert_eq!(unsubscribe.track_namespace_prefix(), "room/a");
+        assert_eq!(unsubscribe.track_namespace_prefix, "room/a");
     }
 
     #[tokio::test]
@@ -1178,7 +1178,7 @@ mod tests {
         let SessionEvent::PublishNamespaceDone(done) = next_event(&client).await else {
             panic!("expected PUBLISH_NAMESPACE_DONE");
         };
-        assert_eq!(done.track_namespace(), "room/a");
+        assert_eq!(done.track_namespace, "room/a");
     }
 
     #[tokio::test]

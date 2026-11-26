@@ -398,7 +398,7 @@ mod tests {
         let SessionEvent::UnsubscribeNamespace(handler) = unsubscribed else {
             panic!("expected UNSUBSCRIBE_NAMESPACE, got {unsubscribed:?}");
         };
-        assert_eq!(handler.track_namespace_prefix(), "room");
+        assert_eq!(handler.track_namespace_prefix, "room");
     }
 
     #[tokio::test]

@@ -22,8 +22,4 @@ impl UnsubscribeNamespaceHandler {
             interest,
         }
     }
-
-    pub fn track_namespace_prefix(&self) -> &str {
-        &self.track_namespace_prefix
-    }
 }
