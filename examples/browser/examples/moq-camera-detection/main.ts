@@ -20,8 +20,6 @@ const MAX_CHOICES = 9
 const MAX_CHOICE_LENGTH = 40
 const VIDEO_ENCODING = {
   codec: 'avc1.42e01f',
-  // The detector starts a decoder per group, so a new detector waits for the next keyframe.
-  keyframeIntervalSeconds: 1,
   hardwareAcceleration: 'prefer-software'
 } as const
 const MAIN_VIDEO = { width: 640, height: 480, bitrate: 500_000, framerate: 30 }
