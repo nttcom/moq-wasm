@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
+
+use tokio::sync::watch;
 
 use crate::modules::extensions::mutex::lock;
 use crate::{
@@ -6,6 +8,7 @@ use crate::{
     modules::moqt::control_plane::control_messages::messages::{
         parameters::content_exists::ContentExists, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
+    modules::moqt::control_plane::handler::publish_done_handler::PublishDoneHandler,
     modules::moqt::control_plane::options::SubscribeUpdateOption,
     object::GroupOrder,
     subscribe::{FilterType, SubscribeHandler, SubscribeOption},
@@ -103,6 +106,44 @@ impl Subscription {
             Self::SubscriberInitiated(subscription) => &subscription.last_update,
         }
     }
+
+    /// Resolves to the PUBLISH_DONE that ended the subscription, or to `None`
+    /// once it ended without one (UNSUBSCRIBE, the session's end).
+    pub(crate) fn done(&self) -> impl Future<Output = Option<PublishDoneHandler>> + 'static {
+        match self {
+            Self::PublisherInitiated(subscription) => subscription.end.done(),
+            Self::SubscriberInitiated(subscription) => subscription.end.done(),
+        }
+    }
+}
+
+/// How the publisher ended a subscription this side receives, shared by its
+/// clones. The session ends it from the moment the subscription is accepted,
+/// so a PUBLISH_DONE read before the caller looks is kept. The default never
+/// belonged to a session and has already ended without PUBLISH_DONE.
+#[derive(Clone, Debug)]
+pub struct SubscriptionEnd(watch::Receiver<Option<PublishDoneHandler>>);
+
+impl Default for SubscriptionEnd {
+    fn default() -> Self {
+        Self(watch::channel(None).1)
+    }
+}
+
+impl SubscriptionEnd {
+    pub(crate) fn new(receiver: watch::Receiver<Option<PublishDoneHandler>>) -> Self {
+        Self(receiver)
+    }
+
+    pub(crate) fn done(&self) -> impl Future<Output = Option<PublishDoneHandler>> + 'static {
+        let mut end = self.0.clone();
+        async move {
+            match end.wait_for(Option::is_some).await {
+                Ok(done) => done.clone(),
+                Err(_) => None,
+            }
+        }
+    }
 }
 
 /// The last SUBSCRIBE_UPDATE sent for a subscription, shared by its clones,
@@ -136,6 +177,7 @@ pub struct SubscriberInitiatedSubscription {
     /// What the SUBSCRIBE_OK said about the track.
     pub track_properties: TrackProperties,
     pub last_update: LastSubscribeUpdate,
+    pub end: SubscriptionEnd,
 }
 
 impl SubscriberInitiatedSubscription {
@@ -144,6 +186,7 @@ impl SubscriberInitiatedSubscription {
         track_name: String,
         subscribe_ok: SubscribeOk,
         option: &SubscribeOption,
+        end: SubscriptionEnd,
     ) -> Self {
         Self {
             request_id: subscribe_ok.request_id,
@@ -158,6 +201,7 @@ impl SubscriberInitiatedSubscription {
             filter_type: option.filter_type,
             track_properties: subscribe_ok.track_properties,
             last_update: LastSubscribeUpdate::default(),
+            end,
         }
     }
 
@@ -175,6 +219,7 @@ impl SubscriberInitiatedSubscription {
             filter_type: handler.filter_type,
             track_properties: handler.track_properties.clone(),
             last_update: LastSubscribeUpdate::default(),
+            end: SubscriptionEnd::default(),
         }
     }
 }
@@ -196,6 +241,7 @@ pub struct PublisherInitiatedSubscription {
     /// What the PUBLISH said about the track.
     pub track_properties: TrackProperties,
     pub last_update: LastSubscribeUpdate,
+    pub end: SubscriptionEnd,
 }
 
 impl PublisherInitiatedSubscription {
@@ -220,6 +266,7 @@ impl PublisherInitiatedSubscription {
             new_group_request: publish_ok.new_group_request,
             track_properties,
             last_update: LastSubscribeUpdate::default(),
+            end: SubscriptionEnd::default(),
         }
     }
 

@@ -433,6 +433,7 @@ impl Publisher for Arc<PeerState> {
                     new_group_request: None,
                     track_properties: TrackProperties::default(),
                     last_update: moqt::LastSubscribeUpdate::default(),
+                    end: moqt::SubscriptionEnd::default(),
                 }),
             )),
             Ok(PublishAnswer::Refuse) => anyhow::bail!("PUBLISH_ERROR"),
@@ -512,6 +513,7 @@ impl Subscriber for Arc<PeerState> {
                     filter_type: FilterType::LargestObject,
                     track_properties: TrackProperties::default(),
                     last_update: moqt::LastSubscribeUpdate::default(),
+                    end: moqt::SubscriptionEnd::default(),
                 }),
             )),
             Ok(SubscribeAnswer::Refuse) => {
@@ -765,6 +767,7 @@ impl PublishHandler for ScriptedPublish {
             new_group_request: None,
             track_properties: TrackProperties::default(),
             last_update: moqt::LastSubscribeUpdate::default(),
+            end: moqt::SubscriptionEnd::default(),
         })
     }
 
@@ -894,6 +897,7 @@ impl SubscribeHandler for ScriptedSubscribe {
                 filter_type: FilterType::LargestObject,
                 track_properties: TrackProperties::default(),
                 last_update: moqt::LastSubscribeUpdate::default(),
+                end: moqt::SubscriptionEnd::default(),
             },
         ))
     }

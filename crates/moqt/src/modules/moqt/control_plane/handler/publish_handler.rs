@@ -112,9 +112,16 @@ impl PublishHandler {
             delivery_timeout: self.delivery_timeout,
             new_group_request,
         };
-        self.guard
+        let ends = self.session_context.event_sender.subscription_ends();
+        let end = ends.register(self.request_id);
+        if let Err(error) = self
+            .guard
             .accept(OutgoingResponse::PublishOk(publish_ok))
-            .await?;
+            .await
+        {
+            ends.forget(self.request_id);
+            return Err(error);
+        }
 
         Ok(Subscription::PublisherInitiated(
             PublisherInitiatedSubscription {
@@ -131,6 +138,7 @@ impl PublishHandler {
                 new_group_request,
                 track_properties: self.track_properties.clone(),
                 last_update: LastSubscribeUpdate::default(),
+                end,
             },
         ))
     }
@@ -178,7 +186,7 @@ impl PublishHandler {
 mod tests {
     use tokio::sync::mpsc::error::TryRecvError;
 
-    use crate::publish::PublishOption;
+    use crate::publish::{PublishDoneCode, PublishOption};
     use crate::subscribe::FilterType;
     use crate::{RequestErrorCode, Subscription, TrackProperties};
     use crate::{
@@ -187,7 +195,7 @@ mod tests {
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
                 DRAFTS, connected_sessions, next_event, notify_datagram,
-                register_and_take_data_receiver, spawn_connected_native_sessions,
+                register_and_take_data_receiver, spawn_connected_native_sessions, within,
             },
         },
     };
@@ -272,6 +280,47 @@ mod tests {
         assert!(
             matches!(published, Subscription::PublisherInitiated(published) if !published.forward)
         );
+    }
+
+    #[tokio::test]
+    async fn an_accepted_publish_s_publish_done_ends_its_subscription() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("publish-handler-done", version).await;
+            let publisher = client.publisher();
+            let (published, accepted) = tokio::join!(
+                publisher.publish(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    PublishOption::default(),
+                ),
+                async {
+                    let SessionEvent::Publish(handler) = next_event(&server).await else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    handler.ok(128, FilterType::LargestObject, true).await
+                }
+            );
+
+            // Act
+            publisher
+                .publish_done(
+                    &published.unwrap(),
+                    PublishDoneCode::TrackEnded,
+                    0,
+                    String::new(),
+                )
+                .await
+                .unwrap();
+            let done = within(accepted.unwrap().done()).await;
+
+            // Assert
+            assert_eq!(
+                done.map(|done| done.status_code()),
+                Some(PublishDoneCode::TrackEnded),
+                "{version:?}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -85,6 +85,7 @@ impl PublishHandler for moqt::publish::PublishHandler {
             new_group_request: None,
             track_properties: self.track_properties.clone(),
             last_update: moqt::LastSubscribeUpdate::default(),
+            end: moqt::SubscriptionEnd::default(),
         })
     }
 

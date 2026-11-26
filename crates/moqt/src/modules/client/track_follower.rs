@@ -58,7 +58,6 @@ impl TrackFollower {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         let task = FollowTask::run(Follow {
             session,
-            routes: routes.clone(),
             namespace,
             track,
             announcements,
@@ -128,7 +127,6 @@ impl Drop for FollowTask {
 
 struct Follow {
     session: Arc<Session>,
-    routes: Arc<Routes>,
     namespace: Vec<String>,
     track: String,
     announcements: mpsc::UnboundedReceiver<NamespaceEvent>,
@@ -245,12 +243,7 @@ impl Follow {
     }
 
     fn subscription(&self, subscription: crate::Subscription) -> Subscription {
-        Subscription::new(
-            self.session.clone(),
-            self.routes.clone(),
-            subscription,
-            Reading::Unstarted,
-        )
+        Subscription::new(self.session.clone(), subscription, Reading::Unstarted)
     }
 }
 

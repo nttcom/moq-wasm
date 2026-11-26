@@ -97,11 +97,6 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 
 ## Verification results
 
-Every `*_current` instance except `origin_current`, `response_guard_current`, `draft14_requests_current`, `draft18_outgoing_request_current`, `draft18_request_update_current`, `draft18_fetch_current`, `object_sinks_current`, `publish_namespace_current`, `track_writer_current`, `track_follower_current`, `new_group_requests_current`, `group_cutover_subgroups_current`, `group_cutover_datagrams_current`, and `migration_current` violates `safety`: TLC found a counterexample in today's code. Each defect below has a fix switch, and `*_fixed` (all of a model's switches on) holds over every reachable state. `check.sh` reproduces the table.
-
-| Model | Defect (counterexample in `*_current`) | Fix switch |
-| --- | --- | --- |
-| `origin_sessions` | A session that is both a subscriber and a PUBLISH peer of one track gets two serving outlets (SUBSCRIBE registered while `publish` awaits PUBLISH_OK); every object is sent twice | `RECHECK_ON_REGISTER` + `SUBSCRIBE_ENDS_PUBLISH` |
-| `subscription` | Client `done()` registered after the event loop routed PUBLISH_DONE or after `end()` never resolves | `DONE_BEFORE_SUBSCRIBE` |
+Every `*_current` instance holds `safety`: TLC found no counterexample in today's code. Each model's fix switches are on in its `*_current`, and the single-switch instances show the defect each switch fixes. `check.sh` reproduces this.
 
 Refuted by the models: Origin outlets surviving a disconnect (one `Origin` per client session; `retire` releases them), Forward State demand drift, `group` and `abandoned` both set in `TrackWriter`, `ended` before a failing `close()` leaking a FETCH entry (quinn's `finish` does not fail there), and PUBLISH_NAMESPACE_DONE racing an in-flight PUBLISH_NAMESPACE (the peer sees them in order).

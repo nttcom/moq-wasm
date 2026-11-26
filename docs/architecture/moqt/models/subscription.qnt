@@ -23,7 +23,8 @@
 //   installs the sink and inserts `receiver_map` under the sinks lock);
 //   `callerReturns` inserts the carried record (subscriber.rs:253) and calls
 //   `response.accept()`; `clientWraps` is `client::Subscription::new`
-//   (client/subscription.rs:95), which registers `routes.publish_done`.
+//   (client/subscription.rs), where the `done` waiter was registered
+//   without DONE_BEFORE_SUBSCRIBE.
 // - `PublishDoneExpiryTask` (moqt/runtime/tasks/publish_done_expiry_task.rs:41-82):
 //   `expiryLooksUp` is `Countdown::look_up` in the select branch (`ELooked`
 //   with `watch` = `Countdown::Counting`),
@@ -32,9 +33,10 @@
 //   `wait_for` ending and `SessionContext::end_subscription`. Time is not
 //   modeled: the 10 s grace may end at any point, so `expiryFires` is
 //   enabled whenever the wait could end; `graceOnlyWhenNeeded` states when it must not be the only way out.
-// - The client event loop (`eventLoopRoutes`, client/routes.rs:154): a
-//   PUBLISH_DONE event resolves the `done` waiter registered for the
-//   request, or is dropped. `sessionEnds` is `Routes::end` (routes.rs:130).
+// - The session's events (`eventLoopRoutes`, `SessionEventSender::send` in
+//   moqt/domains/session_events.rs): a PUBLISH_DONE event resolves the
+//   `SubscriptionEnd` registered for the request, or is dropped.
+//   `sessionEnds` is the session's Disconnected there.
 // - The application: `appClaims` is `Subscriber::accept_data_receiver`
 //   (subscriber.rs:1069, called lazily by `TrackReader`, after the Joining
 //   FETCH for `subscribe_current_group`); `appUpdates` is
@@ -44,8 +46,10 @@
 // Switches (`subscription_current` turns on the ones the code implements):
 // - ACCEPT_BEFORE_NEXT: the control receive task reads the next message only
 //   once the caller accepted (or dropped) the SUBSCRIBE_OK it handed over.
-// - DONE_BEFORE_SUBSCRIBE: the `done` waiter is registered before SUBSCRIBE is
-//   sent, so it exists before any PUBLISH_DONE or `Routes::end`.
+// - DONE_BEFORE_SUBSCRIBE: the `done` waiter (`SubscriptionEnds::register`)
+//   is registered before the SUBSCRIBE_OK is accepted, so, with
+//   ACCEPT_BEFORE_NEXT, before its PUBLISH_DONE is read; registered after
+//   the session ended, it has already ended.
 // - KEEP_UNCLAIMED_RECEIVER: the expiry's `end_subscription` leaves an
 //   unclaimed `receiver_map` entry; dropping the sink's sender ends it once
 //   the application has read what it holds.
@@ -55,8 +59,7 @@
 //
 // Check (from docs/architecture/moqt/models, Java 21+):
 //   quint typecheck subscription.qnt
-//   quint verify --backend tlc --main subscription_current --invariant safety subscription.qnt   # violated
-//   quint verify --backend tlc --main subscription_current --invariant <name> subscription.qnt   # one trace per invariant
+//   quint verify --backend tlc --main subscription_current --invariant safety subscription.qnt   # passes
 //   quint verify --backend tlc --main subscription_fixed --invariant safety subscription.qnt     # passes
 module subscription {
   const MAX_STREAMS: int
@@ -103,7 +106,7 @@ module subscription {
     | EWaiting({ count: int, watch: bool })
     | ECancelled
 
-  // The `done` waiter of the client `Subscription`.
+  // The `done` waiter of the subscription (`SubscriptionEnd`).
   type Done = DUnregistered | DWaiting | DResolved | DClosed
 
   type State = {
@@ -383,8 +386,8 @@ module subscription {
   val receiverEndsAfterExpiry: bool =
     not(s.expiry == ECancelled and arrived >= 0)
 
-  // `done()` resolves once the event loop routed the PUBLISH_DONE or the
-  // session's routes ended.
+  // `done()` resolves once the session's events carried the PUBLISH_DONE
+  // or the session ended.
   val doneResolves: bool =
     not(s.done == DWaiting and (s.pdRouted or s.routesEnded))
 
@@ -407,12 +410,12 @@ module subscription {
   }
 }
 
-// expect: violation
+// expect: ok
 module subscription_current {
   import subscription(
     MAX_STREAMS = 2,
     ACCEPT_BEFORE_NEXT = true,
-    DONE_BEFORE_SUBSCRIBE = false,
+    DONE_BEFORE_SUBSCRIBE = true,
     KEEP_UNCLAIMED_RECEIVER = true,
     END_TRACKED = true,
   ).*

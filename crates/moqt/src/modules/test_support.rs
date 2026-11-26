@@ -1355,6 +1355,7 @@ pub(crate) fn subscription(request_id: u64, track_alias: u64) -> Subscription {
         filter_type: crate::subscribe::FilterType::LargestObject,
         track_properties: Default::default(),
         last_update: crate::LastSubscribeUpdate::default(),
+        end: crate::SubscriptionEnd::default(),
     })
 }
 

@@ -747,6 +747,7 @@ impl Publisher for MockUpstreamPublisher {
                 new_group_request: None,
                 track_properties: TrackProperties::default(),
                 last_update: moqt::LastSubscribeUpdate::default(),
+                end: moqt::SubscriptionEnd::default(),
             }),
         ))
     }
@@ -852,6 +853,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 filter_type: FilterType::LargestObject,
                 track_properties: TrackProperties::default(),
                 last_update: moqt::LastSubscribeUpdate::default(),
+                end: moqt::SubscriptionEnd::default(),
             }),
         ))
     }
@@ -1450,6 +1452,7 @@ impl PublishHandler for MockPublishHandler {
             new_group_request: None,
             track_properties: TrackProperties::default(),
             last_update: moqt::LastSubscribeUpdate::default(),
+            end: moqt::SubscriptionEnd::default(),
         })
     }
 
