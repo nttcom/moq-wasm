@@ -143,8 +143,9 @@ struct RequestStream {
     /// out for on it. No PUBLISH for them follows while the stream lives
     /// (§6.1), whatever prefix it moves to (§10.9.2).
     blocked_tracks: HashSet<(Vec<String>, String)>,
-    /// For a SUBSCRIBE_TRACKS the peer sent: whether its REQUEST_OK went
-    /// out. No PUBLISH_BLOCKED precedes it (§6.1).
+    /// For a request the peer sent: whether this side's first response went
+    /// out. No PUBLISH_BLOCKED precedes a SUBSCRIBE_TRACKS' REQUEST_OK
+    /// (§6.1), and `cancel_incoming` keeps the response from being reset.
     accepted: bool,
 }
 
@@ -275,6 +276,19 @@ pub(crate) struct ControlChannel {
 
 fn cancelled() -> u64 {
     error_codes::stream_reset_code_to_wire(DataStreamResetCode::Cancelled)
+}
+
+/// Cancels the peer's request. Once it is answered, this side's half ends
+/// with FIN, as a reset would discard a response the peer has not read yet;
+/// STOP_SENDING alone cancels it (§3.3.2).
+async fn cancel_incoming(stream: Option<RequestStream>) -> Result<(), TransportSendError> {
+    match stream {
+        Some(stream) if stream.accepted => {
+            stream.reader_stop.notify_one();
+            stream.sender.close().await
+        }
+        stream => cancel(stream).await,
+    }
 }
 
 /// Withdraws a request (§3.3.2): this side's half of its stream is reset,
@@ -478,10 +492,7 @@ impl ControlChannel {
             .requests()
             .incoming
             .get_mut(&request_id)
-            .and_then(|stream| {
-                stream.accepted = true;
-                Some((stream.held_namespaces.take()?, stream.clone()))
-            });
+            .and_then(|stream| Some((stream.held_namespaces.take()?, stream.clone())));
         let Some((held_namespaces, stream)) = held else {
             return Ok(());
         };
@@ -1032,6 +1043,8 @@ impl ControlChannel {
         stream.sender.send(&message).await?;
         if ends_request {
             stream.sender.close().await?;
+        } else if let Some(open) = self.requests().incoming.get_mut(&request_id) {
+            open.accepted = true;
         }
         Ok(())
     }
@@ -1088,11 +1101,10 @@ impl ControlChannel {
             Notification::Unsubscribe(unsubscribe) => {
                 // Either our SUBSCRIBE or a subscription the peer's PUBLISH
                 // started.
-                cancel(
-                    self.take_outgoing(unsubscribe.request_id)
-                        .or_else(|| self.take_incoming(unsubscribe.request_id)),
-                )
-                .await
+                match self.take_outgoing(unsubscribe.request_id) {
+                    Some(stream) => cancel(Some(stream)).await,
+                    None => cancel_incoming(self.take_incoming(unsubscribe.request_id)).await,
+                }
             }
             Notification::PublishDone {
                 request_id,
@@ -1171,7 +1183,7 @@ impl ControlChannel {
             Notification::PublishNamespaceCancel { namespace, .. } => {
                 let kind = RequestStreamKind::PublishNamespace(namespace);
                 let stream = Self::take_by_kind(&mut self.requests().incoming, &kind);
-                cancel(stream).await
+                cancel_incoming(stream).await
             }
             Notification::UnsubscribeNamespace {
                 track_namespace_prefix,
@@ -4973,6 +4985,34 @@ mod tests {
             panic!("expected UNSUBSCRIBE, got {event:?}");
         };
         assert_eq!(unsubscribe.subscribe_id(), track.published.request_id());
+    }
+
+    #[tokio::test]
+    async fn a_publish_unsubscribed_right_after_its_publish_ok_is_accepted_then_unsubscribed() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-ok-then-unsubscribe", "moqt").await;
+        let publisher = client.publisher();
+
+        // Act
+        let (published, ()) = within(async {
+            tokio::join!(
+                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                async {
+                    let accepted = accept_publish(&server).await;
+                    server.subscriber().unsubscribe(&accepted).await.unwrap();
+                }
+            )
+        })
+        .await;
+        let published = published.unwrap().request_id();
+        let event = next_event(&client).await;
+
+        // Assert
+        let SessionEvent::Unsubscribe(unsubscribe) = event else {
+            panic!("expected UNSUBSCRIBE, got {event:?}");
+        };
+        assert_eq!(unsubscribe.subscribe_id(), published);
     }
 
     #[tokio::test]
