@@ -45,7 +45,7 @@ Each entry names the explicit states. Where a Quint model exists under [`models/
 | Pending FETCH | `fetch_notification_map`, `fetch_receiver_map`, `PendingFetch.kept` | `Registered`, `StreamDelivered`, `Kept`, `Accepted`, `Removed`, `ConnectionClosed` | — |
 | PUBLISH_NAMESPACE record | `NamespaceRecord` (`Unrecorded` / `Recorded` / `Answered`) as `PendingPublishNamespace.record` in `moqt/domains/pending_publish_namespace.rs`; `published_namespaces` and carried `published_namespaces` changed only together by `PublishedNamespaceRecord` (`insert` / `keep` / `forget`, and its `Drop`) and `SessionContext::withdraw_published_namespace` / `forget_cancelled_namespace` in `moqt/domains/session_context.rs` | `Pending`, `Accepted`, `Rejected`, `Withdrawn`, `Cancelled` | [`publish_namespace.qnt`](models/publish_namespace.qnt) |
 | SUBSCRIBE_NAMESPACE (carried) | carried `namespaces[id]` | `InFlight`, `Carried`, `Removed` | — |
-| `NamespaceWatchers` entry | `Vec<(prefix, Sender)>` | `Active`, `Dropped` (pruned lazily) | — |
+| `NamespaceWatchers` entry | `Vec<Arc<Watcher>>` with a `CoalescingQueue` (`closed`) per watcher; removed by `NamespaceEventReceiver::close` / `Drop` | `Active`, `Ended` (session end: drains pending), `Closed` (pending dropped) | — |
 
 ## Version layer — draft-14
 
