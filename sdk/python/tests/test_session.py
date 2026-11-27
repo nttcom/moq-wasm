@@ -334,8 +334,8 @@ async def silent_relay():
         server.close()
 
 
-async def test_a_relay_that_never_sets_the_session_up_fails_the_connection():
-    # Arrange
+async def test_a_relay_that_never_sets_the_session_up_fails_the_connection(relay_url):
+    # Arrange: `relay_url`'s relay wrote the certificate the silent server serves
     async with silent_relay() as url:
         # Act / Assert: the server never sends its QMux transport parameters, so one of moqt's 30 s
         # deadlines, the dial's or QMux's idle timeout, whichever fires first, fails the connect
