@@ -873,6 +873,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn next_event_yields_the_end_of_group_a_new_group_writes() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-end-of-group").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+        let first = writer
+            .write(Bytes::from_static(b"o0"), true, ExtensionHeaders::default())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Act: the next group ends the first with an End of Group status object
+        writer
+            .write(Bytes::from_static(b"o1"), true, ExtensionHeaders::default())
+            .await
+            .unwrap();
+        let mut events = Vec::new();
+        for _ in 0..3 {
+            events.push(within(subscription.next_event()).await.unwrap().unwrap());
+        }
+
+        // Assert
+        assert!(events.contains(&SubscriptionEvent::EndOfGroup {
+            group_id: first,
+            subgroup_id: 0,
+            object_id: 1,
+        }));
+    }
+
+    #[tokio::test]
     async fn a_group_written_just_before_the_session_closes_reaches_the_peer() {
         // Arrange: larger than the stream's flow control window, so most of it is
         // still unsent when `write_group` returns

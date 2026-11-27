@@ -107,7 +107,7 @@ All 5 tasks abort when `ConnectionTasks` drops (`ControlReceiver` and `PublishDo
 
 ### `TrackWriter` / `TrackReader`
 - **`TrackWriter`**: Wraps `StreamDataSenderFactory` (1 payload/object, 1 subgroup/group, `SubgroupId::None`, default priority 128). `start_group()` sends `EndOfGroup` + FIN; `start_group_at(id)` aligns switching sets and emits Prior Group ID Gap for the ids it skips. An Origin outlet's writer instead carries the gap its `Placement` got from the numbering (a `GroupBoundary::At` past the next id), so groups it passed in Forward State 0 or failed to open are never announced as nonexistent.
-- **`TrackReader`**: Wraps `DataReceiver`, reading subgroup streams concurrently into a 64-object bounded channel (applying QUIC backpressure; ordering guaranteed per subgroup only). Skips status objects; a per-stream reset ends only that stream and `next_event` reports it as `TrackEvent::Reset` with the decoded `DataStreamResetCode` (`next_object` skips it); only `MalformedTrackError` returns `Err`.
+- **`TrackReader`**: Wraps `DataReceiver`, reading subgroup streams concurrently into a 64-object bounded channel (applying QUIC backpressure; ordering guaranteed per subgroup only). Skips status objects other than End of Group, which `next_event` reports as `TrackEvent::EndOfGroup`; a per-stream reset ends only that stream and `next_event` reports it as `TrackEvent::Reset` with the decoded `DataStreamResetCode` (`next_object` skips both); only `MalformedTrackError` returns `Err`.
 
 **Late-join helpers**
 - `subscribe_current_group`: Pipelines `SUBSCRIBE(LargestObject)` + Relative Joining `FETCH(offset=0)` in 1 RTT; drains fetched objects before live streams (refused FETCH falls back to live).
