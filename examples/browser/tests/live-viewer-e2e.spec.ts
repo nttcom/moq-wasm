@@ -159,7 +159,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
 
     // Assert: the rendition is subscribed first and the relay ends the playing track at the group boundary (SUBSCRIPTION_ENDED)
     await expect(viewer.logPanel).toContainText(new RegExp(`subscribed \\S*/${rendition}`))
-    await expect(viewer.logPanel).toContainText(`${playing} ended by the publisher (status 3)`)
+    await expect(viewer.logPanel).toContainText(`${playing} ended by the publisher (status SUBSCRIPTION_ENDED)`)
     // Assert: the renditions number their groups alike, so the splice keeps the seek timeline
     expect(await rewindableSeconds(viewer)).toBeGreaterThan(10)
     await expect(viewer.seekPosition).toHaveText('LIVE')

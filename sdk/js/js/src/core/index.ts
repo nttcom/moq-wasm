@@ -12,6 +12,7 @@ export {
   type MoqSubscribeOptions,
   type NamespaceEvent,
   type PublishDone,
+  type PublishDoneCode,
   type PublishTrackOptions,
   type ReceivedObject,
   type TransportStats,

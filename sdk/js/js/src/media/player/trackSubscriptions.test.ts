@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { PublishDone } from '../../core/session'
 import type { MediaCatalogTrack } from '../catalog'
 import { FakeSession, receivedObject } from './testing/fakeSession'
 import type { MediaKind, ObjectHandler } from './trackContext'
@@ -311,7 +312,7 @@ test('unsubscribing every track while forwarding is paused sends no SUBSCRIBE_UP
 })
 
 const AUDIO: MediaCatalogTrack = { name: 'audio', label: 'audio' }
-const DONE = { code: 2n, reason: 'track ended' }
+const DONE: PublishDone = { code: 'TRACK_ENDED', reason: 'track ended' }
 
 async function endSubscription(kinds: MediaKind[], ended: MediaKind): Promise<[MediaKind, boolean][]> {
   const session = new FakeSession(undefined, [])

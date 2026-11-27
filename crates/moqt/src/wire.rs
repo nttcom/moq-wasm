@@ -7,9 +7,7 @@ use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
 pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_ok::SubscribeOk;
 pub use crate::modules::moqt::control_plane::error_codes::RequestKind;
-pub use crate::modules::moqt::version::draft14::error_codes::{
-    publish_done_code_to_wire, request_error_code_to_wire,
-};
+pub use crate::modules::moqt::version::draft14::error_codes::request_error_code_to_wire;
 
 // draft-14 §9.20-9.22: identical payload formats.
 pub type TrackStatusOk = SubscribeOk;

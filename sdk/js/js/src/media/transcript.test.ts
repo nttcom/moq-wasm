@@ -86,10 +86,10 @@ test('done resolves with the PUBLISH_DONE the transcriber ends the transcript wi
   const transcript = await subscribeTranscript(fake.session, ROOM, () => {})
 
   // Act
-  fake.subscriptions[0].end({ code: 2n, reason: 'track ended' })
+  fake.subscriptions[0].end({ code: 'TRACK_ENDED', reason: 'track ended' })
 
   // Assert
-  expect(await transcript.done).toEqual({ code: 2n, reason: 'track ended' })
+  expect(await transcript.done).toEqual({ code: 'TRACK_ENDED', reason: 'track ended' })
 })
 
 test('done resolves to undefined when the session ends without PUBLISH_DONE', async () => {

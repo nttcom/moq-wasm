@@ -105,7 +105,7 @@ test('a PUBLISH_DONE of the catalog reports the publisher absent with it and sub
   const { listener, heard } = recordingListener()
   catalog.listen(listener)
   await catalog.start()
-  const done: PublishDone = { code: 0n, reason: 'left' }
+  const done: PublishDone = { code: 'TRACK_ENDED', reason: 'left' }
 
   // Act
   fake.open('catalog')[0].end(done)
@@ -169,7 +169,7 @@ test('an onPublisherAbsent that throws is reported and the catalog is still subs
   await catalog.start()
 
   // Act
-  fake.open('catalog')[0].end({ code: 0n, reason: 'left' })
+  fake.open('catalog')[0].end({ code: 'TRACK_ENDED', reason: 'left' })
   await settle()
 
   // Assert

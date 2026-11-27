@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use crate::scope::SessionScope;
 use mediapack::loc::{LocObject, LocValue, from_extension_headers};
-use moqt::{
-    client::{self, ReceivedObject},
-    wire::publish_done_code_to_wire,
-};
+use moqt::client::{self, ReceivedObject};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
 
 use crate::location::Location;
@@ -76,9 +73,9 @@ impl From<ReceivedObject> for Object {
 /// The PUBLISH_DONE that ended a subscription.
 #[pyclass(frozen, get_all, module = "moq_wasm")]
 pub struct PublishDone {
-    /// The PUBLISH_DONE code as draft-14 numbers it (§13.1.3), also on a
-    /// draft-18 session.
-    pub code: u64,
+    /// The PUBLISH_DONE code's name, e.g. `TRACK_ENDED`, the same on every
+    /// draft.
+    pub code: String,
     pub reason: String,
 }
 
@@ -123,7 +120,7 @@ impl Subscription {
         let done = self.subscription.done();
         self.scope.future_into_py(py, async move {
             Ok(done.await.map(|done| PublishDone {
-                code: publish_done_code_to_wire(done.code),
+                code: done.code.name().to_string(),
                 reason: done.reason,
             }))
         })

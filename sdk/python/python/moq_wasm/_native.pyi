@@ -198,8 +198,8 @@ class Object:
 
 class PublishDone:
     @property
-    def code(self) -> int:
-        """Draft-14 `PUBLISH_DONE` code (§13.1.3), also mapped on draft-18."""
+    def code(self) -> str:
+        """`PUBLISH_DONE` code name, e.g. `TRACK_ENDED`, the same on every draft."""
     @property
     def reason(self) -> str: ...
 

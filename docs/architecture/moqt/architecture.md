@@ -35,7 +35,7 @@ flowchart TB
 | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses`; `self-signed-cert` feature: `CertificateFiles`, `write_self_signed_cert` |
 | `moqt::executor` | `spawn`/`JoinHandle` (`abort_on_drop()` → `AbortOnDrop`), `sleep`, monotonic `now`, wall `system_time` (for wasm32-compatible callers) |
 | `moqt::client` | High-level client `Session`, `Subscription`, `Group`, `Fetch`, `NamespaceWatch`, `Announcement`, `TrackWriter`, `EventHandler`, `RequestError` |
-| `moqt::wire` | Draft-14 numeric codes (`RequestKind`, error/PUBLISH_DONE conversions) for wasm JS bindings, plus `TrackStatusOk`/`SubscribeOk`. Control framing is crate-private. |
+| `moqt::wire` | Draft-14 numeric request error codes (`RequestKind`, `request_error_code_to_wire`) for the SDK bindings, plus `TrackStatusOk`/`SubscribeOk`. Control framing is crate-private. |
 
 Implementation files under `modules/` are organized by layer; top-level modules only re-export. Everything builds on `wasm32` (`QUIC`/`NATIVE` are `#[cfg(not(target_arch = "wasm32"))]`; `BROWSER` is wasm32-only).
 

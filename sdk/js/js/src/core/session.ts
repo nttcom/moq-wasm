@@ -19,7 +19,20 @@ export type ReceivedObject = {
 
 export type MoqLocation = { readonly groupId: bigint; readonly objectId: bigint }
 
-export type PublishDone = { readonly code: bigint; readonly reason: string }
+/** A PUBLISH_DONE code's name, the same on every draft. */
+export type PublishDoneCode =
+  | 'INTERNAL_ERROR'
+  | 'UNAUTHORIZED'
+  | 'TRACK_ENDED'
+  | 'SUBSCRIPTION_ENDED'
+  | 'GOING_AWAY'
+  | 'EXPIRED'
+  | 'TOO_FAR_BEHIND'
+  | 'MALFORMED_TRACK'
+  | 'UPDATE_FAILED'
+  | 'EXCESSIVE_LOAD'
+
+export type PublishDone = { readonly code: PublishDoneCode; readonly reason: string }
 
 export type CloseInfo = { readonly code: number | undefined; readonly reason: string }
 
@@ -279,7 +292,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
       if (!done) {
         return undefined
       }
-      const info = { code: done.code, reason: done.reason }
+      const info = { code: done.code as PublishDoneCode, reason: done.reason }
       done.free()
       return info
     })

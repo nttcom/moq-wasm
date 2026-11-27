@@ -8,7 +8,7 @@ import { FakeSession, receivedObject } from './testing/fakeSession'
 import { collectReportedErrors } from '../internal/testing/reportedErrors'
 
 const ENGLISH: MediaCatalogTrack = { name: 'audio_en', label: 'en' }
-const ENDED = { code: 0, reason: 'time limit' } as unknown as PublishDone
+const ENDED: PublishDone = { code: 'TRACK_ENDED', reason: 'time limit' }
 
 const reported = collectReportedErrors()
 let environment: FakeMediaEnvironment
