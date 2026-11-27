@@ -30,7 +30,7 @@ moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecu
 
 ## Auth token
 
-Without a token, access is limited to `anon/`. `--auth-token-file` is re-read from 5 minutes before the token expires (every 30 s until it holds a new token), and the new token is pushed to the relay so external rotation keeps the stream alive:
+Without a token, access is limited to `anon/`. From 5 minutes before the token expires, `--auth-token-file` is polled every 10 s and a rewritten token is pushed to the relay, so external rotation keeps the stream alive:
 
 ```sh
 AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "<appId>") | .secret' apps.json)" \

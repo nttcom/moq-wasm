@@ -93,12 +93,12 @@ if [[ -f "$MOQ_CLI_DIR/refreshed.exit" ]]; then
   cat "$MOQ_CLI_DIR/refreshed.log" >&2
   exit 1
 fi
-if ! grep -q "authorization token refreshed" "$MOQ_CLI_DIR/refreshed.log"; then
+if ! grep -q "auth token file rewritten" "$MOQ_CLI_DIR/refreshed.log"; then
   echo "moq-cli did not report a token refresh" >&2
   cat "$MOQ_CLI_DIR/refreshed.log" >&2
   exit 1
 fi
-if [[ ! -f "$MOQ_CLI_DIR/expiring.exit" ]] || ! grep -q "session closed by the relay" "$MOQ_CLI_DIR/expiring.log"; then
+if [[ ! -f "$MOQ_CLI_DIR/expiring.exit" ]] || ! grep -q "the relay session ended" "$MOQ_CLI_DIR/expiring.log"; then
   echo "moq-cli with an untouched token file did not exit on the relay closing the session" >&2
   cat "$MOQ_CLI_DIR/expiring.log" >&2
   exit 1
