@@ -66,7 +66,7 @@ mod tests {
     #[tokio::test]
     async fn the_joined_group_is_read_from_the_fetch_then_from_the_subscription() {
         // Arrange
-        let mut publisher = FakePublisher::spawn();
+        let mut publisher = FakePublisher::spawn("catalog-reader-joined");
         let origin = publisher.origin.clone();
         origin
             .ensure_track(NAMESPACE, msf::CATALOG_TRACK_NAME, 0, Retention::NewestOnly)

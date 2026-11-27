@@ -228,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn reads_audio_that_a_publisher_sends_as_one_endless_group() {
         // Arrange: like a meeting member, the audio stays in one group numbered below the video's
-        let mut publisher = FakePublisher::spawn();
+        let mut publisher = FakePublisher::spawn("reader");
         let origin = publisher.origin.clone();
         let keyframe = first_keyframe();
         let video_capture = keyframe.capture_timestamp().unwrap().micros();
