@@ -2,7 +2,7 @@
 
 Lightweight client-side `tracing` collector that converts events and closed spans into [`telemetry::client_report`](../telemetry/README.md) (`ClientLog` and `ClientSpan`) records and propagates W3C `traceparent` headers without pulling in the OpenTelemetry SDK.
 
-> **Workspace crate**: Internal library used by `sdk/js` (wasm32), `sdk/python`, and `examples/rust/moq-cli`. Compiles on native targets and `wasm32`.
+> **Workspace crate**: Internal library used by `sdk/js` (wasm32), `sdk/python`, `sdk/rust`, and `examples/rust/moq-cli`. Compiles on native targets and `wasm32`.
 
 ## Usage
 

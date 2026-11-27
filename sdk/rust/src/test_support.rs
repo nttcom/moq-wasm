@@ -8,7 +8,11 @@ use moqt::{
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
     subscribe::{FilterType, SubscribeOption},
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::TcpListener,
+    sync::{mpsc, oneshot, watch},
+};
 
 use crate::{ConnectOptions, Session, connect};
 
@@ -107,6 +111,15 @@ impl TestRelay {
     pub(crate) async fn connect(&self) -> Session {
         let options = ConnectOptions {
             certificate_verification: CertificateVerification::Disabled,
+            ..ConnectOptions::default()
+        };
+        connect(&self.url, options).await.unwrap()
+    }
+
+    pub(crate) async fn connect_with_token(&self, token: &str) -> Session {
+        let options = ConnectOptions {
+            certificate_verification: CertificateVerification::Disabled,
+            token: Some(token.to_string()),
             ..ConnectOptions::default()
         };
         connect(&self.url, options).await.unwrap()
@@ -252,5 +265,53 @@ fn self_signed_server_config(name: &str) -> ServerConfig {
         key_path,
         keep_alive_interval_sec: 5,
         versions: vec![Version::Draft14],
+    }
+}
+
+/// An HTTP server that answers every request with `status` and keeps the
+/// JSON body of each, standing in for the observability server.
+pub(crate) struct FakeTelemetryServer {
+    pub(crate) url: String,
+    report_receiver: mpsc::UnboundedReceiver<serde_json::Value>,
+}
+
+impl FakeTelemetryServer {
+    pub(crate) async fn spawn(status: u16) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (report_sender, report_receiver) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let report_sender = report_sender.clone();
+                tokio::spawn(async move {
+                    let mut stream = BufReader::new(stream);
+                    let mut content_length = 0;
+                    let mut line = String::new();
+                    while stream.read_line(&mut line).await.unwrap() > 2 {
+                        if let Some((name, value)) = line.split_once(':')
+                            && name.eq_ignore_ascii_case("content-length")
+                        {
+                            content_length = value.trim().parse().unwrap();
+                        }
+                        line.clear();
+                    }
+                    let mut body = vec![0; content_length];
+                    stream.read_exact(&mut body).await.unwrap();
+                    let _ = report_sender.send(serde_json::from_slice(&body).unwrap());
+                    let response = format!(
+                        "HTTP/1.1 {status} Status\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        Self {
+            url,
+            report_receiver,
+        }
+    }
+
+    pub(crate) fn reports(&mut self) -> Vec<serde_json::Value> {
+        std::iter::from_fn(|| self.report_receiver.try_recv().ok()).collect()
     }
 }

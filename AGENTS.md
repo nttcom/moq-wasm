@@ -121,6 +121,7 @@ Use only field names from this table; add new names here before using them:
 | `new_group_request` | `NEW_GROUP_REQUEST` value: largest known Group ID + 1, or `0` |
 | `supported_versions` / `selected_version` | Versions offered by `CLIENT_SETUP` and picked by `SERVER_SETUP` |
 | `error` | Failure, formatted as `%error` or `?error` |
+| `dropped_records` | Telemetry records evicted before they were reported |
 | `is_relay` | Whether the token's app is a relay |
 | `outcome` | Request result (`ok`, `rejected`, `timeout`, `failed`) or service call result (`relay.vts.verify`: `verified`/`unauthorized`/`unavailable`; `vts.request`: `verified`/`malformed_token`/`unknown_app`/`invalid_signature`) |
 | `relay_hostname` | Relay host on every root span (carried on each stdout line) |
