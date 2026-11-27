@@ -2,6 +2,7 @@
 //! sources of encoded frames, published and followed as the browser SDK's
 //! `moq-wasm/media` and the Python SDK's `moq_wasm.media` do.
 
+mod annexb_splitter;
 mod broadcast_end;
 mod catalog;
 mod event_timeline;
@@ -11,6 +12,7 @@ mod media_source;
 mod remote_broadcast;
 mod watch_broadcasts;
 
+pub use annexb_splitter::AnnexBSplitter;
 pub use broadcast::{MediaSourceError, TrackKind};
 pub use catalog::{BitratePreference, Catalog, TrackQuery};
 pub use event_timeline::EventTimeline;
