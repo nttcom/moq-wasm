@@ -26,10 +26,24 @@ pub(crate) mod track_reader;
 pub(crate) mod track_writer;
 
 pub(crate) fn namespace_tuple(namespace: &str) -> Vec<String> {
+    if namespace.is_empty() {
+        return Vec::new();
+    }
     namespace.split('/').map(str::to_string).collect()
 }
 
 /// Milliseconds from `since`, a reading of `executor::now`, to now.
 pub(crate) fn elapsed_ms(since: Duration) -> u64 {
     now().saturating_sub(since).as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_empty_string_is_the_namespace_of_no_fields() {
+        // Act / Assert
+        assert!(namespace_tuple("").is_empty());
+    }
 }
