@@ -94,9 +94,9 @@ mod test {
             let expected_bytes_array = [
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
+                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff00000e) in 62bit
                 2,   // Number of Parameters (i)
-                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Type (i): Type(MaxRequestID)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
                 7, 8, 77, 79, 81, 45, 87, 65, 83, 77,
@@ -110,9 +110,9 @@ mod test {
             let bytes_array = [
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
+                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff00000e) in 62bit
                 2,   // Number of Parameters (i)
-                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Type (i): Type(MaxRequestID)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
                 7, 8, 77, 79, 81, 45, 87, 65, 83, 77,

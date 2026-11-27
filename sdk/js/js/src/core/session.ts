@@ -253,8 +253,8 @@ export class MoqSession {
     )
   }
 
-  /// To publish a MediaStream, use `publish` from `moq-wasm/media`, which feeds
-  /// this broadcast.
+  /// To publish a MediaStream, use `createBroadcast` from `moq-wasm/media`,
+  /// which feeds this broadcast.
   broadcast(namespace: string[]): Moqt.MediaBroadcast {
     return this.inner.broadcast(namespace)
   }

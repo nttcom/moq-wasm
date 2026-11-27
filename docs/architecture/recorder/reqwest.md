@@ -7,11 +7,11 @@
 Add `reqwest` (`default-features = false`, features: `json`, `rustls`) as a direct dependency of `services/recorder`:
 
 - `bot_job::composite_launcher` passes its client to `JobLauncher::CloudRun` (`job-launcher`), which invokes `POST https://run.googleapis.com/v2/<job>:run` with an access token from `google-cloud`'s `MetadataToken`.
-- `recorder` also calls `bot-dispatcher` with it.
+- `bot_dispatcher_client` calls `bot-dispatcher` for bot tokens and heartbeats, and `token_refresh_task` calls `temporary-apps` to renew temporary-app replay tokens.
 
 ## Context
 
-`recorder serve` delegates room recording and compositing to separate jobs so the API scales to zero on Cloud Run and each composite gets dedicated CPU. Starting Cloud Run Jobs via the Admin API requires an HTTPS client and a service-account OAuth token.
+`recorder bot` delegates compositing to a separate job so each composite gets dedicated CPU, and talks to `bot-dispatcher` over HTTP; `recorder serve` renews temporary-app replay tokens via `temporary-apps`. Starting Cloud Run Jobs via the Admin API requires an HTTPS client and a service-account OAuth token.
 
 ## Alternatives
 

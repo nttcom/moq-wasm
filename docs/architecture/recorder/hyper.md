@@ -17,4 +17,4 @@ Browser pages need to list and replay recordings over a handful of JSON endpoint
 
 ## Decision
 
-Use `hyper` directly, matching `observability`. JSON is handled with `serde_json` (already a dependency of `recorder`), avoiding `serde` derive.
+Use `hyper` directly, matching `observability`. JSON is handled with `serde` and `serde_json` (already dependencies of `recorder`).

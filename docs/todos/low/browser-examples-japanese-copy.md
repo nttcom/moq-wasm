@@ -1,6 +1,6 @@
 # [M] Write the examples' remaining English UI copy in Japanese
 
-Next: move the E2E matches on visible text (`tests/meeting-e2e-arrange.ts:69` `/screen share$/`, recording-player `#status` Ready / Playing) to `data-testid`.
+Next: move the E2E matches on visible text (`examples/browser/tests/meeting-e2e-arrange.ts:77` `/screen share$/`, recording-player `#status` Ready / Playing) to `data-testid`.
 
 ## Goal
 

@@ -201,9 +201,9 @@ fn scenario_namespace(scenario: &str) -> String {
     )
 }
 
-/// The bug this pins: a publisher killed without CONNECTION_CLOSE stays
-/// registered until its QUIC idle timeout, and the relay used to send new
-/// SUBSCRIBEs to it alone.
+/// Verifies that after a publisher is killed without CONNECTION_CLOSE (leaving
+/// it registered until its QUIC idle timeout), a new SUBSCRIBE is served by the
+/// restarted publisher.
 pub(crate) async fn run_killed_publisher_scenario(relay_url: &str) -> anyhow::Result<()> {
     let track_namespace = scenario_namespace("killed-publisher");
     let mut killed = tokio::process::Command::new(std::env::current_exe()?)

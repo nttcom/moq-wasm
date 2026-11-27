@@ -1,6 +1,6 @@
 # [S] Start a PUBLISH's objects where its PUBLISH_OK's filter says
 
-Next: replace `FilterType::NextGroupStart` in `Origin::publish` (`crates/moqt/src/modules/moqt/domains/origin.rs:433`) with the filter of the accepted subscription.
+Next: replace `FilterType::NextGroupStart` in `Origin::publish` (`crates/moqt/src/modules/moqt/domains/origin.rs:571`) with the filter of the accepted subscription.
 
 ## Goal
 

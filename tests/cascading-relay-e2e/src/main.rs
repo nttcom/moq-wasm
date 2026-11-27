@@ -1313,7 +1313,6 @@ where
             track_alias = subscription.track_alias(),
             "subscriber received SUBSCRIBE_OK; accepting data receiver"
         );
-        // Act: downstream subscription の準備ができてから publisher にテスト object を送らせる。
         after_subscribe().await?;
         let mut receiver = session
             .subscriber()

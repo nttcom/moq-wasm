@@ -332,7 +332,7 @@ impl Session {
             .await
     }
 
-    /// The broadcast lists LOC tracks only.
+    /// Publishes an MSF broadcast (LOC tracks, optional CMAF siblings, and timelines) under `namespace`.
     pub fn broadcast(&self, namespace: Vec<String>) -> MediaBroadcast {
         self.scope
             .in_scope(|| MediaBroadcast::new(self.relay_connection(), namespace, self.scope))

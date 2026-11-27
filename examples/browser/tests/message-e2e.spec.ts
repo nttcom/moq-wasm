@@ -5,14 +5,11 @@ const TRACK_NAME = 'e2e_track'
 const PAYLOAD = 'e2e-hello'
 
 async function send(client: MessagePageModel, button: Locator, label: string): Promise<void> {
-  // Act: 対象のリクエストを送る。
   await button.click()
-  // Assert: relay が受理したことをステータス表示で確認する。
   await expect(client.sendStatus).toHaveText(`Sent ${label}`)
 }
 
 async function arrangeTrackFields(client: MessagePageModel): Promise<void> {
-  // Arrange: namespace と track を使うフィールドをすべてテスト用の値に揃える。
   const namespace = messageE2EConfig.namespace
   for (const input of [
     client.announceNamespaceInput,
@@ -40,10 +37,10 @@ test.describe('MoqSession requests through the relay', () => {
     const { context, client } = await arrangeMessageE2ESession(browser)
 
     try {
-      // Assert: ローカル検証用の relay URL が初期表示されていることを確認する。
+      // Assert
       await expect(client.urlInput).toHaveValue(messageE2EConfig.moqtUrl)
 
-      // Act: relay へ接続する。
+      // Act
       await client.connectButton.click()
       // Assert
       await expect(client.sendStatus).toHaveText('Connected')
@@ -51,36 +48,36 @@ test.describe('MoqSession requests through the relay', () => {
 
       await send(client, client.announceButton, 'PUBLISH_NAMESPACE')
       await send(client, client.watchButton, 'SUBSCRIBE_NAMESPACE')
-      // Act: 自分の namespace の track を配信する。
+      // Act
       await client.publishTrackButton.click()
       // Assert
       await expect(client.sendStatus).toHaveText(`Published ${messageE2EConfig.namespace}/${TRACK_NAME}`)
 
-      // relay は SUBSCRIBE を publisher であるこのセッションへ転送し、TrackWriter が応答する。
+      // The relay forwards SUBSCRIBE back to this session as publisher, and TrackWriter answers.
       await send(client, client.subscribeButton, 'SUBSCRIBE')
       await send(client, client.writeGroupButton, 'OBJECT')
-      // Assert: 書いた object が relay を経て自分の subscription に届いたことを確認する。
+      // Assert
       await expect(client.received).toContainText(new RegExp(`\\[subscribe\\] \\d+/0: ${PAYLOAD}`))
 
       await send(client, client.trackStatusButton, 'TRACK_STATUS')
-      // Assert: TRACK_STATUS が largest を返すことを確認する。
+      // Assert
       await expect(client.received).toContainText(/\[track status\] largest \d+\/\d+/)
 
-      // Arrange: writeGroup が FETCH の範囲をその group に揃えている。
+      // Arrange: writeGroup aligns the FETCH range with that group.
       await send(client, client.fetchButton, 'FETCH')
-      // Assert: FETCH が書いた object を返したことを確認する。
+      // Assert
       await expect(client.received).toContainText(new RegExp(`\\[fetch\\] \\d+/0: ${PAYLOAD}`))
 
-      // Act: forward を止める。
+      // Act
       await client.subscribeForwardCheckbox.uncheck()
       await send(client, client.setForwardButton, 'SUBSCRIBE_UPDATE')
       await send(client, client.unsubscribeButton, 'UNSUBSCRIBE')
       await send(client, client.withdrawButton, 'PUBLISH_NAMESPACE_DONE')
       await send(client, client.unwatchButton, 'UNSUBSCRIBE_NAMESPACE')
-      // SUBSCRIBE_NAMESPACE を最後にもう一度送る。応答が届けば、一連のリクエストのあともセッションが生きている。
+      // Send SUBSCRIBE_NAMESPACE once more; receiving a reply confirms the session is still alive.
       await send(client, client.watchButton, 'SUBSCRIBE_NAMESPACE')
 
-      // Assert: 一連のリクエストでセッションが切断されていないことを確認する。
+      // Assert
       await expect(client.logPanel).not.toContainText('connection closed')
     } finally {
       await context.close()

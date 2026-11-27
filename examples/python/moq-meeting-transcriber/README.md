@@ -68,7 +68,7 @@ sequenceDiagram
 
 | namespace | track | 内容 |
 | --- | --- | --- |
-| `{app}/{room}/{user}` | `catalog`, `audio_*` | 参加者音声（最高ビットレートを購読） |
+| `{app}/{room}/{user}` | `catalog`, 音声トラック（Meeting では `camera_audio`） | 参加者音声（Opus LOC の最低ビットレートを購読） |
 | `{app}/{room}/bots/transcriber` | `transcript` | `draft-ietf-moq-msf-02` §8 の event timeline。`{"T": 発話開始 ms, "data": {"speaker", "text"}}` |
 | `{app}/{room}/bots/transcriber` | `status` | `{"asr": 名前, "state": "starting"\|"ready"}` |
 

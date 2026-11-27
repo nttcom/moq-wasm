@@ -4,9 +4,6 @@ wire_enum! {
     #[derive(Debug, PartialEq, Eq, Copy, Clone)]
     pub enum ControlMessageType: u8 {
         // setup and dispose
-        // less version than 10.
-        // ClientSetup = 0x40,
-        // ServerSetup = 0x41,
         ClientSetup = 0x20,
         ServerSetup = 0x21,
         GoAway = 0x10,

@@ -21,14 +21,11 @@ Async Python SDK for Media over QUIC Transport (MoQT). Connect to a relay over Q
 Requires Python 3.11+ on Linux (x86_64/aarch64, glibc 2.28+) or macOS (Apple silicon):
 
 ```shell
-python -m pip install "moq-wasm==0.0.1" \
-  --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1
+python -m pip install "moq-wasm==0.1.0" \
+  --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.1.0
 ```
 
-Replace `"moq-wasm==0.0.1"` with `"moq-wasm[codecs]==0.0.1"` or `"moq-wasm[pipecat]==0.0.1"` to include an extra.
-
-> **Release note:** This README tracks `master`. `0.0.1` runs the Quickstart below; later sections use unreleased APIs (`SessionEnded`, `MoqWasmParticipantInput`, `empty_timeout`, `on_room_empty`). To install from a repository checkout now (requires a Rust toolchain):
-> `python -m pip install "./sdk/python[pipecat]"`
+Replace `"moq-wasm==0.1.0"` with `"moq-wasm[codecs]==0.1.0"` or `"moq-wasm[pipecat]==0.1.0"` to include an extra. To install from a repository checkout instead (requires a Rust toolchain), run `python -m pip install "./sdk/python[pipecat]"`.
 
 ## Quickstart: Send and receive a message
 

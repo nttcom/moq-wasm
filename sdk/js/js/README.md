@@ -10,12 +10,12 @@ Browser SDK for publishing and playing live video, audio, and data over Media ov
 
 ## Entry points
 
-| Import path          | Use for                                                                                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `moq-wasm`           | `MoqSession`, raw tracks (`publishTrack`, `subscribe`, `fetch`), namespace watches                                        |
-| `moq-wasm/media`\*   | `createBroadcast`, `LivePlayer`, `RemoteBroadcast`, `watchBroadcasts`, `subscribeTranscript`, `botNamespace`, `botTypeOf` |
-| `moq-wasm/element`   | `<moq-player>` custom HTML element (unreleased; available on `master`)                                                    |
-| `moq-wasm/recording` | `openRecording` for replaying recorded MoQ archives                                                                       |
+| Import path          | Use for                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `moq-wasm`           | `MoqSession`, raw tracks (`publishTrack`, `subscribe`, `fetch`), namespace watches                                                     |
+| `moq-wasm/media`\*   | `createBroadcast`, `LivePlayer`, `RemoteBroadcast`, `PhoneCall`, `watchBroadcasts`, `subscribeTranscript`, `botNamespace`, `botTypeOf` |
+| `moq-wasm/element`   | `<moq-player>` custom HTML element                                                                                                     |
+| `moq-wasm/recording` | `openRecording` for replaying recorded MoQ archives                                                                                    |
 
 \*`moq-wasm/media` is unstable and may change in any minor release.
 
@@ -25,7 +25,7 @@ In an empty directory, install Vite and the latest SDK release:
 
 ```shell
 npm install -D vite
-npm install https://github.com/nttcom/moq-wasm/releases/download/js-sdk-v0.8.0/moq-wasm-0.8.0.tgz
+npm install https://github.com/nttcom/moq-wasm/releases/download/js-sdk-v0.9.0/moq-wasm-0.9.0.tgz
 ```
 
 Exclude `moq-wasm` from Vite pre-bundling in `vite.config.mjs` so Vite can load its `.wasm` binary and workers:
@@ -71,7 +71,7 @@ Try it:
 
 ## Watch a broadcast
 
-### Option A: `LivePlayer` (works with `0.8.0`)
+### Option A: `LivePlayer`
 
 Create `watch.html` and `watch.js` next to the publisher:
 
@@ -97,9 +97,7 @@ document.querySelector('#watch').onclick = async () => {
 
 Open `/watch.html` in another tab, paste the publisher's namespace, and click **Watch** (calling `player.start()` inside a click handler lets the browser play audio). Also import `moq-wasm/media/controls.css` if you attach `PlayerControls`.
 
-### Option B: `<moq-player>` element (`master`)
-
-> Requires a build from `master` (or a release after `0.8.0`). With `0.8.0`, use Option A above or the hosted Live Viewer.
+### Option B: `<moq-player>` element
 
 `<moq-player>` embeds a player without constructing `LivePlayer` manually:
 

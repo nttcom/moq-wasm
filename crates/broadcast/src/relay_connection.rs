@@ -35,7 +35,6 @@ pub use token_refresh_task::TokenRefreshTask;
 /// forwards for a range it never cached can still be answered here.
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
 
-/// A browser reaches the relay over WebTransport only.
 #[cfg(not(target_arch = "wasm32"))]
 type RelayTransport = moqt::NATIVE;
 #[cfg(target_arch = "wasm32")]

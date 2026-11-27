@@ -42,4 +42,4 @@ Logging/OTLP use `TEMPORARY_APPS_STDOUT_FILTER` and standard `OTEL_*` variables 
 TEMPORARY_APPS_SECRET=development-temporary-app-secret cargo run -p temporary-apps
 ```
 
-`docker compose up -d` starts it on port 8083 sharing the dev secret with VTS.
+`docker compose up -d vts temporary-apps` starts it on port 8083 sharing the dev secret with VTS (for the full two-relay stack, run `make relay-certs && docker compose build relay-common && docker compose up -d`).

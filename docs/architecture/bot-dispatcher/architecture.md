@@ -5,7 +5,7 @@ Accepted (2026-11-18)
 
 ## Scope
 `services/bot-dispatcher` starts, stops, and tracks room bots, affecting:
-- `services/recorder`: `recorder record` runs as a bot; `recorder serve` keeps read/replay APIs and drops start/stop.
+- `services/recorder`: `recorder bot` runs as a bot; `recorder serve` keeps read/replay APIs and drops start/stop.
 - `examples/python/moq-*`: replaces `moq-bot-rooms`.
 - `services/temporary-apps`: acts as app server for temporary apps.
 - `crates/auth-token`: adds the `bots` launch claim.
@@ -63,7 +63,7 @@ Bots never see app secrets, launch tokens, or user tokens.
 - **Bot token**: Signed by `bot-dispatcher` (`Claims::issued`) reading the app's current secret from `app-registry` on every sign (or temp secret) so rotations/deletions take effect at next renewal. Lives 1 hour; bots renew 5 min before expiry via relay in-session refresh (`TokenRefreshTask` / `moq_wasm.connect`). Refused once the bot is no longer running.
   - `recorder`: `subscribe: <room>`, `publish: <room>/bots/recorder`
   - AI bots: `subscribe: <room>`, `publish: <room>/bots/<type>`
-- **Bot authentication**: Jobs start with only their bot ID (no secrets in args) and call `/token` and `/heartbeat` with a Google ID token (`aud` = `BOT_DISPATCHER_PUBLIC_URL`, RS256 against Google JWKS, `email` in `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT`). Under `--launcher local`, a random per-bot key is passed via `BOT_DISPATCHER_BOT_KEY` env var instead. JWKS URL is configurable for unit tests.
+- **Bot authentication**: Jobs start with only their bot ID (no secrets in args) and call `/token` and `/heartbeat` with a Google ID token (`aud` = `BOT_DISPATCHER_PUBLIC_URL`, RS256 against Google JWKS, `email` in `BOT_DISPATCHER_JOB_SERVICE_ACCOUNT`). For bot types using a local launcher (`{"kind": "local", …}`), a random per-bot key is passed via `BOT_DISPATCHER_BOT_KEY` env var instead. JWKS URL is configurable for unit tests.
 
 ### Bots in the Room
 - **Presence namespace**: `<room>/bots/<type>` (4 elements under `<app>/<room>`), so 3-element participant logic ignores bots and usernames cannot collide. Pages detect bots directly from `PUBLISH_NAMESPACE` / `PUBLISH_NAMESPACE_DONE` instead of polling (`botNamespace`, `botTypeOf`, and `watchBroadcasts`'s `onBotChange` in `moq-wasm/media`).
@@ -95,7 +95,7 @@ Unknown types or type/ID mismatches return `404`. App comes from the launch toke
 ### Temporary apps
 `temporary-apps` holds the temporary app secret and serves as app server for all temporary apps:
 - Exposes the app-server `/bots/{type}` routes to pages authenticated with their own `Authorization: Bearer` token.
-- Verifies the page token (as in `POST /tokens/refresh`), mints a launch token (`bots` = page's `publish` claim), and forwards to `bot-dispatcher`.
+- Verifies the page token (as in `POST /tokens/refresh`), mints a launch token (`bots` = `""`, whole app root), and forwards to `bot-dispatcher`.
 - Enforces allowed types (`TEMPORARY_APPS_BOT_TYPES`), per-IP fixed-window rate limits, and refuses `stay_when_empty: true` with `403 forbidden`.
 
 ### Configuration & Modules

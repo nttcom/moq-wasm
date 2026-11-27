@@ -1,4 +1,4 @@
-// for draft-ietf-moq-transport-10
+// for draft-ietf-moq-transport-14
 pub const MOQ_TRANSPORT_VERSION: u32 = 0xff00000e;
 
 /// Session termination error codes (draft-ietf-moq-transport-14 §13.1.1).

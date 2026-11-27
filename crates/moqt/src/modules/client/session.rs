@@ -158,8 +158,8 @@ impl Session {
     }
 
     /// Connects to `url` (`moqt://` for raw QUIC, `https://` for
-    /// WebTransport) on an endpoint of its own; in a browser, over
-    /// WebTransport with the WebSocket fallback.
+    /// WebTransport, `wss://` for WebSocket) on an endpoint of its own; in a
+    /// browser, over WebTransport with the WebSocket fallback.
     pub async fn connect(url: &str, config: &ClientConfig) -> anyhow::Result<Self> {
         let endpoint = Endpoint::<ClientTransport>::create_client(config)?;
         let session = endpoint.connect(url).await?.await?;

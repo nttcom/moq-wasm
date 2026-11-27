@@ -17,7 +17,7 @@ Open `http://localhost:5173/moq-wasm/examples/meeting/` in two tabs, select the 
 ## Features
 
 - **Rooms & layout**: Subscribes to everyone's audio and visible tiles' video. Switch between equal gallery and speaker view (screen share or loudest speaker via LOC Audio Level `draft-ietf-moq-loc-04 §2.3.3.2`).
-- **Publishing**: Camera/screen share at 1080p/720p/480p and audio at 128/64/32 kbps, encoded only while subscribed. `Catalog Details` adjusts tracks, codecs, and keyframe intervals.
+- **Publishing**: Camera/screen share at 1080p/720p/480p and Opus audio (64 kbps, `camera_audio`), encoded only while subscribed. Device settings adjust capture constraints and hardware acceleration; clicking a remote participant opens per-track selection, playout buffer controls, and stats.
 - **Playback & ABR**: Plays each remote participant via `RemoteBroadcast` (`moq-wasm/media`) with an adaptive jitter buffer and `Auto` (default) rendition selection based on tile size and delivery lag (switches at group boundaries).
 - **Stats**: Per-participant modal charting bitrate, buffer, capture-to-display delay, and A/V offset.
 - **Recording & captions**: In temporary-app rooms, **Activities** starts the [recorder](../../../../services/recorder/README.md) (MoQ archive with chat and transcript, composite MP4, or one file per participant or per track; `make recorder-serve` lists recordings and finished MoQ archives open in [Recording Player](../recording-player/)) or [transcriber](../../../python/moq-meeting-transcriber/README.md) via `temporary-apps` → [`bot-dispatcher`](../../../../services/bot-dispatcher/README.md). Override URLs with `?temporaryAppsUrl=` and `?recorderUrl=`.

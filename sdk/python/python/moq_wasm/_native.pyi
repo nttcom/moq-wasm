@@ -15,7 +15,7 @@ def connect(
     refreshes_token: bool = False,
     versions: list[str] | None = None,
 ) -> asyncio.Future[Session]:
-    """Connect to a relay (`moqt://` for QUIC, `https://` for WebTransport) with optional JWT `token`.
+    """Connect to a relay (`moqt://` for QUIC, `https://` for WebTransport, `wss://` for WebSocket) with optional JWT `token`.
 
     Follows relay `GOAWAY` using the latest token. With `refreshes_token=True`, also reconnects after
     expired-token closes; otherwise an expired token ends the session and `refresh_token()` raises `RuntimeError`.

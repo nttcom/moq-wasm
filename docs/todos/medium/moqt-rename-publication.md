@@ -8,4 +8,4 @@ No MoQT state in `moqt` is called a publication, as the Naming rule in `.agents/
 
 ## Plan
 
-The wasm `Publication` and `SourcePublication` stay: the rule allows the word in application-facing public APIs.
+Application-facing JS SDK types such as `SourcePublicationStats` stay: the rule allows the word in application-facing public APIs.

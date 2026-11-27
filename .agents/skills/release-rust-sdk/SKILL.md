@@ -13,7 +13,7 @@ Reference: `docs/architecture/moq-wasm/sdk.md` ("Release").
    `git fetch origin --tags && git tag --list 'rust-sdk-v*' --sort=-v:refname | head -1`
    If no tag exists (first release), use the version in `sdk/rust/Cargo.toml` and `## Unreleased` entries, skipping steps 2–5.
 2. List merged PRs touching crate inputs since `<tag>`:
-   `git log --format='%s' <tag>..origin/master -- sdk/rust crates/moqt crates/broadcast crates/msf crates/mediapack crates/auth-token`
+   `git log --format='%s' <tag>..origin/master -- sdk/rust crates/moqt crates/broadcast crates/msf crates/mediapack crates/auth-token crates/robotics`
    (Squash-merged subjects end in `(#<number>)`.)
 3. Read each PR's title and body (prefer PR read tool; fallback: `gh pr view <number> --json title,body`) and collect `## リリースノート（Rust）`.
 4. Show the user PRs missing that section whose entry is not already under `## Unreleased` in `sdk/rust/CHANGELOG.md`; ask which are user-visible and write entries per `create-pull-request` skill rules.

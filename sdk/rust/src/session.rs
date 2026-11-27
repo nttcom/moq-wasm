@@ -40,7 +40,7 @@ pub enum SessionEnd {
     TokenExpired,
 }
 
-/// Connect to a relay (`moqt://` QUIC, `https://` WebTransport).
+/// Connect to a relay (`moqt://` QUIC, `https://` WebTransport, `wss://` WebSocket).
 /// Fails if unreachable/rejected, if `refresh_token` is set without `token`, or if `token` lacks an `appId` claim.
 pub async fn connect(url: &str, options: ConnectOptions) -> anyhow::Result<Session> {
     let keeper = match (&options.token, options.refresh_token) {

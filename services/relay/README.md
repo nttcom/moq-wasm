@@ -8,7 +8,7 @@ MoQT relay accepting QUIC, WebTransport, and WebSocket on one port, with object 
 make relay
 ```
 
-Starts a local VTS, mints a relay token, and runs the relay at `https://127.0.0.1:4433` with a self-signed certificate in `services/relay/keys/`. For a two-relay setup, run `docker compose up -d` (ports 4433 and 4434).
+Starts a local VTS, mints a relay token, and runs the relay at `https://127.0.0.1:4433` with a self-signed certificate in `services/relay/keys/`. For a two-relay setup, run `make relay-certs && docker compose build relay-common && docker compose up -d` (ports 4433 and 4434).
 
 ## Configuration
 

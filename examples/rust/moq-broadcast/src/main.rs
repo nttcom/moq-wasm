@@ -23,7 +23,7 @@ struct Cli {
 
 #[derive(Args)]
 struct RelayArgs {
-    /// The relay: `moqt://` over raw QUIC, `https://` over WebTransport.
+    /// The relay: `moqt://` over raw QUIC, `https://` over WebTransport, `wss://` over WebSocket.
     #[arg(long, default_value = "moqt://127.0.0.1:4433")]
     url: String,
     /// The relay's certificate file, for a self-signed one.

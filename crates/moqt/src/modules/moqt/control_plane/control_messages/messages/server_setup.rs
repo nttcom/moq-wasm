@@ -71,9 +71,9 @@ mod tests {
 
             let expected_bytes_array = [
                 192, // Selected Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000a) in 62bit
+                0, 0, 0, 255, 0, 0, 14,  // Selected Version (i): Value(0xff00000e) in 62bit
                 2,   // Number of Parameters (i)
-                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Type (i): Type(MaxRequestID)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
                 7, 8, b'M', b'O', b'Q', b'-', b'W', b'A', b'S', b'M',
@@ -86,9 +86,9 @@ mod tests {
         fn decode() {
             let bytes_array = [
                 192, // Selected Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff00000a) in 62bit
+                0, 0, 0, 255, 0, 0, 14,  // Selected Version (i): Value(0xff00000e) in 62bit
                 2,   // Number of Parameters (i)
-                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Type (i): Type(MaxRequestID)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
                 7, 8, b'M', b'O', b'Q', b'-', b'W', b'A', b'S', b'M',

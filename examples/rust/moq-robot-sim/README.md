@@ -7,7 +7,7 @@ moves at the velocity `[vx, vy]` of the latest applied action and stops
 when the robot holds. It publishes its position as `state` every 50 ms.
 
 ```sh
-cargo run -p relay
+make relay
 cargo run -p moq-robot-sim -- --insecure --room anon/robot-teleop
 ```
 

@@ -34,7 +34,7 @@ flowchart TB
 
 | JS (`MoqSession`) | Python (`moq_wasm.Session`) | Rust (`moqt::client::Session`) |
 | --- | --- | --- |
-| `subscribe(ns, track, { filter, forward, priority })` | `subscribe(ns, name, filter=, forward=, priority=, delivery_timeout=, group_order=)` | `subscribe(ns, name, SubscribeOptions)` |
+| `subscribe(ns, track, { filter, forward, priority, deliveryTimeoutMs, groupOrder })` | `subscribe(ns, name, filter=, forward=, priority=, delivery_timeout=, group_order=)` | `subscribe(ns, name, SubscribeOptions)` |
 | `subscribeCurrentGroup(ns, track, options?)` | `subscribe_current_group(ns, name, …)` | `subscribe_current_group` |
 | `subscribeGroupStart(ns, track, newGroupAfter, options?)` / `requestNewGroup(largestGroup)` | `subscribe_group_start(ns, name, new_group_after, …)` / `request_new_group` | `subscribe_group_start` / `Subscription::request_new_group` |
 | `fetch(ns, track, start, end)` → `MoqFetch` | `fetch(ns, name, start, end)` → `Fetch` | `fetch` → `Fetch` |
@@ -49,7 +49,7 @@ flowchart TB
 | --- | --- | --- |
 | `watchNamespaces(prefix)` → `MoqNamespaceWatch` | `watch_namespaces(prefix)` → `NamespaceWatch` | `watch_namespaces` → `NamespaceWatch` |
 | `announce(ns)` → `Announcement.close()` | `announce(ns)` → `Announcement.close()` | `announce` → `Announcement::close` |
-| `publishTrack(ns, track, { retentionMs, publish })` → `TrackWriter` | `publish_track(ns, name, retention_seconds=, publish=, datagram=, priority=)` → `TrackWriter` | `publish_track(ns, name, PublishTrackOptions)` → `TrackWriter` |
+| `publishTrack(ns, track, { retentionMs, publish, datagram, priority })` → `TrackWriter` | `publish_track(ns, name, retention_seconds=, publish=, datagram=, priority=)` → `TrackWriter` | `publish_track(ns, name, PublishTrackOptions)` → `TrackWriter` |
 | `write(payload, newGroup, locHeader)` / `writeGroup(payload)` / `nextSubscriber()` | `write(payload, new_group=)` / `write_group(payload)` / `next_subscriber()` | `write(payload, new_group, ExtensionHeaders)` / `write_group` / `next_subscriber` / `demand_change` / `end` |
 | `ReceivedObject` (`groupId`, `subgroupId`, `objectId`, `objectStatus`, `objectPayload`, `locHeader`) | `Object` (`group_id`, `subgroup_id`, `object_id`, `status`, `payload`, `extension_headers`, `timestamp_micros`) | `ReceivedObject` |
 | `RequestError`（draft のエラーコード） | `RequestError` (`message_type`, `code`, `reason`) | `RequestError` |

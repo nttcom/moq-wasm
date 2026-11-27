@@ -29,7 +29,7 @@ use crate::{
     track_writer::TrackWriter,
 };
 
-/// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport.
+/// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport, `wss://` for WebSocket.
 /// The session follows the relay's GOAWAY by itself, presenting the latest
 /// token given to `connect` or `refresh_token`. With `refreshes_token`, it
 /// also reconnects when the relay closes it for an expired token; without it,

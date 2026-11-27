@@ -203,7 +203,7 @@ recorder:
 		--namespace $(RECORDER_NAMESPACE) \
 		$(RECORDER_TLS_FLAGS)
 
-# The recording API for the meeting example; it runs every recording and composite as a child process.
+# The recording API for the meeting example; it lists and replays recordings from the store.
 recorder-serve:
 	@echo "Using MoQT relay URL: $(RECORDER_MOQT_URL)"
 	cargo run -p recorder -- serve \

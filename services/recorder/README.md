@@ -12,7 +12,7 @@ cargo run -p recorder -- \
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--relay` (`MOQT_URL`) | — | `moqt://` (QUIC) or `https://` (WebTransport) |
+| `--relay` (`MOQT_URL`) | — | `moqt://` (QUIC), `https://` (WebTransport), or `wss://` (WebSocket) |
 | `--namespace` | — | Broadcast namespace |
 | `--list-tracks` | off | Print catalog LOC tracks and exit |
 | `--video-track` | by `--max-video-height` | LOC video track (H.264, H.265, VP8, VP9, AV1) |
@@ -54,7 +54,7 @@ cargo run -p recorder -- serve \
 
 - Records every participant namespace under the prefix from the moment it is published (main source and screen share separately) into `<store>/<app>/<recording id>/<namespace>/<track>/`, with `manifest.json` and `composite.mp4` in the recording root.
 - Requires `Authorization: Bearer <JWT>` (verified via VTS) whose `subscribe` claim covers the room. `POST /recordings/{id}/publish` reuses the caller's token (renewed via `--temporary-apps-url` for temporary apps) and therefore also requires relay `publish` permission covering `<room>/recordings/<id>`.
-- Play replays in `examples/recording-player/`. Compositing requires the GStreamer plugins in [`crates/transcode`](../../crates/transcode/README.md#requirements).
+- Play replays in [`examples/browser/examples/recording-player/`](../../examples/browser/examples/recording-player/). Compositing requires the GStreamer plugins in [`crates/transcode`](../../crates/transcode/README.md#install--gstreamer-plugins).
 
 | Option | Default | Meaning |
 | --- | --- | --- |

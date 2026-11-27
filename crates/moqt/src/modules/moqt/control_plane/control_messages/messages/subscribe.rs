@@ -135,7 +135,7 @@ mod tests {
             let buf = subscribe.encode().unwrap();
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
+                0, // Request ID (i)
                 2, // Track Namespace(tuple): Number of elements
                 4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -145,9 +145,9 @@ mod tests {
                 116, 114, 97, 99, 107, 95, 110, 97, 109,
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
-                1,   // Group Order (8): Assending
+                1,   // Group Order (8): Ascending
                 0,   // Forward(8)
-                1,   // Filter Type (i): LatestGroup
+                1,   // Filter Type (i): NextGroupStart
                 0,   // Track Request Parameters (..): Number of Parameters
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
@@ -185,7 +185,7 @@ mod tests {
             let buf = subscribe.encode().unwrap();
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
+                0, // Request ID (i)
                 2, // Track Namespace(tuple): Number of elements
                 4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -238,7 +238,7 @@ mod tests {
             let buf = subscribe.encode().unwrap();
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
+                0, // Request ID (i)
                 2, // Track Namespace(tuple): Number of elements
                 4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -248,7 +248,7 @@ mod tests {
                 116, 114, 97, 99, 107, 95, 110, 97, 109,
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
-                1,   // Group Order (8): Assending
+                1,   // Group Order (8): Ascending
                 1,   // Forward(8)
                 4,   // Filter Type (i): AbsoluteRange
                 10,  // Location: group id (i)
@@ -262,7 +262,7 @@ mod tests {
         #[test]
         fn depacketize_latest_group() {
             let bytes_array = [
-                0, // Subscribe ID (i)
+                0, // Request ID (i)
                 2, // Track Namespace(tuple): Number of elements
                 4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -272,9 +272,9 @@ mod tests {
                 116, 114, 97, 99, 107, 95, 110, 97, 109,
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
-                1,   // Group Order (8): Assending
+                1,   // Group Order (8): Ascending
                 1,   // Forward(8)
-                1,   // Filter Type (i): LatestGroup
+                1,   // Filter Type (i): NextGroupStart
                 0,   // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
@@ -309,7 +309,7 @@ mod tests {
         #[test]
         fn depacketize_absolute_start() {
             let bytes_array = [
-                0, // Subscribe ID (i)
+                0, // Request ID (i)
                 2, // Track Namespace(tuple): Number of elements
                 4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -319,7 +319,7 @@ mod tests {
                 116, 114, 97, 99, 107, 95, 110, 97, 109,
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
-                1,   // Group Order (8): Assending
+                1,   // Group Order (8): Ascending
                 0,   // Forward(8)
                 3,   // Filter Type (i): AbsoluteStart
                 5,   // Location: group id (i)
@@ -363,7 +363,7 @@ mod tests {
         #[test]
         fn depacketize_absolute_range() {
             let bytes_array = [
-                0, // Subscribe ID (i)
+                0, // Request ID (i)
                 2, // Track Namespace(tuple): Number of elements
                 4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -373,7 +373,7 @@ mod tests {
                 116, 114, 97, 99, 107, 95, 110, 97, 109,
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
-                1,   // Group Order (8): Assending
+                1,   // Group Order (8): Ascending
                 0,   // Forward(8)
                 4,   // Filter Type (i): AbsoluteRange
                 5,   // Location: group id (i)
