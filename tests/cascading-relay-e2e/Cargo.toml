@@ -11,4 +11,4 @@ tracing-subscriber = { workspace = true, default-features = true, features = ["e
 anyhow = { workspace = true, features = ["backtrace"] }
 bytes = { workspace = true }
 url = { workspace = true }
-redis = { version = "1.2.2", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.2.2", default-features = false, features = ["tokio-comp", "connection-manager"] }
