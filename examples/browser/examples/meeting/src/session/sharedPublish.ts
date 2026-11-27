@@ -2,7 +2,7 @@
  * Shares one PUBLISH of a track between its callers. A failed PUBLISH is
  * dropped, so the next caller publishes the track again.
  */
-export class TrackPublication<T> {
+export class SharedPublish<T> {
   private pending: Promise<T> | null = null
 
   writer(publish: () => Promise<T>): Promise<T> {
