@@ -57,11 +57,6 @@ impl SharedTiming {
             .get_or_init(|| wall_clock().saturating_sub(presentation_time))
     }
 
-    /// Returns `false` and keeps the earlier origin when one was already taken.
-    pub(crate) fn seed_capture_origin(&self, origin: Timestamp) -> bool {
-        self.capture_origin.set(origin).is_ok()
-    }
-
     pub(crate) fn seeded_capture_origin(&self) -> Option<Timestamp> {
         self.capture_origin.get().copied()
     }

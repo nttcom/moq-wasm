@@ -1,9 +1,9 @@
 mod buffer;
-pub mod compositor;
-pub mod ladder;
+mod compositor;
+mod ladder;
 #[cfg(test)]
 mod test_support;
-pub mod transcoder;
+mod transcoder;
 
 pub use compositor::{CompositeInput, Compositor, EventSource, Loudness};
 pub use ladder::{Rendition, ladder_for};

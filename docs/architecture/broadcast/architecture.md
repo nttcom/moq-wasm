@@ -37,7 +37,7 @@ flowchart LR
 
 ### LOC Tracks (draft-ietf-moq-loc-04)
 - **Payloads**: Raw codec bitstreams—H.264/H.265 (Annex-B, in-band parameter sets), VP8/VP9 frames, AV1 temporal units, raw AAC, G.711 A-law, Opus, MP3.
-- **Extension headers**: Capture timestamp in `0x10` (Unix µs, no Timescale), anchored at wall clock on first `BroadcastWriter::push` + PTS delta (so connect latency never shifts timestamps forward). A source that knows when its samples were captured sets the anchor with `BroadcastWriter::set_capture_origin` before its first push, so that the time a sample spent before the push counts as delay. Audio level (if measured) in `0x0C` (§2.3.3.2).
+- **Extension headers**: Capture timestamp in `0x10` (Unix µs, no Timescale), anchored at wall clock on first `BroadcastWriter::push` + PTS delta (so connect latency never shifts timestamps forward). Audio level (if measured) in `0x0C` (§2.3.3.2).
 
 **Catalog metadata (`msf-02` §5.1.7, §5.2.4.1, §5.2.14)**
 - **Init data**: Base64-encoded in `initDataList` keyed by track name (`initRef`) for AAC `AudioSpecificConfig`; A-law/Opus/MP3 need only codec, sample rate, and channels.

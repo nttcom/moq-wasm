@@ -68,7 +68,6 @@ while let Some(event) = reader.next_event().await {
 | --- | --- |
 | `RelayConnection`, `MoqtTarget` | Owns or borrows a `moqt` session and manages the shared `Origin` and catalog refresh |
 | `TokenRefreshTask` | Polls the caller's `renew` and refreshes a `RelayConnection::new` connection's token before it expires |
-| `token_app_id` | Reads the `appId` claim of a token without verifying it |
 | `Broadcast` | Namespace-scoped handle to announce, declare tracks, offer event timelines (`offer_chat`, `offer_event_timeline`), and send objects |
 | `BroadcastWriter`, `RenditionTrack` | Non-blocking `push(MediaEvent)` publisher for LOC/CMAF tracks, media timelines, and catalog updates; `RenditionTrack` adds ABR renditions |
 | `MediaSource`, `MediaRendition` | Pre-encoded frame publisher with `on_demand` media publishing and keyframe request notifications (used by the SDKs) |
@@ -89,7 +88,7 @@ Customize default track names via `SourceTracks`.
 ## Key caveats
 
 - **Group alignment**: Video keyframes open new wall-clock-seeded groups; audio joins the latest video group (dropped before the first video keyframe; audio-only opens a group every 1 s).
-- **Capture timestamps**: The first pushed sample counts as captured when it is pushed, and the rest follow by PTS. A source that knows the real capture time calls `BroadcastWriter::set_capture_origin` before its first push.
+- **Capture timestamps**: The first pushed sample counts as captured when it is pushed, and the rest follow by PTS.
 - **ABR keyframe ordering**: Push the source video sample to `BroadcastWriter::push()` **before** sending it to [`transcode::Transcoder`](../transcode/README.md) so `FollowSource` renditions match the synchronously assigned keyframe group ID.
 - **Publishing policy**: `catalog` is always eagerly `PUBLISH`ed at `Forward State 1` (refreshed on change and every 30 s, `Retention::NewestOnly`). LOC media tracks use `Forward State 1` by default, or `Forward State 0` when `on_demand` is enabled (media flows only while subscribed). CMAF siblings wait for incoming `SUBSCRIBE`.
 - **Backpressure & retention**: Media tracks keep 60 s for relay `FETCH`. `BroadcastWriter` buffers 2,310 slots (8 reserved for configs); when full, `push()` returns `PushOutcome::Dropped` and drops video until a keyframe fits.
