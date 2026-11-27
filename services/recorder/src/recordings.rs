@@ -49,13 +49,13 @@ impl From<anyhow::Error> for PublishRejection {
     }
 }
 
-pub(crate) struct Publication {
+pub(crate) struct Replay {
     pub(crate) description: Value,
     pub(crate) lease: ReplayLease,
 }
 
-/// Recording state belongs to the store and independent jobs. Replay
-/// publications belong to this API process while a lease on them exists.
+/// Recording state belongs to the store and independent jobs. Replays
+/// belong to this API process while a lease on them exists.
 pub(crate) struct Recordings {
     config: ServeArgs,
     store: RecordingStore,
@@ -108,7 +108,7 @@ impl Recordings {
         &self,
         id: &str,
         bearer: Option<&str>,
-    ) -> Result<Option<Publication>, PublishRejection> {
+    ) -> Result<Option<Replay>, PublishRejection> {
         let Some(record) = self.store.read_state(id).await? else {
             return Ok(None);
         };
@@ -166,7 +166,7 @@ impl Recordings {
                 "renew_after_seconds": RENEW_AFTER.as_secs(),
                 "started_at_ms": started_at_ms,
             });
-            return Ok(Some(Publication { description, lease }));
+            return Ok(Some(Replay { description, lease }));
         }
     }
 
