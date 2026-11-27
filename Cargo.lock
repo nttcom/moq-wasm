@@ -2471,15 +2471,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auth-token",
+ "aws-lc-rs",
  "broadcast",
  "bytes",
  "mediapack",
  "moqt",
  "msf",
+ "reqwest",
  "robotics",
  "serde_json",
+ "telemetry",
+ "telemetry-report",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

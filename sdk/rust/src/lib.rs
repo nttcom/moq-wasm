@@ -3,6 +3,7 @@
 pub mod media;
 pub mod robotics;
 mod session;
+pub mod telemetry;
 #[cfg(test)]
 mod test_support;
 mod token;

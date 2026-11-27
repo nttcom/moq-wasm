@@ -2,6 +2,7 @@ mod connection_watch_task;
 mod token_refresh_task;
 
 use std::{
+    future::Future,
     ops::Deref,
     sync::{Arc, Mutex},
 };
@@ -12,6 +13,7 @@ use moqt::{
 };
 use tokio::sync::watch;
 
+use crate::telemetry::SessionScope;
 use crate::token::{RefreshToken, TokenKeeper};
 use connection_watch_task::ConnectionWatchTask;
 use token_refresh_task::TokenRefreshTask;
@@ -64,18 +66,24 @@ pub async fn connect(url: &str, options: ConnectOptions) -> anyhow::Result<Sessi
         },
         ..ClientConfig::default()
     };
-    let client = Arc::new(client::Session::connect(url, &config).await?);
-    let (end_sender, _) = watch::channel(None);
-    let end_sender = Arc::new(end_sender);
-    let token_refresh = keeper.zip(current_token).map(|(keeper, current_token)| {
-        TokenRefreshTask::run(keeper, current_token, client.clone(), end_sender.clone())
-    });
-    Ok(Session {
-        _connection_watch: ConnectionWatchTask::run(client.clone(), end_sender.clone()),
-        _token_refresh: token_refresh,
-        client,
-        end_sender,
-    })
+    let scope = SessionScope::new(current_token.as_ref());
+    scope
+        .scoped(async move {
+            let client = Arc::new(client::Session::connect(url, &config).await?);
+            let (end_sender, _) = watch::channel(None);
+            let end_sender = Arc::new(end_sender);
+            let token_refresh = keeper.zip(current_token).map(|(keeper, current_token)| {
+                TokenRefreshTask::run(keeper, current_token, client.clone(), end_sender.clone())
+            });
+            Ok(Session {
+                _connection_watch: ConnectionWatchTask::run(client.clone(), end_sender.clone()),
+                _token_refresh: token_refresh,
+                client,
+                end_sender,
+                scope,
+            })
+        })
+        .await
 }
 
 /// Relay session wrapping `moqt::client::Session` (via `Deref`) with automatic token refresh,
@@ -85,6 +93,7 @@ pub struct Session {
     end_sender: Arc<watch::Sender<Option<SessionEnd>>>,
     _connection_watch: ConnectionWatchTask,
     _token_refresh: Option<TokenRefreshTask>,
+    scope: SessionScope,
 }
 
 impl Session {
@@ -101,6 +110,15 @@ impl Session {
             .map(|end| end.clone());
         // `self` holds the sender, so `wait_for` cannot fail and the fallback is unreachable.
         end.ok().flatten().unwrap_or(SessionEnd::Closed)
+    }
+
+    /// Polls `future` in the session's telemetry scope: with
+    /// [`telemetry::layer`](crate::telemetry::layer) installed, its logs and
+    /// spans, and those of the `moqt` tasks it starts, are reported with the
+    /// session's latest token. Tasks it starts with `tokio::spawn` need their
+    /// own `scoped`.
+    pub fn scoped<F: Future>(&self, future: F) -> impl Future<Output = F::Output> {
+        self.scope.scoped(future)
     }
 
     /// Closes the session with NO_ERROR; `closed` resolves with

@@ -39,6 +39,7 @@ flowchart TB
         media["moq_wasm::media (create_broadcast, MediaSource, EventTimeline, watch_broadcasts, RemoteBroadcast, Catalog)"]
         robotics["moq_wasm::robotics (run_robot, offer_actions)"]
         core["moq_wasm (connect, Session, moqt::client re-exports)"]
+        telemetry["moq_wasm::telemetry (layer, Telemetry)"]
     end
     media --> core
     media --> broadcast["broadcast"]
@@ -46,6 +47,8 @@ flowchart TB
     robotics --> core
     robotics --> rlib["robotics"]
     core --> moqt["moqt::client"]
+    core --> telemetry
+    telemetry --> report["telemetry-report"]
     broadcast --> moqt
 ```
 
@@ -87,7 +90,31 @@ tokio::select! {
 **Lifecycle & logging**
 - **Token refresh**: Reads `app_id`/`exp`, calls `RefreshToken` (`Fn(String) -> Future<Output = anyhow::Result<String>>`) 5 min before expiry, retries every 30 s until `exp`, and sends in-session `TRACK_STATUS` refresh ([`relay/architecture.md`](../relay/architecture.md) "Token refresh"). New connections use the latest token.
 - **`closed()`**: Resolves once with `ConnectionLost(TransportClose)`, `TokenExpired`, or `Closed`. Callers race their work against `closed()` with `tokio::select!`.
-- **Logs**: Emits `tracing` events using `AGENTS.md` fields without installing a subscriber (no `init`/`on_log`/`on_span`/client-telemetry forwarding).
+- **Logs**: Emits `tracing` events using `AGENTS.md` fields without installing a subscriber (no `init`/`on_log`/`on_span`); `moq_wasm::telemetry` forwards them to client telemetry (below).
+
+### Client Telemetry: `moq_wasm::telemetry`
+
+```rust
+use tracing_subscriber::{Layer, filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt};
+
+let (telemetry_layer, telemetry) = moq_wasm::telemetry::layer(moq_wasm::telemetry::TelemetryOptions {
+    url: "https://observability.example".to_string(),
+    page: "my-robot".to_string(),
+});
+tracing_subscriber::registry()
+    .with(tracing_subscriber::fmt::layer())
+    .with(telemetry_layer.with_filter(LevelFilter::INFO))
+    .init();
+let session = moq_wasm::connect(url, options).await?;
+session.scoped(work(&session)).await?;
+telemetry.flush().await;
+```
+
+The Rust counterpart of the Python SDK's `init(telemetry=)` ([`python/sdk.md`](../python/sdk.md) "Logs and Spans"), posting to `observability`'s `/api/client-telemetry` ([`observability/architecture.md`](../observability/architecture.md) "Client Telemetry") with `service: "rust"`.
+- **A layer, not `init`**: Rust apps install their own subscriber, so `layer(options)` returns a `tracing_subscriber::Layer` (events → logs at the levels the app filters it to; closed `INFO`+ spans via `telemetry-report`'s `SpanRecordLayer`) and a `Telemetry` owning the flush task. It also sets `moqt`'s spawn wrapper and trace-context provider/joiner (process-wide, first call wins), so requests carry `TRACE_CONTEXT`.
+- **Session scopes**: Each `Session` binds a `telemetry_report` scope to its current token (followed across refreshes); `connect` runs in it, so the session's `moqt` tasks carry it, and `Session::scoped(future)` puts app work (and the `moqt` tasks it spawns) under it. Requests called directly on `Session` outside `scoped` and records outside any session go untokenized, e.g. an HTTP server's logs in a service holding one session per app token.
+- **Reports**: Newest 100 logs + 100 spans per token (max 64 tokens, the oldest evicted and counted), posted every 10 s and on `Telemetry::flush` (5 s timeout, failures dropped). Remembers up to 64 `401`-rejected tokens by SHA-256 digest and sends their later records untokenized. Dropping `Telemetry` stops the task without a final report (a spawned report would not outlive the runtime), so apps await `flush()` before exit. No `redact` or custom stats.
+- **Dependencies**: `telemetry-report` and `telemetry` (shared with the other SDKs), `tracing-subscriber`, `reqwest` (rustls), and `aws-lc-rs` (SHA-256), all already workspace dependencies.
 
 ### Media: `moq_wasm::media`
 

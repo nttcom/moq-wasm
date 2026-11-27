@@ -8,16 +8,21 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0.102"
 auth-token = { path = "../../crates/auth-token" }
+aws-lc-rs = { workspace = true }
 broadcast = { path = "../../crates/broadcast" }
 bytes = "1.11.1"
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
 robotics = { path = "../../crates/robotics" }
 msf = { path = "../../crates/msf" }
+reqwest = { workspace = true, features = ["json", "rustls"] }
 serde_json = "1"
+telemetry = { path = "../../crates/telemetry" }
+telemetry-report = { path = "../../crates/telemetry-report" }
 tokio = { version = "1.52.3", features = ["macros", "sync", "time"] }
 tracing = "0.1.44"
+tracing-subscriber = { workspace = true, features = ["registry", "std"] }
 
 [dev-dependencies]
 moqt = { path = "../../crates/moqt", features = ["self-signed-cert"] }
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }
