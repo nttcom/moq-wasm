@@ -11,7 +11,7 @@ mod token;
 pub use moqt::client::{
     Announcement, Fetch, FetchError, FollowEvent, Group, GroupStartOptions, NamespaceWatch,
     PublishDone, PublishTrackOptions, ReceivedObject, RequestError, SubscribeOptions, Subscription,
-    TrackFollower, TrackWriter,
+    SubscriptionEvent, TrackFollower, TrackWriter,
 };
 pub use moqt::namespace::NamespaceEvent;
 pub use moqt::object::{ExtensionHeaders, GroupOrder, Location, ObjectStatus};

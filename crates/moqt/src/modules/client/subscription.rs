@@ -71,6 +71,14 @@ pub enum SubscriptionEvent {
         group_id: u64,
         code: DataStreamResetCode,
     },
+    /// The End of Group status object (draft-14 §10.2.1.1): no object of
+    /// `group_id` comes after `object_id`.
+    EndOfGroup {
+        group_id: u64,
+        /// 0 for one that arrived in a datagram.
+        subgroup_id: u64,
+        object_id: u64,
+    },
 }
 
 /// The PUBLISH_DONE (draft-14 §9.12) that ended a subscription.
@@ -131,13 +139,17 @@ impl Subscription {
         loop {
             match self.next_event().await? {
                 Some(SubscriptionEvent::Object(object)) => return Ok(Some(object)),
-                Some(SubscriptionEvent::Reset { .. }) => continue,
+                Some(SubscriptionEvent::Reset { .. } | SubscriptionEvent::EndOfGroup { .. }) => {
+                    continue;
+                }
                 None => return Ok(None),
             }
         }
     }
 
-    /// `next`, with the subgroup streams the publisher reset.
+    /// `next`, with the subgroup streams the publisher reset and the End of
+    /// Group status objects, each in its place among the objects of its
+    /// subgroup.
     pub async fn next_event(&self) -> anyhow::Result<Option<SubscriptionEvent>> {
         let mut reading = self.reading.lock().await;
         if let Reading::Unstarted = *reading {
@@ -149,6 +161,14 @@ impl Subscription {
         Ok(reader.next_event().await?.map(|event| match event {
             TrackEvent::Object(object) => SubscriptionEvent::Object(object.into()),
             TrackEvent::Reset { group_id, code } => SubscriptionEvent::Reset { group_id, code },
+            TrackEvent::EndOfGroup {
+                location,
+                forwarding,
+            } => SubscriptionEvent::EndOfGroup {
+                group_id: location.group_id,
+                subgroup_id: subgroup_id(forwarding),
+                object_id: location.object_id,
+            },
         }))
     }
 
