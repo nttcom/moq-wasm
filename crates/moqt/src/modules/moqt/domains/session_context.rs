@@ -490,8 +490,8 @@ impl SessionContext {
         }
     }
 
-    /// Drops `connection` from the PUBLISH subscription `request_id`, and the
-    /// PUBLISH subscription once it is on no connection. `true` when it is still on
+    /// Drops `connection` from the PUBLISH subscription `request_id`, and
+    /// removes it once it is on no connection. `true` when it is still on
     /// another one.
     pub(crate) fn leave_publish_subscription(
         &self,
