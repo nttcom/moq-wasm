@@ -45,6 +45,11 @@ pub enum RequestFailure {
     /// §10.18); draft-14 never returns it.
     #[error("no namespace subscription of the peer covers the namespace")]
     NoNamespaceSubscription,
+    /// A Track Namespace element passed to `moqt::client::Session` contains
+    /// `/`, which this crate joins elements with, so the request was not
+    /// sent.
+    #[error("a track namespace element contains '/'")]
+    InvalidNamespace,
 }
 
 pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {

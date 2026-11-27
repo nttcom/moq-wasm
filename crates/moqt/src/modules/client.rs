@@ -11,11 +11,15 @@ pub(crate) mod track_follower;
 pub(crate) mod track_watch;
 pub(crate) mod track_writer;
 
-/// The `/`-joined form `moqt::Session` takes.
-fn join_namespace(namespace: &[impl AsRef<str>]) -> String {
-    namespace
-        .iter()
-        .map(AsRef::as_ref)
-        .collect::<Vec<_>>()
-        .join("/")
+use crate::RequestFailure;
+
+/// The `/`-joined form `moqt::Session` takes, which splits it back at `/`
+/// into the Track Namespace tuple; an element containing `/` would arrive as
+/// several, so it fails with `RequestFailure::InvalidNamespace`.
+fn join_namespace(namespace: &[impl AsRef<str>]) -> Result<String, RequestFailure> {
+    let elements: Vec<&str> = namespace.iter().map(AsRef::as_ref).collect();
+    if elements.iter().any(|element| element.contains('/')) {
+        return Err(RequestFailure::InvalidNamespace);
+    }
+    Ok(elements.join("/"))
 }

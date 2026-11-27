@@ -205,10 +205,12 @@ impl Session {
             }
             .subscribe_option()
         };
+        let namespace =
+            join_namespace(namespace).map_err(RequestError::of(RequestKind::Subscribe))?;
         let subscription = self
             .session
             .subscriber()
-            .subscribe(join_namespace(namespace), track.to_string(), option)
+            .subscribe(namespace, track.to_string(), option)
             .await
             .map_err(RequestError::of(RequestKind::Subscribe))?;
         Ok(self.subscription(subscription, Reading::Unstarted))
@@ -222,14 +224,12 @@ impl Session {
         track: &str,
         options: GroupStartOptions,
     ) -> Result<Subscription, RequestError> {
+        let namespace =
+            join_namespace(namespace).map_err(RequestError::of(RequestKind::Subscribe))?;
         let (subscription, reader) = self
             .session
             .subscriber()
-            .subscribe_current_group(
-                join_namespace(namespace),
-                track.to_string(),
-                options.subscribe_option(),
-            )
+            .subscribe_current_group(namespace, track.to_string(), options.subscribe_option())
             .await
             .map_err(RequestError::of(RequestKind::Subscribe))?;
         Ok(self.subscription(subscription, Reading::Objects(reader)))
@@ -244,11 +244,13 @@ impl Session {
         new_group_after: u64,
         options: GroupStartOptions,
     ) -> Result<Subscription, RequestError> {
+        let namespace =
+            join_namespace(namespace).map_err(RequestError::of(RequestKind::Subscribe))?;
         let (subscription, reader) = self
             .session
             .subscriber()
             .subscribe_group_start(
-                join_namespace(namespace),
+                namespace,
                 track.to_string(),
                 new_group_after,
                 options.subscribe_option(),
@@ -272,10 +274,11 @@ impl Session {
         start: Location,
         end: Location,
     ) -> Result<Fetch, FetchError> {
+        let namespace = join_namespace(namespace).map_err(RequestError::of(RequestKind::Fetch))?;
         let mut subscriber = self.session.subscriber();
         let handle = subscriber
             .fetch(
-                join_namespace(namespace),
+                namespace,
                 track.to_string(),
                 start,
                 end,
@@ -297,10 +300,12 @@ impl Session {
         namespace: &[impl AsRef<str>],
         track: &str,
     ) -> Result<Option<Location>, RequestError> {
+        let namespace =
+            join_namespace(namespace).map_err(RequestError::of(RequestKind::TrackStatus))?;
         let status = self
             .session
             .subscriber()
-            .track_status(join_namespace(namespace), track.to_string(), Vec::new())
+            .track_status(namespace, track.to_string(), Vec::new())
             .await
             .map_err(RequestError::of(RequestKind::TrackStatus))?;
         Ok(status.content_exists.largest())
@@ -312,19 +317,20 @@ impl Session {
         &self,
         prefix: &[impl AsRef<str>],
     ) -> Result<NamespaceWatch, RequestError> {
+        let joined =
+            join_namespace(prefix).map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         let elements = prefix
             .iter()
             .map(|element| element.as_ref().to_string())
             .collect();
         // Register before sending the request so immediate peer announcements aren't missed.
         let events = self.routes.watchers.watch(elements);
-        let prefix = join_namespace(prefix);
         self.session
             .subscriber()
-            .subscribe_namespace(prefix.clone(), NamespaceInterest::Namespaces)
+            .subscribe_namespace(joined.clone(), NamespaceInterest::Namespaces)
             .await
             .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
-        Ok(NamespaceWatch::new(self.session.clone(), prefix, events))
+        Ok(NamespaceWatch::new(self.session.clone(), joined, events))
     }
 
     /// `SUBSCRIBE_NAMESPACE` (draft-14 §9.28) for namespaces and tracks under `prefix`: reports each namespace and hands over each matching `PUBLISH`, which nothing else on the session then sees.
@@ -333,6 +339,8 @@ impl Session {
         &self,
         prefix: &[impl AsRef<str>],
     ) -> Result<TrackWatch, RequestError> {
+        let joined =
+            join_namespace(prefix).map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         let elements = prefix
             .iter()
             .map(|element| element.as_ref().to_string())
@@ -342,10 +350,7 @@ impl Session {
         let watch = TrackWatch::new(self.session.clone(), self.routes.clone(), elements);
         self.session
             .subscriber()
-            .subscribe_namespace(
-                join_namespace(prefix),
-                NamespaceInterest::NamespacesAndTracks,
-            )
+            .subscribe_namespace(joined, NamespaceInterest::NamespacesAndTracks)
             .await
             .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         Ok(watch)
@@ -363,6 +368,8 @@ impl Session {
         namespace: &[impl AsRef<str>],
         track: &str,
     ) -> Result<TrackFollower, RequestError> {
+        let joined =
+            join_namespace(namespace).map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         let elements: Vec<String> = namespace
             .iter()
             .map(|element| element.as_ref().to_string())
@@ -379,10 +386,7 @@ impl Session {
         );
         self.session
             .subscriber()
-            .subscribe_namespace(
-                join_namespace(namespace),
-                NamespaceInterest::NamespacesAndTracks,
-            )
+            .subscribe_namespace(joined, NamespaceInterest::NamespacesAndTracks)
             .await
             .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         Ok(follower)
@@ -393,7 +397,8 @@ impl Session {
         &self,
         namespace: &[impl AsRef<str>],
     ) -> Result<Announcement, RequestError> {
-        let namespace = join_namespace(namespace);
+        let namespace =
+            join_namespace(namespace).map_err(RequestError::of(RequestKind::PublishNamespace))?;
         self.session
             .publisher()
             .publish_namespace(namespace.clone())
@@ -414,7 +419,7 @@ impl Session {
         track: &str,
         options: PublishTrackOptions,
     ) -> anyhow::Result<TrackWriter> {
-        let namespace = join_namespace(namespace);
+        let namespace = join_namespace(namespace)?;
         let origin = &self.routes.origin;
         origin
             .ensure_track(
@@ -475,7 +480,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        RequestErrorCode, TerminationErrorCode,
+        RequestErrorCode, RequestFailure, TerminationErrorCode,
         client::PublishTrackError,
         modules::{
             client::subscription::ReceivedObject,
@@ -508,7 +513,7 @@ mod tests {
             ..SubscribeOption::default()
         };
         let subscription = within(session.subscriber().subscribe(
-            join_namespace(NAMESPACE),
+            join_namespace(NAMESPACE).unwrap(),
             track.to_string(),
             option,
         ))
@@ -548,7 +553,7 @@ mod tests {
         within(
             server
                 .origin()
-                .end_track(&join_namespace(NAMESPACE), "chat"),
+                .end_track(&join_namespace(NAMESPACE).unwrap(), "chat"),
         )
         .await
         .unwrap();
@@ -636,7 +641,7 @@ mod tests {
             .await
             .unwrap();
         let subscription = within(client.session.subscriber().subscribe(
-            join_namespace(NAMESPACE),
+            join_namespace(NAMESPACE).unwrap(),
             "chat".to_string(),
             SubscribeOption::default(),
         ))
@@ -645,7 +650,7 @@ mod tests {
         within(
             server
                 .origin()
-                .end_track(&join_namespace(NAMESPACE), "chat"),
+                .end_track(&join_namespace(NAMESPACE).unwrap(), "chat"),
         )
         .await
         .unwrap();
@@ -664,6 +669,27 @@ mod tests {
             done.map(|done| done.code),
             Some(PublishDoneCode::TrackEnded)
         );
+    }
+
+    #[tokio::test]
+    async fn announce_and_watch_namespaces_refuse_an_element_containing_slash() {
+        // Arrange
+        let (client, _server) = connected_client_sessions("client-namespace-slash").await;
+        let namespace = ["anon", "room", "directory/filename"];
+
+        // Act
+        let announced = within(client.announce(&namespace)).await;
+        let watched = within(client.watch_namespaces(&namespace)).await;
+
+        // Assert
+        assert!(matches!(
+            announced.err().map(|error| error.failure),
+            Some(RequestFailure::InvalidNamespace)
+        ));
+        assert!(matches!(
+            watched.err().map(|error| error.failure),
+            Some(RequestFailure::InvalidNamespace)
+        ));
     }
 
     #[tokio::test]
@@ -725,7 +751,7 @@ mod tests {
         within(
             server
                 .origin()
-                .end_track(&join_namespace(NAMESPACE), "cursor"),
+                .end_track(&join_namespace(NAMESPACE).unwrap(), "cursor"),
         )
         .await
         .unwrap();
@@ -756,7 +782,7 @@ mod tests {
         within(
             server
                 .origin()
-                .end_track(&join_namespace(NAMESPACE), "cursor"),
+                .end_track(&join_namespace(NAMESPACE).unwrap(), "cursor"),
         )
         .await
         .unwrap();
