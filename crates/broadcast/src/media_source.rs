@@ -12,7 +12,7 @@ use mediapack::{
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::{
-    broadcast::{Broadcast, SourceTracks},
+    broadcast::{Broadcast, SourceTracks, timeline_track_name},
     publish_queue::PushOutcome,
     rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack},
     writer::{BroadcastWriter, remove_track_after},
@@ -243,20 +243,38 @@ impl MediaSource {
 
     /// Ends the video, its renditions and the audio with PUBLISH_DONE after
     /// the media queued before, as `remove_track` does; later pushes to its
-    /// renditions fail with `MediaSourceError::Stopped`. A track whose
-    /// publish task stopped is removed from the broadcast directly. A step
-    /// that fails, as once the relay session ended, does not stop the
-    /// others; the first failure is returned.
+    /// renditions fail with `MediaSourceError::Stopped`. A PUBLISH of these
+    /// tracks or the media timeline still waiting for the relay's answer is
+    /// withdrawn first, which stops the task waiting on it and drops the
+    /// media queued behind. A track whose publish task stopped is removed
+    /// from the broadcast directly. A step that fails, as once the relay
+    /// session ended, does not stop the others; the first failure is
+    /// returned.
     pub fn end(self) -> impl Future<Output = anyhow::Result<()>> + use<> {
         let tracks = self.writer.source_tracks();
+        let broadcast = self.writer.broadcast().clone();
+        let mut withdrawn = vec![
+            tracks.video.clone(),
+            timeline_track_name(&tracks.video),
+            tracks.audio.clone(),
+        ];
+        withdrawn.extend(
+            self.renditions
+                .iter()
+                .map(|rendition| rendition.track_name.clone()),
+        );
         let video = self.writer.end_track(&tracks.video);
         let renditions: Vec<_> = self
             .renditions
             .iter()
-            .map(|rendition| end_rendition(rendition, self.writer.broadcast().clone()))
+            .map(|rendition| end_rendition(rendition, broadcast.clone()))
             .collect();
         let audio = self.writer.end_track(&tracks.audio);
         async move {
+            broadcast
+                .connection()
+                .withdraw_publishes(broadcast.namespace(), &withdrawn)
+                .await;
             let mut result = video.await;
             for ended in renditions {
                 result = result.and(ended.await);
@@ -391,7 +409,7 @@ fn demux(
 
 #[cfg(test)]
 mod tests {
-    use moqt::Subscription;
+    use moqt::{Subscription, Version};
 
     use super::*;
     use crate::{
@@ -665,6 +683,36 @@ mod tests {
                 .any(|request| request.starts_with("PUBLISH ")),
             "{after_done:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn ending_a_source_withdraws_a_publish_the_relay_has_not_answered() {
+        for version in [Version::Draft14, Version::Draft18] {
+            // Arrange: the publish task waits for the PUBLISH_OK of the audio
+            let (answer_publish, publish_gate) = oneshot::channel();
+            let mut relay = FakeRelay::spawn_holding_publish(
+                "media-source-end-unanswered",
+                version,
+                "audio",
+                publish_gate,
+            );
+            // Kept, so the session outlives the source and takes the late answer.
+            let connection = relay.connection();
+            let mut source = source_on(connection.clone(), false);
+            source.configure_audio("opus", 48_000, 1, None).unwrap();
+            source
+                .push_audio(Bytes::from_static(b"a"), 0, None)
+                .unwrap();
+            relay.wait_for_request("PUBLISH live/audio").await;
+
+            // Act
+            let ended = tokio::time::timeout(TEST_TIMEOUT, source.end()).await;
+            let _ = answer_publish.send(());
+
+            // Assert: the PUBLISH answered late is ended
+            assert!(matches!(ended, Ok(Ok(()))), "{version:?}: {ended:?}");
+            relay.wait_for_publish_done("live", &["audio"]).await;
+        }
     }
 
     #[tokio::test]
