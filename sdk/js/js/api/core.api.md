@@ -199,9 +199,12 @@ export type NamespaceEvent = {
 
 // @public (undocumented)
 export type PublishDone = {
-    readonly code: bigint;
+    readonly code: PublishDoneCode;
     readonly reason: string;
 };
+
+// @public
+export type PublishDoneCode = 'INTERNAL_ERROR' | 'UNAUTHORIZED' | 'TRACK_ENDED' | 'SUBSCRIPTION_ENDED' | 'GOING_AWAY' | 'EXPIRED' | 'TOO_FAR_BEHIND' | 'MALFORMED_TRACK' | 'UPDATE_FAILED' | 'EXCESSIVE_LOAD';
 
 // @public (undocumented)
 export type PublishTrackOptions = {

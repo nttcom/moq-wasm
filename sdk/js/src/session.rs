@@ -11,7 +11,7 @@ use moqt::{
     object::{GroupOrder, Location},
     publish::Retention,
     subscribe::FilterType,
-    wire::{publish_done_code_to_wire, request_error_code_to_wire},
+    wire::request_error_code_to_wire,
 };
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
@@ -452,7 +452,7 @@ impl Subscription {
             done: future_to_promise(scope.scoped(async move {
                 Ok(match done.await {
                     Some(done) => PublishDoneInfo {
-                        code: publish_done_code_to_wire(done.code),
+                        code: done.code.name().to_string(),
                         reason: done.reason,
                     }
                     .into(),
@@ -701,9 +701,10 @@ impl From<Location> for MoqLocation {
 
 #[wasm_bindgen]
 pub struct PublishDoneInfo {
-    /// The draft-14 PUBLISH_DONE status code (§9.12).
-    #[wasm_bindgen(readonly)]
-    pub code: u64,
+    /// The PUBLISH_DONE code's name, e.g. `TRACK_ENDED`, the same on every
+    /// draft.
+    #[wasm_bindgen(getter_with_clone, readonly)]
+    pub code: String,
     #[wasm_bindgen(getter_with_clone, readonly)]
     pub reason: String,
 }

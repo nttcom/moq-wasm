@@ -60,7 +60,7 @@ test('a track that ends without ended ends the call with gateway', async () => {
   await settle()
 
   // Act
-  subscription.end({ code: 0n, reason: '' })
+  subscription.end({ code: 'INTERNAL_ERROR', reason: '' })
   await run
 
   // Assert

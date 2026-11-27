@@ -437,6 +437,23 @@ async def test_the_subscription_ends_when_the_publisher_closes_inside_an_open_gr
     await subscriber.close()
 
 
+async def test_publish_done_reports_its_code_by_name_on_a_draft18_session(draft18_relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(draft18_relay_url, namespace)
+    subscriber = await connect(draft18_relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+
+    # Act
+    await within(track.close())
+
+    # Assert
+    done = await within(objects.done())
+    assert done.code == "TRACK_ENDED"
+    await publisher.close()
+    await subscriber.close()
+
+
 async def test_a_subscriber_after_an_unsubscribe_inside_an_open_group_gets_its_later_objects(relay_url):
     # Arrange: the relay's UNSUBSCRIBE makes the publisher leave the open group
     namespace = [*room(), "alice"]

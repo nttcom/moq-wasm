@@ -31,7 +31,7 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
   /// Resolves `done` of the subscription to `name` with SUBSCRIPTION_ENDED,
   /// and waits for the callbacks chained on it.
   async endedByPublisher(name: string): Promise<void> {
-    this.publishDones.get(name)?.({ code: 3n, reason: '' })
+    this.publishDones.get(name)?.({ code: 'SUBSCRIPTION_ENDED', reason: '' })
     await Promise.resolve()
   }
 
