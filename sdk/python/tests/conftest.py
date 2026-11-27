@@ -161,10 +161,8 @@ def relay_auth(tmp_path_factory):
         stop(vts)
 
 
-@contextmanager
-def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = None, port: int | None = None):
-    """`port` restarts a relay on the port a stopped one had."""
-    port = port or free_relay_port()
+def launch_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None, port: int) -> subprocess.Popen | None:
+    """None when another process bound `port` before the relay did."""
     log = auth.logs / f"{relay_id}-{port}-{time.monotonic_ns()}.log"
     process = subprocess.Popen(
         [TARGET / "relay"],
@@ -184,14 +182,31 @@ def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = N
         stdout=open(log, "w"),
         stderr=subprocess.STDOUT,
     )
-    try:
-        def started() -> bool:
-            if process.poll() is not None:
-                raise RuntimeError(f"{relay_id} exited with code {process.returncode}; see {log}")
-            return logged(log, "Relay server started")
 
+    def started() -> bool:
+        if process.poll() is not None:
+            if logged(log, "Address already in use"):
+                return True
+            raise RuntimeError(f"{relay_id} exited with code {process.returncode}; see {log}")
+        return logged(log, "Relay server started")
+
+    try:
         wait_until(started, relay_id)
-        yield Relay(f"moqt://127.0.0.1:{port}", port, process)
+    except BaseException:
+        stop(process)
+        raise
+    return None if process.returncode is not None else process
+
+
+@contextmanager
+def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = None, port: int | None = None):
+    """`port` restarts a relay on the port a stopped one had. Without it, the relay starts again on a
+    fresh port when another test worker takes its port before it binds."""
+    while (process := launch_relay(auth, relay_id, env, chosen := port or free_relay_port())) is None:
+        if port:
+            raise RuntimeError(f"{relay_id} cannot bind port {port}: another process holds it")
+    try:
+        yield Relay(f"moqt://127.0.0.1:{chosen}", chosen, process)
     finally:
         stop(process)
 
