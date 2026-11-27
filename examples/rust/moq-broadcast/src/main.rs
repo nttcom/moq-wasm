@@ -1,5 +1,3 @@
-mod annexb;
-
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context;
@@ -7,11 +5,14 @@ use clap::{Args, Parser, Subcommand};
 use moq_wasm::{
     CertificateVerification, ConnectOptions, Retention, Session, SessionEnd,
     media::{
-        self, BitratePreference, EventTimelineOptions, FollowOptions, MediaSourceOptions,
-        RemoteBroadcast, TrackQuery, WatchOptions,
+        self, AnnexBSplitter, BitratePreference, EventTimelineOptions, FollowOptions,
+        MediaSourceOptions, RemoteBroadcast, TrackQuery, WatchOptions,
     },
 };
 use serde_json::json;
+
+/// The SPS in the file gives the profile and level.
+const CODEC: &str = "avc1";
 
 #[derive(Parser)]
 struct Cli {
@@ -120,10 +121,14 @@ async fn publish(
     let stream = tokio::fs::read(file)
         .await
         .with_context(|| format!("read {}", file.display()))?;
-    let codec = annexb::codec_string(&stream).context("the file has no H.264 SPS")?;
-    let frames = annexb::access_units(&stream);
+    let mut splitter = AnnexBSplitter::new(CODEC)?;
+    let mut frames = splitter
+        .push(&stream)
+        .context("the file is not H.264 Annex B")?;
+    frames.extend(splitter.finish()?);
+    anyhow::ensure!(!frames.is_empty(), "the file has no H.264 picture");
     println!(
-        "publishing {} frames of {codec} at {fps} fps as {namespace}",
+        "publishing {} frames at {fps} fps as {namespace}",
         frames.len()
     );
 
@@ -137,7 +142,7 @@ async fn publish(
         video_framerate: Some(fps),
         ..MediaSourceOptions::new(file.display().to_string())
     });
-    camera.configure_video(&codec)?;
+    camera.configure_video(CODEC)?;
 
     let frame_interval = Duration::from_secs(1) / fps;
     let pushing = async {
@@ -149,7 +154,7 @@ async fn publish(
                 .await?;
             for frame in &frames {
                 ticks.tick().await;
-                camera.push_video(frame.to_vec(), timestamp_micros)?;
+                camera.push_video(frame.clone(), timestamp_micros)?;
                 timestamp_micros += frame_interval.as_micros() as u64;
             }
         }
