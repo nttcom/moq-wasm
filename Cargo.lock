@@ -2416,7 +2416,6 @@ dependencies = [
  "anyhow",
  "clap",
  "moq-wasm",
- "proptest",
  "serde_json",
  "tokio",
  "tracing-subscriber",
