@@ -122,7 +122,7 @@ macOS Chrome (Chrome 156 確認) では最初の `VideoEncoder` 起動に数秒�
 | 表示高さ上限 ABR | container の CSS px 高さで ladder を上限カット（`devicePixelRatio` 不乗算） | 小さいタイルは低 rendition を受信 |
 | Audio Level | `onAudioLevel?(level: AudioLevel)`（LOC §2.3.3.2） | 話者検出 (`dominantSpeaker.ts`) |
 | 優先度 | 固定 Subscriber Priority: catalog `0`, text `16`, audio `32`, video `128`。映像間は `setVideoPriority(0..255)` で動的変更（`SUBSCRIBE_UPDATE`） | 下り輻輳時に小 track やピン留め映像がブロックされるのを防ぐ |
-| `DELIVERY TIMEOUT` | `deliveryTimeoutMs`（既定 `2000`, `null` 無効、範囲外 `RangeError`）。映像・音声・media timeline・`addAudioTrack` に適用（catalog/字幕/`addTextTrack` 除外） | 遅れた Group を relay でリセットさせ送信バッファ詰まりを防ぐ |
+| `DELIVERY TIMEOUT` | `deliveryTimeoutMs`（既定 `2000`, `null` 無効、範囲外 `RangeError`）。映像・音声・media timeline・`addAudioTrack` に適用（catalog/字幕/`addTextTrack` 除外）。`LivePlayer.setDeliveryTimeout` で再生中に変えると選択中の映像・音声を購読し直す（media timeline と追加済みの `addAudioTrack` は元の値のまま） | 遅れた Group を relay でリセットさせ送信バッファ詰まりを防ぐ |
 | `Group Order` | `groupOrder`: `'ascending'`（既定） / `'descending'`（`SUBSCRIBE` 後の変更不可） | 遅延増大よりフレーム飛びを許容するライブ視聴 |
 
 ### keyframe の間隔と NEW_GROUP_REQUEST

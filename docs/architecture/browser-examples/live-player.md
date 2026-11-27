@@ -50,6 +50,7 @@ class LivePlayer {
   selectAudioTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
   setLatencyTolerance(tolerance: LatencyTolerance): void
+  setDeliveryTimeout(deliveryTimeoutMs: number | null): Promise<void>  // resubscribes selected video/audio
   addAudioTrack(name: string, listener?: AddedAudioTrackListener): Promise<AddedAudioTrack>
   addTextTrack(name: string, listener: AddedTextTrackListener): Promise<AddedTextTrack>
   setVideoEnabled(enabled: boolean): Promise<void>
