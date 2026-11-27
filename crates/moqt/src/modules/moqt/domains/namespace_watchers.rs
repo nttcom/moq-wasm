@@ -90,8 +90,6 @@ impl NamespaceWatchers {
     }
 }
 
-/// The events of one watcher, coalesced per namespace so a reader that falls
-/// behind holds at most one event per namespace the peer reported.
 pub(crate) struct NamespaceEventReceiver {
     watchers: NamespaceWatchers,
     watcher: Arc<Watcher>,
