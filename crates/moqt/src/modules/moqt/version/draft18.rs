@@ -3103,6 +3103,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscribe_namespace_to_the_empty_prefix_hears_every_namespace() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-empty-namespace-prefix", "moqt").await;
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace(String::new(), NamespaceInterest::Namespaces)
+                .await
+        });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        let prefix = handler.track_namespace_prefix_tuple.clone();
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+
+        // Act
+        let mut announced = Vec::new();
+        for namespace in ["live/room", "other"] {
+            server
+                .publisher()
+                .publish_namespace(namespace.into())
+                .await
+                .unwrap();
+            let SessionEvent::PublishNamespace(handler) = next_event(&client).await else {
+                panic!("expected PUBLISH_NAMESPACE");
+            };
+            announced.push(handler.track_namespace.clone());
+        }
+
+        // Assert
+        assert!(prefix.is_empty(), "{prefix:?}");
+        assert_eq!(announced, ["live/room", "other"]);
+    }
+
+    #[tokio::test]
     async fn publish_namespace_done_withdraws_every_request_of_its_namespace() {
         // Arrange: the namespace was published twice, on two requests
         let (client, server) =

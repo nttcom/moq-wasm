@@ -1528,6 +1528,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscribe_namespace_to_the_empty_prefix_fails() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("empty-namespace-prefix").await;
+
+        // Act
+        let refused = client
+            .subscriber()
+            .subscribe_namespace(String::new(), NamespaceInterest::Namespaces)
+            .await;
+
+        // Assert: draft-14 §2.4.1 has 1 to 32 fields
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_request_with_a_full_track_name_of_4097_bytes_fails_and_leaves_its_request_id_unused()
     {
         // Arrange
