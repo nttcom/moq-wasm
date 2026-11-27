@@ -4,31 +4,13 @@ use anyhow::{Error, Result, bail};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FullTrackName {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub name: String,
-}
-
-impl FullTrackName {
-    pub fn app_id(&self) -> &str {
-        app_id(&self.namespace)
-    }
-}
-
-/// The relay authorizes a track by the first namespace element, which must
-/// equal the token's appId.
-fn app_id(namespace: &str) -> &str {
-    namespace.split('/').next().unwrap_or_default()
 }
 
 /// A track namespace written with `/` between its elements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Namespace(pub Vec<String>);
-
-impl Namespace {
-    pub fn app_id(&self) -> &str {
-        self.0.first().map(String::as_str).unwrap_or_default()
-    }
-}
 
 impl FromStr for Namespace {
     type Err = Error;
@@ -49,7 +31,7 @@ impl FromStr for FullTrackName {
         match full.rsplit_once('/') {
             Some((namespace, name)) if !namespace.is_empty() && !name.is_empty() => {
                 Ok(FullTrackName {
-                    namespace: namespace.to_string(),
+                    namespace: namespace.parse()?,
                     name: name.to_string(),
                 })
             }
@@ -66,15 +48,8 @@ mod tests {
     fn splits_namespace_and_track() {
         let parsed: FullTrackName = "tokyo/cam01/video".parse().unwrap();
 
-        assert_eq!(parsed.namespace, "tokyo/cam01");
+        assert_eq!(parsed.namespace.0, ["tokyo", "cam01"]);
         assert_eq!(parsed.name, "video");
-    }
-
-    #[test]
-    fn app_id_is_the_first_namespace_element() {
-        let parsed: FullTrackName = "APP/tokyo/cam01/video".parse().unwrap();
-
-        assert_eq!(parsed.app_id(), "APP");
     }
 
     #[test]
@@ -87,7 +62,6 @@ mod tests {
 
         // Assert
         assert_eq!(parsed.0, ["APP", "tokyo", "cam01"]);
-        assert_eq!(parsed.app_id(), "APP");
     }
 
     #[test]

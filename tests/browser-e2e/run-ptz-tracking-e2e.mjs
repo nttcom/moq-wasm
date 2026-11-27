@@ -33,7 +33,7 @@ async function startCamera({ botDir, moqtUrl, app, childProcesses }) {
     { cwd: repoRoot },
   );
   childProcesses.push(camera);
-  await waitForOutput(camera, /codec resolved/, "camera", 180_000);
+  await waitForOutput(camera, /video started/, "camera", 180_000);
   return { PTZ_TRACKING_E2E_CAMERA_ORIGIN: `http://127.0.0.1:${cameraPort}` };
 }
 

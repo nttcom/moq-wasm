@@ -2422,11 +2422,9 @@ name = "moq-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "broadcast",
  "clap",
- "mediapack",
+ "moq-wasm",
  "moqt",
- "msf",
  "reqwest",
  "telemetry",
  "telemetry-report",

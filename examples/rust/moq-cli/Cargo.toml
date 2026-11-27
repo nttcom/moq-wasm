@@ -8,10 +8,8 @@ name = "moq-cli"
 path = "src/main.rs"
 
 [dependencies]
+moq-wasm = { path = "../../../sdk/rust" }
 moqt = { path = "../../../crates/moqt" }
-msf = { path = "../../../crates/msf" }
-mediapack = { path = "../../../crates/mediapack" }
-broadcast = { path = "../../../crates/broadcast" }
 telemetry = { path = "../../../crates/telemetry" }
 telemetry-report = { path = "../../../crates/telemetry-report" }
 tokio = { workspace = true, features = ["full"] }
