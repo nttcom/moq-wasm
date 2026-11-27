@@ -12,7 +12,7 @@ use crate::modules::{
     },
     directory::{
         InMemoryLocalPubSubDirectory,
-        track::{MatchingPublication, NamespaceSubscription},
+        track::{NamespaceSubscription, PrefixMatch},
     },
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::namespace_has_prefix},
     session::handler::{
@@ -348,18 +348,18 @@ impl SubscribeNameSpace {
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
     ) -> HashSet<String> {
-        let publications = downstream_publish.table.matching_publications(offer.prefix);
+        let matches = downstream_publish.table.prefix_matches(offer.prefix);
         let mut namespaces = HashSet::new();
-        for publication in publications {
-            let track_namespace = match &publication {
-                MatchingPublication::Track(track_key) => &track_key.track_namespace,
-                MatchingPublication::Namespace(track_namespace) => track_namespace,
+        for matched in matches {
+            let track_namespace = match &matched {
+                PrefixMatch::Track(track_key) => &track_key.track_namespace,
+                PrefixMatch::Namespace(track_namespace) => track_namespace,
             };
             if offer.was_offered(track_namespace) {
                 continue;
             }
-            match publication {
-                MatchingPublication::Track(track_key)
+            match matched {
+                PrefixMatch::Track(track_key)
                     if downstream_publish.table.offers_track(
                         session_id,
                         &subscription,
@@ -373,7 +373,7 @@ impl SubscribeNameSpace {
                         subscription.forward,
                     );
                 }
-                MatchingPublication::Namespace(track_namespace)
+                PrefixMatch::Namespace(track_namespace)
                     if subscription.interest.includes_namespaces() =>
                 {
                     let table = &downstream_publish.table;
@@ -386,7 +386,7 @@ impl SubscribeNameSpace {
                         namespaces.insert(track_namespace);
                     }
                 }
-                MatchingPublication::Track(_) | MatchingPublication::Namespace(_) => {}
+                PrefixMatch::Track(_) | PrefixMatch::Namespace(_) => {}
             }
         }
         namespaces

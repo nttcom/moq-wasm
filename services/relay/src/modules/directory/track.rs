@@ -525,7 +525,7 @@ impl TrackState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum MatchingPublication {
+pub(crate) enum PrefixMatch {
     Namespace(String),
     Track(TrackKey),
 }

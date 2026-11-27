@@ -18,7 +18,7 @@ import {
   buildTranscriberNamespace,
   parseTrackNamespace
 } from './trackNamespace'
-import { TrackPublication } from './trackPublication'
+import { SharedPublish } from './sharedPublish'
 
 interface LocalSessionOptions {
   roomName: string
@@ -49,7 +49,7 @@ export class LocalSession {
   /// `players` play the others' media on it.
   private session: MoqSession | null = null
   private namespaceWatch: Promise<MoqNamespaceWatch> | null = null
-  private readonly chatTrack = new TrackPublication<TrackWriter>()
+  private readonly chatTrack = new SharedPublish<TrackWriter>()
   private state: LocalSessionState = LocalSessionState.Idle
   private chatMessageHandler: ((message: ChatMessage) => void) | null = null
   private publishNamespaceHandler: NamespaceHandler | null = null

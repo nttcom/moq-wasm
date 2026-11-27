@@ -1,6 +1,6 @@
 mod broadcast_namespace;
 mod broadcast_translation;
-mod catalog_publication;
+mod catalog_track;
 mod echo_translation;
 mod gemini;
 mod language_translation;

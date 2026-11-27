@@ -96,12 +96,12 @@ fn object(group_id: u64, object_id: u64, forwarding: ForwardingPreference) -> Ob
     }
 }
 
-struct Publication {
+struct ServedTrack {
     session: Session,
     subscription: Subscription,
 }
 
-impl Publication {
+impl ServedTrack {
     async fn start(version: Version, namespace: &str) -> anyhow::Result<Self> {
         let session = connect(version).await?;
         let subscription = session
@@ -247,14 +247,14 @@ async fn relays_live_and_fetched_objects(
 ) -> anyhow::Result<()> {
     // Arrange
     let namespace = unique_namespace("live-and-fetch");
-    let publication = Publication::start(publisher_version, &namespace).await?;
+    let served = ServedTrack::start(publisher_version, &namespace).await?;
     let subscriber = connect(subscriber_version).await?;
     let mut reader = subscribe(&subscriber, &namespace).await?;
     tokio::time::sleep(SETTLE).await;
 
     // Act
     for group_id in 0..3 {
-        publication.send_stream_group(group_id).await?;
+        served.send_stream_group(group_id).await?;
     }
     let live = receive(&mut reader, 3 * OBJECTS_PER_GROUP).await?;
     let fetched = fetch_ids(&subscriber, &namespace, 1).await?;
@@ -283,19 +283,19 @@ async fn relays_a_mixed_track_in_one_preference_to_draft14(
     } else {
         "mixed-stream-first"
     });
-    let publication = Publication::start(Version::Draft18, &namespace).await?;
+    let served = ServedTrack::start(Version::Draft18, &namespace).await?;
     let draft14 = connect(Version::Draft14).await?;
     let draft18 = connect(Version::Draft18).await?;
     let mut draft14_reader = subscribe(&draft14, &namespace).await?;
     let mut draft18_reader = subscribe(&draft18, &namespace).await?;
     tokio::time::sleep(SETTLE).await;
     let send_group = |datagram: bool, group_id: u64| {
-        let publication = &publication;
+        let served = &served;
         async move {
             if datagram {
-                publication.send_datagram_group(group_id).await
+                served.send_datagram_group(group_id).await
             } else {
-                publication.send_stream_group(group_id).await
+                served.send_stream_group(group_id).await
             }
         }
     };
@@ -431,18 +431,18 @@ struct FilledFetch {
 
 async fn fetch_with_fill_timeout(fill_timeout: Duration) -> anyhow::Result<FilledFetch> {
     let namespace = unique_namespace("fill-timeout");
-    let publication = Publication::start(Version::Draft18, &namespace).await?;
+    let served = ServedTrack::start(Version::Draft18, &namespace).await?;
     let session = connect(Version::Draft18).await?;
     let mut reader = subscribe(&session, &namespace).await?;
     tokio::time::sleep(SETTLE).await;
-    publication.send_stream_group(1).await?;
+    served.send_stream_group(1).await?;
     receive(&mut reader, OBJECTS_PER_GROUP).await?;
     let upstream_fill_timeouts = Mutex::new(Vec::new());
     // The publisher answers FETCH_OK and never opens the response stream.
     let answer = async {
         let mut answered = Vec::new();
         loop {
-            match publication.session.receive_event().await? {
+            match served.session.receive_event().await? {
                 SessionEvent::Fetch(handler) => {
                     upstream_fill_timeouts
                         .lock()

@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
-    recordings::{Publication, PublishRejection, Recordings},
+    recordings::{PublishRejection, Recordings, Replay},
     replay_stream::replay_stream,
 };
 
@@ -134,7 +134,7 @@ async fn route(request: Request<Incoming>, state: &ApiState) -> ApiResponse {
         },
         (&Method::POST, ["recordings", id, "publish"]) => {
             match state.recordings.publish(id, bearer_token(&headers)).await {
-                Ok(Some(publication)) => replay_response(publication),
+                Ok(Some(replay)) => replay_response(replay),
                 Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
                 Err(PublishRejection::NotReady) => error_response(
                     StatusCode::CONFLICT,
@@ -232,10 +232,10 @@ fn found(value: Option<Value>) -> ApiResponse {
     }
 }
 
-fn replay_response(publication: Publication) -> ApiResponse {
+fn replay_response(replay: Replay) -> ApiResponse {
     let mut response = Response::new(Either::Right(replay_stream(
-        &publication.description,
-        publication.lease,
+        &replay.description,
+        replay.lease,
     )));
     response.headers_mut().insert(
         CONTENT_TYPE,
