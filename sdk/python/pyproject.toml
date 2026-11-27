@@ -41,7 +41,7 @@ pythonVersion = "3.11"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # A hung test fails after this instead of holding its xdist worker until the CI step times out.
-# The setup is left out: the first test of a worker builds the relay and VTS with cargo.
+# The setup is left out: a worker's first test starts its relay and VTS.
 timeout = 120
 timeout_func_only = true
 

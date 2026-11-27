@@ -89,6 +89,15 @@ def signed_token(app_id: str, secret: str, ttl: str = "1h") -> str:
     ).stdout.strip()
 
 
+def pytest_sessionstart(session):
+    """Builds the relay, VTS and auth-token in the xdist controller before any worker starts: a worker
+    rebuilding a binary kills the copies other workers run."""
+    if hasattr(session.config, "workerinput"):
+        return
+    subprocess.run(["cargo", "build", "-q", "-p", "relay", "-p", "vts"], cwd=REPO_ROOT, check=True)
+    subprocess.run(["cargo", "build", "-q", "-p", "auth-token", "--features", "cli"], cwd=REPO_ROOT, check=True)
+
+
 def pytest_asyncio_loop_factories(config, item):
     if "virtual_clock" in item.fixturenames:
         return {"virtual_time": VirtualTimeLoop}
@@ -132,8 +141,6 @@ class Relay:
 @pytest.fixture(scope="session")
 def relay_auth(tmp_path_factory):
     """A VTS built from this workspace and the relay token it accepts."""
-    subprocess.run(["cargo", "build", "-q", "-p", "relay", "-p", "vts"], cwd=REPO_ROOT, check=True)
-    subprocess.run(["cargo", "build", "-q", "-p", "auth-token", "--features", "cli"], cwd=REPO_ROOT, check=True)
     logs = tmp_path_factory.mktemp("relay")
     vts_port = free_port(socket.SOCK_STREAM)
     vts = subprocess.Popen(
