@@ -22,7 +22,7 @@ flowchart LR
 | `temporary_app.rs` | `temporary_app_id`, `TemporaryAppTokenError` | Reads `appId` from an unexpired temporary app token without verifying its signature (`temporary-apps` verifies first; `live-translate` leaves verification to the relay). |
 | `jwt.rs` | `sign_token`, `decode_unverified_payload`, `verify_signature`, `SignatureError` | Compact JWS over `aws-lc-rs` HMAC-SHA256. Header is fixed to `{"alg":"HS256"}`. |
 | `signed_token.rs` | `SignedToken`, `ClaimPolicy`, `ClaimError` | VTS `/verify` response (`appId`, `isRelay`, `claims`). `check` enforces `ClaimPolicy` (default: 24 h max client TTL, 60 s clock leeway), `iat`/`exp`, and namespace format; `covers` checks element-by-element namespace coverage. |
-| `vts_client.rs` | `VtsClient`, `VtsVerifyError` | Optional (`vts-client` feature). Calls VTS `POST /verify` with a 3 s timeout and W3C trace context; returns `SignedToken` or `Unauthorized` / `Unavailable`. |
+| `vts_client.rs` | `VtsClient`, `VtsVerifyError`, `AuthorizeError` | Optional (`vts-client` feature). `verify` calls VTS `POST /verify` with a 3 s timeout and W3C trace context; returns `SignedToken` or `Unauthorized` / `Unavailable`. `authorize` verifies a bearer token, then runs `SignedToken::check` and requires a non-relay token whose claim for an `Access` covers a namespace prefix; `AuthorizeError` separates missing token, VTS rejection, VTS unavailable, invalid claims, and forbidden so HTTP services map each to a status. |
 | `bin/auth-token/` | `auth-token` CLI (`lifetime.rs`) | Optional (`cli` feature). Signs tokens using `AUTH_TOKEN_SECRET`. Flags: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--calls`, `--ttl` (`15s`/`30m`/`12h`/`365d`), `--relay-id`. |
 
 ## Payload Claims

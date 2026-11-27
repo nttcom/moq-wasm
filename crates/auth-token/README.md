@@ -92,11 +92,11 @@ assert!(signed.covers(Access::Publish, "APP/site1/cam1"));
 | --- | --- |
 | *(default)* | `Claims`, `SignedToken`, `ClaimPolicy`, `Access`, `sign_token`, `verify_signature`, `decode_unverified_payload`, `temporary_app_id`, `unix_now` |
 | `cli` | `auth-token` binary for minting tokens |
-| `vts-client` | `VtsClient` and `VtsVerifyError` for calling VTS `POST /verify` |
+| `vts-client` | `VtsClient`, `VtsVerifyError`, and `AuthorizeError` for calling VTS `POST /verify` (`verify`) and checking a claim against a namespace prefix (`authorize`) |
 
 ## Security & validation invariants
 
-- **Signature ≠ authorization**: Both `VtsClient::verify` and `verify_signature` check only the HS256 signature. Always call `signed.check(...)` and `signed.covers(...)`.
+- **Signature ≠ authorization**: Both `VtsClient::verify` and `verify_signature` check only the HS256 signature. Always call `signed.check(...)` and `signed.covers(...)`, or `VtsClient::authorize`, which runs both and refuses relay tokens.
 - **Unverified inspection**: `decode_unverified_payload` and `temporary_app_id` never verify signatures—use them only to look up `appId` before verification.
 - **Policy defaults (`ClaimPolicy::default()`)**: Requires `iat` and `exp`, allows `60 s` clock leeway, caps non-relay TTL at `24 h` (`is_relay: true` is exempt), and rejects empty namespace segments (`"/a"`, `"a/"`, `"a//b"`).
 - **Boundary matching**: `covers()` matches on `/` boundaries (`"site1"` matches `"APP/site1"` and `"APP/site1/cam1"`, never `"APP/site10"`).

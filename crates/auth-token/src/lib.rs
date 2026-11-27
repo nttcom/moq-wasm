@@ -12,7 +12,7 @@ pub use jwt::{SignatureError, decode_unverified_payload, sign_token, verify_sign
 pub use signed_token::{Access, ClaimError, ClaimPolicy, SignedToken};
 pub use temporary_app::{TemporaryAppTokenError, temporary_app_id};
 #[cfg(feature = "vts-client")]
-pub use vts_client::{VtsClient, VtsVerifyError};
+pub use vts_client::{AuthorizeError, VtsClient, VtsVerifyError};
 
 /// The `appId` prefix of a temporary app: an app that exists only as the
 /// tokens issued for it, all signed with one shared secret instead of a
