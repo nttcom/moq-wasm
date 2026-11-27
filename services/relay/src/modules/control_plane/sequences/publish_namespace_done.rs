@@ -31,8 +31,22 @@ impl PublishNamespaceDone {
             "PUBLISH_NAMESPACE_DONE received"
         );
 
-        let removal = table.unregister_publish_namespace(session_id, request_id, track_namespace);
         let is_origin_client = super::is_origin_client(session_id, forwarder).await;
+        // The DONE ending a replaced subscription is ignored: the wider
+        // subscription announces the namespace again
+        // (`subscribe_namespace::end_replaced_subscriptions`).
+        if !is_origin_client
+            && request_id.is_some_and(|request_id| {
+                cascading_relay_context
+                    .inter_relay_connection_manager
+                    .namespace_subscriptions
+                    .take_superseded(session_id, request_id)
+            })
+        {
+            tracing::debug!(session_id, request_id, %track_namespace, "withdrawal of a replaced namespace subscription ignored");
+            return;
+        }
+        let removal = table.unregister_publish_namespace(session_id, request_id, track_namespace);
         // A relay session may withdraw a namespace this relay never registered
         // for it, so only a client's DONE requires its own registration.
         if is_origin_client && removal == PeerRemoval::NotRegistered {

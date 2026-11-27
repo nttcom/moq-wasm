@@ -435,6 +435,31 @@ impl InMemoryLocalPubSubDirectory {
         )
     }
 
+    /// Returns the withdrawn (namespace, Request ID) pairs.
+    pub(crate) fn unregister_publish_namespaces_under(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) -> Vec<(String, u64)> {
+        let mut withdrawn = Vec::new();
+        for entry in self.publisher_namespaces.iter() {
+            if !namespace_has_prefix(entry.key(), track_namespace_prefix) {
+                continue;
+            }
+            entry.value().retain(|(publisher, request_id), _| {
+                let kept = *publisher != session_id;
+                if !kept {
+                    withdrawn.push((entry.key().clone(), *request_id));
+                }
+                kept
+            });
+        }
+        for (track_namespace, _) in &withdrawn {
+            remove_if_empty(&self.publisher_namespaces, track_namespace);
+        }
+        withdrawn
+    }
+
     pub(crate) fn has_namespace_publishers(&self, track_namespace: &str) -> bool {
         self.publisher_namespaces.contains_key(track_namespace)
     }

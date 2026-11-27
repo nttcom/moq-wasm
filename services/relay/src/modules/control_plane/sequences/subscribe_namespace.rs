@@ -1,5 +1,8 @@
 use crate::modules::{
-    cascading::namespace_routes::NamespaceRoutes,
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        namespace_routes::NamespaceRoutes,
+    },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
@@ -22,7 +25,10 @@ use crate::modules::{
 };
 use std::collections::HashSet;
 
-use moqt::{RequestErrorCode, namespace::PrefixUpdateAnswer};
+use moqt::{
+    RequestErrorCode,
+    namespace::{NamespaceInterest, PrefixUpdateAnswer},
+};
 
 pub(crate) struct SubscribeNameSpace;
 
@@ -143,6 +149,7 @@ impl SubscribeNameSpace {
             offer,
             subscription,
             &local_namespaces,
+            table,
             forwarder,
             cascading_relay_context,
         )
@@ -287,6 +294,7 @@ impl SubscribeNameSpace {
             offer,
             subscription,
             &local_namespaces,
+            table,
             forwarder,
             cascading_relay_context,
         )
@@ -401,12 +409,14 @@ impl SubscribeNameSpace {
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %offer.prefix)
     )]
+    #[allow(clippy::too_many_arguments)]
     async fn subscribe_remote_namespaces(
         &self,
         session_id: SessionId,
         offer: Offer<'_>,
         subscription: NamespaceSubscription,
         local_namespaces: &HashSet<String>,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
     ) {
@@ -441,8 +451,13 @@ impl SubscribeNameSpace {
             if offer.was_offered(&track_namespace) || local_namespaces.contains(&track_namespace) {
                 continue;
             }
-            subscribe_at_publisher_relays(&track_namespace, forwarder, cascading_relay_context)
-                .await;
+            subscribe_at_publisher_relays(
+                &track_namespace,
+                table,
+                forwarder,
+                cascading_relay_context,
+            )
+            .await;
         }
     }
 }
@@ -465,6 +480,7 @@ async fn forget_refused_announcements(
 
 async fn subscribe_at_publisher_relays(
     track_namespace: &str,
+    table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
     cascading_relay_context: CascadingRelayContext<'_>,
 ) {
@@ -484,16 +500,18 @@ async fn subscribe_at_publisher_relays(
         let Some(session_id) = super::connect_relay(manager, &relay).await else {
             continue;
         };
-        if !manager
+        let Some(replaced) = manager
             .namespace_subscriptions
             .insert(session_id, track_namespace)
-        {
+        else {
             continue;
-        }
-        if let Err(error) = forwarder
+        };
+        let superseded =
+            end_replaced_subscriptions(session_id, &replaced, table, forwarder, manager).await;
+        let subscribed = forwarder
             .subscribe_namespace(session_id, track_namespace.to_string())
-            .await
-        {
+            .await;
+        if let Err(error) = &subscribed {
             manager
                 .namespace_subscriptions
                 .remove(session_id, track_namespace);
@@ -505,6 +523,97 @@ async fn subscribe_at_publisher_relays(
                 "failed to subscribe the namespace at its publisher relay"
             );
         }
+        if !superseded.is_empty() {
+            withdraw_unpublished(
+                track_namespace,
+                superseded,
+                subscribed.is_ok(),
+                table,
+                forwarder,
+                cascading_relay_context,
+            )
+            .await;
+        }
+    }
+}
+
+/// Unsubscribes each of `replaced` and returns the namespaces they brought.
+/// Call before subscribing the wider namespace (draft-18 §10.18 refuses an
+/// overlap). Their publications leave the directory here and their
+/// PUBLISH_NAMESPACE_DONEs are ignored, so clients keep the namespaces the
+/// wider subscription announces again.
+async fn end_replaced_subscriptions(
+    session_id: SessionId,
+    replaced: &[String],
+    table: &InMemoryLocalPubSubDirectory,
+    forwarder: &ControlMessageForwarder,
+    manager: &InterRelayConnectionManager,
+) -> Vec<String> {
+    let mut superseded = Vec::new();
+    for track_namespace_prefix in replaced {
+        let publications =
+            table.unregister_publish_namespaces_under(session_id, track_namespace_prefix);
+        manager.namespace_subscriptions.supersede(
+            session_id,
+            publications.iter().map(|(_, request_id)| *request_id),
+        );
+        superseded.extend(
+            publications
+                .into_iter()
+                .map(|(track_namespace, _)| track_namespace),
+        );
+        if let Err(error) = forwarder
+            .unsubscribe_namespace(session_id, track_namespace_prefix.clone())
+            .await
+        {
+            tracing::debug!(%error, session_id, %track_namespace_prefix, "failed to unsubscribe the replaced namespace subscription");
+        }
+    }
+    superseded
+}
+
+/// Sends client subscribers PUBLISH_NAMESPACE_DONE for each of
+/// `track_namespaces` the route registry no longer lists under
+/// `replacement`; a listed one is kept because `replacement` announces it
+/// again after its answer. When `replacement` was refused, withdraws all.
+async fn withdraw_unpublished(
+    replacement: &str,
+    track_namespaces: Vec<String>,
+    replacement_accepted: bool,
+    table: &InMemoryLocalPubSubDirectory,
+    forwarder: &ControlMessageForwarder,
+    cascading_relay_context: CascadingRelayContext<'_>,
+) {
+    let published: HashSet<String> = if replacement_accepted {
+        cascading_relay_context
+            .route_registry
+            .find_namespace_publishers_by_prefix(replacement)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(?error, track_namespace_prefix = %replacement, "failed to find remote namespace routes");
+                Vec::new()
+            })
+            .into_iter()
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    for track_namespace in track_namespaces {
+        if published.contains(&track_namespace) {
+            continue;
+        }
+        for (subscriber_session_id, subscription) in
+            table.get_namespace_subscribers(&track_namespace, NamespaceInterest::Namespaces)
+        {
+            if subscription.peer != SessionPeer::Client {
+                continue;
+            }
+            forwarder
+                .publish_namespace_done(subscriber_session_id, track_namespace.clone(), || {
+                    !table.announces_namespace_to(SessionPeer::Client, &track_namespace)
+                })
+                .await;
+        }
     }
 }
 
@@ -512,8 +621,6 @@ async fn subscribe_at_publisher_relays(
 mod tests {
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use std::{collections::BTreeSet, sync::Arc, time::Duration};
-
-    use moqt::namespace::NamespaceInterest;
 
     use super::*;
     use crate::modules::{
@@ -912,6 +1019,183 @@ mod tests {
 
         // Assert
         assert!(publisher_relay.namespace_subscriptions().is_empty());
+    }
+
+    /// Request ID of the PUBLISH_NAMESPACE the publisher relay sent on the
+    /// narrower subscription.
+    const NARROWER_REQUEST_ID: u64 = 7;
+
+    /// A client subscribing `ns` after this relay subscribed `narrower` at
+    /// relay-b, which announced `ns/bob/transcript` on it; the route registry
+    /// lists `listed` on relay-b.
+    async fn subscribe_over_narrower_subscriptions(
+        narrower: &[&str],
+        listed: &[&str],
+        refuse_replacement: bool,
+    ) -> (
+        DownstreamPublishContext,
+        InterRelayConnectionManager,
+        RecordedControlMessages,
+    ) {
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(
+            PUBLISHER_RELAY_SESSION,
+            NARROWER_REQUEST_ID,
+            "ns/bob/transcript".to_string(),
+            SessionPeer::Relay,
+        );
+        let ctx = downstream_publish_context(table, || Ok(true)).await;
+        let manager = inter_relay_connection_manager(ctx.forwarder.repository.clone());
+        let publisher_relay = dial_publisher_relay(&ctx, &manager).await;
+        for track_namespace in narrower {
+            manager
+                .namespace_subscriptions
+                .insert(PUBLISHER_RELAY_SESSION, track_namespace);
+        }
+        if refuse_replacement {
+            publisher_relay.refuse_namespace_subscriptions();
+        }
+        handle_subscribe_namespace_with(
+            &ctx,
+            Arc::new(StubRouteRegistry::with_remote_namespaces(
+                listed,
+                vec!["relay-b"],
+            )),
+            &manager,
+            &MockSubscribeNamespaceHandler::new("ns"),
+        )
+        .await;
+        (ctx, manager, publisher_relay)
+    }
+
+    /// relay-b's PUBLISH_NAMESPACE_DONE for `ns/bob/transcript` on the
+    /// narrower request, then with `reannounced` its PUBLISH_NAMESPACE on the
+    /// wider subscription.
+    async fn end_narrower_request(
+        ctx: &DownstreamPublishContext,
+        manager: &InterRelayConnectionManager,
+        reannounced: bool,
+    ) {
+        let cascading_relay_context = CascadingRelayContext {
+            route_registry: &NoopRelayRouteRegistry,
+            namespace_routes: &NamespaceRoutes::new(Arc::new(NoopRelayRouteRegistry)),
+            inter_relay_connection_manager: manager,
+        };
+        PublishNamespaceDone
+            .handle(
+                PUBLISHER_RELAY_SESSION,
+                &ctx.table,
+                &ctx.forwarder,
+                cascading_relay_context,
+                &moqt::namespace::PublishNamespaceDoneHandler {
+                    track_namespace: "ns/bob/transcript".to_string(),
+                    track_namespace_tuple: vec!["ns".into(), "bob".into(), "transcript".into()],
+                    request_id: Some(NARROWER_REQUEST_ID),
+                },
+            )
+            .await;
+        if reannounced {
+            PublishNamespace
+                .handle(
+                    PUBLISHER_RELAY_SESSION,
+                    &ctx.table,
+                    &ctx.forwarder,
+                    &ctx.cache_store,
+                    &Arc::new(local_publisher_resolver()),
+                    cascading_relay_context,
+                    &MockPublishNamespaceHandler::new("ns/bob/transcript"),
+                )
+                .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_namespace_over_one_subscribed_at_its_relay_replaces_it_there() {
+        // Arrange / Act: ns/bob/transcript was subscribed at relay-b for an earlier client
+        let (ctx, manager, publisher_relay) = subscribe_over_narrower_subscriptions(
+            &["ns/bob/transcript"],
+            &["ns/bob", "ns/bob/transcript"],
+            false,
+        )
+        .await;
+        end_narrower_request(&ctx, &manager, true).await;
+
+        // Assert: the client sees ns/bob/transcript announced once and never withdrawn
+        assert_eq!(
+            publisher_relay.namespace_subscriptions(),
+            vec!["unsubscribe ns/bob/transcript", "subscribe ns/bob"]
+        );
+        assert_eq!(
+            ctx.subscriber.publish_namespaces(),
+            vec!["ns/bob/transcript"]
+        );
+        assert!(ctx.subscriber.publish_namespace_dones().is_empty());
+        assert!(
+            ctx.table
+                .session_publishes_namespace("ns/bob/transcript", PUBLISHER_RELAY_SESSION)
+        );
+    }
+
+    #[tokio::test]
+    async fn every_subscription_under_the_new_namespace_is_replaced() {
+        // Arrange / Act
+        let (_ctx, _manager, publisher_relay) = subscribe_over_narrower_subscriptions(
+            &["ns/bob/transcript", "ns/bob/screen", "ns/carol"],
+            &["ns/bob"],
+            false,
+        )
+        .await;
+
+        // Assert: ns/carol lies outside ns/bob
+        let mut sent = publisher_relay.namespace_subscriptions();
+        let subscribe = sent.pop();
+        sent.sort();
+        assert_eq!(
+            sent,
+            ["unsubscribe ns/bob/screen", "unsubscribe ns/bob/transcript"]
+        );
+        assert_eq!(subscribe.as_deref(), Some("subscribe ns/bob"));
+    }
+
+    #[tokio::test]
+    async fn a_namespace_of_a_replaced_subscription_nobody_publishes_is_withdrawn() {
+        // Arrange / Act: the route registry no longer lists ns/bob/transcript
+        let (ctx, manager, _publisher_relay) =
+            subscribe_over_narrower_subscriptions(&["ns/bob/transcript"], &["ns/bob"], false).await;
+        end_narrower_request(&ctx, &manager, false).await;
+
+        // Assert: withdrawn once, by the reconciliation rather than the end of the narrower request
+        assert_eq!(
+            ctx.subscriber.publish_namespace_dones(),
+            vec!["ns/bob/transcript"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_replacement_withdraws_the_namespaces_of_the_replaced_subscription() {
+        // Arrange / Act
+        let (ctx, manager, publisher_relay) = subscribe_over_narrower_subscriptions(
+            &["ns/bob/transcript"],
+            &["ns/bob", "ns/bob/transcript"],
+            true,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(
+            publisher_relay.namespace_subscriptions(),
+            vec!["unsubscribe ns/bob/transcript", "subscribe ns/bob"]
+        );
+        assert_eq!(
+            ctx.subscriber.publish_namespace_dones(),
+            vec!["ns/bob/transcript"]
+        );
+        assert_eq!(
+            manager
+                .namespace_subscriptions
+                .insert(PUBLISHER_RELAY_SESSION, "ns/bob"),
+            Some(vec![])
+        );
     }
 
     #[tokio::test]

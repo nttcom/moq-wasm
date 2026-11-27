@@ -81,6 +81,7 @@ pub(crate) struct RecordedControlMessages {
     go_aways: Arc<Mutex<Vec<String>>>,
     namespace_announcements: Arc<Mutex<Vec<String>>>,
     namespace_subscriptions: Arc<Mutex<Vec<String>>>,
+    refuses_namespace_subscriptions: Arc<std::sync::atomic::AtomicBool>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
     publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
 }
@@ -104,6 +105,7 @@ impl Default for RecordedControlMessages {
             go_aways: Arc::default(),
             namespace_announcements: Arc::default(),
             namespace_subscriptions: Arc::default(),
+            refuses_namespace_subscriptions: Arc::default(),
             publishes: Arc::default(),
             publish_dones: Arc::default(),
         }
@@ -211,6 +213,12 @@ impl RecordedControlMessages {
     /// PUBLISH_NAMESPACE_DONE, in order.
     pub(crate) fn namespace_announcements(&self) -> Vec<String> {
         self.namespace_announcements.lock().unwrap().clone()
+    }
+
+    /// Makes every later SUBSCRIBE_NAMESPACE fail after it is recorded.
+    pub(crate) fn refuse_namespace_subscriptions(&self) {
+        self.refuses_namespace_subscriptions
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `subscribe <prefix>` or `unsubscribe <prefix>` per request, in order.
@@ -893,6 +901,13 @@ impl Subscriber for MockUpstreamSubscriber {
             .lock()
             .unwrap()
             .push(format!("subscribe {namespace}"));
+        if self
+            .recorded
+            .refuses_namespace_subscriptions
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            anyhow::bail!("SUBSCRIBE_NAMESPACE refused");
+        }
         Ok(())
     }
 
