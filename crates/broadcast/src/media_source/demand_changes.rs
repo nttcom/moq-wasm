@@ -6,7 +6,7 @@ use std::{
 };
 
 use moqt::{
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop},
     publish::TrackDemand,
 };
 use tokio::sync::{Notify, mpsc};
@@ -70,7 +70,7 @@ struct UnreadState {
 /// `DemandChanges` clone is dropped.
 struct DemandBoard {
     unread: Arc<Unread>,
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl DemandBoard {
@@ -94,17 +94,12 @@ impl DemandBoard {
             }
             board.state.lock().unwrap().ended = true;
             board.changed.notify_waiters();
-        });
+        })
+        .abort_on_drop();
         Self {
             unread,
-            join_handle,
+            _join_handle: join_handle,
         }
-    }
-}
-
-impl Drop for DemandBoard {
-    fn drop(&mut self) {
-        self.join_handle.abort();
     }
 }
 

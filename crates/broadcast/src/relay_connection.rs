@@ -16,7 +16,7 @@ use moqt::{
     AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, RequestErrorCode,
     Session, SessionEvent, TransportStats,
     client::{self, EventHandler},
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, TrackDemand, WriteOutcome},
     subscribe::SubscribeHandler,
 };
@@ -150,7 +150,7 @@ pub(crate) struct ConnectedRelay {
 }
 
 struct OwnedSession {
-    event_task: JoinHandle,
+    _event_task: AbortOnDrop,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -158,12 +158,6 @@ struct OwnedSession {
 impl EventHandler for RelayConnection {
     async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         RelayConnection::handle(self, event).await
-    }
-}
-
-impl Drop for OwnedSession {
-    fn drop(&mut self) {
-        self.event_task.abort();
     }
 }
 
@@ -346,7 +340,7 @@ impl ConnectedRelay {
             ledger: ledger.clone(),
         };
         let owned = owns_session.then(|| OwnedSession {
-            event_task: Self::spawn_event_loop(session.clone(), events.clone()),
+            _event_task: Self::spawn_event_loop(session.clone(), events.clone()).abort_on_drop(),
         });
         let catalog = Arc::new(CatalogTrack::new(
             session.clone(),
