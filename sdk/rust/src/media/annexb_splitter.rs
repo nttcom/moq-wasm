@@ -5,10 +5,9 @@ use mediapack::{
     h264::AvcDecoderConfigurationRecord, hevc::HevcDecoderConfigurationRecord, loc::VideoCodec,
 };
 
-/// Splits an H.264 or H.265 Annex B stream, read in chunks of any size (a
-/// pipe from an encoder, for example), into the access units
-/// `MediaSource::push_video` takes. A keyframe without its parameter sets gets
-/// the last ones seen.
+/// Splits an H.264 or H.265 Annex B stream, read in chunks of any size, into
+/// the access units `MediaSource::push_video` takes. A keyframe without its
+/// parameter sets gets the last ones seen.
 pub struct AnnexBSplitter(Demuxer);
 
 enum Demuxer {
