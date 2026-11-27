@@ -32,11 +32,13 @@ pub trait MaybeSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSync for T {}
 
-/// A bare `JoinHandle` detaches its task when dropped.
-pub(crate) struct AbortOnDrop(JoinHandle);
+/// Owns a spawned task and aborts it when dropped; a bare `JoinHandle`
+/// detaches its task instead.
+pub struct AbortOnDrop(JoinHandle);
 
 impl JoinHandle {
-    pub(crate) fn abort_on_drop(self) -> AbortOnDrop {
+    /// Ties the task's lifetime to the returned guard.
+    pub fn abort_on_drop(self) -> AbortOnDrop {
         AbortOnDrop(self)
     }
 }
