@@ -33,7 +33,7 @@ flowchart TB
 | `moqt::namespace` | `PUBLISH_NAMESPACE*`, `SUBSCRIBE_NAMESPACE` (draft-18 `SUBSCRIBE_TRACKS`), `UNSUBSCRIBE_NAMESPACE`, `PendingPublishNamespace`, `NamespaceInterest`, handlers |
 | `moqt::object` | Draft-independent `Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`, subgroup/datagram senders & receivers |
 | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses`; `self-signed-cert` feature: `CertificateFiles`, `write_self_signed_cert` |
-| `moqt::executor` | `spawn`/`JoinHandle`, `sleep`, monotonic `now`, wall `system_time` (for wasm32-compatible callers) |
+| `moqt::executor` | `spawn`/`JoinHandle` (`abort_on_drop()` → `AbortOnDrop`), `sleep`, monotonic `now`, wall `system_time` (for wasm32-compatible callers) |
 | `moqt::client` | High-level client `Session`, `Subscription`, `Group`, `Fetch`, `NamespaceWatch`, `Announcement`, `TrackWriter`, `EventHandler`, `RequestError` |
 | `moqt::wire` | Draft-14 numeric codes (`RequestKind`, error/PUBLISH_DONE conversions) for wasm JS bindings, plus `TrackStatusOk`/`SubscribeOk`. Control framing is crate-private. |
 
