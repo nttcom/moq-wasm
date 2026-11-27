@@ -49,9 +49,10 @@ pub(crate) struct SessionContext {
     ledgers: std::sync::Mutex<HashMap<(String, String), Weak<ObjectLedger>>>,
     /// `None` for a session that does not follow GOAWAY. A new request holds the
     /// read lock from before it is sent until it is recorded (a PUBLISH in
-    /// `publications`) or fails; a migration holds the write lock while it sends
-    /// every carried request again, so none is skipped. Requests edit the record
-    /// through the inner mutex, so they do not wait for one another's answers.
+    /// `publish_subscriptions`) or fails; a migration holds the write lock
+    /// while it sends every carried request again, so none is skipped.
+    /// Requests edit the record through the inner mutex, so they do not wait
+    /// for one another's answers.
     pub(crate) carried: Option<tokio::sync::RwLock<std::sync::Mutex<CarriedRequests>>>,
     /// The namespaces this side sent PUBLISH_NAMESPACE for and has not
     /// withdrawn, keyed as `CarriedRequests::published_namespaces`. Only
@@ -61,7 +62,7 @@ pub(crate) struct SessionContext {
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read
     /// for every subgroup sent, so not behind `carried`.
-    publications: std::sync::Mutex<HashMap<u64, Publication>>,
+    publish_subscriptions: std::sync::Mutex<HashMap<u64, PublishSubscription>>,
     /// Wakes `unserved` whenever a connection stops serving a track.
     served_changed: watch::Sender<()>,
     /// Changes whenever a migration makes another connection current, and
@@ -85,15 +86,15 @@ pub(crate) struct FetchChannel {
     pub(crate) track_name: String,
 }
 
-pub(crate) struct Publication {
+pub(crate) struct PublishSubscription {
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
     pub(crate) option: PublishOption,
-    pub(crate) targets: Vec<PublicationTarget>,
+    pub(crate) targets: Vec<PublishSubscriptionTarget>,
 }
 
-impl Publication {
-    /// `true` when the publication is still on another connection.
+impl PublishSubscription {
+    /// `true` when the PUBLISH subscription is still on another connection.
     fn leave(&mut self, connection: &Connection) -> bool {
         self.targets.retain(|target| {
             target
@@ -105,7 +106,7 @@ impl Publication {
     }
 }
 
-pub(crate) struct PublicationTarget {
+pub(crate) struct PublishSubscriptionTarget {
     pub(crate) connection: Weak<Connection>,
     pub(crate) track_alias: u64,
     pub(crate) request_id: u64,
@@ -272,7 +273,7 @@ impl SessionContext {
             ledgers: std::sync::Mutex::default(),
             carried: follows_go_away.then(tokio::sync::RwLock::default),
             published_namespaces: std::sync::Mutex::default(),
-            publications: std::sync::Mutex::default(),
+            publish_subscriptions: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
             moves: watch::channel(false).0,
         }
@@ -399,12 +400,12 @@ impl SessionContext {
             .map(|connection| (connection, wire_part(logical_id)))
     }
 
-    /// Drops the closed `connection` from every publication and removes each
-    /// publication left on no connection; returns the removed ids.
+    /// Drops the closed `connection` from every PUBLISH subscription and
+    /// removes each one left on no connection; returns the removed ids.
     pub(crate) fn forget_connection(&self, connection: &Connection) -> Vec<u64> {
         let mut ended = Vec::new();
-        lock(&self.publications).retain(|request_id, publication| {
-            let still_published = publication.leave(connection);
+        lock(&self.publish_subscriptions).retain(|request_id, publish_subscription| {
+            let still_published = publish_subscription.leave(connection);
             if !still_published {
                 ended.push(*request_id);
             }
@@ -414,31 +415,42 @@ impl SessionContext {
         ended
     }
 
-    pub(crate) fn add_publication(&self, request_id: u64, publication: Publication) {
-        lock(&self.publications).insert(request_id, publication);
+    pub(crate) fn add_publish_subscription(
+        &self,
+        request_id: u64,
+        publish_subscription: PublishSubscription,
+    ) {
+        lock(&self.publish_subscriptions).insert(request_id, publish_subscription);
     }
 
-    /// Removes the publication `request_id`, so no migration sends it again;
-    /// each connection it was on serves `request_id` until `stop_serving`.
-    pub(crate) fn remove_publication(&self, request_id: u64) -> Option<Publication> {
+    /// Removes the PUBLISH subscription `request_id`, so no migration sends it
+    /// again; each connection it was on serves `request_id` until
+    /// `stop_serving`.
+    pub(crate) fn remove_publish_subscription(
+        &self,
+        request_id: u64,
+    ) -> Option<PublishSubscription> {
         // `serves_on` reads both under this lock, so it never sees neither.
-        let mut publications = lock(&self.publications);
-        let publication = publications.remove(&request_id)?;
-        for target in &publication.targets {
+        let mut publish_subscriptions = lock(&self.publish_subscriptions);
+        let publish_subscription = publish_subscriptions.remove(&request_id)?;
+        for target in &publish_subscription.targets {
             if let Some(connection) = target.connection.upgrade() {
                 connection.serve(request_id);
             }
         }
-        Some(publication)
+        Some(publish_subscription)
     }
 
-    /// The live connections the publication `request_id` is on, with its
+    /// The live connections the PUBLISH subscription `request_id` is on, with its
     /// wire track alias on each.
-    pub(crate) fn publication_targets(&self, request_id: u64) -> Vec<(Arc<Connection>, u64)> {
-        lock(&self.publications)
+    pub(crate) fn publish_subscription_targets(
+        &self,
+        request_id: u64,
+    ) -> Vec<(Arc<Connection>, u64)> {
+        lock(&self.publish_subscriptions)
             .get(&request_id)
-            .map(|publication| {
-                publication
+            .map(|publish_subscription| {
+                publish_subscription
                     .targets
                     .iter()
                     .filter_map(|target| Some((target.connection.upgrade()?, target.track_alias)))
@@ -447,54 +459,64 @@ impl SessionContext {
             .unwrap_or_default()
     }
 
-    pub(crate) fn has_publication(&self, request_id: u64) -> bool {
-        lock(&self.publications).contains_key(&request_id)
+    pub(crate) fn has_publish_subscription(&self, request_id: u64) -> bool {
+        lock(&self.publish_subscriptions).contains_key(&request_id)
     }
 
-    /// What a migration sends again: each publication with its logical id.
-    pub(crate) fn publication_requests(&self) -> Vec<(u64, String, String, PublishOption)> {
-        lock(&self.publications)
+    /// What a migration sends again: each PUBLISH subscription with its logical id.
+    pub(crate) fn publish_subscription_requests(
+        &self,
+    ) -> Vec<(u64, String, String, PublishOption)> {
+        lock(&self.publish_subscriptions)
             .iter()
-            .map(|(request_id, publication)| {
+            .map(|(request_id, publish_subscription)| {
                 (
                     *request_id,
-                    publication.track_namespace.clone(),
-                    publication.track_name.clone(),
-                    publication.option.clone(),
+                    publish_subscription.track_namespace.clone(),
+                    publish_subscription.track_name.clone(),
+                    publish_subscription.option.clone(),
                 )
             })
             .collect()
     }
 
-    pub(crate) fn add_publication_target(&self, request_id: u64, target: PublicationTarget) {
-        if let Some(publication) = lock(&self.publications).get_mut(&request_id) {
-            publication.targets.push(target);
+    pub(crate) fn add_publish_subscription_target(
+        &self,
+        request_id: u64,
+        target: PublishSubscriptionTarget,
+    ) {
+        if let Some(publish_subscription) = lock(&self.publish_subscriptions).get_mut(&request_id) {
+            publish_subscription.targets.push(target);
         }
     }
 
-    /// Drops `connection` from the publication `request_id`, and the
-    /// publication once it is on no connection. `true` when it is still on
+    /// Drops `connection` from the PUBLISH subscription `request_id`, and
+    /// removes it once it is on no connection. `true` when it is still on
     /// another one.
-    pub(crate) fn leave_publication(&self, request_id: u64, connection: &Connection) -> bool {
-        let mut publications = lock(&self.publications);
-        let still_published = publications
+    pub(crate) fn leave_publish_subscription(
+        &self,
+        request_id: u64,
+        connection: &Connection,
+    ) -> bool {
+        let mut publish_subscriptions = lock(&self.publish_subscriptions);
+        let still_published = publish_subscriptions
             .get_mut(&request_id)
-            .is_some_and(|publication| publication.leave(connection));
+            .is_some_and(|publish_subscription| publish_subscription.leave(connection));
         if !still_published {
-            publications.remove(&request_id);
+            publish_subscriptions.remove(&request_id);
         }
-        drop(publications);
+        drop(publish_subscriptions);
         self.served_changed.send_replace(());
         still_published
     }
 
     /// Whether the peer of `connection` still takes a track this side sends:
-    /// a publication on it or a SUBSCRIBE it sent that it has not ended.
+    /// a PUBLISH subscription on it or a SUBSCRIBE it sent that it has not ended.
     pub(crate) fn serves_on(&self, connection: &Arc<Connection>) -> bool {
-        let publications = lock(&self.publications);
+        let publish_subscriptions = lock(&self.publish_subscriptions);
         connection.serves_subscriptions()
-            || publications.values().any(|publication| {
-                publication.targets.iter().any(|target| {
+            || publish_subscriptions.values().any(|publish_subscription| {
+                publish_subscription.targets.iter().any(|target| {
                     target
                         .connection
                         .upgrade()

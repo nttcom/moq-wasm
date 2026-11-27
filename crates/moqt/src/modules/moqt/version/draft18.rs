@@ -1566,7 +1566,7 @@ mod tests {
         });
 
         // Act
-        let publications = tokio::time::timeout(
+        let publish_results = tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
             futures::future::join_all((0..OPEN_REQUESTS).map(|index| {
                 let publisher = server.publisher();
@@ -1584,8 +1584,8 @@ mod tests {
         .await;
 
         // Assert
-        let publications = publications.expect("every PUBLISH is answered in time");
-        assert!(publications.iter().all(Result::is_ok));
+        let publish_results = publish_results.expect("every PUBLISH is answered in time");
+        assert!(publish_results.iter().all(Result::is_ok));
         drop(accepting.await.unwrap());
     }
 

@@ -14,7 +14,7 @@ pub(crate) enum SendTargets {
     },
     /// A PUBLISH a session that follows GOAWAY carries: every connection it
     /// is published on, so objects reach both servers during a migration.
-    Publication {
+    Publish {
         session: Arc<SessionContext>,
         request_id: u64,
     },
@@ -44,10 +44,10 @@ impl SendTargets {
                 .map(|connection| (connection, *track_alias))
                 .into_iter()
                 .collect(),
-            Self::Publication {
+            Self::Publish {
                 session,
                 request_id,
-            } => session.publication_targets(*request_id),
+            } => session.publish_subscription_targets(*request_id),
         }
     }
 }

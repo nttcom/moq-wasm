@@ -31,8 +31,8 @@
 //   control receive task reads the SUBSCRIBE; a refusal or a handler dropped
 //   unanswered undoes it (control_plane/handler/subscribe_handler.rs);
 //   `Publisher::publish_done` writes PUBLISH_DONE, then calls `stop_serving`
-//   + `note_served_changed` (domains/publisher.rs; `remove_publication`
-//   counts a publication as served until then), and
+//   + `note_served_changed` (domains/publisher.rs; `remove_publish_subscription`
+//   counts a PUBLISH subscription as served until then), and
 //   `notify_end` swallows `ConnectionLost` (version.rs:1055-1063);
 //   `Router::unsubscribed` calls `stop_serving` (migration_task.rs:296-303).
 //
