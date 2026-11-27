@@ -131,7 +131,7 @@ Opt-in original-publisher state (`Arc<tokio::sync::Mutex<_>>`, not used by relay
 ### `NamespaceWatchers` & `client`
 
 #### `NamespaceWatchers` (`domains/namespace_watchers.rs`)
-Crate-internal watcher registry: `watch(prefix)` returns a `NamespaceEvent` channel; `handle(event)` answers `PUBLISH_NAMESPACE` with `ok`, fans out announce/done to matching prefixes, and ends watchers on `Disconnected`.
+Crate-internal watcher registry: `watch(prefix)` returns a `NamespaceEventReceiver` whose queue holds at most one pending `NamespaceEvent` per namespace (first-pending order, latest `active`), so a slow reader's memory is bounded by the peer's namespaces; `handle(event)` answers `PUBLISH_NAMESPACE` with `ok`, fans out announce/done to matching prefixes, and ends watchers on `Disconnected`.
 
 #### `client` — the client session
 Language-independent client entry point (`modules/client/`, API mapping in [`sdk.md`](sdk.md)). Wraps `moqt::Session` and runs `EventLoopTask` over `Routes`:

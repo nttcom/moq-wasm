@@ -12,6 +12,7 @@ use crate::{
             subscription::{Reading, ReceivedObject, Subscription},
         },
         executor::{self, JoinHandle},
+        moqt::domains::namespace_watchers::NamespaceEventReceiver,
     },
     namespace::NamespaceEvent,
     publish::PublishHandler,
@@ -47,7 +48,7 @@ impl TrackFollower {
         routes: Arc<Routes>,
         namespace: Vec<String>,
         track: String,
-        announcements: mpsc::UnboundedReceiver<NamespaceEvent>,
+        announcements: NamespaceEventReceiver,
     ) -> Self {
         let (publish_sender, publish_receiver) = mpsc::unbounded_channel();
         let handler = routes.add_handler(Arc::new(PublishTaker {
@@ -129,7 +130,7 @@ struct Follow {
     session: Arc<Session>,
     namespace: Vec<String>,
     track: String,
-    announcements: mpsc::UnboundedReceiver<NamespaceEvent>,
+    announcements: NamespaceEventReceiver,
     publish_receiver: mpsc::UnboundedReceiver<PublishHandler>,
     event_sender: mpsc::UnboundedSender<FollowEvent>,
 }
