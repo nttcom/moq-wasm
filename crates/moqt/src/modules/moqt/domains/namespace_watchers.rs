@@ -69,8 +69,10 @@ impl NamespaceWatchers {
     }
 
     pub(crate) fn close(&self) {
+        // `recv` returns the pending events, then `None`.
         for watcher in lock(&self.watchers).drain(..) {
-            watcher.close();
+            lock(&watcher.queue).closed = true;
+            watcher.pushed.notify_waiters();
         }
     }
 
@@ -85,14 +87,6 @@ impl NamespaceWatchers {
 
     fn remove(&self, watcher: &Arc<Watcher>) {
         lock(&self.watchers).retain(|registered| !Arc::ptr_eq(registered, watcher));
-    }
-}
-
-impl Watcher {
-    /// `recv` returns the pending events, then `None`.
-    fn close(&self) {
-        lock(&self.queue).closed = true;
-        self.pushed.notify_waiters();
     }
 }
 
