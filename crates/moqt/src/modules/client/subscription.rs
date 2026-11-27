@@ -62,7 +62,6 @@ fn subgroup_id(forwarding: ForwardingPreference) -> u64 {
     }
 }
 
-/// What `Subscription::next_event` yields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubscriptionEvent {
     Object(ReceivedObject),
@@ -268,7 +267,6 @@ impl Group {
     }
 }
 
-/// Why `Group::next` failed.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GroupReadError {
