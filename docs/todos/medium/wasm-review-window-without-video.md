@@ -1,6 +1,6 @@
 # [M] Play the sound of a review window that has no video
 
-Next: read the `frames.length === 0` branch of `fetchWindow` at `sdk/js/js/src/media/player/reviewSession.ts:185`.
+Next: read the `frames.length === 0` branch of `fetchWindow` at `sdk/js/js/src/media/player/reviewSession.ts:245`.
 
 ## Goal
 
@@ -12,4 +12,4 @@ A broadcast with no video track at all has no seek axis: `SeekTimeline.groups` r
 
 ## Plan
 
-Tell a window without video, or a group the rendition lacks, from an evicted range: forget only that group, not every earlier one; nothing is evicted from a broadcast that is not live. `LocReview.play` (`locReview.ts:62`) assumes at least one frame.
+Tell a window without video, or a group the rendition lacks, from an evicted range: forget only that group, not every earlier one; nothing is evicted from a broadcast that is not live. `LocReview.play` (`locReview.ts:65`) assumes at least one frame.

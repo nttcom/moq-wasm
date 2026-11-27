@@ -4,7 +4,7 @@ Next: in the `changes` job of `.github/workflows/e2e.yml`, replace the `Cargo.lo
 
 ## Goal
 
-A release PR that bumps only `obs-moqt` (as #2096 did) runs no E2E suite. Today every suite runs, because each one matches any `Cargo.lock` change.
+A release PR that bumps only an unrelated crate (for example `gst-plugin-moqt` or `moq-wasm`) runs only the suites that depend on it. Today every suite runs, because each one matches any `Cargo.lock` change.
 
 ## Plan
 

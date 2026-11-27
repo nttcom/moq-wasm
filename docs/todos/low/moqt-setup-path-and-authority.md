@@ -1,6 +1,6 @@
 # [M] Send and check the PATH and AUTHORITY of a native QUIC session as draft-14 requires
 
-Next: fill `path` and `authority` from the `moqt://` URI in `send_client_setup` (`crates/moqt/src/modules/moqt/version/draft14/setup.rs:34`, `:41`, both `None`), then check them in `receive_client_setup` (`:78`) and `receive_server_setup` (`:54`).
+Next: fill `path` and `authority` from the `moqt://` URI in `send_client_setup` (`crates/moqt/src/modules/moqt/version/draft14/setup.rs:37`, `:44`, both `None`), then check them in `receive_client_setup` (`:81`) and `receive_server_setup` (`:57`).
 
 ## Goal
 

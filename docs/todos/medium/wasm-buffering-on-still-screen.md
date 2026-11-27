@@ -4,7 +4,7 @@ Next: decide in `sdk/js/js/src/media/player/stallWatch.ts:17` how a still source
 
 ## Goal
 
-`PlayerControls` hides `buffering` (`sdk/js/js/src/media/controls/playerControls.ts:50`) while a publisher sends nothing because its screen does not change; it still shows when objects are held up on the path.
+`PlayerControls` hides `buffering` (`sdk/js/js/src/media/controls/playerControls.ts:67`) while a publisher sends nothing because its screen does not change; it still shows when objects are held up on the path.
 
 ## Plan
 
