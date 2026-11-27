@@ -55,7 +55,6 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
     return subscription
   }
 
-  /// The subscription `open` made for `name`.
   openedFor(name: string): TrackSubscription | undefined {
     return this.opened.get(name)
   }

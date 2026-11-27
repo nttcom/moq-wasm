@@ -24,7 +24,6 @@ export type PlayedTrack = { name: string; track: MediaCatalogTrack }
 /// subscription, so its arrival says nothing about the delivery.
 export type ObjectHandler = (groupId: bigint, object: ReceivedObject, cached: boolean) => void
 
-/// Told of a subgroup stream of group `groupId` the publisher reset.
 export type ResetHandler = (groupId: bigint, code: StreamResetCode) => void
 
 export type TrackContext = {

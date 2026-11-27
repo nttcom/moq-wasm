@@ -32,8 +32,8 @@ export type SubscribeCall = {
 /// `requestNewGroup video 7`;
 /// `failedClose` makes each
 /// UNSUBSCRIBE fail. `publishDone` ends the newest subscription to a track
-/// with PUBLISH_DONE. A group `resets` lists is reset with its code after its
-/// objects.
+/// with PUBLISH_DONE. `resets` maps a group ID to the code its stream is
+/// reset with after its objects.
 export class FakeSession {
   readonly calls: SubscribeCall[] = []
   readonly updates: string[] = []

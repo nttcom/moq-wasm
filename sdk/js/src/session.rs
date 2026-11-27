@@ -721,7 +721,6 @@ impl From<Location> for MoqLocation {
     }
 }
 
-/// A subgroup stream of group `groupId` the publisher reset.
 #[wasm_bindgen]
 pub struct StreamReset {
     #[wasm_bindgen(readonly, js_name = groupId)]

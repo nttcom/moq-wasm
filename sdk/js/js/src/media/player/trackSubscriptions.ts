@@ -59,9 +59,10 @@ export class TrackSubscriptions {
     /// video's, or the audio's of a broadcast played without video.
     private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void,
     delivery: Delivery = {},
-    /// A subgroup stream of `groupId` reset other than by the requests the
-    /// player sends: the relay and the publisher reset with CANCELLED a group
-    /// that Forward 0, `endBeforeGroup` or UNSUBSCRIBE leave undelivered.
+    /// Called when a subgroup stream of `groupId` is reset with any code but
+    /// CANCELLED. The relay and the publisher reset with CANCELLED the groups
+    /// that the player's own Forward 0, `endBeforeGroup` or UNSUBSCRIBE leave
+    /// undelivered.
     private readonly onGroupReset: (subscription: TrackSubscription, groupId: bigint) => void = () => {}
   ) {
     checkDeliveryTimeout(delivery.deliveryTimeoutMs)

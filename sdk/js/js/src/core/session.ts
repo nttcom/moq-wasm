@@ -47,8 +47,8 @@ export type StreamResetCode =
   | 'EXPIRED_AUTH_TOKEN'
   | 'EXCESSIVE_LOAD'
 
-/// What `MoqSubscription.events` yields: an object, or a subgroup stream of
-/// group `groupId` the publisher reset with `code`.
+/// A `reset` event means the publisher reset a subgroup stream of the group;
+/// its remaining objects are lost.
 export type SubscriptionEvent =
   | { readonly kind: 'object'; readonly object: ReceivedObject }
   | { readonly kind: 'reset'; readonly groupId: bigint; readonly code: StreamResetCode }
