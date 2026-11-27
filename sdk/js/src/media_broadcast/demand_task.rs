@@ -1,12 +1,12 @@
 use broadcast::DemandChanges;
 use js_sys::Function;
-use moqt::executor::{self, JoinHandle};
+use moqt::executor::{self, AbortOnDrop};
 use wasm_bindgen::JsValue;
 
 /// Calls the page's callback with each `TrackDemand` of the source, until
 /// dropped.
 pub(super) struct DemandTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl DemandTask {
@@ -21,13 +21,10 @@ impl DemandTask {
                     tracing::warn!(?error, "demand callback failed");
                 }
             }
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for DemandTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }

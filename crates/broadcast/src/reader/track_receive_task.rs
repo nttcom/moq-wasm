@@ -6,7 +6,7 @@ use mediapack::{
 };
 use moqt::{
     TrackReader,
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop},
 };
 use tokio::sync::mpsc;
 
@@ -54,7 +54,7 @@ impl StartPoint {
 /// Reads one LOC track into the broadcast's media channel until the track
 /// ends or the channel is closed.
 pub(super) struct TrackReceiveTask {
-    handle: JoinHandle,
+    _handle: AbortOnDrop,
 }
 
 impl TrackReceiveTask {
@@ -68,14 +68,9 @@ impl TrackReceiveTask {
         let handle = executor::spawn(
             "broadcast-track-receive",
             receive_track(name, reader, kind, start, media_sender),
-        );
-        Self { handle }
-    }
-}
-
-impl Drop for TrackReceiveTask {
-    fn drop(&mut self) {
-        self.handle.abort();
+        )
+        .abort_on_drop();
+        Self { _handle: handle }
     }
 }
 

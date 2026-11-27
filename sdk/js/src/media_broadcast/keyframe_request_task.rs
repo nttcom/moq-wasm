@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use js_sys::Function;
-use moqt::executor::{self, JoinHandle};
+use moqt::executor::{self, AbortOnDrop};
 use tokio::sync::Notify;
 use wasm_bindgen::JsValue;
 
 /// Calls the page's callback each time a subscriber asks the source for a new
 /// group, until dropped.
 pub(super) struct KeyframeRequestTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl KeyframeRequestTask {
@@ -20,13 +20,10 @@ impl KeyframeRequestTask {
                     tracing::warn!(?error, "keyframe request callback failed");
                 }
             }
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for KeyframeRequestTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }

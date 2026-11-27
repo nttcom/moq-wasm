@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use mediapack::MediaEvent;
-use moqt::executor::{self, JoinHandle};
+use moqt::executor::{self, AbortOnDrop};
 use tokio::sync::{
     Notify,
     mpsc::{self, error::TrySendError},
@@ -32,6 +32,8 @@ pub(super) enum RenditionCommand {
 /// keep up and the queue is full, frames are dropped, and then every frame up
 /// to a keyframe that fits, so a subscriber gets no group it cannot decode.
 pub(super) struct RenditionTask {
+    /// First, so the task is aborted before `command_sender` closes its queue.
+    _join_handle: AbortOnDrop,
     command_sender: mpsc::Sender<RenditionCommand>,
     /// The source's: dropping frames asks the source for a keyframe.
     keyframe_requests: Arc<Notify>,
@@ -41,7 +43,6 @@ pub(super) struct RenditionTask {
     held_config: Option<RenditionCommand>,
     track_namespace: String,
     track_name: String,
-    join_handle: JoinHandle,
 }
 
 impl RenditionTask {
@@ -77,15 +78,16 @@ impl RenditionTask {
                     }
                 }
             }
-        });
+        })
+        .abort_on_drop();
         Self {
+            _join_handle: join_handle,
             command_sender,
             keyframe_requests,
             awaiting_keyframe: false,
             held_config: None,
             track_namespace,
             track_name,
-            join_handle,
         }
     }
 
@@ -162,12 +164,6 @@ impl RenditionTask {
             }
             Err(TrySendError::Closed(_)) => anyhow::bail!("rendition publishing stopped"),
         }
-    }
-}
-
-impl Drop for RenditionTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
     }
 }
 

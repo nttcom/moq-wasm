@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use moqt::executor::{self, JoinHandle};
+use moqt::executor::{self, AbortOnDrop};
 
 use super::catalog_track::CatalogTrack;
 
@@ -13,13 +13,14 @@ const CATALOG_REFRESH_TICK: Duration = Duration::from_secs(15);
 /// sent catalog when the session moves to the relay named in a GOAWAY, since
 /// that relay has no catalog until the next group.
 pub(super) struct CatalogRefreshTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl CatalogRefreshTask {
     pub(super) fn run(catalog: Arc<CatalogTrack>) -> Self {
         Self {
-            join_handle: executor::spawn("broadcast-catalog-refresh", Self::refresh(catalog)),
+            _join_handle: executor::spawn("broadcast-catalog-refresh", Self::refresh(catalog))
+                .abort_on_drop(),
         }
     }
 
@@ -51,11 +52,5 @@ impl CatalogRefreshTask {
                 }
             }
         }
-    }
-}
-
-impl Drop for CatalogRefreshTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
     }
 }

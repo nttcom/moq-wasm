@@ -1,7 +1,7 @@
 use std::{future::Future, time::Duration};
 
 use anyhow::Result;
-use moqt::executor::{self, JoinHandle, MaybeSend};
+use moqt::executor::{self, AbortOnDrop, MaybeSend};
 
 use super::RelayConnection;
 
@@ -12,7 +12,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Dropping it stops the refreshes.
 pub struct TokenRefreshTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl TokenRefreshTask {
@@ -47,14 +47,11 @@ impl TokenRefreshTask {
                     }
                 }
             }
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for TokenRefreshTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }
 
