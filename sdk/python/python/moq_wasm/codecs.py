@@ -463,7 +463,8 @@ def decode_pictures(
     - **Errors**: raises `ValueError` immediately for unsupported `codec`, and `av.error.FFmpegError` on
       read if a keyframe-joined group fails to decode.
     - **Lifecycle**: each group gets its own `VideoDecoder` (flushed on End-of-Group, after
-      `MAX_OPEN_GROUPS` newer groups, or at EOF). Does not close `objects`; timing out a read can cancel
+      `MAX_OPEN_GROUPS` newer groups, or at EOF; `follow()` / `subscriptions()` yield End-of-Group
+      only with `end_of_group=True`). Does not close `objects`; timing out a read can cancel
       an async generator (use `Subscription`, `RemoteBroadcast.subscriptions()`, or `follow_pictures()`
       with timeouts). `aclose()` stops reads immediately and frees decoders once any in-flight worker step finishes.
     """
@@ -764,7 +765,7 @@ class FollowedPictures(Following[DecodedPicture]):
         self._interval = interval
         self._config = config
         self._subscriptions = remote._subscriptions(
-            name, namespace, on_subscribed, True, None, DEFAULT_DELIVERY_TIMEOUT_SECONDS
+            name, namespace, on_subscribed, True, None, DEFAULT_DELIVERY_TIMEOUT_SECONDS, True
         )
         # The decoding of the current subscription, and the Largest Location its SUBSCRIBE_OK
         # reported.

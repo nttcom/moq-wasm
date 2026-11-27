@@ -4710,6 +4710,26 @@ async def test_following_pictures_starts_at_the_group_whose_first_object_carries
     await session.close()
 
 
+async def test_followed_pictures_a_group_holds_back_come_at_its_end_of_group():
+    # Arrange: the track stays open after the group, so only its End of Group flushes its decoder
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    (group,) = b_frame_groups(1, 6)
+    objects = [video_object(0, object_id, payload) for object_id, (payload, _) in enumerate(group)]
+    native.tracks["camera"] = [[*objects, video_object(0, len(group), b"", status=END_OF_GROUP), STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+
+    # Act
+    async with contextlib.aclosing(follow_pictures(remote, "camera", "avc1.64001f")) as pictures:
+        decoded = [await within(anext(pictures)) for _ in range(6)]
+
+    # Assert
+    values = [round(d.picture.to_ndarray(format="rgb24").mean() / 10) * 10 for d in decoded]
+    assert values == [index * 10 for index in range(6)]
+    await session.close()
+
+
 async def test_closed_followed_pictures_keep_no_decoder_but_the_video_config_they_learned(video_decoders):
     # Arrange: the group stays open, so its decoder lives until the pictures are closed
     relay = FakeRelay()
