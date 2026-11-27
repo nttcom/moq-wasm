@@ -136,6 +136,17 @@ pub(crate) fn data_stream_reset_code_to_wire(code: DataStreamResetCode) -> u64 {
     }
 }
 
+/// An unknown value reads as INTERNAL_ERROR.
+pub(crate) fn data_stream_reset_code_from_wire(value: u64) -> DataStreamResetCode {
+    match value {
+        0x1 => DataStreamResetCode::Cancelled,
+        0x2 => DataStreamResetCode::DeliveryTimeout,
+        0x3 => DataStreamResetCode::SessionClosed,
+        0x9 => DataStreamResetCode::MalformedTrack,
+        _ => DataStreamResetCode::InternalError,
+    }
+}
+
 pub(crate) fn termination_code_to_wire(code: TerminationErrorCode) -> u32 {
     match code {
         TerminationErrorCode::NoError => 0x0,
@@ -165,10 +176,13 @@ pub(crate) fn termination_code_to_wire(code: TerminationErrorCode) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
+        data_stream_reset_code_from_wire, data_stream_reset_code_to_wire,
         publish_done_code_from_wire, request_error_code_from_wire, request_error_code_to_wire,
         request_error_table,
     };
-    use crate::modules::moqt::control_plane::error_codes::{RequestErrorCode, RequestKind};
+    use crate::modules::moqt::control_plane::error_codes::{
+        DataStreamResetCode, RequestErrorCode, RequestKind,
+    };
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::{Layer, layer::SubscriberExt};
 
@@ -289,5 +303,28 @@ mod tests {
     fn unknown_publish_done_value_reads_as_none() {
         // Act / Assert
         assert_eq!(publish_done_code_from_wire(0x8), None);
+    }
+
+    #[test]
+    fn a_stream_reset_code_draft14_defines_reads_as_itself() {
+        // Arrange
+        let defined = [
+            DataStreamResetCode::InternalError,
+            DataStreamResetCode::Cancelled,
+            DataStreamResetCode::DeliveryTimeout,
+            DataStreamResetCode::SessionClosed,
+            DataStreamResetCode::MalformedTrack,
+        ];
+
+        // Act
+        let read = defined
+            .map(|code| data_stream_reset_code_from_wire(data_stream_reset_code_to_wire(code)));
+
+        // Assert
+        assert_eq!(read, defined);
+        assert_eq!(
+            data_stream_reset_code_from_wire(0x4),
+            DataStreamResetCode::InternalError
+        );
     }
 }

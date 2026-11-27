@@ -12,8 +12,9 @@ use crate::{
         moqt::domains::subscriber::{SentFetch, joining_remainder},
     },
     object::{
-        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError,
-        Object, ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
+        ContentExists, DataReceiver, DataStreamResetCode, ExtensionHeaders, ForwardingPreference,
+        Location, MalformedTrackError, Object, ObjectStatus, ReadError, StreamDataReceiver,
+        StreamReceiveError, Subgroup, TrackData,
     },
 };
 
@@ -52,12 +53,43 @@ impl TrackObject {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum TrackEvent {
+    Object(TrackObject),
+    /// The publisher reset a subgroup stream of group `group_id` with `code`
+    /// (draft-14 §13.1.8, draft-18 §15.10.4); its remaining objects are lost.
+    Reset {
+        group_id: u64,
+        code: DataStreamResetCode,
+    },
+    /// The End of Group status object (draft-14 §10.2.1.1): no object of the
+    /// group comes after `location`'s. `forwarding` is the subgroup it
+    /// arrived in, or `Datagram`.
+    EndOfGroup {
+        location: Location,
+        forwarding: ForwardingPreference,
+    },
+}
+
+impl TrackEvent {
+    /// `None` for an object that is neither media nor End of Group.
+    fn from_object(object: Object) -> Option<Self> {
+        if object.status == ObjectStatus::EndOfGroup && object.payload.is_empty() {
+            return Some(Self::EndOfGroup {
+                location: object.location,
+                forwarding: object.forwarding,
+            });
+        }
+        TrackObject::from_object(object).map(Self::Object)
+    }
+}
+
 /// Reads every subgroup stream and datagram of one track concurrently,
 /// inside one task, and yields objects in arrival order. Ordering is only
 /// guaranteed within a subgroup (draft-14 §10.4); consumers that need
 /// cross-subgroup order use `group_id`, `forwarding` and `object_id`.
 pub struct TrackReader {
-    object_receiver: mpsc::Receiver<anyhow::Result<TrackObject>>,
+    object_receiver: mpsc::Receiver<anyhow::Result<TrackEvent>>,
     _track_read_task: TrackReadTask,
 }
 
@@ -160,15 +192,20 @@ impl TrackReader {
             tokio::pin!(wait);
             loop {
                 let object = tokio::select! {
-                    object = live.next_object() => match object {
-                        Ok(Some(object)) if waiting && object.group_id <= largest_group => {
-                            held.push(object);
+                    object = live.next_event() => match object {
+                        Ok(Some(TrackEvent::Object(object))) if waiting && object.group_id <= largest_group => {
+                            held.push(TrackEvent::Object(object));
                             continue;
                         }
-                        Ok(Some(object)) => {
+                        Ok(Some(TrackEvent::Object(object))) => {
                             waiting = false;
-                            Ok(object)
+                            Ok(TrackEvent::Object(object))
                         }
+                        Ok(Some(end @ TrackEvent::EndOfGroup { location, .. })) if waiting && location.group_id <= largest_group => {
+                            held.push(end);
+                            continue;
+                        }
+                        Ok(Some(event)) => Ok(event),
                         Ok(None) => return,
                         Err(error) => Err(error),
                     },
@@ -207,6 +244,19 @@ impl TrackReader {
     /// `MalformedTrackError`, which ends the track after the streams already
     /// accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
+        loop {
+            match self.next_event().await? {
+                Some(TrackEvent::Object(object)) => return Ok(Some(object)),
+                Some(TrackEvent::Reset { .. } | TrackEvent::EndOfGroup { .. }) => continue,
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// `next_object`, with the subgroup streams the publisher reset and the
+    /// End of Group status objects, each in its place among the objects of
+    /// its subgroup.
+    pub async fn next_event(&mut self) -> anyhow::Result<Option<TrackEvent>> {
         self.object_receiver.recv().await.transpose()
     }
 }
@@ -217,14 +267,14 @@ impl TrackReader {
 async fn send_fetched_group(
     subscriber: &mut Subscriber,
     fetch: Result<FetchHandle, RequestFailure>,
-    object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
+    object_sender: mpsc::Sender<anyhow::Result<TrackEvent>>,
 ) {
     let sent = async {
         let mut receiver = subscriber.accept_fetch_receiver(&fetch?).await?;
         loop {
             match receiver.receive().await? {
                 Fetch::Object(object) => {
-                    if let Some(object) = TrackObject::from_object(object)
+                    if let Some(object) = TrackEvent::from_object(object)
                         && object_sender.send(Ok(object)).await.is_err()
                     {
                         break;
@@ -248,7 +298,7 @@ struct TrackReadTask {
 impl TrackReadTask {
     fn run(
         receiver: impl Future<Output = anyhow::Result<DataReceiver>> + MaybeSend + 'static,
-        object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
+        object_sender: mpsc::Sender<anyhow::Result<TrackEvent>>,
     ) -> Self {
         let join_handle = executor::spawn("Track Reader", async move {
             let mut receiver = match receiver.await {
@@ -270,7 +320,7 @@ impl TrackReadTask {
                             subgroup_readers.push(read_subgroup(stream, object_sender.clone()));
                         }
                         Ok(TrackData::Datagram(object)) => {
-                            if let Some(object) = TrackObject::from_object(object)
+                            if let Some(object) = TrackEvent::from_object(object)
                                 && object_sender.send(Ok(object)).await.is_err()
                             {
                                 return;
@@ -300,21 +350,29 @@ impl TrackReadTask {
 
 async fn read_subgroup(
     mut receiver: StreamDataReceiver,
-    object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
+    object_sender: mpsc::Sender<anyhow::Result<TrackEvent>>,
 ) {
-    if let Err(error) = read_subgroup_objects(&mut receiver, &object_sender).await {
-        tracing::debug!(%error, "subgroup stream failed; the track goes on");
+    match read_subgroup_objects(&mut receiver, &object_sender).await {
+        Ok(()) => {}
+        Err(StreamReceiveError::Closed(ReadError::Reset(code))) => {
+            let reset = TrackEvent::Reset {
+                group_id: receiver.group_id(),
+                code: receiver.version().data_stream_reset_code_from_wire(code),
+            };
+            let _ = object_sender.send(Ok(reset)).await;
+        }
+        Err(error) => tracing::debug!(%error, "subgroup stream failed; the track goes on"),
     }
 }
 
 async fn read_subgroup_objects(
     receiver: &mut StreamDataReceiver,
-    object_sender: &mpsc::Sender<anyhow::Result<TrackObject>>,
-) -> anyhow::Result<()> {
+    object_sender: &mpsc::Sender<anyhow::Result<TrackEvent>>,
+) -> Result<(), StreamReceiveError> {
     loop {
         match receiver.receive().await? {
             Some(Subgroup::Object(object)) => {
-                let Some(object) = TrackObject::from_object(object) else {
+                let Some(object) = TrackEvent::from_object(object) else {
                     continue;
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
@@ -334,13 +392,15 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        TrackObject, TrackReader,
+        TrackEvent, TrackObject, TrackReader,
         modules::moqt::data_plane::object::subgroup::{SubgroupId, SubgroupObject},
         modules::test_support::{
             datagram_object, open_raw_subgroup, open_subgroup, published_track, send_payload,
             send_raw_payload, subscribed_track_reader, within,
         },
-        object::{DataStreamResetCode, ForwardingPreference, MalformedTrackError},
+        object::{
+            DataStreamResetCode, ForwardingPreference, Location, MalformedTrackError, ObjectStatus,
+        },
     };
 
     const NO_OBJECT_TIMEOUT: Duration = Duration::from_millis(500);
@@ -499,6 +559,47 @@ mod tests {
         // Assert
         assert_eq!(objects[0].payload, Bytes::from_static(b"g0-o0"));
         assert!(nothing_more.is_err(), "reader must wait for further groups");
+    }
+
+    #[tokio::test]
+    async fn next_event_yields_the_end_of_group_after_the_objects_of_its_subgroup() {
+        // Arrange
+        let track = published_track("reader-end-of-group").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut group_0 = open_raw_subgroup(&factory, 4, SubgroupId::None).await;
+        send_raw_payload(&mut group_0, b"g4-o0").await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
+
+        // Act
+        group_0
+            .send_raw(
+                0,
+                SubgroupObject::new_status(ObjectStatus::EndOfGroup as u64),
+            )
+            .await
+            .unwrap();
+        let object = within(reader.next_event()).await.unwrap();
+        let end_of_group = within(reader.next_event()).await.unwrap();
+
+        // Assert
+        assert!(matches!(
+            object,
+            Some(TrackEvent::Object(TrackObject {
+                group_id: 4,
+                object_id: 0,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            end_of_group,
+            Some(TrackEvent::EndOfGroup {
+                location: Location {
+                    group_id: 4,
+                    object_id: 1
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            })
+        ));
     }
 
     #[tokio::test]

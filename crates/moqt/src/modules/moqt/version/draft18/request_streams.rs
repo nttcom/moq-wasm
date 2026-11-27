@@ -990,7 +990,7 @@ impl FirstMessage {
             None => Self::Cancelled,
             Some(Ok(Some(message))) => Self::Received(message),
             Some(Ok(None)) => Self::Finished,
-            Some(Err(StreamReceiveError::Closed(ReadError::Reset))) => Self::Reset,
+            Some(Err(StreamReceiveError::Closed(ReadError::Reset(_)))) => Self::Reset,
             Some(Err(StreamReceiveError::Closed(_))) => Self::Closed,
             Some(Err(
                 StreamReceiveError::Decode(reason) | StreamReceiveError::ProtocolViolation(reason),
