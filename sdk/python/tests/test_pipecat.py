@@ -2133,8 +2133,8 @@ async def test_a_cleaned_up_participant_input_keeps_no_decoder_or_picture(kept_m
     # Act
     await within(participant_input.cleanup())
 
-    # Assert: the application still holds the input
-    assert kept_media.alive() == (0, 0)
+    # Assert: the application still holds the input; a decoding step still in flight in a worker frees its pictures when it finishes
+    await until(lambda: kept_media.alive() == (0, 0))
     await session.close()
 
 
