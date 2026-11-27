@@ -451,7 +451,7 @@ async fn next_namespace_event(
                 }
             }
             SessionEvent::PublishNamespaceDone(handler) => {
-                if !published && handler.track_namespace() == track_namespace {
+                if !published && handler.track_namespace == track_namespace {
                     return Ok(());
                 }
             }

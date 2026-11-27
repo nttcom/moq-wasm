@@ -58,7 +58,7 @@ impl TestRelay {
                     SessionEvent::PublishNamespaceDone(handler) => {
                         let _ = request_sender.send(format!(
                             "PUBLISH_NAMESPACE_DONE {}",
-                            handler.track_namespace()
+                            handler.track_namespace
                         ));
                     }
                     SessionEvent::SubscribeNameSpace(handler) => {

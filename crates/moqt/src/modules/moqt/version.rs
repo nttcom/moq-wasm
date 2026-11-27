@@ -15,7 +15,7 @@ mod update_answer;
 pub(crate) use update_answer::UpdateAnswer;
 
 use std::{
-    sync::{Arc, Weak},
+    sync::{Arc, Weak, atomic::Ordering},
     time::Duration,
 };
 
@@ -852,10 +852,12 @@ impl ControlChannel {
     /// parity below the end of the Request IDs it wrote, since each endpoint
     /// uses its Request IDs in order (draft-14 §9.1).
     pub(crate) fn wrote_request_id(&self, request_id: RequestId) -> bool {
-        match self {
-            Self::Draft14(channel) => channel.wrote_request_id(request_id),
-            Self::Draft18(channel) => channel.wrote_request_id(request_id),
-        }
+        let written_request_id_end = match self {
+            Self::Draft14(channel) => &channel.written_request_id_end,
+            Self::Draft18(channel) => &channel.written_request_id_end,
+        };
+        let end = written_request_id_end.load(Ordering::Relaxed);
+        request_id % 2 == end % 2 && request_id < end
     }
 
     /// `None` for draft-14, whose FETCH has no request stream of its own.

@@ -279,7 +279,7 @@ impl SessionWorker {
                         self.deps.cascading_relay_context(),
                         scope_anonymous_root_prefix(
                             verified_token,
-                            handler.track_namespace_prefix(),
+                            &handler.track_namespace_prefix,
                         ),
                         handler.interest,
                     )

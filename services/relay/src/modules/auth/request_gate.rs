@@ -15,7 +15,7 @@ pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, V
             Some((Operation::Publish, handler.track_namespace_tuple().to_vec()))
         }
         MoqtSessionEvent::PublishNamespaceDone(handler) => {
-            Some((Operation::Publish, handler.track_namespace_tuple().to_vec()))
+            Some((Operation::Publish, handler.track_namespace_tuple.to_vec()))
         }
         MoqtSessionEvent::Publish(handler) => {
             Some((Operation::Publish, handler.track_namespace_tuple().to_vec()))
@@ -81,7 +81,7 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
         // PUBLISH_NAMESPACE_DONE has no error response (draft-14 §9.26).
         tracing::warn!(
             reason = denied.reason,
-            track_namespace = handler.track_namespace(),
+            track_namespace = handler.track_namespace,
             "PUBLISH_NAMESPACE_DONE denied; dropped"
         );
         return;

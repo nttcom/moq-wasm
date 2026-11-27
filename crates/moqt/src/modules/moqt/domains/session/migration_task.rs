@@ -1822,7 +1822,7 @@ mod tests {
             let SessionEvent::PublishNamespaceDone(done) = event else {
                 panic!("{version:?}: expected PUBLISH_NAMESPACE_DONE on B, got {event:?}");
             };
-            assert_eq!(done.track_namespace(), "room");
+            assert_eq!(done.track_namespace, "room");
         }
     }
 

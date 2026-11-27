@@ -22,8 +22,8 @@ impl PublishNamespaceDone {
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &moqt::namespace::PublishNamespaceDoneHandler,
     ) {
-        let track_namespace = handler.track_namespace();
-        let request_id = handler.request_id();
+        let track_namespace = handler.track_namespace.as_str();
+        let request_id = handler.request_id;
         tracing::info!(
             session_id = %session_id,
             request_id,

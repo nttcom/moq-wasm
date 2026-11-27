@@ -192,7 +192,7 @@ pub(crate) struct ControlChannel {
     /// MAX_REQUEST_ID this side sent.
     request_id_limit: AtomicU64,
     /// The Request ID after the last one this side wrote.
-    written_request_id_end: AtomicU64,
+    pub(super) written_request_id_end: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
     /// The peer's SETUP carried the TRACE_CONTEXT Setup Option.
     pub(super) peer_reads_trace_context: bool,
@@ -251,11 +251,6 @@ impl ControlChannel {
             &self.written_request_id_end
         };
         request_id < next.load(Ordering::Relaxed)
-    }
-
-    pub(super) fn wrote_request_id(&self, request_id: RequestId) -> bool {
-        let end = self.written_request_id_end.load(Ordering::Relaxed);
-        request_id % 2 == end % 2 && request_id < end
     }
 
     /// Waits while the next Request ID reaches the peer's Maximum Request
@@ -1158,7 +1153,7 @@ mod tests {
         let SessionEvent::UnsubscribeNamespace(unsubscribe) = next_event(&client).await else {
             panic!("expected UNSUBSCRIBE_NAMESPACE");
         };
-        assert_eq!(unsubscribe.track_namespace_prefix(), "room/a");
+        assert_eq!(unsubscribe.track_namespace_prefix, "room/a");
     }
 
     #[tokio::test]
@@ -1183,7 +1178,7 @@ mod tests {
         let SessionEvent::PublishNamespaceDone(done) = next_event(&client).await else {
             panic!("expected PUBLISH_NAMESPACE_DONE");
         };
-        assert_eq!(done.track_namespace(), "room/a");
+        assert_eq!(done.track_namespace, "room/a");
     }
 
     #[tokio::test]

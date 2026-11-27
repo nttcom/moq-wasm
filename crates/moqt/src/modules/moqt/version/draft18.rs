@@ -257,7 +257,7 @@ pub(crate) struct ControlChannel {
     /// The Request ID of this side's next request (§10.1).
     next_request_id: tokio::sync::Mutex<RequestId>,
     /// The Request ID after the last one this side wrote.
-    written_request_id_end: AtomicU64,
+    pub(super) written_request_id_end: AtomicU64,
     synthetic_request_id: AtomicU64,
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
@@ -375,11 +375,6 @@ impl ControlChannel {
         *next_request_id += 2;
         self.written_request_id_end
             .store(*next_request_id, Ordering::Relaxed);
-    }
-
-    pub(super) fn wrote_request_id(&self, request_id: RequestId) -> bool {
-        let end = self.written_request_id_end.load(Ordering::Relaxed);
-        request_id % 2 == end % 2 && request_id < end
     }
 
     /// The Request ID after the largest one the peer has used, for GOAWAY.
@@ -3104,7 +3099,7 @@ mod tests {
         let SessionEvent::PublishNamespaceDone(withdrawn) = withdrawn else {
             panic!("expected PUBLISH_NAMESPACE_DONE, got {withdrawn:?}");
         };
-        assert_eq!(withdrawn.track_namespace(), "live/room");
+        assert_eq!(withdrawn.track_namespace, "live/room");
     }
 
     #[tokio::test]
@@ -3136,7 +3131,7 @@ mod tests {
             let SessionEvent::PublishNamespaceDone(done) = next_event(&server).await else {
                 panic!("expected PUBLISH_NAMESPACE_DONE");
             };
-            withdrawn.push(done.request_id().unwrap());
+            withdrawn.push(done.request_id.unwrap());
         }
 
         // Assert
@@ -3185,7 +3180,7 @@ mod tests {
         let SessionEvent::PublishNamespaceDone(withdrawn) = withdrawn else {
             panic!("expected PUBLISH_NAMESPACE_DONE, got {withdrawn:?}");
         };
-        assert_eq!(withdrawn.request_id(), Some(announced[0]));
+        assert_eq!(withdrawn.request_id, Some(announced[0]));
     }
 
     #[tokio::test]
@@ -3424,7 +3419,7 @@ mod tests {
             panic!("expected the SUBSCRIBE_NAMESPACE withdrawn, got {withdrawn:?}");
         };
         assert_eq!(withdrawn.interest, NamespaceInterest::Namespaces);
-        assert_eq!(withdrawn.track_namespace_prefix(), "live");
+        assert_eq!(withdrawn.track_namespace_prefix, "live");
     }
 
     #[tokio::test]
@@ -4268,7 +4263,7 @@ mod tests {
             let SessionEvent::PublishNamespaceDone(done) = event else {
                 panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
             };
-            withdrawn.push(done.track_namespace().to_string());
+            withdrawn.push(done.track_namespace.to_string());
         }
         let later = tokio::time::timeout(
             std::time::Duration::from_millis(200),
@@ -5451,7 +5446,7 @@ mod tests {
         let SessionEvent::UnsubscribeNamespace(unsubscribed) = event else {
             panic!("expected UnsubscribeNamespace, got {event:?}");
         };
-        assert_eq!(unsubscribed.track_namespace_prefix(), "live");
+        assert_eq!(unsubscribed.track_namespace_prefix, "live");
         assert_eq!(unsubscribed.interest, NamespaceInterest::Tracks);
     }
 
@@ -5609,7 +5604,7 @@ mod tests {
         let SessionEvent::UnsubscribeNamespace(unsubscribed) = event else {
             panic!("expected UnsubscribeNamespace, got {event:?}");
         };
-        assert_eq!(unsubscribed.track_namespace_prefix(), "live");
+        assert_eq!(unsubscribed.track_namespace_prefix, "live");
         assert_eq!(late, PrefixUpdateAnswer::Failed);
     }
 

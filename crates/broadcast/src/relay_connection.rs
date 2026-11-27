@@ -396,7 +396,7 @@ impl ConnectedRelay {
                         }
                     }
                     SessionEvent::UnsubscribeNamespace(handler) => {
-                        tracing::info!(track_namespace_prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
+                        tracing::info!(track_namespace_prefix = %handler.track_namespace_prefix, "UNSUBSCRIBE_NAMESPACE received");
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                     SessionEvent::Subscribe(handler) => {

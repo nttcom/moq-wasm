@@ -34,7 +34,7 @@ pub(super) fn session_event_span(
             session_id = %session_id,
             app_id,
             relay_hostname = relay_hostname(),
-            track_namespace = %handler.track_namespace(),
+            track_namespace = %handler.track_namespace,
         ),
         MoqtSessionEvent::SubscribeNamespace(handler) => tracing::info_span!(
             parent: None,
@@ -59,7 +59,7 @@ pub(super) fn session_event_span(
             session_id = %session_id,
             app_id,
             relay_hostname = relay_hostname(),
-            track_namespace_prefix = %handler.track_namespace_prefix(),
+            track_namespace_prefix = %handler.track_namespace_prefix,
         ),
         MoqtSessionEvent::PublishBlocked(handler) => tracing::info_span!(
             parent: session_span,
