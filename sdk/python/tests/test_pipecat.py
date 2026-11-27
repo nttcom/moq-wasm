@@ -1905,8 +1905,7 @@ async def test_a_refused_room_watch_fails_both_processors_starts():
 
 async def test_stopping_a_room_whose_start_failed_waits_until_it_withdrew_its_broadcast(relay_url):
     # Arrange: the session watches the room, so the relay refuses the room's own watch once its
-    # broadcast was published, and the start is cancelled as the room withdraws that broadcast, as
-    # pipecat cancels a processor that reported an error
+    # broadcast was published
     room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
     session = await moq_wasm.connect(relay_url, verify_certificate=False)
     watch = await within(session.watch_namespaces(room))
@@ -1920,11 +1919,12 @@ async def test_stopping_a_room_whose_start_failed_waits_until_it_withdrew_its_br
             await asyncio.sleep(0)
 
     await within(reported())
-    starting.cancel()
-    await asyncio.gather(starting, return_exceptions=True)
 
-    # Act
-    await within(failing.stop("input"))
+    # Act: the room is stopped while it withdraws that broadcast, and the start is cancelled, as
+    # pipecat cancels a processor that reported an error
+    stopping = asyncio.create_task(failing.stop("input"))
+    starting.cancel()
+    await within(stopping)
 
     # Assert: a fresh room on the session publishes the same broadcast; the session's watch is closed
     # first, as the relay would refuse the fresh room's watch like the room's
@@ -1932,6 +1932,7 @@ async def test_stopping_a_room_whose_start_failed_waits_until_it_withdrew_its_br
     fresh = Room(session, room_options(room=room, audio_in=True, audio_out=True), RecordingSink())
     await within(fresh.start("input"))
     await within(fresh.stop("input"))
+    await asyncio.gather(starting, return_exceptions=True)
     await session.close()
 
 
