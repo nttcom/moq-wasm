@@ -14,8 +14,7 @@ pub(crate) mod track_writer;
 use crate::RequestFailure;
 
 /// The `/`-joined form `moqt::Session` takes, which splits it back at `/`
-/// into the Track Namespace tuple; an element containing `/` would arrive as
-/// several, so it fails with `RequestFailure::InvalidNamespace`.
+/// into the Track Namespace tuple.
 fn join_namespace(namespace: &[impl AsRef<str>]) -> Result<String, RequestFailure> {
     let elements: Vec<&str> = namespace.iter().map(AsRef::as_ref).collect();
     if elements.iter().any(|element| element.contains('/')) {
