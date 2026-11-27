@@ -317,6 +317,7 @@ impl Session {
                     publish: publish.unwrap_or(false),
                     datagram: datagram.unwrap_or(false),
                     priority: priority.unwrap_or(defaults.priority),
+                    on_demand: false,
                 };
                 let writer = self
                     .session

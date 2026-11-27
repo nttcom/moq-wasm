@@ -365,6 +365,7 @@ impl Session {
                 publish,
                 datagram,
                 priority,
+                on_demand: false,
             };
             let writer = session
                 .publish_track(&namespace, &name, options)

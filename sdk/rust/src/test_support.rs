@@ -18,8 +18,8 @@ pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE, echoes the session's
 /// namespaces back once it subscribed to namespaces, as a relay does
 /// (draft-14 §6.1), accepts every PUBLISH, serves SUBSCRIBEs from `origin`,
-/// and hands the namespace requests and PUBLISHes it receives to
-/// `next_request`.
+/// and hands the namespace requests, PUBLISHes and PUBLISH_DONEs it
+/// receives to `next_request`.
 pub(crate) struct TestRelay {
     url: String,
     session_receiver: Option<oneshot::Receiver<Arc<moqt::Session>>>,
@@ -68,6 +68,13 @@ impl TestRelay {
                         ));
                         handler.ok().await.unwrap();
                         watching_sender.send_replace(true);
+                    }
+                    SessionEvent::PublishDone(handler) => {
+                        let _ = request_sender.send(format!(
+                            "PUBLISH_DONE {} {:?}",
+                            handler.request_id(),
+                            handler.status_code()
+                        ));
                     }
                     SessionEvent::Publish(handler) => {
                         let _ = request_sender.send(format!(
@@ -155,6 +162,35 @@ impl TestRelay {
         };
         self.origin
             .write(namespace, track_name, object)
+            .await
+            .unwrap();
+    }
+
+    /// Subscribes to the track the session publishes, as a downstream
+    /// subscriber behind the relay would.
+    pub(crate) async fn subscribe(
+        &mut self,
+        namespace: &str,
+        track_name: &str,
+    ) -> moqt::Subscription {
+        let session = self.session().await;
+        let mut subscriber = session.subscriber();
+        let subscribing = subscriber.subscribe(
+            namespace.to_string(),
+            track_name.to_string(),
+            SubscribeOption::default(),
+        );
+        tokio::time::timeout(TEST_TIMEOUT, subscribing)
+            .await
+            .expect("no SUBSCRIBE_OK arrived")
+            .unwrap()
+    }
+
+    pub(crate) async fn unsubscribe(&mut self, subscription: &moqt::Subscription) {
+        let session = self.session().await;
+        session
+            .subscriber()
+            .unsubscribe(subscription)
             .await
             .unwrap();
     }

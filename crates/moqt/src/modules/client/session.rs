@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
+use tokio::sync::mpsc;
+
 use crate::{
     ClientConfig, Endpoint, Session as MoqtSession, Subscription as MoqtSubscription,
     TransferredBytes, TransportClose,
@@ -112,6 +114,10 @@ pub struct PublishTrackOptions {
     /// The Publisher Priority (draft-14 §7.1), 128 by default: among the
     /// session's tracks a lower value is sent first.
     pub priority: u8,
+    /// Sends the track only while a subscription to it is in Forward State 1
+    /// (draft-18 §10.10, draft-14 §5.1), as `TrackWriter::demand_change`
+    /// reports; `false` by default. A PUBLISH then asks for Forward State 0.
+    pub on_demand: bool,
 }
 
 impl Default for PublishTrackOptions {
@@ -121,6 +127,7 @@ impl Default for PublishTrackOptions {
             publish: false,
             datagram: false,
             priority: DEFAULT_PRIORITY,
+            on_demand: false,
         }
     }
 }
@@ -423,6 +430,15 @@ impl Session {
         origin
             .set_publisher_priority(&namespace, track, options.priority)
             .await?;
+        let demand_receiver = if options.on_demand {
+            let (demand_sender, demand_receiver) = mpsc::unbounded_channel();
+            origin
+                .publish_on_demand(&namespace, track, demand_sender)
+                .await?;
+            Some(demand_receiver)
+        } else {
+            None
+        };
         if options.publish {
             origin.publish(&self.session, &namespace, track).await?;
         }
@@ -430,6 +446,7 @@ impl Session {
             self.routes.clone(),
             namespace,
             track.to_string(),
+            demand_receiver,
         ))
     }
 
@@ -479,6 +496,7 @@ mod tests {
         publish: false,
         datagram: true,
         priority: DEFAULT_PRIORITY,
+        on_demand: false,
     };
 
     /// Subscribes below `client::Session`, so the test sees how each object
@@ -541,6 +559,72 @@ mod tests {
             done.map(|done| done.code),
             Some(PublishDoneCode::TrackEnded)
         );
+    }
+
+    const ON_DEMAND: PublishTrackOptions = PublishTrackOptions {
+        retention: Retention::For(DEFAULT_RETENTION),
+        publish: false,
+        datagram: false,
+        priority: DEFAULT_PRIORITY,
+        on_demand: true,
+    };
+
+    #[tokio::test]
+    async fn demand_change_follows_a_subscription_from_subscribe_to_unsubscribe() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-demand-change").await;
+        let writer = server
+            .publish_track(NAMESPACE, "audio_ja", ON_DEMAND)
+            .await
+            .unwrap();
+        let unwanted = within(writer.demand_change()).await.unwrap();
+
+        // Act
+        let subscription =
+            within(client.subscribe(NAMESPACE, "audio_ja", SubscribeOptions::default()))
+                .await
+                .unwrap();
+        let subscribed = within(writer.demand_change()).await.unwrap();
+        within(subscription.close()).await.unwrap();
+        let unsubscribed = within(writer.demand_change()).await.unwrap();
+
+        // Assert
+        assert_eq!([unwanted, subscribed, unsubscribed], [false, true, false]);
+    }
+
+    #[tokio::test]
+    async fn end_sends_publish_done_and_a_later_publish_track_serves_a_new_subscribe() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-track-end").await;
+        let writer = server
+            .publish_track(NAMESPACE, "audio_ja", ON_DEMAND)
+            .await
+            .unwrap();
+        let ended = within(client.subscribe(NAMESPACE, "audio_ja", SubscribeOptions::default()))
+            .await
+            .unwrap();
+
+        // Act
+        within(writer.end()).await.unwrap();
+        let done = within(ended.done()).await;
+        let ended_demand = within(writer.demand_change()).await;
+        let writer = server
+            .publish_track(NAMESPACE, "audio_ja", ON_DEMAND)
+            .await
+            .unwrap();
+        let unwanted = within(writer.demand_change()).await.unwrap();
+        let resubscribed =
+            within(client.subscribe(NAMESPACE, "audio_ja", SubscribeOptions::default())).await;
+        let wanted = within(writer.demand_change()).await.unwrap();
+
+        // Assert
+        assert_eq!(
+            done.map(|done| done.code),
+            Some(PublishDoneCode::TrackEnded)
+        );
+        assert!(ended_demand.is_err());
+        assert!(resubscribed.is_ok());
+        assert_eq!([unwanted, wanted], [false, true]);
     }
 
     #[tokio::test]
