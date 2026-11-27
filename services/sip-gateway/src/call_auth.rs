@@ -4,7 +4,7 @@ use std::{
 };
 
 use app_registry::{Apps, RegistryStore, is_e164};
-use auth_token::{Access, ClaimPolicy, SignedToken};
+use auth_token::{Access, ClaimPolicy, SignedToken, VtsClient, VtsVerifyError};
 use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode};
 
@@ -13,7 +13,6 @@ const CALL_TOKEN_POLICY: ClaimPolicy = ClaimPolicy {
     max_token_ttl: Duration::from_secs(5 * 60),
     clock_leeway: Duration::from_secs(60),
 };
-const VTS_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Rejection {
@@ -41,8 +40,7 @@ pub(crate) struct AuthorizedCall {
 /// against the app's phone settings in the registry.
 pub(crate) enum CallAuth {
     Vts {
-        client: reqwest::Client,
-        vts_url: String,
+        vts: VtsClient,
         registry: Arc<RegistryStore>,
     },
     /// Accepts every request for the app the prefix starts with and joins
@@ -54,8 +52,7 @@ pub(crate) enum CallAuth {
 impl CallAuth {
     pub(crate) fn new(vts_url: String, registry: Arc<RegistryStore>) -> Self {
         Self::Vts {
-            client: reqwest::Client::new(),
-            vts_url,
+            vts: VtsClient::new(vts_url),
             registry,
         }
     }
@@ -69,12 +66,7 @@ impl CallAuth {
         if !is_e164(to) {
             return Err(rejected(StatusCode::BAD_REQUEST, "invalid_destination"));
         }
-        let Self::Vts {
-            client,
-            vts_url,
-            registry,
-        } = self
-        else {
+        let Self::Vts { vts, registry } = self else {
             return Ok(AuthorizedCall {
                 app_id: namespace_prefix
                     .split('/')
@@ -87,23 +79,10 @@ impl CallAuth {
         };
         let token = bearer_token(headers)
             .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "a bearer token is required"))?;
-        let response = client
-            .post(vts_url)
-            .timeout(VTS_TIMEOUT)
-            .json(&serde_json::json!({ "token": token }))
-            .send()
-            .await
-            .map_err(|_| rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(rejected(StatusCode::UNAUTHORIZED, "invalid_token"));
-        }
-        if !response.status().is_success() {
-            return Err(rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"));
-        }
-        let verified: SignedToken = response
-            .json()
-            .await
-            .map_err(|_| rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"))?;
+        let verified = vts.verify(token).await.map_err(|error| match error {
+            VtsVerifyError::Unauthorized(_) => rejected(StatusCode::UNAUTHORIZED, "invalid_token"),
+            _ => rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"),
+        })?;
         check(&verified, namespace_prefix, SystemTime::now())?;
         let apps = registry
             .load()

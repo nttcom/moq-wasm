@@ -1,24 +1,9 @@
-use std::{collections::HashMap, fmt, sync::Mutex, time::SystemTime};
+use std::{collections::HashMap, sync::Mutex, time::SystemTime};
 
 use auth_token::{ClaimPolicy, SignedToken, VtsClient, VtsVerifyError};
 
 /// Verified tokens kept; past it, the cache starts over.
 const MAX_CACHED_TOKENS: usize = 1024;
-
-#[derive(Debug)]
-pub enum VerifyError {
-    Unauthorized(String),
-    Unavailable(anyhow::Error),
-}
-
-impl fmt::Display for VerifyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unauthorized(reason) => write!(f, "the token was rejected: {reason}"),
-            Self::Unavailable(error) => write!(f, "the VTS could not verify the token: {error:#}"),
-        }
-    }
-}
 
 /// Verifies a client token through the VTS `POST /verify` and judges its
 /// claims as the relay does. A token that passed is answered from memory until
@@ -36,7 +21,7 @@ impl AppVerifier {
         }
     }
 
-    pub(crate) async fn verify(&self, token: &str) -> Result<SignedToken, VerifyError> {
+    pub(crate) async fn verify(&self, token: &str) -> Result<SignedToken, VtsVerifyError> {
         if let Some(cached) = self.cached(token, SystemTime::now()) {
             return Ok(cached);
         }
@@ -74,29 +59,26 @@ impl AppVerifier {
         skip_all,
         fields(outcome = tracing::field::Empty)
     )]
-    async fn verify_with_vts(&self, token: &str) -> Result<SignedToken, VerifyError> {
+    async fn verify_with_vts(&self, token: &str) -> Result<SignedToken, VtsVerifyError> {
         let result = self.request_verification(token).await;
         tracing::Span::current().record("outcome", outcome(&result));
         result
     }
 
-    async fn request_verification(&self, token: &str) -> Result<SignedToken, VerifyError> {
-        let signed = self.vts.verify(token).await.map_err(|error| match error {
-            VtsVerifyError::Unauthorized(reason) => VerifyError::Unauthorized(reason),
-            other => VerifyError::Unavailable(other.into()),
-        })?;
+    async fn request_verification(&self, token: &str) -> Result<SignedToken, VtsVerifyError> {
+        let signed = self.vts.verify(token).await?;
         signed
             .check(ClaimPolicy::default(), SystemTime::now())
-            .map_err(|error| VerifyError::Unauthorized(error.to_string()))?;
+            .map_err(|error| VtsVerifyError::Unauthorized(error.to_string()))?;
         Ok(signed)
     }
 }
 
-fn outcome(result: &Result<SignedToken, VerifyError>) -> &'static str {
+fn outcome(result: &Result<SignedToken, VtsVerifyError>) -> &'static str {
     match result {
         Ok(_) => "verified",
-        Err(VerifyError::Unauthorized(_)) => "unauthorized",
-        Err(VerifyError::Unavailable(_)) => "unavailable",
+        Err(VtsVerifyError::Unauthorized(_)) => "unauthorized",
+        Err(_) => "unavailable",
     }
 }
 
@@ -104,11 +86,11 @@ fn outcome(result: &Result<SignedToken, VerifyError>) -> &'static str {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use auth_token::unix_now;
+    use auth_token::{VtsVerifyError, unix_now};
     use http_server::testing::StubServer;
     use hyper::StatusCode;
 
-    use super::{AppVerifier, VerifyError};
+    use super::AppVerifier;
 
     fn answer(exp: u64) -> String {
         format!(
@@ -148,6 +130,6 @@ mod tests {
         let result = verifier.verify("jwt").await;
 
         // Assert
-        assert!(matches!(result, Err(VerifyError::Unauthorized(_))));
+        assert!(matches!(result, Err(VtsVerifyError::Unauthorized(_))));
     }
 }

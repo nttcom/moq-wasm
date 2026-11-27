@@ -4,6 +4,7 @@ mod report;
 
 use std::{net::IpAddr, sync::Arc};
 
+use auth_token::VtsVerifyError;
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::{HeaderMap, StatusCode, body::Incoming};
 
@@ -11,11 +12,7 @@ use rate_limiter::RateLimiter;
 use report::parse_report;
 use telemetry::client_report::ClientReport;
 
-use crate::{
-    ANONYMOUS_APP_ID,
-    app_verifier::{AppVerifier, VerifyError},
-    otlp,
-};
+use crate::{ANONYMOUS_APP_ID, app_verifier::AppVerifier, otlp};
 
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
@@ -115,11 +112,11 @@ impl ClientTelemetry {
             return Ok(ANONYMOUS_APP_ID.to_string());
         };
         let verified = verifier.verify(token).await.map_err(|error| match error {
-            VerifyError::Unauthorized(_) => {
+            VtsVerifyError::Unauthorized(_) => {
                 tracing::debug!(%error, "client telemetry rejected");
                 Rejection::Unauthorized
             }
-            VerifyError::Unavailable(_) => {
+            _ => {
                 tracing::warn!(%error, "client telemetry was not verified");
                 Rejection::VtsUnavailable
             }

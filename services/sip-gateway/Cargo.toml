@@ -7,7 +7,7 @@ description = "Places telephone calls through a SIP trunk and bridges each call'
 [dependencies]
 anyhow = "1.0.102"
 app-registry = { path = "../../crates/app-registry" }
-auth-token = { path = "../../crates/auth-token" }
+auth-token = { path = "../../crates/auth-token", features = ["vts-client"] }
 aws-lc-rs = "1.18.2"
 broadcast = { path = "../../crates/broadcast" }
 bytes = "1"
