@@ -20,14 +20,17 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use google_cloud::MetadataToken;
-use moqt::{CertificateVerification, ClientConfig};
+use moq_wasm::{
+    CertificateVerification, ConnectOptions,
+    telemetry::{self, Telemetry, TelemetryOptions},
+};
 use tokio::{net::TcpListener, sync::Semaphore};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     broadcast_namespace::BroadcastNamespaces,
-    gemini::{AgentPlatform, GeminiCredentials},
-    root_translation::{RootTranslation, TranslationPolicy, TranslationResources},
+    gemini::{AgentPlatform, GeminiCredentials, MetadataToken},
+    root_translation::{TranslationPolicy, TranslationResources, translate_root},
     session_server::{SessionServer, SessionServerState},
     target_language::find_by_code,
     temporary_apps::TemporaryApps,
@@ -116,18 +119,30 @@ struct Args {
         help = "Languages translated for the whole broadcast whether or not anyone listens, like 'en,es', so their first viewer hears them at once; each costs a Gemini session"
     )]
     always_on: Vec<String>,
+
+    #[arg(
+        long,
+        env = "LIVE_TRANSLATE_TELEMETRY_URL",
+        value_name = "OBSERVABILITY_URL",
+        help = "Also send the logs and spans to this observability server's client telemetry, filed under each temporary app's token"
+    )]
+    telemetry_url: Option<String>,
 }
+
+const LOG_DIRECTIVES: &str = "warn,live_translate=info";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
-        service_name: "live-translate",
-        service_version: env!("CARGO_PKG_VERSION"),
-        default_directives: &["live_translate=info"],
-        log_output: telemetry_otlp::LogOutput::Stdout,
-        ..Default::default()
-    })?;
     let args = Args::parse();
+    let telemetry = init_logging(args.telemetry_url.as_deref());
+    let result = run(args).await;
+    if let Some(telemetry) = telemetry {
+        telemetry.flush().await;
+    }
+    result
+}
+
+async fn run(args: Args) -> Result<()> {
     let engine = translation_engine(&args)?;
     let always_on = args
         .always_on
@@ -171,23 +186,58 @@ async fn main() -> Result<()> {
             bail!("nothing to translate: set PORT to serve temporary apps, or pass --public-root");
         }
         tracing::info!("waiting for temporary apps");
-        http_server::shutdown_signal().await?;
+        shutdown_signal().await?;
         tracing::info!("live-translate shutting down");
         return Ok(());
     }
-    let config = ClientConfig {
+    let options = ConnectOptions {
         certificate_verification: CertificateVerification::native_roots_or_disabled(!args.insecure),
-        ..ClientConfig::default()
+        ..ConnectOptions::default()
     };
+    let session = Arc::new(moq_wasm::connect(&args.relay, options).await?);
+    tracing::info!(url = args.relay, "connected to relay");
     let namespaces = BroadcastNamespaces::new(BroadcastNamespaces::PUBLIC_ROOT.to_string());
-    let mut root = RootTranslation::connect(&args.relay, &config, namespaces, resources).await?;
     tokio::select! {
-        result = root.route_events(None) => result,
-        signal = http_server::shutdown_signal() => {
+        result = translate_root(session.clone(), namespaces, resources, None) => {
+            result?;
+            bail!("relay closed the session")
+        }
+        signal = shutdown_signal() => {
             signal?;
             tracing::info!("live-translate shutting down");
+            session.close().await;
             Ok(())
         }
+    }
+}
+
+fn init_logging(telemetry_url: Option<&str>) -> Option<Telemetry> {
+    let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| LOG_DIRECTIVES.into());
+    let (telemetry_layer, telemetry) = match telemetry_url {
+        Some(url) => {
+            let (layer, telemetry) = telemetry::layer(TelemetryOptions {
+                url: url.to_string(),
+                page: "live-translate".to_string(),
+            });
+            (Some(layer.with_filter(filter())), Some(telemetry))
+        }
+        None => (None, None),
+    };
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(filter()))
+        .with(telemetry_layer)
+        .init();
+    telemetry
+}
+
+/// Waits for `SIGINT` (Ctrl-C) or `SIGTERM`. As PID 1 in a container the
+/// process has no default `SIGTERM` action, so Cloud Run would otherwise wait
+/// for `SIGKILL` and drop buffered telemetry.
+async fn shutdown_signal() -> std::io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
     }
 }
 
@@ -211,7 +261,7 @@ fn translation_engine(args: &Args) -> Result<TranslationEngine> {
         Some(service_account) => GeminiCredentials::Gcloud {
             service_account: service_account.to_string(),
         },
-        None => GeminiCredentials::MetadataServer(MetadataToken::new(reqwest::Client::new())),
+        None => GeminiCredentials::MetadataServer(MetadataToken::new()),
     };
     let platform = AgentPlatform::new(project, &args.gcp_location, credentials);
     tracing::info!(

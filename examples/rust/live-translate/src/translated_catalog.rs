@@ -1,4 +1,6 @@
-use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
+use moq_wasm::media::{
+    Catalog, CatalogTrack as Track, KnownPackaging, KnownTrackRole, Packaging, TrackRole,
+};
 
 use crate::{
     opus_codec::TRANSLATED_BITRATE,
@@ -12,8 +14,7 @@ const TEXT_ALT_GROUP: u64 = 2;
 const TEXT_MIME_TYPE: &str = "application/json";
 
 pub(crate) fn source_audio_track(source: &Catalog) -> Option<&Track> {
-    source
-        .loc_tracks()
+    loc_tracks(source)
         .filter(|track| is_opus_audio(track))
         .max_by_key(|track| track.bitrate.unwrap_or(0))
 }
@@ -24,12 +25,11 @@ pub(crate) fn build_translated_catalog(
 ) -> Option<Catalog> {
     let source_audio = source_audio_track(source)?;
     let video = source
-        .tracks
+        .tracks()
         .iter()
         .filter(|track| track.has_role(KnownTrackRole::Video))
         .map(|track| referencing(track, source_namespace));
-    let original_audio = source
-        .loc_tracks()
+    let original_audio = loc_tracks(source)
         .filter(|track| is_opus_audio(track))
         .map(|track| Track {
             lang: Some(SOURCE_LANGUAGE.to_string()),
@@ -58,10 +58,14 @@ pub(crate) fn build_translated_catalog(
         .chain(translated)
         .chain(texts)
         .collect();
-    Some(Catalog {
-        generated_at: None,
-        ..Catalog::new(tracks, 0)
-    })
+    Some(Catalog::new(tracks))
+}
+
+fn loc_tracks(catalog: &Catalog) -> impl Iterator<Item = &Track> {
+    catalog
+        .tracks()
+        .iter()
+        .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
 }
 
 /// `lang` equals the audio track's, so a viewer pairs a transcript with its audio.
@@ -107,8 +111,8 @@ mod tests {
     const SOURCE_NAMESPACE: &str = "anon/live-translate/brave-otter";
 
     fn browser_publisher_catalog() -> Catalog {
-        serde_json::from_str(
-            r#"{ "version": "draft-02", "tracks": [
+        Catalog::parse(
+            br#"{ "version": "draft-02", "tracks": [
               { "namespace": "anon/live-translate/brave-otter", "name": "video_720p", "packaging": "loc", "role": "video", "isLive": true, "codec": "avc1.640028", "bitrate": 2500000, "framerate": 30, "width": 1280, "height": 720 },
               { "namespace": "anon/live-translate/brave-otter", "name": "audio_64kbps", "packaging": "loc", "role": "audio", "isLive": true, "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono" },
               { "namespace": "anon/live-translate/brave-otter", "name": "audio_128kbps", "packaging": "loc", "role": "audio", "isLive": true, "codec": "opus", "bitrate": 128000, "samplerate": 48000, "channelConfig": "mono" }
@@ -119,7 +123,7 @@ mod tests {
 
     fn track<'a>(catalog: &'a Catalog, name: &str) -> &'a Track {
         catalog
-            .tracks
+            .tracks()
             .iter()
             .find(|track| track.name == name)
             .expect("track exists")
@@ -177,7 +181,7 @@ mod tests {
         assert_eq!(english.codec.as_deref(), Some("opus"));
         assert_eq!(english.bitrate, Some(32_000));
         assert_eq!(
-            catalog.tracks.len(),
+            catalog.tracks().len(),
             3 + TARGET_LANGUAGES.len() + 1 + TARGET_LANGUAGES.len()
         );
     }
@@ -210,10 +214,14 @@ mod tests {
     #[test]
     fn catalog_without_opus_audio_has_nothing_to_translate() {
         // Arrange
-        let mut source = browser_publisher_catalog();
-        source
-            .tracks
-            .retain(|track| track.role == Some(TrackRole::Known(KnownTrackRole::Video)));
+        let source = Catalog::new(
+            browser_publisher_catalog()
+                .tracks()
+                .iter()
+                .filter(|track| track.has_role(KnownTrackRole::Video))
+                .cloned()
+                .collect(),
+        );
 
         // Act / Assert
         assert!(build_translated_catalog(&source, SOURCE_NAMESPACE).is_none());

@@ -4,7 +4,7 @@
 Living document. Update alongside any change to design intent, module boundaries, runtime flow, or invariants.
 
 ## Scope
-Converts `tracing` events and closed spans into `telemetry::client_report` (`ClientLog` / `ClientSpan`) records for `/api/client-telemetry`. Used by clients that cannot run `telemetry-otlp`'s OpenTelemetry SDK: wasm (hands records to JS), Python, and `moq-cli` (posts directly). Record delivery stays with each client.
+Converts `tracing` events and closed spans into `telemetry::client_report` (`ClientLog` / `ClientSpan`) records for `/api/client-telemetry`. Used by clients that cannot run `telemetry-otlp`'s OpenTelemetry SDK: wasm (hands records to JS), Python, the Rust SDK `moq-wasm`, and `moq-cli` (the last two post directly). Record delivery stays with each client.
 
 ## API
 
@@ -16,7 +16,7 @@ Converts `tracing` events and closed spans into `telemetry::client_report` (`Cli
 | `current_traceparent` | Formats the thread's innermost entered span as a W3C `traceparent` (passed to `moqt::set_trace_context_provider`). |
 | `continue_trace_from_traceparent` | Attaches a not-yet-entered span to a remote parent `traceparent` (used in wasm for incoming requests carrying `TRACE_CONTEXT`). |
 | `ReportBuffer` | Ring-like buffer keeping the newest `MAX_RECORDS` logs and spans between drains. |
-| `report_layer` | Ready-made layer (`log_record` + `SpanRecordLayer` → `ReportBuffer`) using `SystemTime` (`now_ms`) and std's keyed hasher (`random_u64`). Used by `moq-cli`; Python assembles the same parts directly. |
+| `report_layer` | Ready-made layer (`log_record` + `SpanRecordLayer` → `ReportBuffer`) using `SystemTime` (`now_ms`) and std's keyed hasher (`random_u64`). Used by `moq-cli`; Python and the Rust SDK assemble the same parts directly to queue records per session token. |
 
 ## Invariants
 

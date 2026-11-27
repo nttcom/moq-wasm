@@ -2,7 +2,7 @@
 
 HS256 JWT claims, signing, verification, namespace authorization, VTS verification client, and token-minting CLI for MoQT `CLIENT_SETUP`, bot-launch, SIP call, and relay-to-relay tokens.
 
-Used by workspace services (`vts`, `console`, `relay`, `recorder`, `bot-dispatcher`, `sip-gateway`, `observability`, `temporary-apps`, `live-translate`), `sdk/rust`, and operators minting tokens outside `anon/**`. Native-only.
+Used by workspace services (`vts`, `console`, `relay`, `recorder`, `bot-dispatcher`, `sip-gateway`, `observability`, `temporary-apps`), `sdk/rust`, and operators minting tokens outside `anon/**`. Native-only.
 
 ## Quickstart: Mint a token from the CLI
 

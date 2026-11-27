@@ -4,6 +4,7 @@ members = [
     'services/*',
     'crates/*',
     'sdk/*',
+    'examples/rust/live-translate',
     'examples/rust/moq-broadcast',
     'examples/rust/moq-cli',
     'examples/rust/moq-robot-policy',

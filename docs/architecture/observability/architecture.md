@@ -125,10 +125,10 @@ Exported as OTLP metrics every 10 s (`service.name=relay`, `relay.id`) for Hyper
 
 ## Client Telemetry
 
-VPC-isolated collectors cannot be reached directly by browsers, Python bots, or `moq-cli`, so they `POST /api/client-telemetry` (`telemetry::client_report::ClientReport`) to `observability`, which forwards OTLP/JSON (`502` on collector or VTS error).
+VPC-isolated collectors cannot be reached directly by browsers, Python bots, Rust SDK apps, or `moq-cli`, so they `POST /api/client-telemetry` (`telemetry::client_report::ClientReport`) to `observability`, which forwards OTLP/JSON (`502` on collector or VTS error).
 
 ### Request, Limits & Rate Limiting
-- **Body**: `{ token?, service?, clientId, page, logs, stats, publisherStats, spans }`. `service` must be `browser` (default), `moq-cli`, or `python` (`400` otherwise). Ignores `Content-Type` so browsers can use `text/plain` with `navigator.sendBeacon` (no CORS preflight).
+- **Body**: `{ token?, service?, clientId, page, logs, stats, publisherStats, spans }`. `service` must be `browser` (default), `moq-cli`, `python`, or `rust` (`400` otherwise). Ignores `Content-Type` so browsers can use `text/plain` with `navigator.sendBeacon` (no CORS preflight).
 - **Limits**: Max body **64 KiB** (`413`); max **100** items per array; trace IDs = 32 hex, span IDs = 16 hex; `clientId`/`page`/`trackNamespace`/`mediaSource` ≤ 128 chars (`400`).
 - **Rate limit**: Per-IP token bucket of **10 reports, 1/s refill** (`429`), keyed on the second-to-last `X-Forwarded-For` entry (GCLB client IP) or TCP peer.
 - **App attribution**: Tokenized reports verify via VTS + `SignedToken::check` (`401` on reject; clients retry future reports for a 401'd token without it so they land as `anon`); untokenized reports map to `anon`. Server stamps `app_id` and `client_id` on every record.

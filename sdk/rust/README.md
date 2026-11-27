@@ -9,6 +9,7 @@ Async Rust SDK for Media over QUIC Transport (MoQT) relays, matching the [JavaSc
 | `moq_wasm::*`        | `connect`, `Session` (derefs to `moqt::client::Session`), raw tracks, token refresh   |
 | `moq_wasm::media`    | MSF broadcasts (`create_broadcast`, `watch_broadcasts`), `MediaSource`, `EventTimeline` |
 | `moq_wasm::robotics` | Robot-room arbiter and action/state tracks (`run_robot`, `offer_actions`)             |
+| `moq_wasm::telemetry` | A `tracing` layer that sends logs and spans to client telemetry                      |
 
 ## Install
 
@@ -178,7 +179,31 @@ tokio::select! {
 
 The session follows `GOAWAY` and reconnects for up to 60 s automatically, restoring its namespaces and subscriptions. `session.closed()` resolves on unrecoverable connection loss, token expiry, or `session.close()`.
 
-## Logging & design
+## Logging & client telemetry
 
-- Logs through [`tracing`](https://docs.rs/tracing); install your own subscriber (e.g. `tracing-subscriber`).
+The SDK logs through [`tracing`](https://docs.rs/tracing); install your own subscriber (e.g. `tracing-subscriber`). To send the logs and spans to an observability server's `/api/client-telemetry`, as the JavaScript and Python SDKs' `telemetry` option does, add `moq_wasm::telemetry::layer` to it before connecting. Records under a session (its own tasks, and futures passed to `session.scoped`) carry the session's latest token, so the server files them under its app; records outside any session are sent without a token:
+
+```rust,no_run
+use moq_wasm::telemetry::{self, TelemetryOptions};
+use tracing_subscriber::{Layer, filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt};
+
+# async fn work(_: &moq_wasm::Session) -> anyhow::Result<()> { Ok(()) }
+# async fn run(options: moq_wasm::ConnectOptions) -> anyhow::Result<()> {
+let (telemetry_layer, telemetry) = telemetry::layer(TelemetryOptions {
+    url: "https://observability.example".to_string(),
+    page: "my-robot".to_string(),
+});
+tracing_subscriber::registry()
+    .with(telemetry_layer.with_filter(LevelFilter::INFO))
+    .init();
+
+let session = moq_wasm::connect("https://relay.example:4433", options).await?;
+let result = session.scoped(work(&session)).await;
+telemetry.flush().await; // reports go every 10 s; send the rest before exiting
+result
+# }
+```
+
+## Design
+
 - Architecture & internals: [docs/architecture/moq-wasm/sdk.md](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/moq-wasm/sdk.md).
