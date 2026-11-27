@@ -58,7 +58,7 @@ flowchart LR
 | Domain | Capabilities | Starting points |
 | --- | --- | --- |
 | **Messaging & collaboration** | Event timelines, `FETCH` catch-up | [Whiteboard](https://nttcom.github.io/moq-wasm/examples/whiteboard/), [Message](https://nttcom.github.io/moq-wasm/examples/message/) |
-| **Web meetings & telephony** | Multi-party A/V, recording, SIP trunks | [Meeting](https://nttcom.github.io/moq-wasm/examples/meeting/), [`recorder`](services/recorder/README.md), [`sip-gateway`](docs/architecture/sip-gateway/architecture.md) |
+| **Web meetings & telephony** | Multi-party A/V, recording, SIP trunks | [Meeting](https://nttcom.github.io/moq-wasm/examples/meeting/), [`recorder`](services/recorder/README.md), [`sip-gateway`](services/sip-gateway/README.md) |
 | **Live streaming & production** | Cascading relays, RTMP/SRT/RTP ingest, ABR, relay-cache rewind | [Live Viewer](https://nttcom.github.io/moq-wasm/examples/live-viewer/), [`ingest-gateway`](services/ingest-gateway/README.md), [`egress-gateway`](services/egress-gateway/README.md), [`moqtsink`](sdk/gstreamer/README.md) |
 | **Surveillance & monitoring** | ONVIF/RTSP pull, on-demand camera streams, PTZ | [Remote Monitoring](https://nttcom.github.io/moq-wasm/examples/remote-monitoring/), [`ingest-gateway pull`](services/ingest-gateway/README.md#pull) |
 | **AI agents** | Pipecat voice transport, live translation, object-detection bots | [AI Voice Agent](https://nttcom.github.io/moq-wasm/examples/moq-ai-voice-agent/), [`sdk/python`](sdk/python/README.md), [`bot-dispatcher`](services/bot-dispatcher/README.md) |
@@ -88,8 +88,8 @@ All three SDKs interoperate, follow `GOAWAY`, reconnect automatically, and suppo
 | --- | --- |
 | [`services/relay`](services/relay/README.md) | MoQT relay (QUIC, WebTransport, WebSocket on one port), `FETCH` cache, cascading, draft-14/18 |
 | [`services/vts`](services/vts/README.md) · [`services/console`](services/console/README.md) · [`services/temporary-apps`](services/temporary-apps/README.md) | JWT verification (VTS), app/token console, and temporary-app (`temp-*`) token mint / bot-launch proxy |
-| [`services/bot-dispatcher`](services/bot-dispatcher/README.md) · [`services/live-translate`](docs/architecture/live-translate/architecture.md) | On-demand room bot launcher and live audio translation |
-| [`services/observability`](docs/architecture/observability/architecture.md) | Client telemetry collector and OTLP forwarder ([design](docs/architecture/telemetry/architecture.md)) |
+| [`services/bot-dispatcher`](services/bot-dispatcher/README.md) · [`services/live-translate`](services/live-translate/README.md) | On-demand room bot launcher and live audio translation |
+| [`services/observability`](services/observability/README.md) | Client telemetry collector and OTLP forwarder ([design](docs/architecture/telemetry/architecture.md)) |
 
 ### Media & telephony gateways
 
@@ -97,7 +97,7 @@ All three SDKs interoperate, follow `GOAWAY`, reconnect automatically, and suppo
 | --- | --- |
 | [`services/ingest-gateway`](services/ingest-gateway/README.md) | RTMP, SRT, RTP, RTSP, and ONVIF (PTZ) ingest |
 | [`services/egress-gateway`](services/egress-gateway/README.md) | MoQT to RTP + RTCP + SDP output |
-| [`services/sip-gateway`](docs/architecture/sip-gateway/architecture.md) | Inbound/outbound SIP + SDES-SRTP room bridge |
+| [`services/sip-gateway`](services/sip-gateway/README.md) | Inbound/outbound SIP + SDES-SRTP room bridge |
 | [`services/recorder`](services/recorder/README.md) | Multi-participant fMP4 recording and replayable MoQ archives |
 | [`sdk/gstreamer`](sdk/gstreamer/README.md) | GStreamer `moqtsink` plugin (H.264/AAC) |
 
