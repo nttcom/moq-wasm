@@ -1016,6 +1016,7 @@ impl ControlChannel {
             draft,
             sent,
             sent_at: now(),
+            connection: Arc::downgrade(connection),
         })
     }
 
@@ -1245,6 +1246,8 @@ pub(crate) struct PendingResponse {
     sent: RequestSummary,
     /// An `executor::now` reading.
     sent_at: Duration,
+    /// Reports how the transport closed when the response cannot arrive.
+    connection: Weak<Connection>,
 }
 
 enum DraftPendingResponse {
@@ -1262,7 +1265,7 @@ impl PendingResponse {
     /// request first (draft-18), or with `RequestFailure::SessionClosed` when
     /// the control stream closes first.
     pub(crate) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
-        let result = match self.draft {
+        let mut result = match self.draft {
             DraftPendingResponse::Draft14(pending) => {
                 pending.response().await.map(ReceivedResponse::Draft14)
             }
@@ -1272,6 +1275,11 @@ impl PendingResponse {
         };
         if let Err(RequestFailure::Timeout) = result {
             self.sent.log_timed_out(elapsed_ms(self.sent_at));
+        }
+        if let Err(RequestFailure::SessionClosed(None)) = result
+            && let Some(connection) = self.connection.upgrade()
+        {
+            result = Err(connection.session_closed().await);
         }
         result
     }

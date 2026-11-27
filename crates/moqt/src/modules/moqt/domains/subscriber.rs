@@ -1893,8 +1893,32 @@ mod tests {
                 .expect("the FETCH wait ends once the peer disconnects")
                 .unwrap();
             assert!(
-                matches!(fetched, Err(RequestFailure::SessionClosed)),
+                matches!(fetched, Err(RequestFailure::SessionClosed(_))),
                 "{fetched:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_failing_on_the_peers_close_reports_its_code_and_reason() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-fetch-close-reason", version).await;
+            let (request, _handler) = start_fetch(&client, &server, TRACK).await;
+
+            // Act
+            server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
+            let fetched = within(request).await.unwrap();
+
+            // Assert: GOAWAY_TIMEOUT is 0x10 (16) in both drafts
+            let Err(failure) = fetched else {
+                panic!("{version:?}: the FETCH succeeded");
+            };
+            assert_eq!(
+                failure.to_string(),
+                "the session closed before the response arrived: bye (code 16)",
+                "{version:?}"
             );
         }
     }

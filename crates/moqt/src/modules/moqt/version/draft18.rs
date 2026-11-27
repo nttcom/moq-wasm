@@ -729,23 +729,21 @@ impl ControlChannel {
         }
         let Some(blocked) = self.publish_blocked_for(track_namespace, track_name) else {
             drop(namespace_writes);
-            return connection
-                .transport
-                .open_bi()
-                .await
-                .map_err(|_| RequestFailure::SessionClosed);
+            return match connection.transport.open_bi().await {
+                Ok(streams) => Ok(streams),
+                Err(_) => Err(connection.session_closed().await),
+            };
         };
         let (subscribe_tracks_id, subscribe_tracks, publish_blocked) =
             blocked.map_err(|error| {
                 tracing::error!(%error, "PUBLISH_BLOCKED could not be encoded");
                 RequestFailure::ProtocolViolation("request could not be encoded")
             })?;
-        match connection
-            .transport
-            .try_open_bi()
-            .await
-            .map_err(|_| RequestFailure::SessionClosed)?
-        {
+        let opened = match connection.transport.try_open_bi().await {
+            Ok(opened) => opened,
+            Err(_) => return Err(connection.session_closed().await),
+        };
+        match opened {
             Some(streams) => Ok(streams),
             None => {
                 tracing::info!("no stream for a PUBLISH; sending PUBLISH_BLOCKED");
@@ -894,11 +892,10 @@ impl ControlChannel {
                 self.open_publish_stream(connection, &track_namespace, &track_name)
                     .await?
             }
-            None => connection
-                .transport
-                .open_bi()
-                .await
-                .map_err(|_| RequestFailure::SessionClosed)?,
+            None => match connection.transport.open_bi().await {
+                Ok(streams) => streams,
+                Err(_) => return Err(connection.session_closed().await),
+            },
         };
         let sender = Arc::new(StreamSender::new(send_stream));
         debug_assert_eq!(request_id, reservation.request_id());
@@ -1408,7 +1405,7 @@ impl PendingResponse {
                 })
             }
             Ok(Ok(None)) => Err(RequestFailure::Withdrawn),
-            Ok(Err(_)) => Err(RequestFailure::SessionClosed),
+            Ok(Err(_)) => Err(RequestFailure::SessionClosed(None)),
             Err(_) => Err(RequestFailure::Timeout),
         }
     }
