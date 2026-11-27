@@ -91,7 +91,7 @@ Counters are cumulative since start (rates derive from deltas, so dropped snapsh
 Ranges exceeding 7 days or `points > 300` return `400`.
 
 ### Access & Privacy (`viewer::viewer_app`, `app_verifier::AppVerifier`)
-- **Auth**: No `Authorization` → `anon`. With Bearer token → VTS verify + `SignedToken::check` + require `subscribe == ""` (prevents room-scoped tokens reading whole app; wrong claim `403`, invalid `401`, missing/down VTS `503`). Verified tokens cache in memory (LRU cap 1,024) until `check` fails.
+- **Auth**: No `Authorization` → `anon`. With Bearer token → VTS verify + `SignedToken::check` + require `subscribe == ""` (prevents room-scoped tokens reading whole app; wrong claim `403`, invalid `401`, missing/down VTS `503`). Verified tokens cache in memory (cleared at 1,024 entries) until `check` fails.
 - **Snapshot scoping**: Keeps only the app's client sessions, tracks, and subscriptions. Inter-relay sessions stay only when referenced, stripped of counters (leaving only ID, peer, addresses); relay `process` figures are omitted.
 - **IP masking**: Client IPs are masked before leaving the server (`203.0.113.x:50123`, IPv6 keeps first 3 groups, port kept); relay IPs remain unmasked for link resolution; ClickHouse keeps raw IPs.
 

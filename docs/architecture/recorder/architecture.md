@@ -58,7 +58,7 @@ Builds an `ObjectStore` via `object_store::parse_url_opts` + env credentials ([o
 
 ## Recording API
 
-`bot-dispatcher` starts/stops room recordings (`recorder bot`) and composites (`recorder composite`); `recorder serve` (`api_server::ApiServer` on `http_server::HttpServer`; [hyper.md](hyper.md)) is a stateless HTTP read/replay API sharing state through `--store` (`gs://` or `file://`).
+`bot-dispatcher` starts/stops room recordings (`recorder bot`), which in turn launch composites (`recorder composite`); `recorder serve` (`api_server::ApiServer` on `http_server::HttpServer`; [hyper.md](hyper.md)) is a stateless HTTP read/replay API sharing state through `--store` (`gs://` or `file://`).
 
 ```mermaid
 flowchart LR

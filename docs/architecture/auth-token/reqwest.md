@@ -4,7 +4,7 @@
 Accepted (2026-09-09)
 
 ## What
-Optional dependency of `auth-token` (`json`, `rustls`, `default-features = false`, gated behind `vts-client`). `VtsClient` (`vts_client.rs`) POSTs client JWTs to VTS and parses verified claims for `relay`, `bot-dispatcher`, `observability`, and `recorder`.
+Optional dependency of `auth-token` (`json`, `rustls`, `default-features = false`, gated behind `vts-client`). `VtsClient` (`vts_client.rs`) POSTs client JWTs to VTS and parses verified claims for `relay`, `bot-dispatcher`, `sip-gateway`, `observability`, and `recorder`.
 
 ## Context
 Relays and services do not hold app signing secrets; they verify client JWTs via a single HTTP call to VTS per session.
