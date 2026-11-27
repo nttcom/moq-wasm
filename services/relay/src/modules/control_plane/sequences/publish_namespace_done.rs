@@ -46,6 +46,18 @@ impl PublishNamespaceDone {
             tracing::debug!(session_id, request_id, %track_namespace, "withdrawal of a replaced namespace subscription ignored");
             return;
         }
+        // Announced on a replaced subscription after it was superseded, so
+        // whether clients lose it waits for the wider subscription's answer.
+        if !is_origin_client
+            && cascading_relay_context
+                .inter_relay_connection_manager
+                .namespace_subscriptions
+                .defer_withdrawal(session_id, track_namespace)
+        {
+            table.unregister_publish_namespace(session_id, request_id, track_namespace);
+            tracing::debug!(session_id, request_id, %track_namespace, "withdrawal under a namespace subscription being replaced deferred");
+            return;
+        }
         let removal = table.unregister_publish_namespace(session_id, request_id, track_namespace);
         // A relay session may withdraw a namespace this relay never registered
         // for it, so only a client's DONE requires its own registration.
@@ -157,6 +169,10 @@ impl PublishNamespaceDone {
         forwarder: &ControlMessageForwarder,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
+        let _serialized = inter_relay_connection_manager
+            .namespace_subscriptions
+            .lock_session(session_id)
+            .await;
         if !inter_relay_connection_manager
             .namespace_subscriptions
             .remove(session_id, track_namespace)
