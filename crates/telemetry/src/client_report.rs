@@ -35,6 +35,7 @@ pub enum ClientService {
     Browser,
     MoqCli,
     Python,
+    Rust,
 }
 
 impl ClientService {
@@ -43,6 +44,7 @@ impl ClientService {
             Self::Browser => "browser",
             Self::MoqCli => "moq-cli",
             Self::Python => "python",
+            Self::Rust => "rust",
         }
     }
 }
