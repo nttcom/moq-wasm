@@ -40,7 +40,7 @@ flowchart LR
 
 - **Signers**: `services/console` (`apps.rs`) and `auth-token` CLI build `Claims::issued` and sign via `sign_token`.
 - **Signature verifier**: `services/vts` (`verify.rs`) calls `decode_unverified_payload` then `verify_signature`.
-- **Token consumers**: `services/relay` (`modules/auth/vts_token_verifier.rs`), `services/recorder` (`api_auth.rs`), `services/bot-dispatcher` (`launch_auth.rs`), and `services/observability` (`app_verifier.rs`) call `VtsClient` and run `SignedToken::check` with their own `ClaimPolicy` and authorization rules (`recorder` also checks `covers`). They hold no secret and never sign or verify locally.
+- **Token consumers**: `services/relay` (`modules/auth/vts_token_verifier.rs`), `services/recorder` (`api_auth.rs`), and `services/observability` (`app_verifier.rs`) call `VtsClient::verify` and run `SignedToken::check` with their own `ClaimPolicy` and authorization rules (`recorder` also checks `covers`); `services/bot-dispatcher` (`launch_auth.rs`, `bots`) and `services/sip-gateway` (`call_auth.rs`, `calls`) call `VtsClient::authorize` and map `AuthorizeError` to their HTTP responses. They hold no secret and never sign or verify locally.
 
 ## Invariants
 

@@ -1,10 +1,7 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::Duration};
 
 use app_registry::{Apps, RegistryStore, is_e164};
-use auth_token::{Access, ClaimPolicy, SignedToken, VtsClient, VtsVerifyError};
+use auth_token::{Access, AuthorizeError, ClaimPolicy, VtsClient};
 use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode};
 
@@ -77,13 +74,15 @@ impl CallAuth {
                 from: None,
             });
         };
-        let token = bearer_token(headers)
-            .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "a bearer token is required"))?;
-        let verified = vts.verify(token).await.map_err(|error| match error {
-            VtsVerifyError::Unauthorized(_) => rejected(StatusCode::UNAUTHORIZED, "invalid_token"),
-            _ => rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"),
-        })?;
-        check(&verified, namespace_prefix, SystemTime::now())?;
+        let verified = vts
+            .authorize(
+                bearer_token(headers),
+                Access::Calls,
+                namespace_prefix,
+                CALL_TOKEN_POLICY,
+            )
+            .await
+            .map_err(rejection)?;
         let apps = registry
             .load()
             .await
@@ -110,69 +109,46 @@ fn app_call(apps: &Apps, app_id: &str, to: &str) -> Result<AuthorizedCall, Rejec
     })
 }
 
-fn check(verified: &SignedToken, namespace_prefix: &str, now: SystemTime) -> Result<(), Rejection> {
-    verified
-        .check(CALL_TOKEN_POLICY, now)
-        .map_err(|_| rejected(StatusCode::UNAUTHORIZED, "invalid_token_lifetime"))?;
-    if verified.is_relay || !verified.covers(Access::Calls, namespace_prefix) {
-        return Err(rejected(StatusCode::FORBIDDEN, "forbidden"));
+fn rejection(error: AuthorizeError) -> Rejection {
+    match error {
+        AuthorizeError::MissingToken => {
+            rejected(StatusCode::UNAUTHORIZED, "a bearer token is required")
+        }
+        AuthorizeError::Unauthorized(_) => rejected(StatusCode::UNAUTHORIZED, "invalid_token"),
+        AuthorizeError::InvalidClaims(_) => {
+            rejected(StatusCode::UNAUTHORIZED, "invalid_token_lifetime")
+        }
+        AuthorizeError::Forbidden => rejected(StatusCode::FORBIDDEN, "forbidden"),
+        _ => rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"),
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use auth_token::ClaimError;
     use serde_json::json;
 
     use super::*;
 
-    fn at(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn verified(is_relay: bool, calls: Option<&str>, exp: u64) -> SignedToken {
-        serde_json::from_value(json!({
-            "appId": "APP",
-            "isRelay": is_relay,
-            "claims": { "appId": "APP", "calls": calls, "bots": "", "iat": 100, "exp": exp },
-        }))
-        .unwrap()
-    }
-
     #[test]
-    fn only_a_short_lived_calls_claim_covering_the_room_passes() {
+    fn each_authorization_failure_keeps_its_status_and_error() {
         // Act / Assert
         assert_eq!(
-            check(&verified(false, Some("room"), 400), "APP/room", at(110)),
-            Ok(())
-        );
-        assert_eq!(
-            check(&verified(false, Some("room"), 400), "APP/room2", at(110))
-                .unwrap_err()
-                .status,
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            check(&verified(false, None, 400), "APP/room", at(110))
-                .unwrap_err()
-                .status,
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            check(&verified(true, Some(""), 400), "APP/room", at(110))
-                .unwrap_err()
-                .status,
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            check(
-                &verified(false, Some("room"), 100 + 3600),
-                "APP/room",
-                at(110)
-            )
-            .unwrap_err()
-            .status,
-            StatusCode::UNAUTHORIZED
+            [
+                AuthorizeError::MissingToken,
+                AuthorizeError::Unauthorized("bad".to_string()),
+                AuthorizeError::Unavailable(anyhow::anyhow!("down")),
+                AuthorizeError::InvalidClaims(ClaimError::Expired),
+                AuthorizeError::Forbidden,
+            ]
+            .map(rejection),
+            [
+                rejected(StatusCode::UNAUTHORIZED, "a bearer token is required"),
+                rejected(StatusCode::UNAUTHORIZED, "invalid_token"),
+                rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"),
+                rejected(StatusCode::UNAUTHORIZED, "invalid_token_lifetime"),
+                rejected(StatusCode::FORBIDDEN, "forbidden"),
+            ]
         );
     }
 
