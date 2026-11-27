@@ -26,10 +26,7 @@ use crate::{
         Location, Object, ObjectStatus,
     },
     publish::PublishOption,
-    subscribe::{
-        FilterType, SubscribeHandler, SubscribeUpdateHandler, TrackStatusHandler,
-        UnsubscribeHandler,
-    },
+    subscribe::{SubscribeHandler, SubscribeUpdateHandler, TrackStatusHandler, UnsubscribeHandler},
 };
 
 mod cache_expiry_task;
@@ -92,7 +89,7 @@ pub enum WriteOutcome {
 
 /// Manages published tracks, numbering and caching objects from the first write (even with no subscribers) so cache and live streams share IDs.
 /// Each subscription (`SUBSCRIBE` or `PUBLISH`) gets an outlet and writes fan out to every outlet (during migration, old and new servers subscribe independently).
-/// `PUBLISH` sends from the next group, `SUBSCRIBE` follows its filter's Start Location (draft-14 §9.7; Largest Object takes the remainder of the open group), and `Content Exists` reports the largest cached object (`FETCH`able).
+/// Each subscription starts at its filter's Start Location (`SUBSCRIBE` or `PUBLISH_OK`, draft-14 §9.7, §9.14; Largest Object takes the remainder of the open group), and `Content Exists` reports the largest cached object (`FETCH`able).
 #[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
@@ -568,7 +565,9 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         track.lifecycle = Lifecycle::Live;
-        let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
+        let start = subscription
+            .filter_type()
+            .start_location(track.numbering.largest());
         track.outlets.push(Outlet {
             request,
             state: OutletState::Serving(Serving {
@@ -1700,7 +1699,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_caches_before_publish_and_sends_from_the_next_group_after_it() {
+    async fn write_caches_before_publish_and_sends_the_rest_of_the_group_after_it() {
         for version in DRAFTS {
             // Arrange
             let peers = origin_with_track("origin-publish", RETENTION, version).await;
@@ -1716,6 +1715,60 @@ mod tests {
                 .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
                 .await
                 .unwrap();
+            let received = next_object(&peers, &accepted).await;
+
+            // Assert: the PUBLISH_OK's Largest Object filter starts after "a"
+            assert_eq!(before_publish, WriteOutcome::NotSent);
+            assert_eq!(mid_group, sent(FIRST_GROUP_ID, 1, false));
+            assert_eq!(
+                (received.group_id, received.object_id, received.payload),
+                (FIRST_GROUP_ID, 1, Bytes::from_static(b"b"))
+            );
+            let (handle, cached) = fetch(
+                &peers,
+                TRACK,
+                location(FIRST_GROUP_ID, 0),
+                location(FIRST_GROUP_ID + 1, 0),
+                GroupOrder::Ascending,
+            )
+            .await
+            .unwrap();
+            assert_eq!(ids(&cached), [(FIRST_GROUP_ID, 0), (FIRST_GROUP_ID, 1)]);
+            assert_eq!(handle.end_location, location(FIRST_GROUP_ID, 2));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_accepted_from_the_next_group_skips_the_rest_of_the_current_one() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-next-group", RETENTION, version).await;
+            let origin = &peers.origin;
+            origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            let (published, accepted) = within(async {
+                tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
+                    let SessionEvent::Publish(handler) = next_event(&peers.server).await else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    let accepted = handler
+                        .ok(128, FilterType::NextGroupStart, true)
+                        .await
+                        .unwrap();
+                    handler.accept_data_receiver().await;
+                    accepted
+                })
+            })
+            .await;
+            published.unwrap();
+
+            // Act
+            let mid_group = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                .await
+                .unwrap();
             let next_group = origin
                 .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
                 .await
@@ -1723,31 +1776,12 @@ mod tests {
             let received = next_object(&peers, &accepted).await;
 
             // Assert
-            assert_eq!(before_publish, WriteOutcome::NotSent);
             assert_eq!(mid_group, WriteOutcome::NotSent);
             assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
             assert_eq!(
                 (received.group_id, received.object_id, received.payload),
                 (FIRST_GROUP_ID + 1, 0, Bytes::from_static(b"c"))
             );
-            let (handle, cached) = fetch(
-                &peers,
-                TRACK,
-                location(FIRST_GROUP_ID, 0),
-                location(FIRST_GROUP_ID + 2, 0),
-                GroupOrder::Ascending,
-            )
-            .await
-            .unwrap();
-            assert_eq!(
-                ids(&cached),
-                [
-                    (FIRST_GROUP_ID, 0),
-                    (FIRST_GROUP_ID, 1),
-                    (FIRST_GROUP_ID + 1, 0)
-                ]
-            );
-            assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
         }
     }
 
@@ -1848,7 +1882,7 @@ mod tests {
             .unwrap();
         let received = next_object(&peers, &accepted).await;
 
-        // Assert: the write while PUBLISH_OK was pending is cached only; the track is sent from the next group
+        // Assert: the write while PUBLISH_OK was pending is cached only
         published.unwrap();
         assert_eq!(written, WriteOutcome::NotSent);
         assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
