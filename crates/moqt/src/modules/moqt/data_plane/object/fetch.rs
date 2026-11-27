@@ -253,7 +253,7 @@ mod tests {
                 2,   // Subgroup ID
                 3,   // Object ID
                 128, // Publisher Priority
-                0,   // Extension Headers Length (= 0, 拡張なし)
+                0,   // Extension Headers Length
                 4,   // Object Payload Length
                 b'a', b'b', b'c', b'd', // Payload
             ];

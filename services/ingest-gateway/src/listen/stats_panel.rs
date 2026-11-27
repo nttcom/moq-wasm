@@ -84,8 +84,8 @@ impl Drop for Registration {
 }
 
 /// Redraws the statistics of every registered connection from the top of the
-/// screen once a second, so wrapped lines never leave stale rows behind; logs
-/// must go to stderr while it runs.
+/// screen every `REFRESH_INTERVAL`, so wrapped lines never leave stale rows
+/// behind; logs must go to stderr while it runs.
 pub struct StatsPanel {
     _task: JoinHandle<()>,
 }

@@ -45,7 +45,7 @@ use crate::{bot_job::LauncherKind, recording::Layout};
     after_help = "`recorder serve` serves an HTTP API that lists and replays room recordings; see `recorder serve --help`."
 )]
 pub(crate) struct Args {
-    /// MoQT relay URL (`moqt://` for QUIC, `https://` for WebTransport)
+    /// MoQT relay URL (`moqt://` for QUIC, `https://` for WebTransport, `wss://` for WebSocket)
     #[arg(long, env = "MOQT_URL")]
     pub(crate) relay: String,
 
@@ -77,8 +77,8 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) list_tracks: bool,
 
-    /// Output file; defaults to <namespace>-<Unix seconds>.mp4 in the current
-    /// directory. With `--layout per-track` each track goes to <stem>-<track>.mp4
+    /// Output file; defaults to `<namespace>-<Unix seconds>.mp4` in the current
+    /// directory. With `--layout per-track` each track goes to `<stem>-<track>.mp4`
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
 
@@ -119,7 +119,7 @@ pub(crate) struct Args {
     pub(crate) insecure_skip_tls_verify: bool,
 }
 
-/// Serve an HTTP API that starts and stops room recordings
+/// Serve an HTTP API that lists and replays room recordings
 #[derive(Parser, Debug)]
 #[command(name = "recorder serve", bin_name = "recorder serve", version)]
 pub(crate) struct ServeArgs {
@@ -223,7 +223,7 @@ pub(crate) struct BotArgs {
     pub(crate) launcher: LauncherKind,
 
     /// Cloud Run Job running `recorder composite`, as
-    /// projects/<project>/locations/<region>/jobs/<job>
+    /// `projects/<project>/locations/<region>/jobs/<job>`
     #[arg(long, env = "RECORDER_COMPOSITE_JOB")]
     pub(crate) composite_job: Option<String>,
 }

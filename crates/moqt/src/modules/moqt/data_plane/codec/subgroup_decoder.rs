@@ -40,7 +40,6 @@ pub(crate) struct SubgroupDecoder {
 
 impl Decoder for SubgroupDecoder {
     type Item = SubgroupFrame;
-    // TODO: define a proper error type.
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {

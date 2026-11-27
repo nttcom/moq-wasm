@@ -21,7 +21,7 @@ use crate::rtp::RtpOutput;
     about = "Subscribe to an MSF broadcast and send it as plain RTP"
 )]
 struct Args {
-    /// MoQ server URL (`moqt://` for QUIC, `https://` for WebTransport)
+    /// MoQ server URL (`moqt://` for QUIC, `https://` for WebTransport, `wss://` for WebSocket)
     #[arg(long)]
     moqt_url: String,
 

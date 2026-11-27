@@ -929,7 +929,7 @@ impl ControlChannel {
     }
 
     /// Sends REQUEST_UPDATE on the stream of the subscription it updates
-    /// (§10.10).
+    /// (§10.9.1).
     pub(super) async fn send_subscribe_update(
         &self,
         reservation: RequestIdReservation<'_>,

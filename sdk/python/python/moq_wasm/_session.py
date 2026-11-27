@@ -1048,7 +1048,7 @@ def connect(
     refresh_token: RefreshToken | None = None,
     versions: list[str] | None = None,
 ) -> _Connecting:
-    """Connect to a MoQT relay (`moqt://` QUIC, `https://` WebTransport) with optional JWT `token`.
+    """Connect to a MoQT relay (`moqt://` QUIC, `https://` WebTransport, `wss://` WebSocket) with optional JWT `token`.
 
     Use with `async with` or `await` + `close()`. Raises `RuntimeError` on failure or 30 s handshake timeout.
     `versions` lists drafts to offer, most preferred first (default: draft-18 then draft-14).

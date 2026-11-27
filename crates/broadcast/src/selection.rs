@@ -89,7 +89,7 @@ type Source = Option<u64>;
 /// `Ok(None)` while the chosen source lists neither a video track nor an
 /// audio track that can be decoded; a meeting participant with the camera off lists
 /// only the audio. `Err` when the named video track, or every video track of
-/// the source, has a codec other than H.264, VP8, VP9 or AV1.
+/// the source, has a codec other than H.264, H.265, VP8, VP9 or AV1.
 ///
 /// Without a name, only LOC tracks with role `video` or `audio` qualify.
 /// Remaining ties go to the track listed first.

@@ -466,8 +466,7 @@ mod tests {
             }
             assert_eq!(header.publisher_priority, depacketized.publisher_priority);
 
-            // Check raw bytes for 0x14
-            // Message Type (0x14), Track Alias (5), Group ID (6), Subgroup ID (100), Publisher Priority (32)
+            // Message Type (0x1D), Track Alias (5), Group ID (6), Subgroup ID (100), Publisher Priority (32)
             let expected_bytes = vec![0x1D, 0x05, 0x06, 0x40, 0x64, 0x20];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
         }
@@ -565,13 +564,11 @@ mod tests {
             assert_eq!(buf[0], 0x10);
 
             // Case 2: First Object ID, Extensions, No End of Group -> 0x13
-            // (Previously buggy logic would have returned 0x15)
             let h = SubgroupHeader::new(0, 0, SubgroupId::FirstObjectIdDelta, 0, true, false);
             let buf = h.encode().unwrap();
             assert_eq!(buf[0], 0x13);
 
             // Case 3: Value, Extensions, End of Group -> 0x1D
-            // (Previously buggy logic would have returned 0x1B)
             let h = SubgroupHeader::new(0, 0, SubgroupId::Value(100), 0, true, true);
             let buf = h.encode().unwrap();
             assert_eq!(buf[0], 0x1D);

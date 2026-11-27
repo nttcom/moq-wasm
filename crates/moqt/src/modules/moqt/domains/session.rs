@@ -121,7 +121,8 @@ impl Session {
 
     /// Terminates the session (draft-14 §3.4): the peer receives `code` and
     /// `reason` on the transport close, and this side observes
-    /// `SessionEvent::ProtocolViolation`.
+    /// `SessionEvent::ProtocolViolation` when `code` is `ProtocolViolation` or
+    /// `SessionEvent::Disconnected` otherwise.
     pub fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
         self.inner.close_with_error(code, reason);
     }

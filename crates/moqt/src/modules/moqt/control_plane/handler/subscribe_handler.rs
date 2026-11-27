@@ -229,8 +229,8 @@ impl SubscribeHandler {
 }
 
 /// The order a subscription is delivered in, which a draft-14 SUBSCRIBE_OK
-/// or TRACK_STATUS_OK states (§9.10): the one the subscriber asked for, else
-/// the track's DEFAULT PUBLISHER GROUP ORDER, else Ascending.
+/// or TRACK_STATUS_OK states (§9.8, §9.21): the one the subscriber asked for,
+/// else the track's DEFAULT PUBLISHER GROUP ORDER, else Ascending.
 pub(crate) fn delivered_group_order(
     requested: GroupOrder,
     track_properties: &TrackProperties,

@@ -26,7 +26,7 @@ enum Command {
 
 #[derive(Args, Debug)]
 struct RelayArgs {
-    /// MoQ relay URL (`moqt://` for QUIC, `https://` for WebTransport)
+    /// MoQ relay URL (`moqt://` for QUIC, `https://` for WebTransport, `wss://` for WebSocket)
     #[arg(long)]
     moqt_url: Option<String>,
 
