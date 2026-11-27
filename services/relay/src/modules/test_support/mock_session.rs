@@ -82,6 +82,7 @@ pub(crate) struct RecordedControlMessages {
     namespace_announcements: Arc<Mutex<Vec<String>>>,
     namespace_subscriptions: Arc<Mutex<Vec<String>>>,
     refuses_namespace_subscriptions: Arc<std::sync::atomic::AtomicBool>,
+    namespace_subscription_gate: Arc<Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
     publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
 }
@@ -106,6 +107,7 @@ impl Default for RecordedControlMessages {
             namespace_announcements: Arc::default(),
             namespace_subscriptions: Arc::default(),
             refuses_namespace_subscriptions: Arc::default(),
+            namespace_subscription_gate: Arc::default(),
             publishes: Arc::default(),
             publish_dones: Arc::default(),
         }
@@ -219,6 +221,14 @@ impl RecordedControlMessages {
     pub(crate) fn refuse_namespace_subscriptions(&self) {
         self.refuses_namespace_subscriptions
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes each later SUBSCRIBE_NAMESPACE wait for a permit of the returned
+    /// gate, in arrival order, before it is recorded as sent.
+    pub(crate) fn hold_namespace_subscriptions(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.namespace_subscription_gate.lock().unwrap() = Some(gate.clone());
+        gate
     }
 
     /// `subscribe <prefix>` or `unsubscribe <prefix>` per request, in order.
@@ -896,6 +906,15 @@ impl Subscriber for MockUpstreamSubscriber {
     }
 
     async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        let gate = self
+            .recorded
+            .namespace_subscription_gate
+            .lock()
+            .unwrap()
+            .clone();
+        if let Some(gate) = gate {
+            gate.acquire().await?.forget();
+        }
         self.recorded
             .namespace_subscriptions
             .lock()
@@ -1493,6 +1512,7 @@ impl PublishHandler for MockPublishHandler {
 pub(crate) struct MockPublishNamespaceHandler {
     track_namespace: String,
     track_namespace_tuple: Vec<String>,
+    request_id: u64,
 }
 
 impl MockPublishNamespaceHandler {
@@ -1500,7 +1520,12 @@ impl MockPublishNamespaceHandler {
         Self {
             track_namespace: track_namespace.to_string(),
             track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
+            request_id: 0,
         }
+    }
+
+    pub(crate) fn with_request_id(self, request_id: u64) -> Self {
+        Self { request_id, ..self }
     }
 }
 
@@ -1510,7 +1535,7 @@ impl PublishNamespaceHandler for MockPublishNamespaceHandler {
         None
     }
     fn request_id(&self) -> u64 {
-        0
+        self.request_id
     }
     fn track_namespace(&self) -> &str {
         &self.track_namespace

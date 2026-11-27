@@ -76,23 +76,28 @@ impl UnsubscribeNamespace {
             );
         }
 
-        let released = cascading_relay_context
+        let subscriptions = &cascading_relay_context
             .inter_relay_connection_manager
-            .namespace_subscriptions
-            .remove_under_prefix(track_namespace_prefix, |track_namespace| {
-                table.is_watched_by_client(track_namespace)
-            });
-        for (session_id, track_namespace) in released {
-            if let Err(err) = forwarder
-                .unsubscribe_namespace(session_id, track_namespace.clone())
-                .await
-            {
-                tracing::warn!(
-                    error = ?err,
-                    session_id = session_id,
-                    %track_namespace,
-                    "failed to unsubscribe the namespace at its publisher relay"
-                );
+            .namespace_subscriptions;
+        for session_id in subscriptions.sessions_under_prefix(track_namespace_prefix) {
+            let _serialized = subscriptions.lock_session(session_id).await;
+            let released = subscriptions.remove_under_prefix(
+                session_id,
+                track_namespace_prefix,
+                |track_namespace| table.is_watched_by_client(track_namespace),
+            );
+            for track_namespace in released {
+                if let Err(err) = forwarder
+                    .unsubscribe_namespace(session_id, track_namespace.clone())
+                    .await
+                {
+                    tracing::warn!(
+                        error = ?err,
+                        session_id = session_id,
+                        %track_namespace,
+                        "failed to unsubscribe the namespace at its publisher relay"
+                    );
+                }
             }
         }
     }
