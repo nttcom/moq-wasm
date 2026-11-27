@@ -43,7 +43,16 @@ async fn publish_stdin(session: &Session, namespace: &Namespace, codec: Codec) -
     let codec = codec.codec_family();
     source.configure_video(codec)?;
     let mut splitter = AnnexBSplitter::new(codec)?;
-    let mut clock = ArrivalClock::new();
+    // The stream has no timestamps: each access unit takes its arrival, 1 µs
+    // after the previous one when one read completes several.
+    let started = Instant::now();
+    let mut last_micros = None;
+    let mut arrival = || {
+        let elapsed = started.elapsed().as_micros() as u64;
+        let micros = last_micros.map_or(elapsed, |last: u64| elapsed.max(last + 1));
+        last_micros = Some(micros);
+        micros
+    };
 
     let mut reader = tokio::io::stdin();
     let mut read_buf = vec![0u8; READ_BUFFER_BYTES];
@@ -67,7 +76,7 @@ async fn publish_stdin(session: &Session, namespace: &Namespace, codec: Codec) -
         }
         .context("failed to read the input; check --codec")?;
         for access_unit in access_units {
-            source.push_video(access_unit, clock.next())?;
+            source.push_video(access_unit, arrival())?;
         }
         if read == 0 {
             info!("input ended");
@@ -75,29 +84,4 @@ async fn publish_stdin(session: &Session, namespace: &Namespace, codec: Codec) -
         }
     }
     broadcast.close().await
-}
-
-/// Times each access unit by its arrival, since the stream carries no
-/// timestamps; units completed by one read are 1 µs apart.
-struct ArrivalClock {
-    started: Instant,
-    last_micros: Option<u64>,
-}
-
-impl ArrivalClock {
-    fn new() -> Self {
-        Self {
-            started: Instant::now(),
-            last_micros: None,
-        }
-    }
-
-    fn next(&mut self) -> u64 {
-        let arrival = self.started.elapsed().as_micros() as u64;
-        let micros = self
-            .last_micros
-            .map_or(arrival, |last| arrival.max(last + 1));
-        self.last_micros = Some(micros);
-        micros
-    }
 }
