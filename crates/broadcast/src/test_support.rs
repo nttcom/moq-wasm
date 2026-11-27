@@ -103,9 +103,9 @@ pub(crate) struct FakePublisher {
 }
 
 impl FakePublisher {
-    pub(crate) fn spawn() -> Self {
-        let endpoint =
-            Endpoint::<NATIVE>::create_server(&self_signed_server_config("publisher")).unwrap();
+    /// `name` keeps the certificate apart from other tests'.
+    pub(crate) fn spawn(name: &str) -> Self {
+        let endpoint = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
         let origin = Origin::default();
         let (served_sender, served) = mpsc::unbounded_channel();

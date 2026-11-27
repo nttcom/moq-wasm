@@ -91,7 +91,7 @@ Every writer publishes `<video>_timeline` (default `video_timeline`), even witho
 
 `BroadcastReader` (used by `egress-gateway`, `sip-gateway`) subscribes to a broadcast and yields `mediapack::MediaEvent`s on one channel via per-track `TrackReceiveTask`s (aborted on drop):
 
-- **Selection**: Uses `selection::select_tracks` (shared with `recorder`, see [`recorder/architecture.md`](../recorder/architecture.md) "Sources"). Default: main source's tallest video + highest-bitrate audio (`VideoChoice::Off`/`AudioChoice::Off` disable). Ignores CMAF and timelines; skips unsupported codecs; waits for next catalog if AAC lacks `initRef` yet.
+- **Selection**: `CatalogReader::next_selection` applies `selection::select_tracks` to each catalog until one lists a selected track (shared with `recorder`, see [`recorder/architecture.md`](../recorder/architecture.md) "Sources"). Default: main source's tallest video + highest-bitrate audio (`VideoChoice::Off`/`AudioChoice::Off` disable). Ignores CMAF and timelines; skips unsupported codecs; waits for next catalog if AAC lacks `initRef` yet.
 - **A/V sync & timing**: Audio arriving before (or captured before) the first video object is dropped (untimed audio passes once video starts). Each `loc::Demuxer` measures PTS relative to a shared capture origin (first video object's LOC timestamp, or first audio object if audio-only).
 
 **Joining subscriptions**

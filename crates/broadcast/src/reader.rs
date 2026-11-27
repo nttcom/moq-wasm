@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use crate::{
     CatalogReader,
     reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask},
-    selection::{Selection, TrackChoice, select_tracks},
+    selection::{Selection, TrackChoice},
 };
 
 const MEDIA_CHANNEL_CAPACITY: usize = 256;
@@ -111,14 +111,11 @@ async fn wait_for_selection(
     namespace: &str,
     choice: TrackChoice<'_>,
 ) -> Result<Selection> {
-    let mut catalogs = CatalogReader::open(session, namespace).await?;
-    while let Some(catalog) = catalogs.next().await? {
-        if let Some(selection) = select_tracks(&catalog, choice)? {
-            return Ok(selection);
-        }
-        tracing::info!(namespace, "waiting for the catalog to list a track to read");
-    }
-    anyhow::bail!("catalog track ended before it listed a track to read")
+    CatalogReader::open(session, namespace)
+        .await?
+        .next_selection(choice)
+        .await?
+        .context("catalog track ended before it listed a track to read")
 }
 
 async fn subscribe(
@@ -228,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn reads_audio_that_a_publisher_sends_as_one_endless_group() {
         // Arrange: like a meeting member, the audio stays in one group numbered below the video's
-        let mut publisher = FakePublisher::spawn();
+        let mut publisher = FakePublisher::spawn("reader");
         let origin = publisher.origin.clone();
         let keyframe = first_keyframe();
         let video_capture = keyframe.capture_timestamp().unwrap().micros();
