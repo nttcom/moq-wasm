@@ -25,15 +25,12 @@ const SHARED_TAB_VIEWPORT = { width: 960, height: 720 }
 
 // Assert that a video element is actively playing (decoded frames, time advancing, not paused).
 async function expectVideoPlaying(video: import('@playwright/test').Locator): Promise<void> {
-  // Assert: video 要素がデコード済みデータを持つ readyState に達していることを確認する。
   await expect
     .poll(async () => video.evaluate((el) => (el as HTMLVideoElement).readyState), { timeout: 30_000 })
     .toBeGreaterThanOrEqual(2)
-  // Assert: 再生時刻が進み、映像が実際に流れていることを確認する。
   await expect
     .poll(async () => video.evaluate((el) => (el as HTMLVideoElement).currentTime), { timeout: 30_000 })
     .toBeGreaterThan(0)
-  // Assert: pause 状態でないことを確認する。
   await expect.poll(async () => video.evaluate((el) => (el as HTMLVideoElement).paused)).toBe(false)
 }
 
@@ -105,42 +102,35 @@ async function subscribeAndExpectMedia(viewer: import('@playwright/test').Page, 
 }
 
 test('cross-relay: two clients on different relays see each other and receive video+audio', async ({ browser }) => {
-  // Arrange: relay-a に接続する Client1 と relay-b に接続する Client2 を用意する。
+  // Arrange
   const client1 = await arrangeMeetingClient(browser)
   const client2 = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-cross-relay-${Date.now()}`
 
-    // Act: Client1 を relay-a 経由で同じルームに参加させカメラ・マイクを有効にする。
+    // Act
     await joinRoom(client1.page, roomName, 'alice', 'a')
     await enableMedia(client1.page)
-    // Assert: Client1 のルームヘッダーにルーム名が表示されることを確認する。
+    // Assert
     await expect(client1.page.roomName).toHaveText(roomName)
 
-    // Act: Client2 を relay-b 経由で同じルームに参加させカメラ・マイクを有効にする。
+    // Act
     await joinRoom(client2.page, roomName, 'bob', 'b')
     await enableMedia(client2.page)
-    // Assert: Client2 のルームヘッダーにルーム名が表示されることを確認する。
+    // Assert
     await expect(client2.page.roomName).toHaveText(roomName)
-
-    // Assert: Client1 側に bob のメンバーカードが現れ、カタログが自動購読されることを確認する。
     await expectCatalogStatus(client1.page.page, 'bob', 'Subscribed', 60_000)
-    // Assert: Client2 側に alice のメンバーカードが現れ、カタログが自動購読されることを確認する。
     await expectCatalogStatus(client2.page.page, 'alice', 'Subscribed', 60_000)
 
-    // Act: Client1/Client2 が相手の映像・音声を明示的に購読する。
+    // Act
     await subscribeMedia(client1.page.page, 'bob')
     await subscribeMedia(client2.page.page, 'alice')
 
-    // Assert: Client1 が bob の映像を再生していることを確認する（クロスリレー経路）。
+    // Assert
     await expectVideoPlaying(getMemberVideo(client1.page.page, 'bob'))
-    // Assert: Client1 が bob の音声を再生していることを確認する。
     await expectAudioPlaying(getMemberStats(client1.page.page, 'bob'))
-
-    // Assert: Client2 が alice の映像を再生していることを確認する（クロスリレー経路）。
     await expectVideoPlaying(getMemberVideo(client2.page.page, 'alice'))
-    // Assert: Client2 が alice の音声を再生していることを確認する。
     await expectAudioPlaying(getMemberStats(client2.page.page, 'alice'))
 
     // Assert: both directions decode inter-frames, not only keyframes.
@@ -276,46 +266,40 @@ test('unmuting a member microphone keeps their picture on the viewer page', asyn
 })
 
 test('leave and rejoin with same memberName succeeds without stale-member failure', async ({ browser }) => {
-  // Arrange: 同一ルームに relay-a 経由で 2 クライアントを参加させる。
+  // Arrange
   const client1 = await arrangeMeetingClient(browser)
   const client2 = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-rejoin-${Date.now()}`
 
-    // Act: Client1 を relay-a 経由でルームに参加させカメラ・マイクを有効にする。
+    // Act
     await joinRoom(client1.page, roomName, 'alice', 'a')
     await enableMedia(client1.page)
-
-    // Act: Client2 を relay-a 経由で同じルームに参加させカメラ・マイクを有効にする。
     await joinRoom(client2.page, roomName, 'bob', 'a')
     await enableMedia(client2.page)
 
-    // Assert: 双方に相手が現れカタログ購読が完了することを確認する。
+    // Assert
     await expectCatalogSubscribed(client1.page.page, 'bob')
     await expectCatalogSubscribed(client2.page.page, 'alice')
 
-    // Act: Client2 が映像・音声を購読し再生が始まることを確認する。
+    // Act / Assert
     await subscribeMedia(client2.page.page, 'alice')
     await expectVideoPlaying(getMemberVideo(client2.page.page, 'alice'))
 
-    // Act: Client2 がルームを退室する（Leave Room ボタン）。
+    // Act
     await client2.page.leaveButton.click()
-    // Assert: Join フォームに戻り、Client1 側から古い bob のメンバー表示が消える。
+    // Assert
     await expect(client2.page.roomName).not.toBeVisible({ timeout: 15_000 })
     await expect(getMemberCard(client1.page.page, 'bob')).not.toBeVisible({ timeout: 15_000 })
 
-    // Act: Client2 が同じ名前・同じルームで再参加する。
+    // Act
     await joinRoom(client2.page, roomName, 'bob', 'a')
     await enableMedia(client2.page)
-    // Assert: 再参加後もルームヘッダーにルーム名が表示されることを確認する。
+    // Assert
     await expect(client2.page.roomName).toHaveText(roomName)
-
-    // Assert: 再参加後も双方に相手が現れカタログ購読されることを確認する。
     await expectCatalogSubscribed(client1.page.page, 'bob')
     await expectCatalogSubscribed(client2.page.page, 'alice')
-
-    // Assert: 再参加後も双方向で映像・音声が流れることを確認する。
     await subscribeAndExpectMedia(client2.page.page, 'alice')
     await subscribeAndExpectMedia(client1.page.page, 'bob')
   } finally {
@@ -325,7 +309,7 @@ test('leave and rejoin with same memberName succeeds without stale-member failur
 })
 
 test('three clients in the same room all see each other and receive video+audio', async ({ browser }) => {
-  // Arrange: relay-a に alice/carol、relay-b に bob を参加させる 3 クライアントを用意する。
+  // Arrange
   const alice = await arrangeMeetingClient(browser)
   const bob = await arrangeMeetingClient(browser)
   const carol = await arrangeMeetingClient(browser)
@@ -333,7 +317,7 @@ test('three clients in the same room all see each other and receive video+audio'
   try {
     const roomName = `e2e-trio-${Date.now()}`
 
-    // Act: 3 名を同じルームに参加させ、それぞれカメラ・マイクを有効にする。
+    // Act
     await joinRoom(alice.page, roomName, 'alice', 'a')
     await enableMedia(alice.page)
     await joinRoom(bob.page, roomName, 'bob', 'b')
@@ -341,7 +325,7 @@ test('three clients in the same room all see each other and receive video+audio'
     await joinRoom(carol.page, roomName, 'carol', 'a')
     await enableMedia(carol.page)
 
-    // Assert: 各クライアントが他の 2 名をリモートメンバーとして認識しカタログ購読が完了する。
+    // Assert
     await Promise.all([
       expectCatalogSubscribed(alice.page.page, 'bob'),
       expectCatalogSubscribed(alice.page.page, 'carol'),
@@ -351,7 +335,7 @@ test('three clients in the same room all see each other and receive video+audio'
       expectCatalogSubscribed(carol.page.page, 'bob')
     ])
 
-    // Act: 全 6 経路を先に一括購読する（配信開始直後に購読し直近キーフレームを拾うため）。
+    // Act: subscribe all 6 paths up front to catch the initial keyframes.
     await subscribeMedia(alice.page.page, 'bob')
     await subscribeMedia(alice.page.page, 'carol')
     await subscribeMedia(bob.page.page, 'alice')
@@ -359,7 +343,7 @@ test('three clients in the same room all see each other and receive video+audio'
     await subscribeMedia(carol.page.page, 'alice')
     await subscribeMedia(carol.page.page, 'bob')
 
-    // Assert: 各クライアントが両相手から映像・音声を受信できることをまとめて確認する。
+    // Assert
     await expectMediaFlowing(alice.page.page, 'bob')
     await expectMediaFlowing(alice.page.page, 'carol')
     await expectMediaFlowing(bob.page.page, 'alice')
@@ -374,40 +358,36 @@ test('three clients in the same room all see each other and receive video+audio'
 })
 
 test('repeated leave and rejoin keeps reconnecting with the same memberName', async ({ browser }) => {
-  // Arrange: relay-a に alice と bob を参加させる。
+  // Arrange
   const alice = await arrangeMeetingClient(browser)
   const bob = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-rejoin-loop-${Date.now()}`
 
-    // Act: alice と bob を同じルームに参加させカメラ・マイクを有効にする。
+    // Act
     await joinRoom(alice.page, roomName, 'alice', 'a')
     await enableMedia(alice.page)
     await joinRoom(bob.page, roomName, 'bob', 'a')
     await enableMedia(bob.page)
-    // Assert: 双方に相手が現れカタログ購読が完了する。
+    // Assert
     await expectCatalogSubscribed(alice.page.page, 'bob')
     await expectCatalogSubscribed(bob.page.page, 'alice')
 
-    // Act / Assert: bob が退室→同名再参加を 3 回繰り返し、毎回問題なく再接続できることを確認する。
     for (let attempt = 1; attempt <= 3; attempt++) {
-      // Act: bob がルームを退室する。
+      // Act
       await bob.page.leaveButton.click()
-      // Assert: Join フォームに戻り、alice 側から古い bob のメンバー表示が消える。
+      // Assert
       await expect(bob.page.roomName).not.toBeVisible({ timeout: 15_000 })
       await expect(getMemberCard(alice.page.page, 'bob')).not.toBeVisible({ timeout: 15_000 })
 
-      // Act: bob が同じ名前・同じルームに再参加する。
+      // Act
       await joinRoom(bob.page, roomName, 'bob', 'a')
       await enableMedia(bob.page)
-      // Assert: 再参加のたびにルームヘッダーが表示される。
+      // Assert
       await expect(bob.page.roomName).toHaveText(roomName)
-      // Assert: 双方で相手が毎回リモートメンバーとして再認識される。
       await expectCatalogSubscribed(alice.page.page, 'bob')
       await expectCatalogSubscribed(bob.page.page, 'alice')
-
-      // Assert: 各再参加直後に双方向で映像・音声が流れることを確認する。
       await subscribeAndExpectMedia(bob.page.page, 'alice')
       await subscribeAndExpectMedia(alice.page.page, 'bob')
     }
@@ -776,7 +756,7 @@ test('the stats charts of a member are drawn across the full panel width', async
 })
 
 test('multiple clients on a single relay all connect and receive video+audio', async ({ browser }) => {
-  // Arrange: 全員 relay-a に接続する 3 クライアントを用意する（単一リレーで複数接続を検証）。
+  // Arrange
   const alice = await arrangeMeetingClient(browser)
   const bob = await arrangeMeetingClient(browser)
   const carol = await arrangeMeetingClient(browser)
@@ -784,7 +764,7 @@ test('multiple clients on a single relay all connect and receive video+audio', a
   try {
     const roomName = `e2e-single-relay-${Date.now()}`
 
-    // Act: 3 名すべてを relay-a 経由で同じルームに参加させ、カメラ・マイクを有効にする。
+    // Act
     await joinRoom(alice.page, roomName, 'alice', 'a')
     await enableMedia(alice.page)
     await joinRoom(bob.page, roomName, 'bob', 'a')
@@ -792,7 +772,7 @@ test('multiple clients on a single relay all connect and receive video+audio', a
     await joinRoom(carol.page, roomName, 'carol', 'a')
     await enableMedia(carol.page)
 
-    // Assert: 同一リレー上で各クライアントが他の 2 名を認識しカタログ購読が完了する。
+    // Assert
     await Promise.all([
       expectCatalogSubscribed(alice.page.page, 'bob'),
       expectCatalogSubscribed(alice.page.page, 'carol'),
@@ -802,7 +782,7 @@ test('multiple clients on a single relay all connect and receive video+audio', a
       expectCatalogSubscribed(carol.page.page, 'bob')
     ])
 
-    // Act: 単一リレー経由で全 6 経路を先に一括購読する。
+    // Act
     await subscribeMedia(alice.page.page, 'bob')
     await subscribeMedia(alice.page.page, 'carol')
     await subscribeMedia(bob.page.page, 'alice')
@@ -810,7 +790,7 @@ test('multiple clients on a single relay all connect and receive video+audio', a
     await subscribeMedia(carol.page.page, 'alice')
     await subscribeMedia(carol.page.page, 'bob')
 
-    // Assert: 全員が相互に映像・音声を受信できることをまとめて確認する。
+    // Assert
     await expectMediaFlowing(alice.page.page, 'bob')
     await expectMediaFlowing(alice.page.page, 'carol')
     await expectMediaFlowing(bob.page.page, 'alice')
@@ -825,37 +805,36 @@ test('multiple clients on a single relay all connect and receive video+audio', a
 })
 
 test('chat message sent by one client is displayed on the receiving client', async ({ browser }) => {
-  // Arrange: relay-a に alice と bob を参加させる。
+  // Arrange
   const alice = await arrangeMeetingClient(browser)
   const bob = await arrangeMeetingClient(browser)
-  // Arrange: bob の描画を遅らせ、自動購読の effect が購読完了より後に走る CI の遅さを再現する。
+  // Slow down bob's rendering so the auto-subscribe effect runs late, as in CI.
   await throttleCpu(bob.page.page, 2)
 
   try {
     const roomName = `e2e-chat-${Date.now()}`
 
-    // Act: 2 名を同じルームに参加させカメラ・マイクを有効にする。
+    // Act
     await joinRoom(alice.page, roomName, 'alice', 'a')
     await enableMedia(alice.page)
     await joinRoom(bob.page, roomName, 'bob', 'a')
     await enableMedia(bob.page)
 
-    // Assert: 互いを認識しカタログ購読が完了する。
+    // Assert
     await expectCatalogSubscribed(alice.page.page, 'bob')
     await expectCatalogSubscribed(bob.page.page, 'alice')
-    // Assert: 送信前に bob が alice の chat トラックを自動購読し終えるまで待つ（メッセージ取りこぼし防止）。
+    // Wait for bob's chat subscription before sending so the message is not missed.
     await expectTrackStatus(bob.page.page, 'chat', 'alice', 'Subscribed', 60_000)
 
-    // Act: alice が一意なチャットメッセージを送信する。
+    // Act
     const message = `hello-from-alice-${Date.now()}`
     await sendChatMessage(alice.page, message)
 
-    // Assert: 受信側 bob のチャットに alice からのメッセージが表示される。
+    // Assert
     await openChat(bob.page)
     await expect(getChatMessageByText(bob.page.page, message)).toBeVisible({ timeout: 30_000 })
-    // Assert: chat トラックの購読は 1 本だけなので、メッセージは 1 件だけ表示される。
+    // Only one chat subscription exists, so the message appears once.
     await expect(getChatMessageByText(bob.page.page, message)).toHaveCount(1)
-    // Assert: 送信側 alice のチャットにも自分のメッセージが表示される。
     await expect(getChatMessageByText(alice.page.page, message)).toBeVisible()
   } finally {
     await alice.context.close()
@@ -864,11 +843,11 @@ test('chat message sent by one client is displayed on the receiving client', asy
 })
 
 test('an invalid token is rejected by the relay with a surfaced reason', async ({ browser }) => {
-  // Arrange: 不正な JWT を提示するクライアントを用意する。
+  // Arrange
   const client = await arrangeMeetingClient(browser, { jwt: 'not-a-jwt' })
 
   try {
-    // Act: 不正トークンのまま relay-a に入室を試みる。
+    // Act
     await client.page.roomNameInput.fill(`e2e-auth-${Date.now()}`)
     await client.page.userNameInput.fill('mallory')
     await client.page.relayPickerToggle.click()
@@ -876,7 +855,7 @@ test('an invalid token is rejected by the relay with a surfaced reason', async (
     await client.page.relayARadio.click()
     await client.page.submitButton.click()
 
-    // Assert: relay が CLIENT_SETUP を拒否し、理由付きの入室エラーが表示されてルーム画面に進まないことを確認する。
+    // Assert: relay rejects CLIENT_SETUP
     await expect(client.page.joinError).toBeVisible({ timeout: 30_000 })
     await expect(client.page.joinError).toContainText('code 2')
     await expect(client.page.roomName).toHaveCount(0)

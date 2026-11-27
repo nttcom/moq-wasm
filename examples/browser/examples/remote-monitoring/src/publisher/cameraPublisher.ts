@@ -124,7 +124,7 @@ export class CameraPublisher {
   private startVideoFileCamera(url: string): Promise<MediaStream> {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video')
-      // リスナーを src 代入より先に登録（キャッシュ済みファイルで canplay が即時発火する場合に備える）
+      // Register the listener before setting src so a cached file firing canplay immediately is not missed.
       video.addEventListener(
         'canplay',
         () => {

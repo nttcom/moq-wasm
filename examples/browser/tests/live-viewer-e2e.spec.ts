@@ -28,10 +28,10 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expectVideoDecoded(viewer.video)
 
-    // Assert: 映像と音声は同じ clock で提示され、ずれは 1 フレーム未満
+    // Assert: A/V offset stays within one frame
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
-    // Act: 10 秒分の group が FETCH できるようになるのを待って巻き戻す
+    // Act
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
@@ -63,11 +63,11 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     const thumbBefore = await thumbValue(viewer)
     const playedBefore = await playedWidth(viewer)
 
-    // Assert: 1 ウィンドウ分 (4 group = 8 秒) を超えて再生が続く
+    // Assert: playback continues beyond one fetch window (4 groups = 8 s)
     await expect.poll(async () => reviewedSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(9)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects/)
 
-    // Assert: つまみはシークした位置に留まり、再生の進みは塗りが表す
+    // Assert: the thumb stays at the seek position while the fill shows playback progress
     expect(await thumbValue(viewer)).toBeCloseTo(thumbBefore, 1)
     expect(await playedWidth(viewer)).toBeGreaterThan(playedBefore)
 
@@ -98,7 +98,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
 
-    // Act: 中央のボタンで停止し、もう一度押して再開する
+    // Act
     await viewer.liveButton.click()
     await viewer.seekbar.hover()
     await viewer.playPauseButton.click()
@@ -110,15 +110,15 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Act
     await viewer.playPauseButton.click()
 
-    // Assert: 再開後もライブ端で映像と音声が揃う
+    // Assert
     await expect.poll(async () => mediaProp(viewer.video, 'paused')).toBe(false)
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
-    // Act: ↓ でライブから 5 秒戻り、→ で 1 秒進む（音量スライダーにフォーカスがあると矢印はスライダーのもの）
+    // Act: focus seekbar so ArrowDown steps 5 s back instead of moving the volume slider
     await viewer.seekbar.focus()
     await viewer.page.keyboard.press('ArrowDown')
 
-    // Assert: つまみは目標位置そのものに置かれ、描画は目標以降のフレームから始まる
+    // Assert
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.seekPosition).toHaveText(/-[5-7]\.\ds/)
     const skippedTo = await thumbValue(viewer)
@@ -131,7 +131,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect.poll(async () => thumbValue(viewer)).toBeGreaterThan(skippedTo)
 
-    // Act: 映像に重なるボタンはカーソルを合わせると押せる
+    // Act: overlay buttons become clickable on hover
     const beforeBack = await thumbValue(viewer)
     await viewer.seekbar.hover()
     await viewer.skipBack5Button.click()
@@ -139,7 +139,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect.poll(async () => thumbValue(viewer)).toBeLessThan(beforeBack)
 
-    // Act: ↑ でライブ端まで進む（再生位置が止まっている間もライブ端は進むので、LIVE になるまで押す）
+    // Act: repeat ArrowUp because the live edge keeps advancing while paused
     for (let presses = 0; presses < 6 && (await viewer.seekPosition.innerText()) !== 'LIVE'; presses += 1) {
       await viewer.page.keyboard.press('ArrowUp')
     }
@@ -148,7 +148,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.reviewCanvas).toBeHidden()
 
-    // Act: 歯車から下位画質へ切り替える
+    // Act
     await viewer.qualityButton.click()
     await expect(viewer.qualityMenu).toBeVisible()
     await expect(viewer.videoTrackSelect).toHaveValue('@auto')
@@ -225,7 +225,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     const liveSource = await mediaProp(viewer.visibleVideo, 'src')
     const liveVideo = viewer.page.locator(`.viewer-stage video[src="${liveSource}"]`)
 
-    // Act: relay のキャッシュがたまるのを待って MSE 経由で巻き戻す
+    // Act
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await viewer.page.keyboard.press('Escape')
     await viewer.seekbar.focus()
@@ -250,14 +250,14 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect(viewer.visibleVideo).toHaveCount(1)
     const liveTimeWhileReviewing = await mediaProp(liveVideo, 'currentTime')
 
-    // Act: 停止すると review 要素が止まり、再開で動き出す
+    // Act / Assert
     await viewer.seekbar.hover()
     await viewer.playPauseButton.click()
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'paused')).toBe(true)
     await viewer.playPauseButton.click()
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'paused')).toBe(false)
 
-    // Act: 巻き戻し中だけ倍速を選べる
+    // Act
     await expect(viewer.speedSelect).toBeEnabled()
     await viewer.speedSelect.selectOption('2')
 
@@ -335,20 +335,20 @@ test('live viewer rewinds to groups from before it started watching, placed by t
     expect(replayable.offset).toBeCloseTo(0, 1)
     expect(replayable.width).toBeCloseTo(100, 1)
 
-    // Act: 40 秒前へシークする（range input が書き直さない整数で渡す）
+    // Act: round to an integer so the range input does not rewrite the value
     await viewer.seekbar.fill(String(Math.round(Number(await viewer.seekbar.getAttribute('max')) - 40)))
 
-    // Assert: 視聴を始める前の group から再生が続く
+    // Assert
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
     expect(rewoundSeconds(await viewer.rewindStatus.innerText())).toBeGreaterThan((Date.now() - watchedAt) / 1_000 + 20)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
     await expect.poll(async () => reviewedSeconds(viewer), { timeout: 20_000 }).toBeGreaterThan(3)
 
-    // Act: Home は timeline が載せる最古の group へ戻る
+    // Act
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
-    // Assert: その group から再生が続く
+    // Assert
     await expect
       .poll(async () => rewoundSeconds(await viewer.rewindStatus.innerText()), { timeout: 20_000 })
       .toBeGreaterThan(45)
