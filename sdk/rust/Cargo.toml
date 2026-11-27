@@ -10,7 +10,7 @@ anyhow = "1.0.102"
 auth-token = { path = "../../crates/auth-token" }
 broadcast = { path = "../../crates/broadcast" }
 bytes = "1.11.1"
-mediapack = { path = "../../crates/mediapack" }
+mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
 robotics = { path = "../../crates/robotics" }
 msf = { path = "../../crates/msf" }
