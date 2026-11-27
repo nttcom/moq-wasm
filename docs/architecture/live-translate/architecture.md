@@ -34,7 +34,7 @@ flowchart TB
     TA --> RT["RootTranslation (1 relay session, sole Session::receive_event reader)"]
     RT -->|"PUBLISH_NAMESPACE / DONE / SUBSCRIBE / UNSUBSCRIBE"| BT["BroadcastTranslation (per broadcast)"]
     BT --> SC["SourceCatalog (SUBSCRIBE + joining FETCH)"]
-    BT --> CP["CatalogPublication (re-sends every 10 s + on change)"]
+    BT --> CP["CatalogTrack (re-sends every 10 s + on change)"]
     BT --> SA["SourceAudio (highest-bitrate Opus → 16 kHz PCM)"]
     SA --> LT["LanguageTranslation (per active language)"]
     LT --> Gem["RunningTranslation (Gemini WS or --echo)"]

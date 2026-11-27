@@ -9,12 +9,12 @@ const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 /// One catalog subscriber's track: the catalog goes out at once, again every
 /// `CATALOG_REFRESH_INTERVAL` so the relay keeps a copy, and whenever
 /// `update` replaces it.
-pub(crate) struct CatalogPublication {
+pub(crate) struct CatalogTrack {
     join_handle: JoinHandle<()>,
     payload_sender: mpsc::UnboundedSender<Bytes>,
 }
 
-impl CatalogPublication {
+impl CatalogTrack {
     pub(crate) fn run(mut writer: TrackWriter, mut payload: Bytes) -> Self {
         let (payload_sender, mut payload_receiver) = mpsc::unbounded_channel::<Bytes>();
         let join_handle = tokio::spawn(async move {
@@ -28,7 +28,7 @@ impl CatalogPublication {
                     },
                 }
                 if let Err(error) = writer.write_group(payload.clone()).await {
-                    tracing::warn!(?error, "catalog publication stopped");
+                    tracing::warn!(?error, "catalog track stopped");
                     return;
                 }
             }
@@ -44,7 +44,7 @@ impl CatalogPublication {
     }
 }
 
-impl Drop for CatalogPublication {
+impl Drop for CatalogTrack {
     fn drop(&mut self) {
         self.join_handle.abort();
     }

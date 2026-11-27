@@ -14,7 +14,7 @@ use tokio::{
 
 use crate::{
     broadcast_namespace::translated_namespace,
-    catalog_publication::CatalogPublication,
+    catalog_track::CatalogTrack,
     language_translation::{LanguageTranslation, WriterUpdate},
     root_translation::TranslationPolicy,
     root_translation::TranslationResources,
@@ -145,7 +145,7 @@ struct Serving {
     source_track_name: String,
     source_channels: u32,
     catalog_payload: Bytes,
-    catalog_publications: HashMap<u64, CatalogPublication>,
+    catalog_tracks: HashMap<u64, CatalogTrack>,
     languages: HashMap<&'static str, LanguageSlot>,
     request_languages: HashMap<u64, &'static str>,
     source_text: Option<SourceText>,
@@ -191,7 +191,7 @@ async fn serve(
         source_track_name: source_track.name.clone(),
         source_channels: channel_count(source_track.channel_config.as_deref()),
         catalog_payload: Bytes::from(serde_json::to_vec(&translated_catalog)?),
-        catalog_publications: HashMap::new(),
+        catalog_tracks: HashMap::new(),
         languages: HashMap::new(),
         request_languages: HashMap::new(),
         source_text: None,
@@ -259,9 +259,9 @@ impl Serving {
 
     async fn subscribe_catalog(&mut self, handler: &SubscribeHandler) -> Result<()> {
         let (_, writer) = self.accept(handler).await?;
-        self.catalog_publications.insert(
+        self.catalog_tracks.insert(
             handler.request_id(),
-            CatalogPublication::run(writer, self.catalog_payload.clone()),
+            CatalogTrack::run(writer, self.catalog_payload.clone()),
         );
         Ok(())
     }
@@ -422,19 +422,19 @@ impl Serving {
             return Ok(());
         }
         self.catalog_payload = payload;
-        for publication in self.catalog_publications.values() {
-            publication.update(self.catalog_payload.clone());
+        for catalog in self.catalog_tracks.values() {
+            catalog.update(self.catalog_payload.clone());
         }
         tracing::info!(
             namespace = %translated_namespace(&self.broadcast_namespace),
-            subscribers = self.catalog_publications.len(),
+            subscribers = self.catalog_tracks.len(),
             "translated catalog updated"
         );
         Ok(())
     }
 
     fn unsubscribe(&mut self, request_id: u64) {
-        if self.catalog_publications.remove(&request_id).is_some() {
+        if self.catalog_tracks.remove(&request_id).is_some() {
             return;
         }
         let Some(code) = self.request_languages.remove(&request_id) else {
