@@ -1911,7 +1911,7 @@ mod tests {
             server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
             let fetched = within(request).await.unwrap();
 
-            // Assert: both drafts number GOAWAY_TIMEOUT 0x10
+            // Assert: GOAWAY_TIMEOUT is 0x10 (16) in both drafts
             let Err(failure) = fetched else {
                 panic!("{version:?}: the FETCH succeeded");
             };

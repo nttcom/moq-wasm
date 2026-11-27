@@ -43,10 +43,9 @@ const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 /// The objects buffered across all unknown track aliases of a connection:
 /// the peer picks the aliases, and datagrams take no flow control.
 const MAX_PENDING_OBJECTS: usize = 1024;
-/// How long a failed request waits for the transport to report its close. A
-/// request fails because the connection closed, so the close is known at once
-/// or right after; the bound covers a request that failed while the
-/// connection stays open.
+/// How long a failed request waits for the transport to report its close.
+/// The close usually arrives at once; the bound covers a request that
+/// failed while the connection stays open.
 const TRANSPORT_CLOSE_WAIT: Duration = Duration::from_secs(1);
 /// A logical id is `generation << GENERATION_SHIFT | wire id`: the first
 /// connection's ids are their own logical ids, and the ids of a later
@@ -622,9 +621,6 @@ impl Connection {
         self.closed_locally.load(Ordering::SeqCst)
     }
 
-    /// `RequestFailure::SessionClosed` with how the transport closed, or
-    /// without it when the transport reports no close within
-    /// `TRANSPORT_CLOSE_WAIT`.
     pub(crate) async fn session_closed(&self) -> RequestFailure {
         let close = executor::timeout(TRANSPORT_CLOSE_WAIT, self.transport.closed()).await;
         RequestFailure::SessionClosed(close.ok())

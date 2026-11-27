@@ -48,7 +48,6 @@ pub enum RequestFailure {
     NoNamespaceSubscription,
 }
 
-/// `: <reason> (code <code>)`, the peer's termination code and reason.
 fn close_suffix(close: Option<&TransportClose>) -> String {
     match close {
         None => String::new(),
