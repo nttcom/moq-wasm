@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use msf::Track;
 
 /// An independent draft-ietf-moq-msf-02 catalog (§5).
@@ -29,6 +30,21 @@ pub enum BitratePreference {
 }
 
 impl Catalog {
+    /// A catalog of `tracks` with `version` `draft-02` (draft-ietf-moq-msf-02
+    /// §5.1.1). `generatedAt` (§5.1.2) and `isComplete` (§5.1.3) are left
+    /// absent: both are optional, and `isComplete` commits the broadcast to
+    /// publish nothing more. A track with a `namespace` (§5.2.2) is read from
+    /// that namespace instead of the catalog's. `tracks` are not validated;
+    /// `parse` refuses a catalog the draft calls invalid.
+    pub fn new(tracks: Vec<Track>) -> Self {
+        Self {
+            catalog: msf::Catalog {
+                generated_at: None,
+                ..msf::Catalog::new(tracks, 0)
+            },
+        }
+    }
+
     pub fn parse(payload: &[u8]) -> Result<Self, msf::CatalogParseError> {
         Ok(Self {
             catalog: msf::Catalog::parse(payload)?,
@@ -37,6 +53,15 @@ impl Catalog {
 
     pub fn tracks(&self) -> &[Track] {
         &self.catalog.tracks
+    }
+
+    /// The catalog's JSON (draft-ietf-moq-msf-02 §5), to write as one group
+    /// of the `catalog` track.
+    pub fn to_bytes(&self) -> Bytes {
+        // Every field serializes as a JSON string, number, bool, array or
+        // string-keyed object, the only shapes serde_json writes without error.
+        let json = serde_json::to_vec(&self.catalog).expect("an MSF catalog serializes to JSON");
+        Bytes::from(json)
     }
 
     pub fn select(&self, query: &TrackQuery) -> Option<&Track> {
@@ -65,6 +90,8 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests {
+    use msf::{KnownPackaging, KnownTrackRole, TrackRole};
+
     use super::*;
 
     fn catalog() -> Catalog {
@@ -83,6 +110,29 @@ mod tests {
             ],
         });
         Catalog::parse(payload.to_string().as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_built_catalog_parses_back_with_its_tracks() {
+        // Arrange
+        let mut source_video = Track::new("video", KnownPackaging::Loc, true);
+        source_video.namespace = Some("live/source".to_string());
+        source_video.role = Some(TrackRole::Known(KnownTrackRole::Video));
+        source_video.codec = Some("avc1.42e01f".to_string());
+        source_video.bitrate = Some(2_000_000);
+        source_video.width = Some(1280);
+        source_video.height = Some(720);
+        source_video.framerate = Some(30.0);
+        let mut text = Track::new("text", KnownPackaging::Loc, true);
+        text.role = Some(TrackRole::Known(KnownTrackRole::Subtitle));
+        text.mime_type = Some("text/plain".to_string());
+        let catalog = Catalog::new(vec![source_video, text]);
+
+        // Act
+        let parsed = Catalog::parse(&catalog.to_bytes()).unwrap();
+
+        // Assert
+        assert_eq!(parsed, catalog);
     }
 
     #[test]

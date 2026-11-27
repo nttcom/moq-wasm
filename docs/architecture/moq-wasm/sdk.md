@@ -122,7 +122,7 @@ broadcast.close().await?;
 | `watch_broadcasts` | Spawns a Tokio task per matching broadcast under `prefix`, aborts on withdraw, restarts on re-announce, logs `Err`, optional `empty_timeout`. Skips self-published namespaces via `moqt::Session::publishes_namespace`. |
 | `RemoteBroadcast` | `catalogs()` (joining FETCH, skips/logs unparseable), `follow(name, FollowOptions)` (plain `SUBSCRIBE` from largest object to avoid `SUBSCRIBE_NAMESPACE` overlap draft-14 §9.28; 2 s default `delivery_timeout`, 1 s resubscribe), `event_timeline(name, EventTimelineOptions)` (joining FETCH, no default timeout, deduplicates on resubscribe). Dropping unsubscribes. |
 | `loc_timestamp_micros` / `loc_timestamp_headers` | Read and write the LOC Timestamp property (draft-ietf-moq-loc-04 §2.3.1.1) as wall-clock µs since the Unix epoch, in the `ExtensionHeaders` of `follow` objects and `TrackWriter::write`; thin wrappers over `mediapack::loc`. A Timestamp in media time (with Timescale, §2.3.1.2) reads as `None`. |
-| `Catalog` | Parsed `msf` catalog with `select(&TrackQuery)` (`role`, `packaging`, `codec` prefix, `BitratePreference::{Lowest, Highest}`); tracks re-exported as `CatalogTrack`. |
+| `Catalog` | `msf` catalog parsed with `parse` or built with `new(tracks)` (no `generatedAt`) and written with `to_bytes()` (e.g. a catalog listing another broadcast's tracks by `namespace`, MSF §5.2.2); `select(&TrackQuery)` (`role`, `packaging`, `codec` prefix, `BitratePreference::{Lowest, Highest}`); tracks re-exported as `CatalogTrack`. |
 
 Deferred until requested: `BroadcastReader`, CMAF copies, server API, and codecs.
 
