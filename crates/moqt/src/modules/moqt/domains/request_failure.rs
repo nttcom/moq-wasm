@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::modules::{
     moqt::control_plane::error_codes::RequestErrorCode,
-    transport::transport_send_stream::TransportSendError,
+    transport::{transport_connection::TransportClose, transport_send_stream::TransportSendError},
 };
 
 /// The session stays open after `Rejected` and `Timeout` (draft-14 §12.2).
@@ -17,8 +17,9 @@ pub enum RequestFailure {
     },
     #[error("request timed out")]
     Timeout,
-    #[error("the session closed before the response arrived")]
-    SessionClosed,
+    /// Carries how the transport closed, when it reported that in time.
+    #[error("the session closed before the response arrived{}", close_suffix(.0.as_ref()))]
+    SessionClosed(Option<TransportClose>),
     /// This side withdrew the request before its response arrived (e.g.
     /// PUBLISH_NAMESPACE_DONE on a pending PUBLISH_NAMESPACE, draft-18 §3.3.2).
     /// The session stays open.
@@ -47,6 +48,22 @@ pub enum RequestFailure {
     NoNamespaceSubscription,
 }
 
+/// `: <reason> (code <code>)`, the peer's termination code and reason.
+fn close_suffix(close: Option<&TransportClose>) -> String {
+    match close {
+        None => String::new(),
+        Some(TransportClose { code: None, reason }) => format!(": {reason}"),
+        Some(TransportClose {
+            code: Some(code),
+            reason,
+        }) if reason.is_empty() => format!(": code {code}"),
+        Some(TransportClose {
+            code: Some(code),
+            reason,
+        }) => format!(": {reason} (code {code})"),
+    }
+}
+
 pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {
     let outcome = match result {
         Ok(_) => "ok",
@@ -55,4 +72,53 @@ pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {
         Err(_) => "failed",
     };
     tracing::Span::current().record("outcome", outcome);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_closed(code: Option<u32>, reason: &str) -> String {
+        RequestFailure::SessionClosed(Some(TransportClose {
+            code,
+            reason: reason.to_string(),
+        }))
+        .to_string()
+    }
+
+    #[test]
+    fn session_closed_reads_the_peers_reason_and_code() {
+        // Act / Assert
+        assert_eq!(
+            session_closed(Some(24), "authorization token expired"),
+            "the session closed before the response arrived: authorization token expired (code 24)"
+        );
+    }
+
+    #[test]
+    fn session_closed_reads_the_code_alone_without_a_reason() {
+        // Act / Assert
+        assert_eq!(
+            session_closed(Some(0), ""),
+            "the session closed before the response arrived: code 0"
+        );
+    }
+
+    #[test]
+    fn session_closed_reads_a_transport_failure_without_a_code() {
+        // Act / Assert
+        assert_eq!(
+            session_closed(None, "timed out"),
+            "the session closed before the response arrived: timed out"
+        );
+    }
+
+    #[test]
+    fn session_closed_reads_the_bare_text_without_a_close() {
+        // Act / Assert
+        assert_eq!(
+            RequestFailure::SessionClosed(None).to_string(),
+            "the session closed before the response arrived"
+        );
+    }
 }

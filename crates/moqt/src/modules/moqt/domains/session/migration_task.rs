@@ -2934,6 +2934,6 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert!(matches!(subscribed, Err(RequestFailure::SessionClosed)));
+        assert!(matches!(subscribed, Err(RequestFailure::SessionClosed(_))));
     }
 }

@@ -574,7 +574,7 @@ impl SessionContext {
         if !self.follows_go_away()
             || !matches!(
                 error,
-                RequestFailure::SessionClosed | RequestFailure::Send(_)
+                RequestFailure::SessionClosed(_) | RequestFailure::Send(_)
             )
         {
             return false;

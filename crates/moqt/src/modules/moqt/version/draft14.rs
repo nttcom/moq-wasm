@@ -678,7 +678,7 @@ impl PendingResponse {
     pub(super) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
         match executor::timeout(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(RequestFailure::SessionClosed),
+            Ok(Err(_)) => Err(RequestFailure::SessionClosed(None)),
             Err(_) => Err(RequestFailure::Timeout),
         }
     }
