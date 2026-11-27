@@ -53,7 +53,6 @@ impl TrackObject {
     }
 }
 
-/// What `TrackReader::next_event` yields.
 #[derive(Debug, Clone)]
 pub enum TrackEvent {
     Object(TrackObject),
