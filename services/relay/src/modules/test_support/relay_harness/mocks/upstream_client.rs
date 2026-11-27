@@ -93,7 +93,7 @@ impl UpstreamSubgroupStream {
 
     pub(crate) fn reset(&self) {
         self.push(Err(moqt::object::StreamReceiveError::Closed(
-            moqt::object::ReadError::Reset,
+            moqt::object::ReadError::Reset(0),
         )));
     }
 

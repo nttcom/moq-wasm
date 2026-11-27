@@ -86,3 +86,23 @@ pub enum DataStreamResetCode {
     ExpiredAuthToken,
     ExcessiveLoad,
 }
+
+impl DataStreamResetCode {
+    /// The code's name in the drafts' stream reset code tables
+    /// (draft-14 §13.1.8, draft-18 §15.10.4), e.g. `CANCELLED`, the same on
+    /// every draft.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InternalError => "INTERNAL_ERROR",
+            Self::Cancelled => "CANCELLED",
+            Self::DeliveryTimeout => "DELIVERY_TIMEOUT",
+            Self::SessionClosed => "SESSION_CLOSED",
+            Self::MalformedTrack => "MALFORMED_TRACK",
+            Self::GoingAway => "GOING_AWAY",
+            Self::TooFarBehind => "TOO_FAR_BEHIND",
+            Self::UnknownObjectStatus => "UNKNOWN_OBJECT_STATUS",
+            Self::ExpiredAuthToken => "EXPIRED_AUTH_TOKEN",
+            Self::ExcessiveLoad => "EXCESSIVE_LOAD",
+        }
+    }
+}

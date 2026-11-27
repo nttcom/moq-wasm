@@ -437,7 +437,7 @@ mod tests {
         let result = within(read_to_end(&mut receive_stream)).await;
 
         // Assert
-        assert_eq!(result, Err(ReadError::Reset));
+        assert_eq!(result, Err(ReadError::Reset(7)));
     }
 
     #[tokio::test]

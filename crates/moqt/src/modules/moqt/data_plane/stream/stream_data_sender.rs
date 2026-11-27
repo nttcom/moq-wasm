@@ -415,7 +415,7 @@ mod tests {
 
             // Assert
             assert!(
-                matches!(result, Err(StreamReceiveError::Closed(ReadError::Reset))),
+                matches!(result, Err(StreamReceiveError::Closed(ReadError::Reset(_)))),
                 "{result:?}"
             );
         })

@@ -234,6 +234,13 @@ impl Version {
         }
     }
 
+    pub(crate) fn data_stream_reset_code_from_wire(self, value: u64) -> DataStreamResetCode {
+        match self {
+            Self::Draft14 => draft14::error_codes::data_stream_reset_code_from_wire(value),
+            Self::Draft18 => draft18::error_codes::stream_reset_code_from_wire(value),
+        }
+    }
+
     /// The draft `protocol` selects, when it is one of `accepted`. A
     /// WebTransport session without a subprotocol selects draft-14, which
     /// defines none, so an endpoint that does not accept draft-14 refuses it.

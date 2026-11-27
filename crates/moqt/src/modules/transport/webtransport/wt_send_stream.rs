@@ -127,7 +127,7 @@ mod tests {
 
         // Assert: the peer does not take the partial data for a complete stream
         let read = within(read_to_end(&mut stream.receiver)).await;
-        assert_eq!(read, Err(ReadError::Reset));
+        assert_eq!(read, Err(ReadError::Reset(0)));
     }
 
     #[tokio::test]

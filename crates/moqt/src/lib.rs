@@ -32,7 +32,7 @@ pub use crate::modules::moqt::domains::subscription::{LastSubscribeUpdate, Subsc
 pub use crate::modules::moqt::domains::subscription::PublisherInitiatedSubscription;
 pub use crate::modules::moqt::domains::subscription::SubscriberInitiatedSubscription;
 pub use crate::modules::moqt::domains::subscription::Subscription;
-pub use crate::modules::moqt::domains::track_reader::TrackObject;
+pub use crate::modules::moqt::domains::track_reader::{TrackEvent, TrackObject};
 pub use crate::modules::moqt::domains::track_reader::TrackReader;
 pub use crate::modules::moqt::domains::track_writer::TrackWriter;
 #[cfg(target_arch = "wasm32")]

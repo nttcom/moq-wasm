@@ -476,7 +476,7 @@ mod tests {
     use super::*;
     use crate::{
         RequestErrorCode, TerminationErrorCode,
-        client::PublishTrackError,
+        client::{GroupReadError, PublishTrackError, SubscriptionEvent},
         modules::{
             client::subscription::ReceivedObject,
             test_support::{
@@ -485,7 +485,9 @@ mod tests {
             },
         },
         namespace::NamespaceEvent,
-        object::{DataReceiver, ExtensionHeaders, ForwardingPreference, Subgroup},
+        object::{
+            DataReceiver, DataStreamResetCode, ExtensionHeaders, ForwardingPreference, Subgroup,
+        },
         publish::PublishDoneCode,
     };
 
@@ -918,6 +920,73 @@ mod tests {
         assert_eq!(Some(group.group_id()), group_id);
         assert_eq!(object.payload, Bytes::from_static(b"catalog"));
         assert!(subscription.next().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_group_reset_by_the_publisher_fails_with_its_code() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-group-reset").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+        writer
+            .write(Bytes::from_static(b"o0"), true, ExtensionHeaders::default())
+            .await
+            .unwrap();
+        let group = within(subscription.next_group()).await.unwrap().unwrap();
+        within(group.next()).await.unwrap().unwrap();
+
+        // Act: UNSUBSCRIBE has the publisher reset the open group (draft-14 §10.4.3)
+        within(subscription.close()).await.unwrap();
+        let result = within(group.next()).await;
+
+        // Assert
+        assert!(
+            matches!(
+                result,
+                Err(GroupReadError::Reset(DataStreamResetCode::Cancelled))
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscription_read_by_event_reports_a_reset_group() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-event-reset").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+        let group_id = writer
+            .write(Bytes::from_static(b"o0"), true, ExtensionHeaders::default())
+            .await
+            .unwrap()
+            .unwrap();
+        let Some(SubscriptionEvent::Object(_)) = within(subscription.next_event()).await.unwrap()
+        else {
+            panic!("expected the first object");
+        };
+
+        // Act: UNSUBSCRIBE has the publisher reset the open group (draft-14 §10.4.3)
+        within(subscription.close()).await.unwrap();
+        let event = within(subscription.next_event()).await.unwrap();
+
+        // Assert
+        assert_eq!(
+            event,
+            Some(SubscriptionEvent::Reset {
+                group_id,
+                code: DataStreamResetCode::Cancelled
+            })
+        );
     }
 
     #[tokio::test]
