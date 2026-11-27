@@ -8,8 +8,7 @@ use anyhow::{Context, Result};
 use broadcast::{
     CatalogReader,
     selection::{
-        AudioChoice, Selection, SourceChoice, TrackChoice, VideoChoice, keeps, select_audio,
-        select_tracks, select_video,
+        AudioChoice, SourceChoice, TrackChoice, VideoChoice, keeps, select_audio, select_video,
     },
 };
 use mediapack::Timestamp;
@@ -170,7 +169,7 @@ pub(crate) async fn record_broadcast(
 ) -> Result<Vec<RecordedFile>> {
     let mut catalog = CatalogReader::open(session, namespace).await?;
     let selection = tokio::select! {
-        selection = wait_for_selection(&mut catalog, options) => selection?,
+        selection = catalog.next_selection(choice(options)) => selection?,
         _ = stop_requested(&mut stop) => return Ok(Vec::new()),
     };
     let Some(selection) = selection else {
@@ -254,26 +253,6 @@ pub(crate) async fn record_broadcast(
     }
     tracing::info!("recording finished");
     Ok(files)
-}
-
-/// `None` once the catalog ends.
-async fn wait_for_selection(
-    catalog: &mut CatalogReader,
-    options: &BroadcastOptions,
-) -> Result<Option<Selection>> {
-    while let Some(catalog) = catalog.next().await? {
-        let selection = select_tracks(&catalog, choice(options))?;
-        if selection.is_some() {
-            return Ok(selection);
-        }
-        tracing::info!(
-            content = ?options.content,
-            video = options.video_track.as_deref(),
-            audio = options.audio_track.as_deref(),
-            "waiting for the catalog to list a track to record"
-        );
-    }
-    Ok(None)
 }
 
 /// A track named in the options is recorded only by the main source's
