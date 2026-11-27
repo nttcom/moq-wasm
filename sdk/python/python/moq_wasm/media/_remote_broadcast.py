@@ -94,9 +94,10 @@ class _Objects(Following[Object]):
     """The objects of one subscription, which it owns, until the subscription ends, as by a stream
     failure, which is logged. Closing or dropping it unsubscribes."""
 
-    def __init__(self, subscription: Subscription, name: str, namespace: list[str]):
+    def __init__(self, subscription: Subscription, name: str, namespace: list[str], end_of_group: bool):
         super().__init__(f"track {name}")
         self._subscription = subscription
+        self._objects = subscription.with_end_of_group() if end_of_group else subscription
         self._name = name
         self._namespace = namespace
         self._owned = _Owned(subscription._session, subscription)
@@ -104,7 +105,7 @@ class _Objects(Following[Object]):
 
     async def _next(self) -> Object:
         try:
-            return await anext(self._subscription)
+            return await anext(self._objects)
         except StopAsyncIteration:
             logger.info("track %s of %s ended", self._name, self._namespace)
             raise
@@ -130,8 +131,10 @@ class _Subscriptions(Following[Following[Object]]):
         from_group_start: bool,
         priority: int | None,
         delivery_timeout: float | None,
+        end_of_group: bool,
     ):
         super().__init__(f"the subscriptions to {name}")
+        self._end_of_group = end_of_group
         self._session = session
         self._namespace = namespace
         self._name = name
@@ -172,7 +175,7 @@ class _Subscriptions(Following[Following[Object]]):
                 logger.info("track %s of %s ended: %s", self._name, self._namespace, error)
                 self._resubscribe_at = loop.time() + RESUBSCRIBE_DELAY_SECONDS
                 continue
-            self._accepted = _Objects(subscription, self._name, self._namespace)
+            self._accepted = _Objects(subscription, self._name, self._namespace, self._end_of_group)
             # What it raises is the caller's own: it ends the iteration, whose close unsubscribes
             # the subscription, before the read raises it; a read cancelled during that close, as
             # by a timeout, leaves the close and the error to the next read. The read cancelled
@@ -328,16 +331,20 @@ class RemoteBroadcast:
         namespace: list[str] | None = None,
         on_subscribed: Callable[[], Awaitable[None]] | None = None,
         delivery_timeout: float | None = DEFAULT_DELIVERY_TIMEOUT_SECONDS,
+        end_of_group: bool = False,
     ) -> Following[Object]:
         """Yield objects from track `name` (defaulting to this broadcast's namespace), retrying 1 s after track end or failure.
 
         - `on_subscribed`: awaited after each accepted `SUBSCRIBE`.
         - `delivery_timeout`: seconds before the relay drops stale groups (`None` for lossless tracks like chat).
+        - `end_of_group`: also yield each End of Group status object (`status` 3, empty payload), on
+          which `decode_pictures` flushes the group's decoder.
 
         Ends only on `SessionEnded` or an error from `on_subscribed`. Use `subscriptions()` if you need
         to detect subscription boundaries; use with `contextlib.aclosing`.
         """
-        return _Follow(self._subscriptions(name, namespace, on_subscribed, False, None, delivery_timeout), name)
+        subscriptions = self._subscriptions(name, namespace, on_subscribed, False, None, delivery_timeout, end_of_group)
+        return _Follow(subscriptions, name)
 
     def subscriptions(
         self,
@@ -347,6 +354,7 @@ class RemoteBroadcast:
         on_subscribed: Callable[[], Awaitable[None]] | None = None,
         from_group_start: bool = False,
         delivery_timeout: float | None = DEFAULT_DELIVERY_TIMEOUT_SECONDS,
+        end_of_group: bool = False,
     ) -> Following[Following[Object]]:
         """Like `follow()`, but yields one inner `Following[Object]` per subscription so stateful readers
         (such as video decoders) can reset when a publisher restarts.
@@ -358,7 +366,9 @@ class RemoteBroadcast:
         With `from_group_start=True`, joins via `subscribe_current_group` (joining `FETCH`) to start at the
         current group's keyframe and Video Config.
         """
-        return self._subscriptions(name, namespace, on_subscribed, from_group_start, None, delivery_timeout)
+        return self._subscriptions(
+            name, namespace, on_subscribed, from_group_start, None, delivery_timeout, end_of_group
+        )
 
     def event_timeline(
         self, name: str, *, priority: int | None = None, delivery_timeout: float | None = None
@@ -368,7 +378,7 @@ class RemoteBroadcast:
         Deduplicates records across resubscribes and skips malformed JSON objects.
         `priority` defaults to 128; `delivery_timeout=None` is lossless. Use with `contextlib.aclosing`.
         """
-        subscriptions = self._subscriptions(name, None, None, True, priority, delivery_timeout)
+        subscriptions = self._subscriptions(name, None, None, True, priority, delivery_timeout, False)
         return _EventRecords(subscriptions, name, list(self.namespace))
 
     def _subscriptions(
@@ -379,10 +389,11 @@ class RemoteBroadcast:
         from_group_start: bool,
         priority: int | None,
         delivery_timeout: float | None,
+        end_of_group: bool,
     ) -> _Subscriptions:
         namespace = list(self.namespace if namespace is None else namespace)
         return _Subscriptions(
-            self._session, namespace, name, on_subscribed, from_group_start, priority, delivery_timeout
+            self._session, namespace, name, on_subscribed, from_group_start, priority, delivery_timeout, end_of_group
         )
 
 

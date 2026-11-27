@@ -212,6 +212,8 @@ class Subscription(AsyncIterator[Object]):
         """Largest location reported by `SUBSCRIBE_OK`."""
     def done(self) -> asyncio.Future[PublishDone | None]:
         """Resolves with `PublishDone` on publisher termination, or `None` on local `close()` / session end."""
+    def with_end_of_group(self) -> ObjectsWithEndOfGroup:
+        """Iterate the objects together with each End of Group status object (`status` 3, empty payload) in its place after its subgroup's objects; reads the same objects as iterating the subscription itself, so read one or the other."""
     def groups(self) -> Groups:
         """Iterate subgroup streams (including status objects). Mutually exclusive with object iteration; raises `RuntimeError` if already read by object or if datagram-delivered."""
     def set_forward(self, forward: bool) -> asyncio.Future[None]:
@@ -228,6 +230,10 @@ class Subscription(AsyncIterator[Object]):
         """Send `SUBSCRIBE_UPDATE` ending the subscription before `group_id`; the publisher sends `PUBLISH_DONE` after earlier groups finish."""
     def close(self) -> asyncio.Future[None]:
         """Send `UNSUBSCRIBE` and end iteration once the relay stops the track."""
+
+class ObjectsWithEndOfGroup(AsyncIterator[Object]):
+    def __aiter__(self) -> ObjectsWithEndOfGroup: ...
+    def __anext__(self) -> asyncio.Future[Object]: ...
 
 class Groups(AsyncIterator[Group]):
     def __aiter__(self) -> Groups: ...
