@@ -132,6 +132,16 @@ fn end(end_sender: &watch::Sender<Option<SessionEnd>>, session_end: SessionEnd) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        PublishTrackOptions,
+        test_support::{TEST_TIMEOUT, TestRelay},
+    };
+
+    async fn within<F: Future>(future: F) -> F::Output {
+        tokio::time::timeout(TEST_TIMEOUT, future)
+            .await
+            .expect("timed out")
+    }
 
     #[test]
     fn the_first_end_of_a_session_stays() {
@@ -159,5 +169,45 @@ mod tests {
 
         // Assert
         assert!(result.is_err_and(|error| error.to_string().contains("needs a token")));
+    }
+
+    #[tokio::test]
+    async fn a_track_on_demand_reports_its_subscriber_and_is_served_again_after_it_ends() {
+        // Arrange
+        let mut relay = TestRelay::spawn("track-on-demand");
+        let session = relay.connect().await;
+        let options = PublishTrackOptions {
+            on_demand: true,
+            ..PublishTrackOptions::default()
+        };
+        let writer = session
+            .publish_track(&["anon", "room"], "audio_ja", options)
+            .await
+            .unwrap();
+        let unwanted = within(writer.demand_change()).await.unwrap();
+
+        // Act
+        let subscription = relay.subscribe("anon/room", "audio_ja").await;
+        let subscribed = within(writer.demand_change()).await.unwrap();
+        relay.unsubscribe(&subscription).await;
+        let unsubscribed = within(writer.demand_change()).await.unwrap();
+        let ended = relay.subscribe("anon/room", "audio_ja").await;
+        within(writer.end()).await.unwrap();
+        let done = relay.next_request().await;
+        let writer = session
+            .publish_track(&["anon", "room"], "audio_ja", options)
+            .await
+            .unwrap();
+        let republished = within(writer.demand_change()).await.unwrap();
+        let _resubscribed = relay.subscribe("anon/room", "audio_ja").await;
+        let resubscribed = within(writer.demand_change()).await.unwrap();
+
+        // Assert
+        assert_eq!([unwanted, subscribed, unsubscribed], [false, true, false]);
+        assert_eq!(
+            done,
+            format!("PUBLISH_DONE {} TrackEnded", ended.request_id())
+        );
+        assert_eq!([republished, resubscribed], [false, true]);
     }
 }

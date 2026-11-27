@@ -81,6 +81,7 @@ tokio::select! {
 **Connection & session**
 - **`connect(url, ConnectOptions)`**: Accepts `token`, `refresh_token`, `certificate_verification`, and `versions` (default: draft-18, then draft-14).
 - **`Session`**: Owns `moqt::client::Session` (via `Deref`, keeping all request methods without copying signatures) plus the token-refresh task. Provides its own `closed()` and `close()`. Refused requests return `RequestError` / `FetchError`; other failures return `anyhow::Error`.
+- **Raw tracks**: `publish_track` returns `TrackWriter`. With `PublishTrackOptions::on_demand`, `demand_change()` reports whether a subscription is in Forward State 1 (draft-18 §10.10; latest value, changes coalesced) so the app produces only while wanted; `end()` sends `PUBLISH_DONE` to every subscriber and a later `publish_track` of the same name makes the track subscribable again.
 - **Reconnection & GOAWAY**: Handled by `moqt` up to 60 s ([`moqt/session-migration.md`](../moqt/session-migration.md)); SDK does not re-dial afterward.
 
 **Lifecycle & logging**
