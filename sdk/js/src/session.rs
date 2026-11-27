@@ -494,20 +494,23 @@ impl Subscription {
     /// reset.
     #[wasm_bindgen(js_name = nextEvent)]
     pub async fn next_event(&self) -> Result<JsValue, JsValue> {
-        let event = self
-            .scope
-            .scoped(self.subscription.next_event())
-            .await
-            .map_err(anyhow_error)?;
-        Ok(match event {
-            Some(SubscriptionEvent::Object(object)) => MoqObject(object).into(),
-            Some(SubscriptionEvent::Reset { group_id, code }) => StreamReset {
-                group_id,
-                code: code.name().to_string(),
-            }
-            .into(),
-            None => JsValue::UNDEFINED,
-        })
+        loop {
+            let event = self
+                .scope
+                .scoped(self.subscription.next_event())
+                .await
+                .map_err(anyhow_error)?;
+            return Ok(match event {
+                Some(SubscriptionEvent::Object(object)) => MoqObject(object).into(),
+                Some(SubscriptionEvent::Reset { group_id, code }) => StreamReset {
+                    group_id,
+                    code: code.name().to_string(),
+                }
+                .into(),
+                Some(SubscriptionEvent::EndOfGroup { .. }) => continue,
+                None => JsValue::UNDEFINED,
+            });
+        }
     }
 
     /// The next subgroup stream; `undefined` once the track has no more
