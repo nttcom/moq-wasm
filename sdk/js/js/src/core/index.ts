@@ -15,10 +15,13 @@ export {
   type PublishDoneCode,
   type PublishTrackOptions,
   type ReceivedObject,
+  type StreamResetCode,
+  type SubscriptionEvent,
   type TransportStats,
   MoqFetch,
   MoqGroup,
   MoqNamespaceWatch,
   MoqSession,
-  MoqSubscription
+  MoqSubscription,
+  StreamResetError
 } from './session'

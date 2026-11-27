@@ -177,6 +177,8 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     // (undocumented)
     endBeforeGroup(groupId: bigint): Promise<void>;
     // (undocumented)
+    events(): AsyncIterable<SubscriptionEvent>;
+    // (undocumented)
     groups(): AsyncIterable<MoqGroup>;
     // (undocumented)
     readonly largest: MoqLocation | undefined;
@@ -268,6 +270,26 @@ export interface SpanRecord {
     // (undocumented)
     traceId: string;
 }
+
+// @public
+export type StreamResetCode = 'INTERNAL_ERROR' | 'CANCELLED' | 'DELIVERY_TIMEOUT' | 'SESSION_CLOSED' | 'MALFORMED_TRACK' | 'GOING_AWAY' | 'TOO_FAR_BEHIND' | 'UNKNOWN_OBJECT_STATUS' | 'EXPIRED_AUTH_TOKEN' | 'EXCESSIVE_LOAD';
+
+// @public (undocumented)
+export class StreamResetError extends Error {
+    constructor(code: StreamResetCode, message: string);
+    // (undocumented)
+    readonly code: StreamResetCode;
+}
+
+// @public (undocumented)
+export type SubscriptionEvent = {
+    readonly kind: 'object';
+    readonly object: ReceivedObject;
+} | {
+    readonly kind: 'reset';
+    readonly groupId: bigint;
+    readonly code: StreamResetCode;
+};
 
 // @public (undocumented)
 export interface TelemetryOptions {

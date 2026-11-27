@@ -6,9 +6,11 @@ import { VideoSwitcher } from './videoSwitcher'
 
 const CAMERA: MediaCatalogTrack = { name: 'camera', label: 'camera', altGroup: 1 }
 
-/// A switcher from `camera_low`, whose newest group is 4, to `camera`.
-async function switchingToCamera() {
+/// A switcher from `camera_low`, whose newest group is 4, to `camera`, whose
+/// SUBSCRIBE_OK reports `incomingLargestGroup`.
+async function switchingToCamera(incomingLargestGroup?: bigint) {
   const subscriptions = new FakeTrackSubscriptions()
+  subscriptions.openedLargestGroup = incomingLargestGroup
   const outgoing = subscriptions.subscribed('video', 'camera_low')
   const played: string[] = []
   const handovers: SpliceStart[] = []
@@ -127,4 +129,42 @@ test('a switch abandoned before the handover closes the incoming rendition and r
   expect(played).toEqual([])
   expect(subscriptions.calls).toContain('close camera')
   expect(switcher.acceptOutgoing('camera_low', 5n)).toBe(true)
+})
+
+test('the incoming group asked for and reset before the splice is asked for once more', async () => {
+  // Arrange
+  const { subscriptions, switcher } = await switchingToCamera(4n)
+  const incoming = subscriptions.openedFor('camera')!
+
+  // Act
+  switcher.groupReset(incoming, 5n)
+  switcher.groupReset(incoming, 6n)
+
+  // Assert: a repeat would start one more group after the one asked for
+  expect(subscriptions.calls).toEqual(['open camera', 'requestNewGroup camera 4', 'requestNewGroup camera 5'])
+})
+
+test('a reset of an incoming group from before the request asks for nothing', async () => {
+  // Arrange
+  const { subscriptions, switcher } = await switchingToCamera(4n)
+
+  // Act
+  switcher.groupReset(subscriptions.openedFor('camera')!, 4n)
+
+  // Assert
+  expect(subscriptions.calls).toEqual(['open camera', 'requestNewGroup camera 4'])
+})
+
+test('a reset once the splice started is left to the played rendition', async () => {
+  // Arrange
+  const { subscriptions, switcher } = await switchingToCamera()
+  subscriptions.deliver('camera', 5n, 0n)
+
+  // Act
+  switcher.groupReset(subscriptions.openedFor('camera')!, 5n)
+
+  // Assert
+  expect(subscriptions.calls.filter((call) => call.startsWith('requestNewGroup'))).toEqual([
+    'requestNewGroup camera undefined'
+  ])
 })

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { setSdkLogSink } from './log'
 import { RequestError } from './requestError'
-import { MoqNamespaceWatch, MoqSession, MoqSubscription } from './session'
+import { MoqNamespaceWatch, MoqSession, MoqSubscription, StreamResetError } from './session'
 
 type Freed = { freed: number }
 
@@ -28,6 +28,7 @@ function wasmSubscription(overrides: Record<string, unknown>) {
     largest: undefined,
     done: new Promise(() => {}),
     next: sequence([]),
+    nextEvent: sequence([]),
     nextGroup: sequence([]),
     setForward: async () => {},
     setPriority: async () => {},
@@ -284,4 +285,56 @@ test('a subscribe passes its subscriber priority to the wasm session', async () 
 
   // Assert
   expect(priorities).toEqual([0])
+})
+
+test('the events of a subscription are its objects and the streams the publisher reset', async () => {
+  // Arrange
+  const freed = { freed: 0 }
+  const reset = {
+    groupId: 4n,
+    code: 'INTERNAL_ERROR',
+    free: () => {
+      freed.freed += 1
+    }
+  }
+  const subscription = new MoqSubscription(
+    wasmSubscription({ nextEvent: sequence<unknown>([wasmObject(0n, [1], freed), reset]) })
+  )
+
+  // Act
+  const events = []
+  for await (const event of subscription.events()) {
+    events.push(event.kind === 'object' ? `object ${event.object.objectId}` : `reset ${event.groupId} ${event.code}`)
+  }
+
+  // Assert
+  expect(events).toEqual(['object 0', 'reset 4 INTERNAL_ERROR'])
+  expect(freed.freed).toBe(2)
+})
+
+test('a group the publisher reset throws a StreamResetError with the code', async () => {
+  // Arrange
+  const rejection = Object.assign(new Error('subgroup stream reset with CANCELLED'), { streamResetCode: 'CANCELLED' })
+  const group = {
+    groupId: 4n,
+    subgroupId: 0n,
+    next: async () => {
+      throw rejection
+    },
+    free: () => {}
+  }
+  const subscription = new MoqSubscription(wasmSubscription({ nextGroup: sequence([group]) }))
+
+  // Act
+  let error: unknown
+  for await (const received of subscription.groups()) {
+    error = await (async () => {
+      for await (const _object of received) {
+      }
+    })().catch((error: unknown) => error)
+  }
+
+  // Assert
+  expect(error).toBeInstanceOf(StreamResetError)
+  expect((error as StreamResetError).code).toBe('CANCELLED')
 })

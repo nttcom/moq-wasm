@@ -374,3 +374,28 @@ test('the PUBLISH_DONE of the audio does not lead while the video is subscribed,
   expect(audioEnded).toEqual([['audio', false]])
   expect(videoEnded).toEqual([['video', true]])
 })
+
+test('a group reset other than with CANCELLED is reported for a subscription from a group start and a plain one', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [receivedObject(3n, 0n), receivedObject(4n, 0n), receivedObject(5n, 0n)])
+  session.resets.set(3n, 'INTERNAL_ERROR')
+  session.resets.set(4n, 'CANCELLED')
+  session.resets.set(5n, 'DELIVERY_TIMEOUT')
+  const reported: string[] = []
+  const subscriptions = new TrackSubscriptions(
+    session.context(),
+    () => {},
+    {},
+    (subscription, groupId) => reported.push(`${subscription.name} ${groupId}`)
+  )
+
+  // Act
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {}, true)
+  await session.drained
+  await subscriptions.open('video', 'video_low', VIDEO, () => {})
+  await session.drained
+  await settle()
+
+  // Assert: the relay resets with CANCELLED what Forward 0, End Group or UNSUBSCRIBE leave undelivered
+  expect(reported).toEqual(['video 3', 'video 5', 'video_low 3', 'video_low 5'])
+})

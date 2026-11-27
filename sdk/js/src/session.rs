@@ -5,8 +5,8 @@ use mediapack::loc::from_extension_headers;
 use moqt::{
     AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, TerminationErrorCode, Version,
     client::{
-        self, FetchError, GroupStartOptions, PublishTrackOptions, ReceivedObject, RequestError,
-        SubscribeOptions,
+        self, FetchError, GroupReadError, GroupStartOptions, PublishTrackOptions, ReceivedObject,
+        RequestError, SubscribeOptions, SubscriptionEvent,
     },
     object::{GroupOrder, Location},
     publish::Retention,
@@ -490,6 +490,29 @@ impl Subscription {
             .map_err(anyhow_error)
     }
 
+    /// `next`, with a `StreamReset` for each subgroup stream the publisher
+    /// reset.
+    #[wasm_bindgen(js_name = nextEvent)]
+    pub async fn next_event(&self) -> Result<JsValue, JsValue> {
+        loop {
+            let event = self
+                .scope
+                .scoped(self.subscription.next_event())
+                .await
+                .map_err(anyhow_error)?;
+            return Ok(match event {
+                Some(SubscriptionEvent::Object(object)) => MoqObject(object).into(),
+                Some(SubscriptionEvent::Reset { group_id, code }) => StreamReset {
+                    group_id,
+                    code: code.name().to_string(),
+                }
+                .into(),
+                Some(SubscriptionEvent::EndOfGroup { .. }) => continue,
+                None => JsValue::UNDEFINED,
+            });
+        }
+    }
+
     /// The next subgroup stream; `undefined` once the track has no more
     /// streams. Rejects for a track delivered in datagrams, and once `next` read
     /// the subscription.
@@ -595,13 +618,14 @@ impl Group {
 
     /// The next object, a status object such as End of Group included;
     /// `undefined` once the publisher finished the stream. Rejects when the
-    /// stream was reset.
+    /// stream was reset, with an `Error` whose `streamResetCode` names the
+    /// reset code.
     pub async fn next(&self) -> Result<Option<MoqObject>, JsValue> {
         self.scope
             .scoped(self.group.next())
             .await
             .map(|object| object.map(MoqObject))
-            .map_err(|error| anyhow_error(error.into()))
+            .map_err(group_read_error)
     }
 }
 
@@ -698,6 +722,15 @@ impl From<Location> for MoqLocation {
             object_id: location.object_id,
         }
     }
+}
+
+#[wasm_bindgen]
+pub struct StreamReset {
+    #[wasm_bindgen(readonly, js_name = groupId)]
+    pub group_id: u64,
+    /// The reset code's name, e.g. `CANCELLED`, the same on every draft.
+    #[wasm_bindgen(getter_with_clone, readonly)]
+    pub code: String,
 }
 
 #[wasm_bindgen]
@@ -827,6 +860,18 @@ fn group_start_options(
             Some(other) => return Err(js_error(format!("unknown group order: {other}"))),
         },
     })
+}
+
+fn group_read_error(error: GroupReadError) -> JsValue {
+    let js_error = js_sys::Error::new(&error.to_string());
+    if let GroupReadError::Reset(code) = error {
+        let _ = js_sys::Reflect::set(
+            &js_error,
+            &JsValue::from_str("streamResetCode"),
+            &JsValue::from_str(code.name()),
+        );
+    }
+    js_error.into()
 }
 
 fn request_error(error: RequestError) -> JsValue {

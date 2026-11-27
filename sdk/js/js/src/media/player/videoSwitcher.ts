@@ -24,6 +24,10 @@ type VideoSwitch = {
   outgoing: TrackSubscription
   next?: TrackSubscription
   previousName: string
+  /// The largest group of `next` when its new group was asked for.
+  requestedAfter?: bigint
+  /// Whether the new group was asked for again after it was reset.
+  askedAgain: boolean
 }
 
 /// Switches live LOC video to another rendition of its switching set
@@ -48,7 +52,12 @@ export class VideoSwitcher {
     outgoingNewestGroup: bigint | undefined,
     previousName: string
   ): Promise<void> {
-    const pending: VideoSwitch = { splice: new RenditionSplice(outgoingNewestGroup), outgoing, previousName }
+    const pending: VideoSwitch = {
+      splice: new RenditionSplice(outgoingNewestGroup),
+      outgoing,
+      previousName,
+      askedAgain: false
+    }
     this.current = pending
     const subscriptions = this.host.subscriptions
     const next = await subscriptions.open('video', name, track, (groupId, object) =>
@@ -59,9 +68,29 @@ export class VideoSwitcher {
       return
     }
     pending.next = next
+    pending.requestedAfter = next.handle.largest?.groupId
     // The splice waits for a group start: renditions keyframe on the same
     // frames, so the new group begins on the outgoing rendition too.
-    void subscriptions.requestNewGroup(next, next.handle.largest?.groupId)
+    void subscriptions.requestNewGroup(next, pending.requestedAfter)
+  }
+
+  /// A group of the incoming rendition that `begin` asked for and that was
+  /// reset before the splice started leaves the switch waiting for the next
+  /// keyframe, so the group is asked for once more.
+  groupReset(subscription: TrackSubscription, groupId: bigint): void {
+    const pending = this.current
+    if (
+      !pending ||
+      pending.next !== subscription ||
+      pending.splice.start !== undefined ||
+      pending.askedAgain ||
+      (pending.requestedAfter !== undefined && groupId <= pending.requestedAfter)
+    ) {
+      return
+    }
+    pending.askedAgain = true
+    this.host.log('info', `group ${groupId} of ${subscription.name} reset before the switch, asking for a new group`)
+    void this.host.subscriptions.requestNewGroup(subscription, groupId)
   }
 
   /// False for an object of the outgoing rendition at or past the start of

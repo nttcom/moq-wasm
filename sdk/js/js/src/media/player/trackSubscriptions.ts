@@ -58,7 +58,12 @@ export class TrackSubscriptions {
     /// `leading` when no video is subscribed after the PUBLISH_DONE: the
     /// video's, or the audio's of a broadcast played without video.
     private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void,
-    delivery: Delivery = {}
+    delivery: Delivery = {},
+    /// Called when a subgroup stream of `groupId` is reset with any code but
+    /// CANCELLED. The relay and the publisher reset with CANCELLED the groups
+    /// that the player's own Forward 0, `endBeforeGroup` or UNSUBSCRIBE leave
+    /// undelivered.
+    private readonly onGroupReset: (subscription: TrackSubscription, groupId: bigint) => void = () => {}
   ) {
     checkDeliveryTimeout(delivery.deliveryTimeoutMs)
     this.sent = { ...delivery }
@@ -141,11 +146,21 @@ export class TrackSubscriptions {
     }
     const observed = observedObjectHandler(this.context, subscription.id, wireName, handler)
     const read = joining ? readJoinedObjects : readGroups
-    void read(this.context, subscription.id, handle, (groupId, object, cached) => {
-      if (!subscription.forgotten) {
-        observed(groupId, object, cached)
+    void read(
+      this.context,
+      subscription.id,
+      handle,
+      (groupId, object, cached) => {
+        if (!subscription.forgotten) {
+          observed(groupId, object, cached)
+        }
+      },
+      (groupId, code) => {
+        if (!subscription.forgotten && code !== 'CANCELLED') {
+          this.onGroupReset(subscription, groupId)
+        }
       }
-    })
+    )
     void handle.done.then((done) => done && this.end(kind, subscription, done))
     this.context.log('info', `subscribed ${namespace.join('/')}/${wireName}`)
     return subscription

@@ -130,6 +130,7 @@ macOS Chrome (Chrome 156 確認) では最初の `VideoEncoder` 起動に数秒�
 - **オンデマンド encode (`onDemandChange`)**: 映像・rendition・音声を Forward State 0 で `PUBLISH` (§10.10)。視聴者ゼロの rendition はフレームを捨て、再視聴時に全 rendition で keyframe 化（音声は encoder 再生成）。静止画面共有の再視聴時は page が clone から 1 フレーム読み直して渡す（`refreshFrame`、Safari 除外）。catalog と media timeline は常時 Forward State 1。
 - **初回購読**: `subscribeGroupStart(ns, track, 60)` — Largest Object < 60 なら joining FETCH、≥ 60 なら `NEW_GROUP_REQUEST`（1 s 来なければ FETCH; draft-14 や非 dynamic は常に FETCH）。
 - **切り替え・`goLive`・decode 異常**: rendition 切替・`goLive`・decoder の delta 破棄開始時（`keyFrameNeeded`、後続 group 未着時のみ）に `requestNewGroup` を1回送る。relay は新 group 開始まで重複転送を抑止する。
+- **group のリセット**: 再生中の映像 group の subgroup stream が `CANCELLED` 以外でリセットされると（上流断の `INTERNAL_ERROR`、`DELIVERY_TIMEOUT` など）、後続 group 未着時のみ `requestNewGroup` を送る。`CANCELLED` は Forward 0・`endBeforeGroup`・UNSUBSCRIBE で配信しない group の想定内のリセットなので無視する。rendition 切替中は、要求した incoming 側の group が splice 開始前にリセットされたら1回だけ再要求する。
 
 ## 相手ごとに再生し、source を名前で扱う
 
