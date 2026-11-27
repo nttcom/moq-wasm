@@ -2,14 +2,19 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use futures_util::stream;
-use http_body_util::{BodyExt, StreamBody, combinators::BoxBody};
-use http_server::{HttpServer, allow_any_origin, bearer_token};
+use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Frame, Incoming},
-    header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue},
+    header::{
+        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderValue,
+    },
+    server::conn::http1,
+    service::service_fn,
 };
-use tokio::{net::TcpListener, time::interval};
+use hyper_util::rt::TokioIo;
+use tokio::{net::TcpListener, task::JoinHandle, time::interval};
 use tracing::Instrument;
 
 use crate::temporary_apps::{Refusal, TemporaryApps};
@@ -21,7 +26,7 @@ const EVENTS_HEARTBEAT: Duration = Duration::from_secs(15);
 /// lives while a request is in flight, so the `/events` streams the pages hold
 /// are what keeps the translator running.
 pub(crate) struct SessionServer {
-    _http: HttpServer,
+    accept_handle: JoinHandle<()>,
 }
 
 pub(crate) struct SessionServerState {
@@ -31,11 +36,37 @@ pub(crate) struct SessionServerState {
 impl SessionServer {
     pub(crate) fn run(listener: TcpListener, state: SessionServerState) -> Self {
         let state = Arc::new(state);
-        Self {
-            _http: HttpServer::run(listener, move |request, _peer| {
-                handle(request, state.clone())
-            }),
-        }
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        tracing::warn!(%error, "accept failed");
+                        continue;
+                    }
+                };
+                let state = state.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |request| {
+                        let state = state.clone();
+                        async move { Ok::<_, Infallible>(handle(request, state).await) }
+                    });
+                    if let Err(error) = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await
+                    {
+                        tracing::debug!(%error, "connection closed with error");
+                    }
+                });
+            }
+        });
+        Self { accept_handle }
+    }
+}
+
+impl Drop for SessionServer {
+    fn drop(&mut self) {
+        self.accept_handle.abort();
     }
 }
 
@@ -49,10 +80,9 @@ async fn handle(request: Request<Incoming>, state: Arc<SessionServerState>) -> S
         "url.path" = head.uri.path(),
         "http.response.status_code" = tracing::field::Empty,
     );
-    telemetry_otlp::continue_trace_from(&span, &head.headers);
-    let response = async {
+    let mut response = async {
         match (&head.method, head.uri.path()) {
-            (&Method::GET, "/healthz") => http_server::healthz_response().map(BodyExt::boxed),
+            (&Method::GET, "/healthz") => json_response(StatusCode::OK, r#"{"status":"ok"}"#),
             (&Method::GET, "/events") => events(),
             (&Method::POST, "/sessions") => start_session(&state, &head.headers).await,
             (&Method::OPTIONS, "/sessions") => empty_response(StatusCode::NO_CONTENT),
@@ -63,7 +93,17 @@ async fn handle(request: Request<Incoming>, state: Arc<SessionServerState>) -> S
     .await;
     span.record("http.response.status_code", response.status().as_u16());
     // The pages are served from another origin.
-    allow_any_origin(response, "GET, POST, OPTIONS", "authorization")
+    let headers = response.headers_mut();
+    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("authorization"),
+    );
+    response
 }
 
 async fn start_session(state: &SessionServerState, headers: &HeaderMap) -> ServerResponse {
@@ -84,8 +124,13 @@ async fn start_session(state: &SessionServerState, headers: &HeaderMap) -> Serve
     }
 }
 
-fn empty_response(status: StatusCode) -> ServerResponse {
-    http_server::empty_response(status).map(BodyExt::boxed)
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .filter(|token| !token.is_empty())
 }
 
 fn events() -> ServerResponse {
@@ -101,18 +146,32 @@ fn events() -> ServerResponse {
     response
 }
 
+fn empty_response(status: StatusCode) -> ServerResponse {
+    let mut response = Response::new(Full::default().boxed());
+    *response.status_mut() = status;
+    response
+}
+
+fn json_response(status: StatusCode, body: &str) -> ServerResponse {
+    let mut response = Response::new(Full::new(Bytes::from(body.to_string())).boxed());
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response
+}
+
 fn error_response(status: StatusCode, error: &str) -> ServerResponse {
-    http_server::error_response(status, error).map(BodyExt::boxed)
+    json_response(status, &serde_json::json!({ "error": error }).to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use auth_token::{Claims, sign_token};
-    use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
     use tokio::sync::Semaphore;
 
     use crate::{
         root_translation::{TranslationPolicy, TranslationResources},
+        temporary_apps::{tests::unsigned_token, unix_now},
         translation_engine::TranslationEngine,
     };
 
@@ -172,15 +231,7 @@ mod tests {
     }
 
     fn token_of(app_id: &str) -> String {
-        let now = auth_token::unix_now();
-        let claims = Claims::issued(
-            app_id.to_string(),
-            Some(String::new()),
-            Some(String::new()),
-            now,
-            Duration::from_secs(3600),
-        );
-        sign_token(&claims, "s3cret").unwrap()
+        unsigned_token(app_id, unix_now() + 3600)
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@
 
 Minimal Google Cloud HTTP client using workload identity (no service-account key files): metadata server tokens, conditional Cloud Storage reads/writes, and Google IAP / ID token JWKS verification.
 
-> **Workspace crate**: Internal library shared by [`app-registry`](../app-registry/README.md), [`job-launcher`](../job-launcher/README.md), `console`, `bot-dispatcher`, `live-translate`, and `recorder`. Native-only.
+> **Workspace crate**: Internal library shared by [`app-registry`](../app-registry/README.md), [`job-launcher`](../job-launcher/README.md), `console`, `bot-dispatcher`, and `recorder`. Native-only.
 
 ## Usage
 

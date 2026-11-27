@@ -1,8 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{Context, Result};
-use mediapack::loc::LocObject;
-use moqt::{Session, subscribe::SubscribeOption};
+use anyhow::Result;
+use moq_wasm::{
+    Session,
+    media::{FollowOptions, FollowedTrack, RemoteBroadcast, loc_timestamp_micros},
+};
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinHandle,
@@ -11,11 +13,10 @@ use tokio::{
 use crate::opus_codec::OpusDecoder;
 
 const SOURCE_PCM_CAPACITY: usize = 256;
-const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
 /// The relay drops source audio it has not sent this long after receiving it
 /// (draft-14 §9.2.1.2), so the translation catches up instead of falling
 /// behind. Longer than a player's 2 s because a dropped stretch loses words.
-const DELIVERY_TIMEOUT_MS: u64 = 5_000;
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub(crate) struct SourcePcm {
@@ -29,28 +30,32 @@ pub(crate) struct SourceAudio {
 }
 
 impl SourceAudio {
+    /// The SDK subscribes again whenever the subscription ends or fails, so
+    /// the languages keep their receivers and a refused SUBSCRIBE does not
+    /// silence the broadcast for good.
     pub(crate) fn run(
-        session: Arc<Session>,
-        namespace: String,
-        track_name: String,
+        session: &Session,
+        source: &RemoteBroadcast,
+        track_name: &str,
         channels: u32,
     ) -> Self {
         let (source_pcm_sender, _) = broadcast::channel(SOURCE_PCM_CAPACITY);
+        let followed = source.follow(
+            track_name,
+            FollowOptions {
+                delivery_timeout: Some(DELIVERY_TIMEOUT),
+                ..FollowOptions::default()
+            },
+        );
+        let track_namespace = source.namespace().join("/");
+        let track_name = track_name.to_string();
         let sender = source_pcm_sender.clone();
-        // The subscription is renewed whenever it ends or fails, so the languages
-        // keep their receivers and a refused SUBSCRIBE does not silence the
-        // broadcast for good.
-        let join_handle = tokio::spawn(async move {
-            loop {
-                match receive(&session, &namespace, &track_name, channels, &sender).await {
-                    Ok(()) => tracing::info!(%namespace, %track_name, "source audio ended"),
-                    Err(error) => {
-                        tracing::warn!(%namespace, %track_name, ?error, "source audio stopped")
-                    }
-                }
-                tokio::time::sleep(RESUBSCRIBE_DELAY).await;
+        let join_handle = tokio::spawn(session.scoped(async move {
+            tracing::info!(track_namespace, track_name, "following source audio");
+            if let Err(error) = decode(followed, channels, &sender).await {
+                tracing::warn!(track_namespace, track_name, ?error, "source audio stopped");
             }
-        });
+        }));
         Self {
             source_pcm_sender,
             join_handle,
@@ -68,54 +73,23 @@ impl Drop for SourceAudio {
     }
 }
 
-async fn receive(
-    session: &Session,
-    namespace: &str,
-    track_name: &str,
-    channels: u32,
-    source_pcm_sender: &broadcast::Sender<SourcePcm>,
-) -> Result<()> {
-    let mut subscriber = session.subscriber();
-    let subscription = subscriber
-        .subscribe(
-            namespace.to_string(),
-            track_name.to_string(),
-            SubscribeOption {
-                delivery_timeout: Some(DELIVERY_TIMEOUT_MS),
-                ..SubscribeOption::default()
-            },
-        )
-        .await
-        .context("subscribe to the source audio")?;
-    tracing::info!(%namespace, %track_name, "subscribed to source audio");
-    let result = decode(&mut subscriber, &subscription, channels, source_pcm_sender).await;
-    let _ = subscriber.unsubscribe(&subscription).await;
-    result
-}
-
 async fn decode(
-    subscriber: &mut moqt::Subscriber,
-    subscription: &moqt::Subscription,
+    mut followed: FollowedTrack,
     channels: u32,
     source_pcm_sender: &broadcast::Sender<SourcePcm>,
 ) -> Result<()> {
-    let mut reader = subscriber.track_reader(subscription);
     let (pcm_sender, mut pcm_receiver) = mpsc::unbounded_channel();
     let decoder = OpusDecoder::new(channels, pcm_sender)?;
     let mut latest_input_timestamp_micros = None;
     loop {
         tokio::select! {
-            object = reader.next_object() => {
-                let Some(object) = object? else {
-                    return Ok(());
-                };
-                let loc = LocObject::from(&object);
-                let Some(timestamp) = loc.capture_timestamp() else {
+            object = followed.next() => {
+                let Some(timestamp_micros) = loc_timestamp_micros(&object.extension_headers) else {
                     tracing::warn!("source audio object without a capture timestamp");
                     continue;
                 };
-                latest_input_timestamp_micros = Some(timestamp.micros());
-                decoder.push(&loc.payload)?;
+                latest_input_timestamp_micros = Some(timestamp_micros);
+                decoder.push(&object.payload)?;
             }
             Some(samples) = pcm_receiver.recv() => {
                 if let Some(input_timestamp_micros) = latest_input_timestamp_micros {

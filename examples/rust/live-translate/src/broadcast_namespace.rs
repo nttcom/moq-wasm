@@ -1,4 +1,4 @@
-const TRANSLATED_SUFFIX: &str = "translated";
+pub(crate) const TRANSLATED_SUFFIX: &str = "translated";
 
 /// Where the broadcasts live: `{root}/{id}` is a broadcast and
 /// `{root}/{id}/translated` its translation. The root is the public
@@ -25,17 +25,6 @@ impl BroadcastNamespaces {
             .and_then(|rest| rest.strip_prefix('/'))
             .is_some_and(|id| !id.is_empty() && !id.contains('/'))
     }
-
-    pub(crate) fn broadcast_of_translated<'a>(&self, namespace: &'a str) -> Option<&'a str> {
-        namespace
-            .strip_suffix(TRANSLATED_SUFFIX)
-            .and_then(|rest| rest.strip_suffix('/'))
-            .filter(|broadcast| self.is_broadcast(broadcast))
-    }
-}
-
-pub(crate) fn translated_namespace(broadcast_namespace: &str) -> String {
-    format!("{broadcast_namespace}/{TRANSLATED_SUFFIX}")
 }
 
 #[cfg(test)]
@@ -65,31 +54,5 @@ mod tests {
         assert!(!public().is_broadcast("anon/live-translate"));
         assert!(!public().is_broadcast("anon/live-translate/"));
         assert!(!public().is_broadcast("anon/live-translate-old/brave-otter"));
-    }
-
-    #[test]
-    fn translated_namespace_leads_back_to_its_broadcast() {
-        // Act / Assert
-        assert_eq!(
-            public().broadcast_of_translated("anon/live-translate/brave-otter/translated"),
-            Some("anon/live-translate/brave-otter")
-        );
-        assert_eq!(
-            public().broadcast_of_translated("anon/live-translate/brave-otter"),
-            None
-        );
-        assert_eq!(
-            public().broadcast_of_translated("anon/other/brave-otter/translated"),
-            None
-        );
-    }
-
-    #[test]
-    fn translated_namespace_is_nested_under_the_broadcast() {
-        // Act / Assert
-        assert_eq!(
-            translated_namespace("anon/live-translate/brave-otter"),
-            "anon/live-translate/brave-otter/translated"
-        );
     }
 }
