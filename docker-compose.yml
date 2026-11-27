@@ -147,7 +147,7 @@ services:
     image: moqt-live-translate:local
     build:
       context: .
-      dockerfile: services/live-translate/Dockerfile
+      dockerfile: examples/rust/live-translate/Dockerfile
     profiles:
       - live-translate
     env_file:

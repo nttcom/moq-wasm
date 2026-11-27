@@ -23,7 +23,7 @@ make chrome         # Chrome trusting the local relay cert (make chrome:linux on
 | [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                                      |
 | `recording-player`                                                                      | Replay finished MoQ recordings from `services/recorder` (`moq-wasm/recording`) |
 | `phone`                                                                                 | Inbound/outbound SIP calling via `services/sip-gateway` (`PhoneCall`)          |
-| [`live-translate`](examples/live-translate/README.md)                                   | Live translated broadcast via `services/live-translate`                        |
+| [`live-translate`](examples/live-translate/README.md)                                   | Live translated broadcast via `examples/rust/live-translate`                   |
 | `onvif`                                                                                 | Remote PTZ camera control and viewing via `services/ingest-gateway`            |
 | `remote-monitoring`                                                                     | USB camera remote monitoring                                                   |
 | `robot-teleop`                                                                          | Robot teleoperation (`moq-robot-sim` / `moq-robot-policy`) with dead-man hold  |

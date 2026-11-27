@@ -5,20 +5,20 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
-auth-token = { path = "../../crates/auth-token" }
+auth-token = { path = "../../../crates/auth-token" }
 base64 = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 futures-util = { workspace = true }
-google-cloud = { path = "../../crates/google-cloud" }
+google-cloud = { path = "../../../crates/google-cloud" }
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 http-body-util = { workspace = true }
-http-server = { path = "../../crates/http-server" }
+http-server = { path = "../../../crates/http-server" }
 hyper = { workspace = true, features = ["http1", "server"] }
-mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
-moqt = { path = "../../crates/moqt" }
-msf = { path = "../../crates/msf" }
+mediapack = { path = "../../../crates/mediapack", features = ["moqt"] }
+moqt = { path = "../../../crates/moqt" }
+msf = { path = "../../../crates/msf" }
 reqwest = { workspace = true, features = ["rustls", "json"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-native-certs = { workspace = true }
@@ -26,7 +26,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-native-roots"] }
-telemetry-otlp = { path = "../../crates/telemetry-otlp" }
+telemetry-otlp = { path = "../../../crates/telemetry-otlp" }
 tracing = { workspace = true }
 
 [dev-dependencies]

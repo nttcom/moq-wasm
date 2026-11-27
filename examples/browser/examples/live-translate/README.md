@@ -1,6 +1,6 @@
 # live-translate
 
-Streams camera/mic from a broadcaster while viewers pick a language translated live by `services/live-translate`.
+Streams camera/mic from a broadcaster while viewers pick a language translated live by `examples/rust/live-translate`.
 
 ## Run locally
 
