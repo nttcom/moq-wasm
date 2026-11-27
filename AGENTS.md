@@ -30,10 +30,10 @@ This repository implements Media over QUIC Transport (MoQT), a low-latency QUIC-
 | Component | Description | Related Draft |
 | --- | --- | --- |
 | `moqt` | Core MoQT protocol | `docs/spec/draft-ietf-moq-transport-14.txt`; `docs/spec/draft-ietf-moq-transport-18.txt` (`modules/moqt/version/draft18`) |
-| `relay` | MoQT relay server extending `moqt` | `docs/spec/draft-ietf-moq-transport-14.txt` (relay sections) |
+| `relay` | MoQT relay server extending `moqt` | `docs/spec/draft-ietf-moq-transport-14.txt`, `docs/spec/draft-ietf-moq-transport-18.txt` (relay sections) |
 | `crates/msf` | Object and catalog format over MoQT | `docs/spec/draft-ietf-moq-msf-02.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
 | `crates/mediapack` | Container mux/demux (MPEG-TS, FLV, fMP4, LOC), progressive MP4 index, H.264/AAC helpers; `moqt` feature maps LOC properties to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-04.txt` (`loc` module only) |
-| `crates/broadcast` | MSF broadcast writer/reader (`mediapack` ↔ catalog, LOC/CMAF tracks, media timeline, publish policy, track selection) for `ingest-gateway`, `gst-plugin-moqt`, `egress-gateway`, `sip-gateway`, and `recorder`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
+| `crates/broadcast` | MSF broadcast writer/reader (`mediapack` ↔ catalog, LOC/CMAF tracks, media timeline, publish policy, track selection) for gateways, `recorder`, `robotics`, and SDKs; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-02.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
 | `crates/robotics` | Robot teleoperation, cloud policies, and data collection (`state`, `control`, `episode`, `action` tracks; `Robot`/`Arbiter` dead-man arbitration; `Driver` writer); extends `broadcast` and `moqt` | `docs/spec/draft-ietf-moq-msf-02.txt` (§8 Event Timeline) |
 
 All other crates under `services/`, `crates/`, `sdk/`, and `examples/` are application/integration components (see each crate's `Cargo.toml` `description` and `docs/architecture/<package_name>/`); draft lookup is normally not required.
@@ -63,7 +63,7 @@ Read `.agents/rules/coding-style.md` before your first code edit if not already 
 - Lint (Rust, wasm32): `cargo clippy -p wasm -p moqt -p broadcast -p telemetry -p telemetry-report -p mediapack -p msf --target wasm32-unknown-unknown -- -D warnings`
 - Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "sdk/js/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore`
 - Test (browser unit): `npm test --workspaces`
-- Test (Python): `cd sdk/python && uv run pytest` (and `uv run pytest` in `examples/python/<project>`)
+- Test (Python): `cd sdk/python && uv run pyright && uv run pytest` (and `uv run pytest` in `examples/python/<project>`)
 - Wasm / JS SDK: `npm run wasm -w moq-wasm && npm run build -w moq-wasm`
 - Console web: `npm --prefix services/console/web run format:check && npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`

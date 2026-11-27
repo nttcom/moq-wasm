@@ -28,7 +28,7 @@ Lower layers are shared crates: `moqt`, `broadcast`, `msf`, `mediapack`, `sdk/js
 ## Naming
 - Follow language conventions (`snake_case` in Rust, `camelCase` in TypeScript); names must clearly reflect the concept. Abbreviations are allowed.
 - Channels: `*_sender` and `*_receiver`.
-- MoQT terms: use draft terminology. A track started via `PUBLISH` is a subscription (draft-14 §5.1) and a publisher serves a track, so never name MoQT state `Publication`. App-facing APIs (e.g. wasm `publish()`) may use `Publication`.
+- MoQT terms: use draft terminology. A track started via `PUBLISH` is a subscription (draft-14 §5.1) and a publisher serves a track, so never name MoQT state `Publication`. Application-facing APIs may use `Publication`.
 
 ## Error Handling
 - Default to `anyhow::Result`.
@@ -63,7 +63,7 @@ Lower layers are shared crates: `moqt`, `broadcast`, `msf`, `mediapack`, `sdk/js
 
 ## Dependencies
 - Minimize external crates; prefer existing dependencies.
-- Adding a crate requires an ADR at `docs/architecture/<package_name>/<crate>.md` (e.g. `docs/architecture/msf/tokio-util.md`) covering:
+- Adding a crate requires an ADR at `docs/architecture/<package_name>/<crate>.md` (e.g. `docs/architecture/gst-plugin-moqt/gstreamer.md`) covering:
   1. **What** — crate and purpose.
   2. **Context** — motivating problem or requirement.
   3. **Alternatives** — other crates/approaches and trade-offs.
