@@ -50,7 +50,7 @@ flowchart TB
 | `watchNamespaces(prefix)` → `MoqNamespaceWatch` | `watch_namespaces(prefix)` → `NamespaceWatch` | `watch_namespaces` → `NamespaceWatch` |
 | `announce(ns)` → `Announcement.close()` | `announce(ns)` → `Announcement.close()` | `announce` → `Announcement::close` |
 | `publishTrack(ns, track, { retentionMs, publish })` → `TrackWriter` | `publish_track(ns, name, retention_seconds=, publish=, datagram=, priority=)` → `TrackWriter` | `publish_track(ns, name, PublishTrackOptions)` → `TrackWriter` |
-| `write(payload, newGroup, locHeader)` / `writeGroup(payload)` / `nextSubscriber()` | `write(payload, new_group=)` / `write_group(payload)` / `next_subscriber()` | `write(payload, new_group, ExtensionHeaders)` / `write_group` / `next_subscriber` |
+| `write(payload, newGroup, locHeader)` / `writeGroup(payload)` / `nextSubscriber()` | `write(payload, new_group=)` / `write_group(payload)` / `next_subscriber()` | `write(payload, new_group, ExtensionHeaders)` / `write_group` / `next_subscriber` / `demand_change` / `end` |
 | `ReceivedObject` (`groupId`, `subgroupId`, `objectId`, `objectStatus`, `objectPayload`, `locHeader`) | `Object` (`group_id`, `subgroup_id`, `object_id`, `status`, `payload`, `extension_headers`, `timestamp_micros`) | `ReceivedObject` |
 | `RequestError`（draft のエラーコード） | `RequestError` (`message_type`, `code`, `reason`) | `RequestError` |
 
@@ -96,7 +96,7 @@ session.close().await;
 | `NamespaceWatch` | `MoqNamespaceWatch` | `next` と `close`（`UNSUBSCRIBE_NAMESPACE`） |
 | `TrackFollower` | なし | `follow_track` の戻り値。publisher が入れ替わる1本のトラック（視聴者の操作トラック等）を追い、`FollowEvent` を返す。ネイティブブリッジ専用 |
 | `Announcement` | `Announcement` | `close`（`PUBLISH_NAMESPACE_DONE`） |
-| `TrackWriter` | `TrackWriter` | `Origin` への `write`（`ExtensionHeaders` 対応）・`write_group`・`next_subscriber` |
+| `TrackWriter` | `TrackWriter` | `Origin` への `write`（`ExtensionHeaders` 対応）・`write_group`・`next_subscriber`・`demand_change`（`PublishTrackOptions::on_demand` のトラックで Forward State 1 の購読があるか）・`end`（`PUBLISH_DONE` で終了、再度の `publish_track` で購読可能に戻る） |
 | `EventHandler` | なし | `broadcast` 等のイベントフック（下記） |
 | `RequestError` | `RequestError` | `kind` (`RequestKind`)、`failure` (`RequestFailure`)、`code()`、`reason()` |
 | `PublishTrackError` | なし（`Error` 文字列） | `publish_track` の `anyhow::Error` 内包型。`OtherDelivery`: 異なる `datagram` 方式で再登録 |

@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - **Pick one read mode per `Subscription`**: Call either `next()` (objects/datagrams) or `next_group()` (subgroup streams). Mixing both fails, and `next_group()` fails if a datagram arrives.
 - **Safe drop semantics**: Dropping a send stream before `close`/`reset` resets it with code `0` instead of sending a partial subgroup `FIN`.
-- **Track defaults**: `PublishTrackOptions::default()` sets 60 s retention, priority `128`, `publish: false`, and `datagram: false`. `Session::publish_track` seeds the initial Group ID from wall-clock microseconds so restarts do not collide with relay caches.
+- **Track defaults**: `PublishTrackOptions::default()` sets 60 s retention, priority `128`, `publish: false`, `datagram: false`, and `on_demand: false`. `Session::publish_track` seeds the initial Group ID from wall-clock microseconds so restarts do not collide with relay caches.
 - **Auth & `GOAWAY`**: Set `ClientConfig::authorization_token` (`AuthorizationTokenSource`) for namespaces outside `anon/**`. `follow_go_away` defaults to `true`.
 - **Limits**: Control requests time out after 10 s (`RequestFailure::Timeout` keeps the session open); payloads and extension headers cap at 16 MiB.
 

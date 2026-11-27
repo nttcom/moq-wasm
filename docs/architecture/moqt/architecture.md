@@ -147,7 +147,7 @@ Language-independent client entry point (`modules/client/`, API mapping in [`sdk
 
 **Event dispatch order**: custom `EventHandler`s (in `add_handler` order, e.g., `broadcast::RelayConnection`) → `Origin` (also notifies `TrackWriter::next_subscriber`) → `NamespaceWatchers` → `Routes::answer` (acks `SUBSCRIBE_NAMESPACE`, rejects unknown `SUBSCRIBE` with `TRACK_DOES_NOT_EXIST` and `PUBLISH` with `UNINTERESTED` under `moqt.client.*` root spans joining peer trace).
 
-**Invariants**: `Send + Sync` natively (`MaybeSend`/`MaybeSync` on `wasm32`; `std::sync::Mutex` tables never held across `.await`); session end terminates all watches/`done`/`next_subscriber`; `Subscription` locks into `next` or `next_group` on first call; GOAWAY/reconnect stay in `moqt::Session`.
+**Invariants**: `Send + Sync` natively (`MaybeSend`/`MaybeSync` on `wasm32`; `std::sync::Mutex` tables never held across `.await`); session end terminates all watches/`done`/`next_subscriber`/`demand_change`; `Subscription` locks into `next` or `next_group` on first call; GOAWAY/reconnect stay in `moqt::Session`.
 
 ### `SessionContext` & `Connection` State
 - **`Connection`** (per transport): `transport`, `ControlChannel`, `track_alias: AtomicU64`, server/GOAWAY flags, `generation` (logical ID = `generation << 56 | wire_id`), `ObjectSinks` (keyed by wire alias, stamping logical alias), `fetch_notification_map` (single-stream; unknown IDs stopped with `CANCELLED`).

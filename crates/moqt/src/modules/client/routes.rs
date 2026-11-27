@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 use tracing::Instrument;
 
 use crate::modules::extensions::mutex::lock;
@@ -37,6 +37,7 @@ pub(super) struct Routes {
     pub(super) watchers: NamespaceWatchers,
     /// One permit per answered SUBSCRIBE `next_subscriber` has not taken.
     subscriber_watchers: Mutex<HashMap<TrackKey, Arc<Semaphore>>>,
+    ended_sender: watch::Sender<bool>,
 }
 
 impl Routes {
@@ -83,6 +84,11 @@ impl Routes {
         }
     }
 
+    /// `true` once the session has ended.
+    pub(super) fn ended(&self) -> watch::Receiver<bool> {
+        self.ended_sender.subscribe()
+    }
+
     /// Returns once the session has ended.
     pub(super) async fn route(&self, session: &Session) {
         while let Ok(event) = session.receive_event().await {
@@ -119,6 +125,7 @@ impl Routes {
         for (_, subscribers) in lock(&self.subscriber_watchers).drain() {
             subscribers.close();
         }
+        self.ended_sender.send_replace(true);
     }
 
     async fn pass_handlers(&self, event: SessionEvent) -> Option<SessionEvent> {
