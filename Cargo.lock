@@ -2240,29 +2240,25 @@ name = "live-translate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auth-token",
  "base64 0.23.1",
  "bytes",
  "clap",
  "futures-util",
- "google-cloud",
  "gstreamer",
  "gstreamer-app",
  "http-body-util",
- "http-server",
  "hyper 1.12.0",
- "mediapack",
- "moqt",
- "msf",
+ "hyper-util",
+ "moq-wasm",
  "reqwest",
  "rustls",
  "rustls-native-certs",
  "serde",
  "serde_json",
- "telemetry-otlp",
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

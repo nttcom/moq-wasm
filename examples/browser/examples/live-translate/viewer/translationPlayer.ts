@@ -401,8 +401,8 @@ export class TranslationPlayer {
   }
 
   /// Follows the language heard with its transcript; the source's (`text_ja`)
-  /// is served only while some language is being translated, so a refusal
-  /// is logged and leaves the picture without captions.
+  /// is served only while some language is being translated, so otherwise
+  /// it ends at once and leaves the picture without captions.
   private async showCaptions(lang: string): Promise<void> {
     if (this.captions?.lang === lang) {
       return

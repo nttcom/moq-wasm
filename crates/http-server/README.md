@@ -2,7 +2,7 @@
 
 Shared HTTP/1 accept loop, JSON body/response helpers, CORS, trusted-proxy client IP extraction, bearer token header parsing, and graceful shutdown signal helper.
 
-> **Workspace crate**: Internal library shared by HTTP services (`vts`, `console`, `temporary-apps`, `observability`, `live-translate`, `recorder`, `bot-dispatcher`, `sip-gateway`) and test stubs in `auth-token` / `google-cloud`. Routing and state stay in each service. Native-only.
+> **Workspace crate**: Internal library shared by HTTP services (`vts`, `console`, `temporary-apps`, `observability`, `recorder`, `bot-dispatcher`, `sip-gateway`) and test stubs in `auth-token` / `google-cloud`. Routing and state stay in each service. Native-only.
 
 ## Usage
 

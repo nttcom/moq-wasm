@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
-use google_cloud::MetadataToken;
 use tokio::process::Command;
+
+use super::MetadataToken;
 
 const MODEL_ID: &str = "gemini-3.5-live-translate-preview";
 const BIDI_PATH: &str = "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent";

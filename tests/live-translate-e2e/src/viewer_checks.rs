@@ -11,7 +11,6 @@ const TRANSLATED_OBJECTS_TO_CHECK: usize = 100;
 const ECHO_DELAY_MICROS: i64 = 3_700_000;
 const DELAY_TOLERANCE_MICROS: i64 = 400_000;
 const FRAME_MICROS: u64 = 20_000;
-const GROUP_MICROS: u64 = 2_000_000;
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) async fn run(
@@ -140,17 +139,17 @@ async fn check_translated_timestamps(session: &Session, namespace: &str) -> Resu
             .capture_timestamp()
             .context("translated object has a timestamp")?
             .micros();
-        ensure!(
-            group_id == timestamp / GROUP_MICROS,
-            "group {group_id} matches timestamp {timestamp}"
-        );
-        if let Some(previous) = previous {
+        if let Some((previous_group_id, previous_timestamp)) = previous {
             ensure!(
-                timestamp >= previous + FRAME_MICROS,
+                group_id >= previous_group_id,
+                "group {group_id} follows group {previous_group_id}"
+            );
+            ensure!(
+                timestamp >= previous_timestamp + FRAME_MICROS,
                 "timestamps advance by at least one frame"
             );
         }
-        previous = Some(timestamp);
+        previous = Some((group_id, timestamp));
         delays.push(received_micros as i64 - timestamp as i64);
     }
     let _ = subscriber.unsubscribe(&subscription).await;

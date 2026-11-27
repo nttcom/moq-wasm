@@ -1,10 +1,9 @@
 use std::{collections::HashMap, future::pending, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
-use moqt::{
-    RequestErrorCode, Session, Subscription, TrackWriter, object::ContentExists,
-    publish::PublishDoneCode, subscribe::SubscribeHandler,
+use moq_wasm::{
+    PublishTrackOptions, Session, TrackWriter,
+    media::{Catalog, RemoteBroadcast, create_broadcast},
 };
 use tokio::{
     sync::{Semaphore, mpsc},
@@ -13,110 +12,106 @@ use tokio::{
 };
 
 use crate::{
-    broadcast_namespace::translated_namespace,
+    broadcast_namespace::TRANSLATED_SUFFIX,
     catalog_track::CatalogTrack,
-    language_translation::{LanguageTranslation, WriterUpdate},
-    root_translation::TranslationPolicy,
-    root_translation::TranslationResources,
+    language_translation::{LanguageTranslation, LanguageWriters},
+    root_translation::{TranslationPolicy, TranslationResources},
     source_audio::SourceAudio,
     source_catalog::SourceCatalog,
-    target_language::{
-        SOURCE_TEXT_TRACK, TargetLanguage, find_by_text_track_name, find_by_track_name,
-    },
+    target_language::{SOURCE_TEXT_TRACK, TARGET_LANGUAGES, TargetLanguage, find_by_code},
     translated_catalog::{build_translated_catalog, source_audio_track},
     translation_engine::TranslationEngine,
 };
 
-const SUBSCRIPTION_NEVER_EXPIRES: u64 = 0;
+const CATALOG_TRACK_NAME: &str = "catalog";
 const LANGUAGE_IDLE_GRACE: Duration = Duration::from_secs(5);
 const POLICY_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// Covers the source catalog's SUBSCRIBE retries and the wait for the audio
 /// track to be listed.
 const FIRST_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 
-enum BroadcastCommand {
-    Subscribe(Box<SubscribeHandler>),
-    Unsubscribe(u64),
-}
-
 enum StartRefusal {
     Capacity,
     Failed(anyhow::Error),
 }
 
-pub(crate) struct BroadcastTranslation {
-    session: Arc<Session>,
-    translated_namespace: String,
-    command_sender: mpsc::UnboundedSender<BroadcastCommand>,
-    join_handle: JoinHandle<()>,
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum TrackKey {
+    Audio(&'static TargetLanguage),
+    Text(&'static TargetLanguage),
+    SourceText,
 }
 
-impl BroadcastTranslation {
-    pub(crate) fn run(
-        session: Arc<Session>,
-        resources: TranslationResources,
-        broadcast_namespace: String,
-    ) -> Self {
-        let TranslationResources {
-            engine,
-            capacity,
-            policy,
-        } = resources;
-        let translated_namespace = translated_namespace(&broadcast_namespace);
-        let (command_sender, command_receiver) = mpsc::unbounded_channel();
-        let join_handle = tokio::spawn({
-            let session = session.clone();
-            async move {
-                if let Err(error) = serve(
-                    session,
-                    engine,
-                    capacity,
-                    policy,
-                    &broadcast_namespace,
-                    command_receiver,
-                )
-                .await
-                {
-                    tracing::warn!(%broadcast_namespace, ?error, "broadcast translation stopped");
-                }
-            }
-        });
-        Self {
-            session,
-            translated_namespace,
-            command_sender,
-            join_handle,
+impl TrackKey {
+    fn all() -> impl Iterator<Item = Self> {
+        TARGET_LANGUAGES
+            .iter()
+            .flat_map(|language| [Self::Audio(language), Self::Text(language)])
+            .chain([Self::SourceText])
+    }
+
+    fn name(self) -> String {
+        match self {
+            Self::Audio(language) => language.track_name(),
+            Self::Text(language) => language.text_track_name(),
+            Self::SourceText => SOURCE_TEXT_TRACK.to_string(),
         }
     }
+}
 
-    pub(crate) fn subscribe(&self, handler: SubscribeHandler) {
-        let _ = self
-            .command_sender
-            .send(BroadcastCommand::Subscribe(Box::new(handler)));
-    }
+/// One report of `TrackWriter::demand_change`. `generation` drops reports
+/// still queued from a writer that `TranslatedTracks::end` replaced.
+struct DemandChange {
+    key: TrackKey,
+    generation: u64,
+    wanted: bool,
+}
 
-    pub(crate) fn unsubscribe(&self, request_id: u64) {
-        let _ = self
-            .command_sender
-            .send(BroadcastCommand::Unsubscribe(request_id));
+struct OnDemandTrack {
+    writer: Arc<TrackWriter>,
+    generation: u64,
+    wanted: bool,
+    demand_watch: JoinHandle<()>,
+}
+
+impl OnDemandTrack {
+    fn watch(
+        session: &Session,
+        key: TrackKey,
+        writer: TrackWriter,
+        generation: u64,
+        demand_sender: mpsc::UnboundedSender<DemandChange>,
+    ) -> Self {
+        let writer = Arc::new(writer);
+        let demand_watch = tokio::spawn(session.scoped({
+            let writer = writer.clone();
+            async move {
+                while let Ok(wanted) = writer.demand_change().await {
+                    let change = DemandChange {
+                        key,
+                        generation,
+                        wanted,
+                    };
+                    if demand_sender.send(change).is_err() {
+                        return;
+                    }
+                }
+            }
+        }));
+        Self {
+            writer,
+            generation,
+            wanted: false,
+            demand_watch,
+        }
     }
 }
 
-impl Drop for BroadcastTranslation {
+impl Drop for OnDemandTrack {
     fn drop(&mut self) {
-        self.join_handle.abort();
-        let session = self.session.clone();
-        let namespace = self.translated_namespace.clone();
-        tokio::spawn(async move {
-            let _ = session.publisher().publish_namespace_done(namespace).await;
-        });
+        self.demand_watch.abort();
     }
 }
-
-/// The Stream Count of a PUBLISH_DONE whose publisher cannot count its streams
-/// (draft-14 §9.12): the writers live in the language's task, which drops a
-/// replaced one, so their stream counts are not known here.
-const UNKNOWN_STREAM_COUNT: u64 = (1 << 62) - 1;
 
 struct LanguageSlot {
     translation: LanguageTranslation,
@@ -124,87 +119,84 @@ struct LanguageSlot {
     started_at: Instant,
     /// An always-on language: neither viewers leaving nor the time limit stop it.
     pinned: bool,
-    /// The viewers' subscriptions the relay forwarded, to end with PUBLISH_DONE.
-    subscriptions: HashMap<u64, Subscription>,
 }
 
-/// The `text_ja` subscription: the language writing it, and the subscription
-/// to end with PUBLISH_DONE when that language ends.
-struct SourceText {
-    request_id: u64,
-    code: &'static str,
-    subscription: Subscription,
-}
-
-struct Serving {
+/// Publishes `{broadcast}/translated` for one source broadcast until the
+/// source withdraws its namespace, which aborts the task.
+pub(crate) async fn serve(
     session: Arc<Session>,
-    engine: TranslationEngine,
-    capacity: Arc<Semaphore>,
-    policy: Arc<TranslationPolicy>,
-    broadcast_namespace: String,
-    source_track_name: String,
-    source_channels: u32,
-    catalog_payload: Bytes,
-    catalog_tracks: HashMap<u64, CatalogTrack>,
-    languages: HashMap<&'static str, LanguageSlot>,
-    request_languages: HashMap<u64, &'static str>,
-    source_text: Option<SourceText>,
-    source_audio: Option<SourceAudio>,
-    /// Languages whose engine gave up report their code here.
-    language_ended_sender: mpsc::UnboundedSender<&'static str>,
-}
-
-enum LanguageTrack {
-    Audio,
-    Text,
-}
-
-async fn serve(
-    session: Arc<Session>,
-    engine: TranslationEngine,
-    capacity: Arc<Semaphore>,
-    policy: Arc<TranslationPolicy>,
-    broadcast_namespace: &str,
-    mut command_receiver: mpsc::UnboundedReceiver<BroadcastCommand>,
+    resources: TranslationResources,
+    source: RemoteBroadcast,
 ) -> Result<()> {
+    let broadcast_namespace = source.namespace().join("/");
     let (catalog_sender, mut catalog_receiver) = mpsc::unbounded_channel();
-    let _source_catalog = SourceCatalog::run(
-        session.clone(),
-        broadcast_namespace.to_string(),
-        catalog_sender,
-    );
+    let _source_catalog = SourceCatalog::run(&session, source.clone(), catalog_sender);
     let (source_catalog, translated_catalog) = tokio::time::timeout(
         FIRST_CATALOG_TIMEOUT,
-        first_translatable_catalog(&mut catalog_receiver, broadcast_namespace),
+        first_translatable_catalog(&mut catalog_receiver, &broadcast_namespace),
     )
     .await
     .context("source catalog did not list Opus audio in time")??;
     let source_track = source_audio_track(&source_catalog)
         .context("source catalog has no Opus audio to translate")?;
+    let source_track_name = source_track.name.clone();
+    let source_channels = channel_count(source_track.channel_config.as_deref());
+
+    let translated_namespace: Vec<String> = source
+        .namespace()
+        .iter()
+        .cloned()
+        .chain([TRANSLATED_SUFFIX.to_string()])
+        .collect();
+    // Every track is registered before PUBLISH_NAMESPACE, so a SUBSCRIBE that
+    // follows it at once finds its track.
+    let builder = create_broadcast(&session, &translated_namespace);
+    let catalog_writer = builder
+        .publish_track(CATALOG_TRACK_NAME, PublishTrackOptions::default())
+        .await?;
+    let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+    let mut tracks = HashMap::new();
+    for key in TrackKey::all() {
+        let writer = builder.publish_track(&key.name(), on_demand()).await?;
+        let track = OnDemandTrack::watch(&session, key, writer, 0, demand_sender.clone());
+        tracks.insert(key, track);
+    }
+    let broadcast = builder
+        .announce()
+        .await
+        .context("announce the translated namespace")?;
     let (language_ended_sender, mut language_ended_receiver) = mpsc::unbounded_channel();
-    let mut serving = Serving {
-        session: session.clone(),
+    let TranslationResources {
         engine,
         capacity,
         policy,
-        broadcast_namespace: broadcast_namespace.to_string(),
-        source_track_name: source_track.name.clone(),
-        source_channels: channel_count(source_track.channel_config.as_deref()),
-        catalog_payload: Bytes::from(serde_json::to_vec(&translated_catalog)?),
-        catalog_tracks: HashMap::new(),
+    } = resources;
+    let mut serving = Serving {
+        catalog: CatalogTrack::run(&session, catalog_writer, translated_catalog.to_bytes()),
+        session,
+        engine,
+        capacity,
+        policy,
+        source,
+        broadcast_namespace,
+        source_track_name,
+        source_channels,
+        translated: TranslatedTracks {
+            broadcast,
+            tracks,
+            next_generation: 1,
+            demand_sender,
+        },
         languages: HashMap::new(),
-        request_languages: HashMap::new(),
-        source_text: None,
+        source_text_language: None,
         source_audio: None,
         language_ended_sender,
     };
-    let namespace = translated_namespace(broadcast_namespace);
-    session
-        .publisher()
-        .publish_namespace(namespace.clone())
-        .await
-        .context("announce the translated namespace")?;
-    tracing::info!(%namespace, source_track = %serving.source_track_name, "translation ready");
+    tracing::info!(
+        track_namespace = translated_namespace.join("/"),
+        source_track = %serving.source_track_name,
+        "translation ready"
+    );
     serving.start_always_on();
     let mut policy_check = tokio::time::interval(POLICY_CHECK_INTERVAL);
     loop {
@@ -214,14 +206,8 @@ async fn serve(
                 serving.enforce_limits().await;
                 serving.start_always_on();
             }
-            command = command_receiver.recv() => match command {
-                Some(BroadcastCommand::Subscribe(handler)) => serving.subscribe(*handler).await,
-                Some(BroadcastCommand::Unsubscribe(request_id)) => serving.unsubscribe(request_id),
-                None => return Ok(()),
-            },
-            catalog = catalog_receiver.recv() => if let Some(catalog) = catalog {
-                serving.update_catalog(&catalog)?;
-            },
+            Some(change) = demand_receiver.recv() => serving.demand_changed(change).await,
+            Some(catalog) = catalog_receiver.recv() => serving.update_catalog(&catalog),
             Some(code) = language_ended_receiver.recv() => {
                 serving.end_language(code, "translation unavailable").await;
             }
@@ -230,79 +216,145 @@ async fn serve(
     }
 }
 
+fn on_demand() -> PublishTrackOptions {
+    PublishTrackOptions {
+        on_demand: true,
+        ..PublishTrackOptions::default()
+    }
+}
+
+/// The translated namespace and its on-demand tracks.
+struct TranslatedTracks {
+    broadcast: moq_wasm::media::LocalBroadcast,
+    tracks: HashMap<TrackKey, OnDemandTrack>,
+    next_generation: u64,
+    demand_sender: mpsc::UnboundedSender<DemandChange>,
+}
+
+impl TranslatedTracks {
+    fn wanted(&self, key: TrackKey) -> bool {
+        self.tracks.get(&key).is_some_and(|track| track.wanted)
+    }
+
+    fn writer(&self, key: TrackKey) -> Option<Arc<TrackWriter>> {
+        self.tracks.get(&key).map(|track| track.writer.clone())
+    }
+
+    /// Ends each of `keys` a subscriber wants with PUBLISH_DONE and publishes
+    /// it again, so a viewer can subscribe anew. Viewers of an ended
+    /// `audio_<lang>` fall back to the original audio.
+    async fn end(&mut self, session: &Session, keys: &[TrackKey], reason: &str) {
+        for &key in keys {
+            if !self.wanted(key) {
+                continue;
+            }
+            let track_name = key.name();
+            if let Some(track) = self.tracks.remove(&key)
+                && let Err(error) = track.writer.end().await
+            {
+                tracing::warn!(track_name, ?error, "PUBLISH_DONE failed");
+            }
+            tracing::info!(track_name, reason, "translated track ended");
+            match self.broadcast.publish_track(&track_name, on_demand()).await {
+                Ok(writer) => {
+                    let generation = self.next_generation;
+                    self.next_generation += 1;
+                    let track = OnDemandTrack::watch(
+                        session,
+                        key,
+                        writer,
+                        generation,
+                        self.demand_sender.clone(),
+                    );
+                    self.tracks.insert(key, track);
+                }
+                Err(error) => tracing::warn!(track_name, ?error, "publish the track again"),
+            }
+        }
+    }
+}
+
+struct Serving {
+    session: Arc<Session>,
+    engine: TranslationEngine,
+    capacity: Arc<Semaphore>,
+    policy: Arc<TranslationPolicy>,
+    source: RemoteBroadcast,
+    broadcast_namespace: String,
+    source_track_name: String,
+    source_channels: u32,
+    catalog: CatalogTrack,
+    translated: TranslatedTracks,
+    languages: HashMap<&'static str, LanguageSlot>,
+    /// The language writing `text_ja`.
+    source_text_language: Option<&'static str>,
+    source_audio: Option<SourceAudio>,
+    /// Languages whose engine gave up report their code here.
+    language_ended_sender: mpsc::UnboundedSender<&'static str>,
+}
+
 impl Serving {
-    async fn subscribe(&mut self, handler: SubscribeHandler) {
-        let track_name = handler.track_name.clone();
-        let result = if track_name == msf::CATALOG_TRACK_NAME {
-            self.subscribe_catalog(&handler).await
-        } else if track_name == SOURCE_TEXT_TRACK {
-            self.subscribe_source_text(&handler).await
-        } else if let Some(language) = find_by_track_name(&track_name) {
-            self.subscribe_language(&handler, language, LanguageTrack::Audio)
-                .await
-        } else if let Some(language) = find_by_text_track_name(&track_name) {
-            self.subscribe_language(&handler, language, LanguageTrack::Text)
-                .await
-        } else {
-            reject(
-                &handler,
-                RequestErrorCode::TrackDoesNotExist,
-                "unknown track",
-            )
-            .await;
-            Ok(())
+    async fn demand_changed(&mut self, change: DemandChange) {
+        let Some(track) = self.translated.tracks.get_mut(&change.key) else {
+            return;
         };
-        if let Err(error) = result {
-            tracing::warn!(%track_name, ?error, "SUBSCRIBE failed");
+        if track.generation != change.generation || track.wanted == change.wanted {
+            return;
+        }
+        track.wanted = change.wanted;
+        match change.key {
+            TrackKey::Audio(code) | TrackKey::Text(code) => {
+                self.language_demand_changed(code).await
+            }
+            TrackKey::SourceText => self.source_text_demand_changed(change.wanted).await,
         }
     }
 
-    async fn subscribe_catalog(&mut self, handler: &SubscribeHandler) -> Result<()> {
-        let (_, writer) = self.accept(handler).await?;
-        self.catalog_tracks.insert(
-            handler.request_id(),
-            CatalogTrack::run(writer, self.catalog_payload.clone()),
-        );
-        Ok(())
-    }
-
-    async fn subscribe_language(
-        &mut self,
-        handler: &SubscribeHandler,
-        language: &'static TargetLanguage,
-        track: LanguageTrack,
-    ) -> Result<()> {
-        if let Err(refusal) = self.start_language(language, false) {
-            let reason = match &refusal {
-                StartRefusal::Capacity => "translation capacity reached",
-                StartRefusal::Failed(_) => "translation failed to start",
-            };
-            reject(handler, RequestErrorCode::InternalError, reason).await;
-            return match refusal {
-                StartRefusal::Failed(error) => Err(error),
-                _ => Ok(()),
-            };
+    /// A language runs while its audio or its transcript is wanted, and
+    /// idles once neither is.
+    async fn language_demand_changed(&mut self, language: &'static TargetLanguage) {
+        let code = language.code;
+        let keys = [TrackKey::Audio(language), TrackKey::Text(language)];
+        if !keys.iter().any(|&key| self.translated.wanted(key)) {
+            if let Some(slot) = self.languages.get_mut(code) {
+                slot.idle_since.get_or_insert_with(Instant::now);
+            }
+            return;
         }
-        let (subscription, writer) = self.accept(handler).await?;
-        if let Some(slot) = self.languages.get_mut(language.code) {
-            slot.translation.replace_writer(match track {
-                LanguageTrack::Audio => WriterUpdate::Audio(Some(writer)),
-                LanguageTrack::Text => WriterUpdate::Text(Some(writer)),
-            });
-            slot.idle_since = None;
-            slot.subscriptions
-                .insert(handler.request_id(), subscription);
+        match self.start_language(language, false) {
+            Ok(()) => {
+                if let Some(slot) = self.languages.get_mut(code) {
+                    slot.idle_since = None;
+                }
+            }
+            Err(refusal) => {
+                let reason = match &refusal {
+                    StartRefusal::Capacity => "translation capacity reached",
+                    StartRefusal::Failed(error) => {
+                        tracing::warn!(language = code, ?error, "translation failed to start");
+                        "translation failed to start"
+                    }
+                };
+                self.translated.end(&self.session, &keys, reason).await;
+            }
         }
-        self.request_languages
-            .insert(handler.request_id(), language.code);
-        Ok(())
     }
 
     /// The source transcript comes with every Gemini session, so one running
-    /// language writes it; without any, the track is refused rather than
-    /// paying for a session only to transcribe. The subscription is kept out
-    /// of the language's own, so it does not keep the language from idling.
-    async fn subscribe_source_text(&mut self, handler: &SubscribeHandler) -> Result<()> {
+    /// language writes it; without any, the track is ended rather than
+    /// paying for a session only to transcribe. Its demand does not keep the
+    /// language from idling.
+    async fn source_text_demand_changed(&mut self, wanted: bool) {
+        if !wanted {
+            if let Some(slot) = self
+                .source_text_language
+                .take()
+                .and_then(|code| self.languages.get(code))
+            {
+                slot.translation.set_source_text(None);
+            }
+            return;
+        }
         let Some(code) = self
             .languages
             .iter()
@@ -310,35 +362,25 @@ impl Serving {
             .or_else(|| self.languages.iter().next())
             .map(|(code, _)| *code)
         else {
-            reject(
-                handler,
-                RequestErrorCode::InternalError,
-                "no translation is running to transcribe the source",
-            )
-            .await;
-            return Ok(());
+            self.translated
+                .end(
+                    &self.session,
+                    &[TrackKey::SourceText],
+                    "no translation is running to transcribe the source",
+                )
+                .await;
+            return;
         };
-        if let Some(previous) = self.source_text.take() {
-            self.request_languages.remove(&previous.request_id);
-            if previous.code != code
-                && let Some(slot) = self.languages.get_mut(previous.code)
-            {
-                slot.translation
-                    .replace_writer(WriterUpdate::SourceText(None));
-            }
+        if let Some(previous) = self.source_text_language.replace(code)
+            && previous != code
+            && let Some(slot) = self.languages.get(previous)
+        {
+            slot.translation.set_source_text(None);
         }
-        let (subscription, writer) = self.accept(handler).await?;
-        if let Some(slot) = self.languages.get_mut(code) {
+        if let Some(slot) = self.languages.get(code) {
             slot.translation
-                .replace_writer(WriterUpdate::SourceText(Some(writer)));
+                .set_source_text(self.translated.writer(TrackKey::SourceText));
         }
-        self.request_languages.insert(handler.request_id(), code);
-        self.source_text = Some(SourceText {
-            request_id: handler.request_id(),
-            code,
-            subscription,
-        });
-        Ok(())
     }
 
     /// `pinned` marks an always-on language; a start for a language that
@@ -351,20 +393,30 @@ impl Serving {
         if self.languages.contains_key(language.code) {
             return Ok(());
         }
+        let (Some(audio), Some(text)) = (
+            self.translated.writer(TrackKey::Audio(language)),
+            self.translated.writer(TrackKey::Text(language)),
+        ) else {
+            return Err(StartRefusal::Failed(anyhow::anyhow!(
+                "the language's tracks are not published"
+            )));
+        };
         let Ok(capacity_permit) = self.capacity.clone().try_acquire_owned() else {
             return Err(StartRefusal::Capacity);
         };
         let source_audio = self.source_audio.get_or_insert_with(|| {
             SourceAudio::run(
-                self.session.clone(),
-                self.broadcast_namespace.clone(),
-                self.source_track_name.clone(),
+                &self.session,
+                &self.source,
+                &self.source_track_name,
                 self.source_channels,
             )
         });
         let translation = LanguageTranslation::run(
+            &self.session,
             &self.engine,
             language,
+            LanguageWriters { audio, text },
             source_audio.subscribe(),
             capacity_permit,
             self.language_ended_sender.clone(),
@@ -377,7 +429,6 @@ impl Serving {
                 idle_since: None,
                 started_at: Instant::now(),
                 pinned,
-                subscriptions: HashMap::new(),
             },
         );
         Ok(())
@@ -411,56 +462,21 @@ impl Serving {
     }
 
     /// A source catalog that lists more tracks, such as the video once its
-    /// codec is known, reaches every catalog subscriber at once. The audio
-    /// track being translated stays the one of the first catalog.
-    fn update_catalog(&mut self, source: &msf::Catalog) -> Result<()> {
+    /// codec is known, replaces the translated one. The audio track being
+    /// translated stays the one of the first catalog.
+    fn update_catalog(&mut self, source: &Catalog) {
         let Some(translated) = build_translated_catalog(source, &self.broadcast_namespace) else {
-            return Ok(());
-        };
-        let payload = Bytes::from(serde_json::to_vec(&translated)?);
-        if payload == self.catalog_payload {
-            return Ok(());
-        }
-        self.catalog_payload = payload;
-        for catalog in self.catalog_tracks.values() {
-            catalog.update(self.catalog_payload.clone());
-        }
-        tracing::info!(
-            namespace = %translated_namespace(&self.broadcast_namespace),
-            subscribers = self.catalog_tracks.len(),
-            "translated catalog updated"
-        );
-        Ok(())
-    }
-
-    fn unsubscribe(&mut self, request_id: u64) {
-        if self.catalog_tracks.remove(&request_id).is_some() {
-            return;
-        }
-        let Some(code) = self.request_languages.remove(&request_id) else {
             return;
         };
-        let Some(slot) = self.languages.get_mut(code) else {
-            return;
-        };
-        if self
-            .source_text
-            .take_if(|source_text| source_text.request_id == request_id)
-            .is_some()
-        {
-            slot.translation
-                .replace_writer(WriterUpdate::SourceText(None));
-            return;
-        }
-        slot.subscriptions.remove(&request_id);
-        if slot.subscriptions.is_empty() {
-            slot.translation.replace_writer(WriterUpdate::Audio(None));
-            slot.translation.replace_writer(WriterUpdate::Text(None));
-            slot.idle_since = Some(Instant::now());
+        if self.catalog.update(translated.to_bytes()) {
+            tracing::info!(
+                track_namespace = self.broadcast_namespace,
+                "translated catalog updated"
+            );
         }
     }
 
-    /// Viewers of an ended language get PUBLISH_DONE and may subscribe again.
+    /// Ends every unpinned language that has run for `language_time_limit`.
     async fn enforce_limits(&mut self) {
         let now = Instant::now();
         let ended: Vec<&'static str> = self
@@ -504,60 +520,24 @@ impl Serving {
     }
 
     /// Drops the language, which stops its Gemini session, and ends its
-    /// subscriptions, the `text_ja` one included when this language wrote it,
-    /// with PUBLISH_DONE so the viewers fall back and may subscribe again.
+    /// tracks, `text_ja` included when this language wrote it.
     async fn end_language(&mut self, code: &'static str, reason: &str) {
-        let Some(slot) = self.languages.remove(code) else {
+        let (Some(language), Some(slot)) = (find_by_code(code), self.languages.remove(code)) else {
             return;
         };
-        let mut subscriptions: Vec<(u64, Subscription)> = slot.subscriptions.into_iter().collect();
-        if let Some(source_text) = self
-            .source_text
-            .take_if(|source_text| source_text.code == code)
-        {
-            subscriptions.push((source_text.request_id, source_text.subscription));
+        let ran_minutes = slot.started_at.elapsed().as_secs() / 60;
+        // Stops the language's writes before its tracks end and are published again.
+        drop(slot);
+        let mut keys = vec![TrackKey::Audio(language), TrackKey::Text(language)];
+        if self.source_text_language == Some(code) {
+            self.source_text_language = None;
+            keys.push(TrackKey::SourceText);
         }
-        for (request_id, subscription) in subscriptions {
-            self.request_languages.remove(&request_id);
-            if let Err(error) = self
-                .session
-                .publisher()
-                .publish_done(
-                    &subscription,
-                    PublishDoneCode::TrackEnded,
-                    UNKNOWN_STREAM_COUNT,
-                    reason.to_string(),
-                )
-                .await
-            {
-                tracing::warn!(request_id, ?error, "send PUBLISH_DONE");
-            }
-        }
-        tracing::info!(
-            language = code,
-            reason,
-            ran_minutes = slot.started_at.elapsed().as_secs() / 60,
-            "translation stopped"
-        );
+        self.translated.end(&self.session, &keys, reason).await;
+        tracing::info!(language = code, reason, ran_minutes, "translation stopped");
         if self.languages.is_empty() {
             self.source_audio = None;
         }
-    }
-
-    async fn accept(&self, handler: &SubscribeHandler) -> Result<(Subscription, TrackWriter)> {
-        let track_alias = handler
-            .ok(SUBSCRIPTION_NEVER_EXPIRES, ContentExists::False)
-            .await
-            .context("send SUBSCRIBE_OK")?;
-        let subscription = handler.into_subscription(track_alias);
-        let writer = TrackWriter::new(self.session.publisher().create_stream(&subscription), 0);
-        Ok((subscription, writer))
-    }
-}
-
-async fn reject(handler: &SubscribeHandler, error_code: RequestErrorCode, reason: &str) {
-    if let Err(error) = handler.error(error_code, reason.to_string()).await {
-        tracing::warn!(?error, "send SUBSCRIBE_ERROR");
     }
 }
 
@@ -571,22 +551,31 @@ pub(crate) async fn sleep_until(deadline: Option<Instant>) {
 /// Waits for the first source catalog that lists Opus audio and returns it
 /// with the translated catalog built from it.
 async fn first_translatable_catalog(
-    catalog_receiver: &mut mpsc::UnboundedReceiver<msf::Catalog>,
+    catalog_receiver: &mut mpsc::UnboundedReceiver<Catalog>,
     broadcast_namespace: &str,
-) -> Result<(msf::Catalog, msf::Catalog)> {
+) -> Result<(Catalog, Catalog)> {
     while let Some(source) = catalog_receiver.recv().await {
         if let Some(translated) = build_translated_catalog(&source, broadcast_namespace) {
             return Ok((source, translated));
         }
-        tracing::debug!(%broadcast_namespace, "source catalog lists no Opus audio yet");
+        tracing::debug!(
+            track_namespace = broadcast_namespace,
+            "source catalog lists no Opus audio yet"
+        );
     }
     anyhow::bail!("source catalog ended before listing Opus audio")
 }
 
+/// The channel count of a `channelConfig` (draft-ietf-moq-msf-02 §5.2.30),
+/// whose format the draft leaves open: `mono`, `stereo`, `<n>ch` or `<n>`;
+/// one channel when absent or unknown.
 fn channel_count(channel_config: Option<&str>) -> u32 {
-    channel_config
-        .and_then(msf::channel_count)
-        .map_or(1, u32::from)
+    let count = match channel_config {
+        Some("mono") | None => Some(1),
+        Some("stereo") => Some(2),
+        Some(other) => other.trim_end_matches("ch").parse().ok(),
+    };
+    count.filter(|&count| count > 0).unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -594,8 +583,8 @@ mod tests {
     use super::*;
     use crate::target_language::TARGET_LANGUAGES;
 
-    fn catalog(json: &str) -> msf::Catalog {
-        serde_json::from_str(json).expect("catalog")
+    fn catalog(json: &str) -> Catalog {
+        Catalog::parse(json.as_bytes()).expect("catalog")
     }
 
     #[tokio::test]
@@ -606,7 +595,7 @@ mod tests {
             "{\"version\":\"draft-02\",\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\",\"bitrate\":1000000,\"framerate\":30}]}",
         );
         let with_audio = catalog(
-            "{\"version\":\"draft-02\",\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\",\"bitrate\":1000000,\"framerate\":30},{\"name\":\"audio\",\"packaging\":\"loc\",\"role\":\"audio\",\"isLive\":true,\"codec\":\"opus\",\"samplerate\":48000,\"channelConfig\":\"mono\"}]}",
+            "{\"version\":\"draft-02\",\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\",\"bitrate\":1000000,\"framerate\":30},{\"name\":\"audio\",\"packaging\":\"loc\",\"role\":\"audio\",\"isLive\":true,\"codec\":\"opus\",\"bitrate\":64000,\"samplerate\":48000,\"channelConfig\":\"mono\"}]}",
         );
         catalog_sender.send(video_only).expect("sent");
         catalog_sender.send(with_audio).expect("sent");
@@ -618,8 +607,8 @@ mod tests {
                 .expect("a translatable catalog");
 
         // Assert: the second catalog is used, and its video is referenced by the translated one
-        assert_eq!(source.tracks.len(), 2);
-        let translated_tracks = translated.tracks;
+        assert_eq!(source.tracks().len(), 2);
+        let translated_tracks = translated.tracks();
         assert!(translated_tracks.iter().any(|track| track.name == "video"));
         assert_eq!(
             translated_tracks.len(),
@@ -635,5 +624,17 @@ mod tests {
         assert_eq!(channel_count(Some("2ch")), 2);
         assert_eq!(channel_count(Some("2")), 2);
         assert_eq!(channel_count(None), 1);
+    }
+
+    #[test]
+    fn every_language_and_the_source_transcript_get_a_track() {
+        // Act
+        let names: Vec<String> = TrackKey::all().map(TrackKey::name).collect();
+
+        // Assert
+        assert_eq!(names.len(), 2 * TARGET_LANGUAGES.len() + 1);
+        assert!(names.contains(&"audio_en".to_string()));
+        assert!(names.contains(&"text_zh-Hans".to_string()));
+        assert!(names.contains(&"text_ja".to_string()));
     }
 }
