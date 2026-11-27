@@ -75,13 +75,15 @@ let broadcast = builder.announce().await?;
 
 let camera = broadcast.add_media_source(MediaSourceOptions::new("camera"));
 camera.configure_video("avc1.42e01f")?;
-camera.push_video(access_unit, timestamp_micros)?; // Annex B; keyframes open a new group
+camera.push_video(access_unit, timestamp_micros)?; // one Annex B access unit; keyframes open a new group
 events.append(&json!({"T": 0, "data": "started"})).await?;
 
 broadcast.close().await?;
 # Ok(())
 # }
 ```
+
+To publish an H.264/H.265 Annex B byte stream (e.g. an encoder's stdout), cut it into access units with `media::AnnexBSplitter` (`push` each chunk read, `finish` at the end).
 
 ## Watch and follow broadcasts
 

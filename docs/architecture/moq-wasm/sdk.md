@@ -15,7 +15,8 @@ Revises two decisions from [`moqt/sdk.md`](../moqt/sdk.md): the Rust entry point
 | --- | --- | --- |
 | Token refresh | `connect(refresh_token=)` | Per-service or missing |
 | End classification | `ConnectionLost`, `TokenExpired`, `SessionClosed` | `TransportClose` only |
-| Namespace lifecycle | `watch_broadcasts` | Custom loops in `ingest-gateway` / `live-translate` |
+| Namespace lifecycle | `AnnexBSplitter` | Splits an H.264/H.265 Annex B byte stream read in arbitrary chunks (an encoder's stdout) into the access units `push_video` takes; wraps `mediapack::elementary_stream::ElementaryStreamDemuxer` and leaves timing to the caller. |
+| `watch_broadcasts` | Custom loops in `ingest-gateway` / `live-translate` |
 | Catalog & track follow | `RemoteBroadcast.catalogs`, `Catalog.select`, `follow` | `CatalogReader` / `CommandSubscriber` per service |
 | Media & event publishing | `add_media_source`, `EventTimeline` | Manual `BroadcastWriter` + `mediapack` events |
 
