@@ -126,13 +126,14 @@ impl NamespaceRoutes {
 
     /// Registers the namespace's publisher route while a client publishes the
     /// namespace and withdraws it once none does. Fails only when the route
-    /// could not be registered; a failed withdrawal is logged. Returns whether
-    /// it withdrew the route.
+    /// could not be registered; a failed withdrawal is logged. The returned
+    /// lock keeps the namespace's next reconcile waiting, so the caller tells
+    /// remote subscriber relays of this route change before that one.
     pub(crate) async fn reconcile_publisher(
         &self,
         track_namespace: &str,
         table: &InMemoryLocalPubSubDirectory,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ReconciledRoute<'_>> {
         self.reconcile(Route::Publisher(track_namespace.to_string()), table)
             .await
     }
@@ -146,6 +147,7 @@ impl NamespaceRoutes {
     ) -> anyhow::Result<bool> {
         self.reconcile(Route::Subscriber(track_namespace_prefix.to_string()), table)
             .await
+            .map(|reconciled| reconciled.withdrawn)
     }
 
     /// `reconcile_publisher` for the track's publisher route, held while a
@@ -155,7 +157,9 @@ impl NamespaceRoutes {
         track_key: &TrackKey,
         table: &InMemoryLocalPubSubDirectory,
     ) -> anyhow::Result<bool> {
-        self.reconcile(Route::Track(track_key.clone()), table).await
+        self.reconcile(Route::Track(track_key.clone()), table)
+            .await
+            .map(|reconciled| reconciled.withdrawn)
     }
 
     /// `reconcile_track` for a caller that removed a client's PUBLISH from the
@@ -181,7 +185,7 @@ impl NamespaceRoutes {
         &self,
         route: Route,
         table: &InMemoryLocalPubSubDirectory,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ReconciledRoute<'_>> {
         let mut held = self.held.lock(&route).await;
         let wanted = route.is_wanted(table);
         let withdrawn = match (wanted, *held) {
@@ -198,9 +202,29 @@ impl NamespaceRoutes {
         if withdrawn.is_ok() {
             *held = wanted;
         }
-        drop(held);
-        self.held.forget_unheld(&route);
-        withdrawn
+        let mut reconciled = ReconciledRoute {
+            withdrawn: false,
+            held: Some(held),
+            held_routes: &self.held,
+            route,
+        };
+        reconciled.withdrawn = withdrawn?;
+        Ok(reconciled)
+    }
+}
+
+/// Holds the route's lock until dropped.
+pub(crate) struct ReconciledRoute<'a> {
+    pub(crate) withdrawn: bool,
+    held: Option<tokio::sync::OwnedMutexGuard<bool>>,
+    held_routes: &'a HeldRoutes,
+    route: Route,
+}
+
+impl Drop for ReconciledRoute<'_> {
+    fn drop(&mut self) {
+        drop(self.held.take());
+        self.held_routes.forget_unheld(&self.route);
     }
 }
 
@@ -225,9 +249,17 @@ mod tests {
         routes.reconcile_publisher("ns", &table).await.unwrap();
         let registered = registry.routes().namespace_publishers;
         table.unregister_publish_namespace(1, None, "ns");
-        let one_left = routes.reconcile_publisher("ns", &table).await.unwrap();
+        let one_left = routes
+            .reconcile_publisher("ns", &table)
+            .await
+            .unwrap()
+            .withdrawn;
         table.unregister_publish_namespace(2, None, "ns");
-        let none_left = routes.reconcile_publisher("ns", &table).await.unwrap();
+        let none_left = routes
+            .reconcile_publisher("ns", &table)
+            .await
+            .unwrap()
+            .withdrawn;
 
         // Assert
         assert!(registered.contains("ns"));

@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        namespace_routes::NamespaceRoutes, route_registry::RelayRouteRegistry,
+        namespace_routes::{NamespaceRoutes, ReconciledRoute},
+        route_registry::RelayRouteRegistry,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -52,8 +53,10 @@ impl PublishNamespace {
             track_namespace.to_string(),
             peer,
         );
-        if is_origin
-            && !self
+        // Held until remote subscriber relays are told, so they get this
+        // PUBLISH_NAMESPACE after the DONE of an earlier withdrawal.
+        let _reconciled = if is_origin {
+            let Some(reconciled) = self
                 .register_route(
                     session_id,
                     table,
@@ -62,9 +65,13 @@ impl PublishNamespace {
                     handler,
                 )
                 .await
-        {
-            return;
-        }
+            else {
+                return;
+            };
+            Some(reconciled)
+        } else {
+            None
+        };
 
         if let Err(e) = handler.ok().await {
             tracing::error!(error = ?e, "PUBLISH_NAMESPACE failed");
@@ -210,20 +217,21 @@ impl PublishNamespace {
         skip_all,
         fields(track_namespace = %handler.track_namespace())
     )]
-    async fn register_route(
+    async fn register_route<'a>(
         &self,
         session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        namespace_routes: &NamespaceRoutes,
+        namespace_routes: &'a NamespaceRoutes,
         handler: &dyn PublishNamespaceHandler,
-    ) -> bool {
+    ) -> Option<ReconciledRoute<'a>> {
         let track_namespace = handler.track_namespace();
-        let Err(err) = namespace_routes
+        let err = match namespace_routes
             .reconcile_publisher(track_namespace, table)
             .await
-        else {
-            return true;
+        {
+            Ok(reconciled) => return Some(reconciled),
+            Err(err) => err,
         };
         tracing::warn!(error = ?err, track_namespace = %track_namespace, "failed to register namespace route");
         table.unregister_publish_namespace(session_id, Some(handler.request_id()), track_namespace);
@@ -251,7 +259,7 @@ impl PublishNamespace {
         {
             tracing::error!("failed to send `PUBLISH_NAMESPACE_ERROR`");
         }
-        false
+        None
     }
 
     #[tracing::instrument(
