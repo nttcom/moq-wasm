@@ -2263,8 +2263,9 @@ async def test_a_participant_input_whose_session_closed_answers_its_image_reques
     room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
     alice_session = await moq_wasm.connect(relay_url, verify_certificate=False)
     bot_session = await moq_wasm.connect(relay_url, verify_certificate=False)
-    alice = await within(create_broadcast(alice_session, [*room, "alice"]).__aenter__())
+    alice = create_broadcast(alice_session, [*room, "alice"])
     catalog = alice.publish_track("catalog")
+    await within(alice.__aenter__())
     await within(alice.published())
     await catalog.write(AUDIO_CATALOG, new_group=True)
     participant_input = MoqWasmParticipantInput(
