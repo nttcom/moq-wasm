@@ -43,6 +43,7 @@ async fn publish_stdin(session: &Session, namespace: &Namespace, codec: Codec) -
     let codec = codec.codec_family();
     source.configure_video(codec)?;
     let mut splitter = AnnexBSplitter::new(codec)?;
+    let mut video_started = false;
     // The stream has no timestamps: each access unit takes its arrival, 1 µs
     // after the previous one when one read completes several.
     let started = Instant::now();
@@ -77,6 +78,10 @@ async fn publish_stdin(session: &Session, namespace: &Namespace, codec: Codec) -
         .context("failed to read the input; check --codec")?;
         for access_unit in access_units {
             source.push_video(access_unit, arrival())?;
+            if !video_started {
+                info!("video started");
+                video_started = true;
+            }
         }
         if read == 0 {
             info!("input ended");
