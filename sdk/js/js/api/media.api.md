@@ -212,6 +212,8 @@ export class LivePlayer {
     // (undocumented)
     setCatchUp(catchUp: CatchUp): void;
     // (undocumented)
+    setDeliveryTimeout(deliveryTimeoutMs: number | null): Promise<void>;
+    // (undocumented)
     setLatencyTolerance(tolerance: LatencyTolerance): void;
     // (undocumented)
     setLateSamples(lateSamples: LateSamples): void;

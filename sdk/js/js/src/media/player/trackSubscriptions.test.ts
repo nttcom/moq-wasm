@@ -56,6 +56,35 @@ test('a delivery timeout that is not a whole number of milliseconds from 1 up is
   }
 })
 
+test('a delivery timeout set later is sent with the subscriptions after it and none is sent once unset', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {}, { deliveryTimeoutMs: 2_000 })
+  const { handler } = recordingHandler()
+
+  // Act
+  subscriptions.setDeliveryTimeout(10_000)
+  await subscriptions.subscribe('video', 'video', VIDEO, handler, false)
+  subscriptions.setDeliveryTimeout(undefined)
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, handler, false)
+
+  // Assert
+  expect(session.calls).toEqual([
+    { method: 'subscribe', track: 'video', options: { forward: true, priority: 128, deliveryTimeoutMs: 10_000 } },
+    { method: 'subscribe', track: 'audio', options: { forward: true, priority: 32 } }
+  ])
+})
+
+test('a delivery timeout set to a value out of range is refused and the previous one kept', () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {}, { deliveryTimeoutMs: 2_000 })
+
+  // Act / Assert
+  expect(() => subscriptions.setDeliveryTimeout(0)).toThrow(RangeError)
+  expect(subscriptions.delivery.deliveryTimeoutMs).toBe(2_000)
+})
+
 test('a subscription from a group start marks the objects up to the largest one as cached', async () => {
   // Arrange
   const session = new FakeSession({ groupId: 3n, objectId: 1n }, [

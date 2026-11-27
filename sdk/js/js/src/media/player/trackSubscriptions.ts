@@ -21,6 +21,15 @@ import { AUDIO_PRIORITY, DEFAULT_VIDEO_PRIORITY } from './trackPriority'
 /// delay (`MIN_GROUP_OBJECTS` in moqt).
 const FETCHED_GROUP_OBJECTS = 60
 
+type Delivery = Pick<MoqSubscribeOptions, 'deliveryTimeoutMs' | 'groupOrder'>
+
+function checkDeliveryTimeout(timeout: number | undefined): void {
+  // The wasm binding takes a u32 and would wrap or truncate any other number.
+  if (timeout !== undefined && (!Number.isInteger(timeout) || timeout < 1 || timeout > 0xffff_ffff)) {
+    throw new RangeError(`delivery timeout ${timeout} is not an integer from 1 to 4294967295`)
+  }
+}
+
 export type TrackSubscription = PlayedTrack & {
   id: bigint
   handle: MoqSubscription
@@ -42,20 +51,29 @@ export class TrackSubscriptions {
   /// The SUBSCRIBE_UPDATEs sent so far: each repeats what the one before it
   /// set, so they are sent one after another.
   private updates = Promise.resolve()
+  private sent: Delivery
 
   constructor(
     private readonly context: TrackContext,
     /// `leading` when no video is subscribed after the PUBLISH_DONE: the
     /// video's, or the audio's of a broadcast played without video.
     private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void,
-    /// Sent with every media SUBSCRIBE.
-    private readonly delivery: Pick<MoqSubscribeOptions, 'deliveryTimeoutMs' | 'groupOrder'> = {}
+    delivery: Delivery = {}
   ) {
-    // The wasm binding takes a u32 and would wrap or truncate any other number.
-    const timeout = delivery.deliveryTimeoutMs
-    if (timeout !== undefined && (!Number.isInteger(timeout) || timeout < 1 || timeout > 0xffff_ffff)) {
-      throw new RangeError(`delivery timeout ${timeout} is not an integer from 1 to 4294967295`)
-    }
+    checkDeliveryTimeout(delivery.deliveryTimeoutMs)
+    this.sent = { ...delivery }
+  }
+
+  /// Sent with every media SUBSCRIBE.
+  get delivery(): Readonly<Delivery> {
+    return this.sent
+  }
+
+  /// For the SUBSCRIBEs sent from now on; `undefined` sends none. Throws a
+  /// `RangeError` unless it is an integer from 1 to 4294967295.
+  setDeliveryTimeout(deliveryTimeoutMs: number | undefined): void {
+    checkDeliveryTimeout(deliveryTimeoutMs)
+    this.sent = { ...this.sent, deliveryTimeoutMs }
   }
 
   get(kind: MediaKind): TrackSubscription | undefined {
@@ -105,12 +123,12 @@ export class TrackSubscriptions {
     const handle = joining
       ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, {
           priority,
-          ...this.delivery
+          ...this.sent
         })
       : await session.subscribe(namespace, wireName, {
           forward,
           priority,
-          ...this.delivery
+          ...this.sent
         })
     const subscription: TrackSubscription = {
       id: streamId(),

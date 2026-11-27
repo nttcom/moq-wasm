@@ -1,7 +1,7 @@
 import { forwardSdkLog } from '../../core/log'
 import { RequestError, RequestErrorCode } from '../../core/requestError'
 import { type PlayerStatsSample, registerPlayerStats } from '../../core/telemetry'
-import type { MoqSession, MoqSubscribeOptions, PublishDone, ReceivedObject } from '../../core/session'
+import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { callPage } from '../internal/callPage'
 import { monotonicUnixMicros } from '../internal/clock'
@@ -149,7 +149,6 @@ export class LivePlayer {
   private readonly keepLiveWhileReviewing: boolean
   private readonly source: LiveSource | undefined
   private readonly textTracks: TextTracks
-  private readonly delivery: Pick<MoqSubscribeOptions, 'deliveryTimeoutMs' | 'groupOrder'>
   private readonly addedTracks = new Set<AddedAudioTrack | AddedTextTrack>()
   /// The catalog the player listens to since `start`; `owned` when the
   /// player created it and closes it at `stop`.
@@ -223,15 +222,14 @@ export class LivePlayer {
       }
     }
     this.textTracks = new TextTracks(this.context)
-    this.delivery = {
-      deliveryTimeoutMs:
-        options.deliveryTimeoutMs === null ? undefined : (options.deliveryTimeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS),
-      groupOrder: options.groupOrder
-    }
     this.subscriptions = new TrackSubscriptions(
       this.context,
       (kind, done, leading) => this.publisherEnded(kind, done, leading),
-      this.delivery
+      {
+        deliveryTimeoutMs:
+          options.deliveryTimeoutMs === null ? undefined : (options.deliveryTimeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS),
+        groupOrder: options.groupOrder
+      }
     )
     this.videoSwitcher = new VideoSwitcher({
       subscriptions: this.subscriptions,
@@ -576,6 +574,34 @@ export class LivePlayer {
     this.adaptiveBitrate.setLatencyTolerance(tolerance)
   }
 
+  /// Sets `deliveryTimeoutMs` (`null` sends none) and subscribes the selected
+  /// video and audio again with it, so the picture restarts from the start of
+  /// a group and a review goes back to live. The media timeline and the tracks
+  /// added with `addAudioTrack` keep the timeout they were subscribed with.
+  /// Throws a `RangeError` unless `null` or an integer from 1 to 4294967295.
+  setDeliveryTimeout(deliveryTimeoutMs: number | null): Promise<void> {
+    const timeout = deliveryTimeoutMs ?? undefined
+    if (timeout === this.subscriptions.delivery.deliveryTimeoutMs) {
+      return Promise.resolve()
+    }
+    this.subscriptions.setDeliveryTimeout(timeout)
+    return this.queueTrackChange(async () => {
+      if (!this.started) {
+        return
+      }
+      for (const kind of ['video', 'audio'] as const) {
+        // `resubscribe` does nothing while the track it would pick is already subscribed.
+        await this.subscriptions.unsubscribe(kind)
+        try {
+          await this.resubscribe(kind)
+        } catch (error) {
+          this.context.log('warn', `${kind} SUBSCRIBE failed: ${getErrorMessage(error)}`)
+        }
+      }
+      await this.openLiveMse()
+    })
+  }
+
   selectAudioTrack(name: string): Promise<void> {
     return this.selectTrack('audio', name)
   }
@@ -601,7 +627,7 @@ export class LivePlayer {
         track,
         listener,
         onClosed,
-        this.delivery.deliveryTimeoutMs
+        this.subscriptions.delivery.deliveryTimeoutMs
       )
     )
   }
@@ -1106,7 +1132,7 @@ export class LivePlayer {
     try {
       await this.textTracks.subscribe(track.name, onTimeline, {
         currentGroup: !this.timeline.live,
-        delivery: this.delivery
+        delivery: this.subscriptions.delivery
       })
     } catch (error) {
       // The media plays without the timeline, which the next catalog retries.
