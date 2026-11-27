@@ -269,9 +269,8 @@ impl RelayConnection {
         Some(connected.session.transport_stats())
     }
 
-    /// Withdraws the PUBLISHes of `track_names` in `namespace` still waiting
-    /// for their answer (`Origin::withdraw_publish`), so the sends waiting on
-    /// them fail. Does not connect.
+    /// Runs `Origin::withdraw_publish` for each of `track_names`; never
+    /// connects.
     pub(crate) async fn withdraw_publishes(&self, namespace: &[String], track_names: &[String]) {
         let Some(relay) = self.connected.lock().await.clone() else {
             return;

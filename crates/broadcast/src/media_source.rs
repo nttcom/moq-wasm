@@ -688,7 +688,7 @@ mod tests {
     #[tokio::test]
     async fn ending_a_source_withdraws_a_publish_the_relay_has_not_answered() {
         for version in [Version::Draft14, Version::Draft18] {
-            // Arrange: the publish task waits for the PUBLISH_OK of the audio
+            // Arrange: the relay holds the audio PUBLISH unanswered
             let (answer_publish, publish_gate) = oneshot::channel();
             let mut relay = FakeRelay::spawn_holding_publish(
                 "media-source-end-unanswered",

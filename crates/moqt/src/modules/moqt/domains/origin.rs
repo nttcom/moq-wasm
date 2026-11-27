@@ -868,8 +868,8 @@ impl Origin {
         Some(key)
     }
 
-    /// Withdraws the track's PUBLISH that a `publish` still waits to have
-    /// answered; that `publish` fails. Does nothing when none waits.
+    /// Makes a `publish` of the track still awaiting PUBLISH_OK fail, dropping
+    /// its PUBLISH request. Does nothing when none waits.
     pub async fn withdraw_publish(&self, namespace: &str, track_name: &str) {
         let key = track_key(namespace, track_name);
         if let Some(withdrawal) = self
@@ -890,9 +890,8 @@ impl Origin {
     /// `withdraw_publish` does; one answered meanwhile is ended too. A new
     /// SUBSCRIBE or TRACK_STATUS then finds no track until `ensure_track` or
     /// `publish` takes it up again, with its numbering and cache, at the next
-    /// group; FETCH still serves the cache. A track
-    /// published on demand reports no demand until `publish_on_demand` is
-    /// called again.
+    /// group; FETCH still serves the cache. A track published on demand
+    /// reports no demand until `publish_on_demand` is called again.
     pub async fn end_track(&self, namespace: &str, track_name: &str) -> Result<()> {
         self.withdraw_publish(namespace, track_name).await;
         let key = track_key(namespace, track_name);
