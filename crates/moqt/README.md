@@ -70,10 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Module | Use for |
 | --- | --- |
-| `moqt::client` | Managed client `Session`, `TrackWriter`, `Subscription`, `Fetch`, `NamespaceWatch`, `TrackWatch`, `EventHandler` |
+| `moqt::client` | Managed client `Session`, `TrackWriter`, `Subscription`, `Fetch`, `TrackFollower`, `NamespaceWatch`, `TrackWatch`, `EventHandler` |
 | `moqt::*` | Low-level `Endpoint`, `Session`, `ClientConfig`, `AuthorizationTokenSource`, `Publisher`, `Subscriber`, transport markers (`NATIVE`, `QUIC`, `BROWSER`) |
 | `moqt::server` | Inbound `ServerConfig`, `Accepting`, `Handshake`, and (`self-signed-cert`) certificate generation |
-| `moqt::executor` | Cross-target `spawn`, `sleep`, monotonic `now()`, and `MaybeSend`/`MaybeSync` |
+| `moqt::executor` | Cross-target `spawn`, `JoinHandle`, `AbortOnDrop`, `sleep`, monotonic `now()`, `system_time()`, and `MaybeSend`/`MaybeSync` |
 | `moqt::wire` | Draft-14 numeric error codes for language bindings |
 
 ### Protocol messages & data

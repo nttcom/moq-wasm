@@ -55,7 +55,7 @@ Sign HS256 tokens with the UTF-8 bytes of `secret` using [`auth-token`](../../cr
 VTS_APPS_FILE=./services/vts/apps.example.json cargo run -p vts
 ```
 
-`docker compose up -d` runs VTS with `apps.example.json` and connects both relays using dev `AUTH_RELAY_TOKEN` values minted from the relay entry:
+`make relay-certs && docker compose build relay-common && docker compose up -d` runs VTS with `apps.example.json` and connects both relays using dev `AUTH_RELAY_TOKEN` values minted from the relay entry:
 
 ```shell
 AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "11111111-2222-3333-4444-555555555555") | .secret' services/vts/apps.example.json)" \

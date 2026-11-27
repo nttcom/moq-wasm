@@ -12,6 +12,9 @@ Backend for the internal MoQ console. Runs behind IAP on Cloud Run, reads user i
 | `POST /api/apps/{appId}/tokens` | `{ "publish": "cam1", "subscribe": "", "ttlSeconds": 3600 }` | `{ "token": "eyJ…", "expiresAt": 1760903600 }` |
 | `POST /api/apps/{appId}/secret` | | `{ "app": …, "secret": … }` (invalidates earlier tokens) |
 | `DELETE /api/apps/{appId}` | | `204` |
+| `GET /api/apps/{appId}/usage` | | Usage stats proxied from `CONSOLE_OBSERVABILITY_URL` (`503` if unset) |
+| `GET /api/apps/{appId}/recordings` | | MP4 recording list proxied from `CONSOLE_RECORDER_URL` (`503` if unset) |
+| `GET /api/apps/{appId}/recordings/{id}/file?name=<name>` | | `302` redirect to signed Cloud Storage URL from `CONSOLE_RECORDER_URL` |
 
 Non-`GET` requests require `X-Console-Request`. The app `secret` is returned only on creation and rotation.
 
@@ -52,7 +55,7 @@ npm --prefix services/console/web install
 npm --prefix services/console/web run dev
 ```
 
-On Cloud Run, set `CONSOLE_IAP_AUDIENCE` and `CONSOLE_REGISTRY_BUCKET` instead (`CONSOLE_DEV_SUB` is rejected). The container serves built frontend assets from `CONSOLE_STATIC_DIR`:
+On Cloud Run, set `CONSOLE_IAP_AUDIENCE` and `CONSOLE_REGISTRY_BUCKET` instead (`CONSOLE_DEV_SUB` is rejected). Optional variables: `PORT` (default `8080`), `CONSOLE_REGISTRY_OBJECT` (default `registry.json`), `CONSOLE_RELAY_URL`, `CONSOLE_OBSERVABILITY_URL`, and `CONSOLE_RECORDER_URL`. The container serves built frontend assets from `CONSOLE_STATIC_DIR`:
 
 ```shell
 docker build -f services/console/Dockerfile -t moqt-console .

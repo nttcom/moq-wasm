@@ -50,6 +50,7 @@ IAM 認証（`roles/run.invoker`）が必須のため、ローカルでは `--gc
 | `{app}/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`（1〜8 問）。`{"type": "choice", "question", "choices"}` または `{"type": "boxes", "target"}` |
 | `{app}/moq-camera-detection/{room}/camera` | `catalog`, `camera` | ブラウザ | MSF catalog と H.264（キーフレームで group 開始） |
 | `{app}/moq-camera-detection/{room}/bots/camera-detection` | `eventtimeline` | bot | `draft-ietf-moq-msf-02` §8 の event timeline。`L` で対象フレーム、`data.answers` で質問順の回答（枠は `[[left, top, right, bottom], ...]`） |
+| `{app}/moq-camera-detection/{room}/bots/camera-detection` | `status` | bot | System One の状態 `{"system_one", "since"}` |
 
 - 推論待ち中のフレームおよび復号後 2 秒超過フレームは破棄します。
 - セッション切断時は 2 秒後に再接続します。

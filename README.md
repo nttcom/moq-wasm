@@ -87,7 +87,7 @@ All three SDKs interoperate, follow `GOAWAY`, reconnect automatically, and suppo
 | Component | Role |
 | --- | --- |
 | [`services/relay`](services/relay/README.md) | MoQT relay (QUIC, WebTransport, WebSocket on one port), `FETCH` cache, cascading, draft-14/18 |
-| [`services/vts`](services/vts/README.md) · [`services/console`](services/console/README.md) | JWT verification (VTS) and app/token console |
+| [`services/vts`](services/vts/README.md) · [`services/console`](services/console/README.md) · [`services/temporary-apps`](services/temporary-apps/README.md) | JWT verification (VTS), app/token console, and temporary-app (`temp-*`) token mint / bot-launch proxy |
 | [`services/bot-dispatcher`](services/bot-dispatcher/README.md) · [`services/live-translate`](docs/architecture/live-translate/architecture.md) | On-demand room bot launcher and live audio translation |
 | [`services/observability`](docs/architecture/observability/architecture.md) | Client telemetry collector and OTLP forwarder ([design](docs/architecture/telemetry/architecture.md)) |
 

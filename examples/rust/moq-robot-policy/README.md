@@ -7,7 +7,7 @@ and answers each `state` of the simulated robot with a velocity toward a
 target point.
 
 ```sh
-cargo run -p relay
+make relay
 cargo run -p moq-robot-sim -- --insecure --room anon/robot-teleop --policy-episode "go to the corner"
 cargo run -p moq-robot-policy -- --insecure --room anon/robot-teleop --target 0.5,0.5
 ```

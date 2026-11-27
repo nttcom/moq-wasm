@@ -4,7 +4,7 @@ Reusable Rust libraries under `crates/`.
 
 - **Building an app, bot, or robot?** Start with an SDK: [JavaScript](../sdk/js/js/README.md) · [Python](../sdk/python/README.md) · [Rust (`moq-wasm`)](../sdk/rust/README.md). `sdk/rust` wraps `moqt`, `broadcast`, and `robotics` with automatic reconnects and JWT refresh.
 - **Publishing from GStreamer?** Use the [`gst-plugin-moqt`](../sdk/gstreamer/README.md) plugin.
-- **Self-hosting a relay or gateway?** See [`services/`](../README.md#self-hostable-server--gateway-stack).
+- **Self-hosting a relay or gateway?** See [`services/`](../README.md#server--gateway-stack).
 - **Embedding a crate directly or exploring the codebase?** Pick a crate below.
 
 ## Protocol & media dependencies

@@ -4,7 +4,7 @@
 
 `bot_job.add_bot_job_arguments` で共通引数を定義し、`bot_job.serve_bot_job` でルーム接続・heartbeat・終了報告を処理します。
 
-- **認証と publish**: `Bots.token` / `Bots.refresh` で relay トークンを取得・更新し、`<room>/bots/<type>`（`BotJob.broadcast`）に publish します。ローカル起動時は `BOT_DISPATCHER_BOT_KEY`、Cloud Run Job ではメタデータサーバの ID トークンで `bot-dispatcher` に認証します。
+- **認証と publish**: `BotDispatcher.token` / `BotDispatcher.refresh` で relay トークンを取得・更新し、`<room>/bots/<type>`（`BotJob.broadcast`）に publish します。ローカル起動時は `BOT_DISPATCHER_BOT_KEY`、Cloud Run Job ではメタデータサーバの ID トークンで `bot-dispatcher` に認証します。
 - **ライフサイクル**: 5 秒ごとに heartbeat を送り、停止要求（`DELETE` / `--max-seconds`）・無人終了・`SIGTERM` で `finished`、例外終了で `failed` を報告します。
 
 ## オプション
