@@ -81,8 +81,9 @@ module origin {
   // `ensure_track`
   action ensureTrack = s' = { ...s, registered: true, ended: false }
 
-  // `end_track`: waits for `publishing`, takes every outlet and sends
-  // PUBLISH_DONE on the serving ones.
+  // `end_track`: withdraws a PUBLISH in flight (`withdrawPublish`), waits for
+  // `publishing`, takes every outlet and sends PUBLISH_DONE on the serving
+  // ones.
   action endTrack = all {
     s.registered,
     s.publishing == NOBODY,
@@ -200,6 +201,19 @@ module origin {
     },
   }
 
+  // `withdraw_publish` (and `end_track` first): the `publish` waiting for
+  // PUBLISH_OK drops its request, fails, and drops `publishing`; the PUBLISH
+  // answered or answered later gets PUBLISH_DONE.
+  action withdrawPublish(p: str): bool = all {
+    s.publishing == p,
+    s' = {
+      ...s,
+      publishing: NOBODY,
+      registering: s.registering.exclude(Set(p)),
+      peers: s.peers.set(p, PDone),
+    },
+  }
+
   action peerUnsubscribes(p: str): bool = all {
     s.peers.get(p) == PActive,
     s' = { ...s, peers: s.peers.set(p, PUnsubscribing) },
@@ -239,6 +253,7 @@ module origin {
       peerAcceptsPublish(p),
       peerRefusesPublish(p),
       registerPublish(p),
+      withdrawPublish(p),
       peerUnsubscribes(p),
       releasePeer(p),
       republish(p),
