@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use crate::scope::SessionScope;
 use mediapack::loc::{LocObject, LocValue, from_extension_headers};
-use moqt::client::{self, ReceivedObject};
+use moqt::{
+    client::{self, ReceivedObject, SubscriptionEvent},
+    object::ObjectStatus,
+};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
 
 use crate::location::Location;
@@ -70,6 +73,18 @@ impl From<ReceivedObject> for Object {
     }
 }
 
+impl Object {
+    fn end_of_group(group_id: u64, subgroup_id: u64, object_id: u64) -> Self {
+        Self {
+            group_id,
+            subgroup_id,
+            object_id,
+            status: Some(ObjectStatus::EndOfGroup as u8),
+            loc: LocObject::default(),
+        }
+    }
+}
+
 /// The PUBLISH_DONE that ended a subscription.
 #[pyclass(frozen, get_all, module = "moq_wasm")]
 pub struct PublishDone {
@@ -126,6 +141,13 @@ impl Subscription {
         })
     }
 
+    fn with_end_of_group(&self) -> ObjectsWithEndOfGroup {
+        ObjectsWithEndOfGroup {
+            subscription: self.subscription.clone(),
+            scope: self.scope,
+        }
+    }
+
     fn groups(&self) -> Groups {
         Groups {
             subscription: self.subscription.clone(),
@@ -175,6 +197,37 @@ impl Subscription {
         self.scope.future_into_py(py, async move {
             subscription.close().await?;
             Ok(())
+        })
+    }
+}
+
+#[pyclass(module = "moq_wasm")]
+pub struct ObjectsWithEndOfGroup {
+    subscription: Arc<client::Subscription>,
+    scope: SessionScope,
+}
+
+#[pymethods]
+impl ObjectsWithEndOfGroup {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let subscription = self.subscription.clone();
+        self.scope.future_into_py(py, async move {
+            loop {
+                return match subscription.next_event().await? {
+                    Some(SubscriptionEvent::Object(object)) => Ok(Object::from(object)),
+                    Some(SubscriptionEvent::EndOfGroup {
+                        group_id,
+                        subgroup_id,
+                        object_id,
+                    }) => Ok(Object::end_of_group(group_id, subgroup_id, object_id)),
+                    Some(SubscriptionEvent::Reset { .. }) => continue,
+                    None => Err(PyStopAsyncIteration::new_err("the track ended")),
+                };
+            }
         })
     }
 }

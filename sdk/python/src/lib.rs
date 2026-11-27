@@ -36,6 +36,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<subscription::Subscription>()?;
     module.add_class::<subscription::Object>()?;
     module.add_class::<subscription::PublishDone>()?;
+    module.add_class::<subscription::ObjectsWithEndOfGroup>()?;
     module.add_class::<subscription::Groups>()?;
     module.add_class::<subscription::Group>()?;
     module.add_class::<fetch::Fetch>()?;

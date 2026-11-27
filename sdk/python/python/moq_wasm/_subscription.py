@@ -102,8 +102,12 @@ class Subscription(AsyncIterator[_native.Object]):
         self._session = session
         self._objects = _Reads(native, "the subscription", session)
         self._groups: Groups | None = None
+        self._with_end_of_group: ObjectsWithEndOfGroup | None = None
         # "object" or "group", as the first read or the native subscription made it.
         self._read_by = read_by
+        # Whether the objects are read with their End of Group status objects, as the first read
+        # made it.
+        self._reads_end_of_group: bool | None = None
         self._closing: Once[None] = Once()
 
     def __aiter__(self) -> "Subscription":
@@ -112,8 +116,17 @@ class Subscription(AsyncIterator[_native.Object]):
     async def __anext__(self) -> _native.Object:
         """Raises StopAsyncIteration once the publisher ends the track. A group whose stream fails
         (reset by a publisher that left, or cut by a GOAWAY's cutover) ends early."""
-        self._read_as("object")
+        self._read_objects(with_end_of_group=False)
         return await self._objects.next()
+
+    def _read_objects(self, *, with_end_of_group: bool) -> None:
+        """`_read_as("object")`, which also raises RuntimeError once the objects were read with
+        End of Group status objects or without, the other way: each way holds its own read."""
+        self._read_as("object")
+        if self._reads_end_of_group is None:
+            self._reads_end_of_group = with_end_of_group
+        elif self._reads_end_of_group != with_end_of_group:
+            raise RuntimeError("the subscription is read " + ("with" if self._reads_end_of_group else "without") + " End of Group")
 
     def _read_as(self, unit: str) -> None:
         """Raises RuntimeError once the subscription was read by another unit, before the native
@@ -131,6 +144,15 @@ class Subscription(AsyncIterator[_native.Object]):
     def done(self) -> asyncio.Future[_native.PublishDone | None]:
         """`_native.Subscription.done`."""
         return self._native.done()
+
+    def with_end_of_group(self) -> "ObjectsWithEndOfGroup":
+        """The objects with each End of Group status object among them
+        (`_native.Subscription.with_end_of_group`), read as the objects are, instead of iterating
+        the subscription itself. Every call returns the same iterator, so an object a cancelled
+        read took goes to the next read through it."""
+        if self._with_end_of_group is None:
+            self._with_end_of_group = ObjectsWithEndOfGroup(self._native.with_end_of_group(), self)
+        return self._with_end_of_group
 
     def groups(self) -> "Groups":
         """The subgroup streams (`_native.Subscription.groups`), read as the objects are. Every
@@ -162,6 +184,20 @@ class Subscription(AsyncIterator[_native.Object]):
         UNSUBSCRIBE was sent, even after another was cancelled, and raises what failed it;
         cancelling it leaves the UNSUBSCRIBE going."""
         return self._closing.start(self._native.close)
+
+
+class ObjectsWithEndOfGroup(AsyncIterator[_native.Object]):
+    def __init__(self, native: _native.ObjectsWithEndOfGroup, subscription: Subscription):
+        self._objects = _Reads(native, "the subscription", subscription._session)
+        self._subscription = subscription
+
+    def __aiter__(self) -> "ObjectsWithEndOfGroup":
+        return self
+
+    async def __anext__(self) -> _native.Object:
+        """Raises StopAsyncIteration once the publisher ends the track."""
+        self._subscription._read_objects(with_end_of_group=True)
+        return await self._objects.next()
 
 
 class Groups(AsyncIterator["Group"]):

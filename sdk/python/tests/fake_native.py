@@ -90,7 +90,16 @@ class FakeSubscription:
     def __aiter__(self) -> "FakeSubscription":
         return self
 
+    def with_end_of_group(self) -> "_FakeObjectsWithEndOfGroup":
+        return _FakeObjectsWithEndOfGroup(self)
+
     async def __anext__(self):
+        """Skips status objects, as the native subscription does."""
+        while (item := await self._next_item()).status is not None:
+            pass
+        return item
+
+    async def _next_item(self):
         try:
             item = next(self._items)
             while isinstance(item, asyncio.Event):
@@ -121,6 +130,17 @@ class FakeSubscription:
         if self._unsubscribe_gate is not None:
             await self._unsubscribe_gate.wait()
         self.closed = True
+
+
+class _FakeObjectsWithEndOfGroup:
+    def __init__(self, subscription: FakeSubscription):
+        self._subscription = subscription
+
+    def __aiter__(self) -> "_FakeObjectsWithEndOfGroup":
+        return self
+
+    async def __anext__(self):
+        return await self._subscription._next_item()
 
 
 def _last_location(items: list) -> Location | None:

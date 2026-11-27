@@ -143,6 +143,25 @@ async def test_groups_yield_each_subgroup_stream_ending_with_end_of_group(relay_
     await close_all(subscriber, publisher)
 
 
+async def test_objects_with_end_of_group_yield_the_end_of_group_a_new_group_writes(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = (await within(subscriber.subscribe(namespace, TRACK))).with_end_of_group()
+
+    # Act
+    await track.write(b"v1", new_group=True)
+    first = await within(objects.__anext__())
+    await track.write(b"v2", new_group=True)
+    received = [await within(objects.__anext__()) for _ in range(2)]
+
+    # Assert
+    end_of_group = (first.group_id, 0, 1, END_OF_GROUP, b"")
+    assert end_of_group in [(o.group_id, o.subgroup_id, o.object_id, o.status, o.payload) for o in received]
+    await close_all(subscriber, publisher)
+
+
 async def test_request_new_group_does_not_send_for_a_track_without_dynamic_groups(relay_url):
     # Arrange
     namespace = [*room(), "alice"]
@@ -204,6 +223,21 @@ async def test_reading_groups_after_a_read_by_object_timed_out_raises_at_once(re
     # Act / Assert: no object needs to arrive for the refusal
     with pytest.raises(RuntimeError, match="read by object"):
         await asyncio.wait_for(anext(subscription.groups()), NOTHING_ARRIVES_SECONDS)
+    await close_all(subscriber, publisher)
+
+
+async def test_reading_with_end_of_group_after_a_read_without_timed_out_raises_at_once(relay_url):
+    # Arrange: a read without End of Group timed out with nothing published
+    namespace = [*room(), "alice"]
+    publisher, _ = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    subscription = await within(subscriber.subscribe(namespace, TRACK))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(subscription), NOTHING_ARRIVES_SECONDS)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="read without End of Group"):
+        await asyncio.wait_for(anext(subscription.with_end_of_group()), NOTHING_ARRIVES_SECONDS)
     await close_all(subscriber, publisher)
 
 

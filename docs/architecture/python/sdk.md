@@ -140,7 +140,7 @@ Process-wide (first `init` wins):
 
 #### Codecs (`moq_wasm.codecs`)
 - Software PyAV decoders (`dav1d` single-threaded for AV1 to avoid GIL deadlock on mid-group drop, falling back to `libaom`; FFmpeg HW-only AV1 excluded; other codecs keep multi-threading).
-- `decode_pictures` / `follow_pictures`: Decodes in worker threads (surviving cancelled reads), tracks up to 4 concurrent interleaved groups (flushing B-frames on End of Group, eviction, or end), fails track after 3 consecutive refusals in a keyframe-joined group.
+- `decode_pictures` / `follow_pictures`: Decodes in worker threads (surviving cancelled reads), tracks up to 4 concurrent interleaved groups (flushing B-frames on End of Group, eviction, or end; `follow_pictures` reads End of Group through `Subscription.with_end_of_group()`, as `end_of_group=True` on `follow()` / `subscriptions()` does), fails track after 3 consecutive refusals in a keyframe-joined group.
 - **H.264/H.265 framing & LOC Video Config (§2.1.3–2.1.4, §2.3.2.1)**: Auto-detects Annex-B start codes vs. 4-byte length prefixes (rewriting in-band SPS `avc3`/`hev1` to start codes; skipping unreadable pre-config objects with warning). Inherits LOC Video Config across groups (holding out-of-order groups up to `MAX_HELD_OBJECTS`/`MAX_HELD_BYTES`, provisionally re-decoding if an open earlier group updates config, and carrying latest config across resubscriptions in `follow_pictures.config`).
 
 #### Workspace Bots Built on `moq_wasm.pipecat`
