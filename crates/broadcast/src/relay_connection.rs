@@ -269,6 +269,21 @@ impl RelayConnection {
         Some(connected.session.transport_stats())
     }
 
+    /// Runs `Origin::withdraw_publish` for each of `track_names`; never
+    /// connects.
+    pub(crate) async fn withdraw_publishes(&self, namespace: &[String], track_names: &[String]) {
+        let Some(relay) = self.connected.lock().await.clone() else {
+            return;
+        };
+        let namespace_path = namespace.join("/");
+        for track_name in track_names {
+            relay
+                .origin
+                .withdraw_publish(&namespace_path, track_name)
+                .await;
+        }
+    }
+
     /// The relay session to send on, connected on first use; it follows the
     /// relay's GOAWAY (`ClientConfig::follow_go_away`).
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]

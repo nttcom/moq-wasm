@@ -125,7 +125,7 @@ Opt-in original-publisher state (`Arc<tokio::sync::Mutex<_>>`, not used by relay
 **Publishing, demand & lifecycle**
 - **Publishing & subscriptions**: `publish` serializes via an outer `publishing` lock (taken before state lock; `release` and `end_track` wait on it to handle immediate `UNSUBSCRIBE`). `accept_subscribe` sets `JoinPoint` for Joining FETCH (rejected with `INVALID_JOINING_REQUEST_ID` / `INVALID_RANGE` / `PROTOCOL_VIOLATION`); `release` cancels the outlet's `CancellationToken` and resets its open group with `CANCELLED` (§10.4.3).
 - **Forward State & demand**: Tracks Forward State per outlet (skipping Forward 0; resets abandoned group and reopens stream on resume, §11.4.3). `publish_on_demand` starts in Forward 0 and notifies `TrackDemand` changes (§10.10).
-- **`end_track`**: Finishes open groups with `EndOfGroup`, sends `PUBLISH_DONE(TRACK_ENDED)` with exact `Stream Count`, keeps cache/numbering for FETCH and future re-publish (rejecting new `SUBSCRIBE` until re-ensured).
+- **`end_track`**: Withdraws the track's `PUBLISH` still awaiting `PUBLISH_OK` (as `withdraw_publish` does: the waiting `publish` drops its request and fails, so one unanswered `PUBLISH` never holds `publishing` forever), finishes open groups with `EndOfGroup`, sends `PUBLISH_DONE(TRACK_ENDED)` with exact `Stream Count`, keeps cache/numbering for FETCH and future re-publish (rejecting new `SUBSCRIBE` until re-ensured).
 - **`handle(event)`**: Auto-handles registered-track `SUBSCRIBE`, `UNSUBSCRIBE`, `FETCH` (`FetchServeTask`), `FETCH_CANCEL`, `TRACK_STATUS`, and `NEW_GROUP_REQUEST`, returning unhandled events to the app. Range math lives in `domains/fetch_range.rs` (`resolve_fetch_range`, `resolve_joining_fetch`).
 
 ### `NamespaceWatchers` & `client`

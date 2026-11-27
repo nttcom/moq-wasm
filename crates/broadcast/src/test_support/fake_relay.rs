@@ -52,7 +52,18 @@ impl FakeRelay {
     }
 
     pub(crate) fn spawn_draft18(name: &str) -> Self {
-        Self::spawn_with(name, Version::Draft18, None, None)
+        Self::spawn_with(name, Version::Draft18, None, None, None)
+    }
+
+    /// Answers the first PUBLISH of `track_name` only once `publish_gate`
+    /// fires.
+    pub(crate) fn spawn_holding_publish(
+        name: &str,
+        version: Version,
+        track_name: &'static str,
+        publish_gate: oneshot::Receiver<()>,
+    ) -> Self {
+        Self::spawn_with(name, version, None, None, Some((track_name, publish_gate)))
     }
 
     /// PUBLISH_NAMESPACE is answered only once `namespace_gate` fires;
@@ -62,7 +73,7 @@ impl FakeRelay {
         namespace_gate: Option<oneshot::Receiver<()>>,
         catalog_gate: Option<oneshot::Receiver<()>>,
     ) -> Self {
-        Self::spawn_with(name, Version::Draft14, namespace_gate, catalog_gate)
+        Self::spawn_with(name, Version::Draft14, namespace_gate, catalog_gate, None)
     }
 
     fn spawn_with(
@@ -70,6 +81,7 @@ impl FakeRelay {
         version: Version,
         namespace_gate: Option<oneshot::Receiver<()>>,
         catalog_gate: Option<oneshot::Receiver<()>>,
+        held_publish: Option<(&'static str, oneshot::Receiver<()>)>,
     ) -> Self {
         let config = ServerConfig {
             versions: vec![version],
@@ -85,7 +97,8 @@ impl FakeRelay {
         let (catalog_object_sender, catalog_objects) = mpsc::unbounded_channel();
         let (track_data_sender, track_data) = mpsc::unbounded_channel();
         tokio::spawn(async move {
-            let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
+            let (mut namespace_gate, mut catalog_gate, mut held_publish) =
+                (namespace_gate, catalog_gate, held_publish);
             let mut published_tracks = HashMap::new();
             let handshake = endpoint.accept().await.unwrap().await.unwrap();
             let _ = authorization_tokens_sender.send(handshake.authorization_tokens().to_vec());
@@ -110,6 +123,22 @@ impl FakeRelay {
                             "PUBLISH {}/{}",
                             handler.track_namespace, handler.track_name
                         ));
+                        if let Some((track_name, _)) = &held_publish
+                            && *track_name == handler.track_name
+                            && let Some((_, gate)) = held_publish.take()
+                        {
+                            published_tracks.insert(
+                                handler.request_id,
+                                format!("{}/{}", handler.track_namespace, handler.track_name),
+                            );
+                            tokio::spawn(async move {
+                                let _ = gate.await;
+                                let _ = handler
+                                    .ok(0, FilterType::LargestObject, handler.forward)
+                                    .await;
+                            });
+                            continue;
+                        }
                         let object_sender = match handler.track_name.as_str() {
                             VIDEO_TRACK_NAME => Some(video_object_sender.clone()),
                             CATALOG_TRACK_NAME => Some(catalog_object_sender.clone()),

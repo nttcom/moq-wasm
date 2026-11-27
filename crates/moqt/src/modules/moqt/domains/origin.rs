@@ -3,10 +3,10 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use futures::future::join_all;
-use tokio::sync::{Mutex, MutexGuard, Notify, mpsc};
+use tokio::sync::{Mutex, MutexGuard, Notify, mpsc, oneshot};
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
@@ -199,6 +199,9 @@ struct OriginTrack {
     delivery: Delivery,
     publisher_priority: u8,
     lifecycle: Lifecycle,
+    /// Set while a `publish` of the track waits for its answer; fired by
+    /// `withdraw_publish` and `end_track`.
+    publish_withdrawal: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -271,6 +274,7 @@ impl OriginTrack {
             delivery: Delivery::Undecided { datagrams: false },
             publisher_priority: DEFAULT_PRIORITY,
             lifecycle: Lifecycle::Live,
+            publish_withdrawal: None,
         }
     }
 
@@ -519,6 +523,8 @@ impl Origin {
     /// the track, and once that peer unsubscribed from a PUBLISH of it. A
     /// track released after a SUBSCRIBE is published again. A session that
     /// follows GOAWAY sends the track to every connection it is published on.
+    /// Fails when `withdraw_publish` or `end_track` withdraws the PUBLISH
+    /// before its answer.
     pub async fn publish(
         &self,
         session: &Session,
@@ -529,7 +535,7 @@ impl Origin {
         let context = session.context();
         let key_of_session = session_key(context);
         let _publishing = self.publishing.lock().await;
-        let option = {
+        let (option, withdrawn) = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             if track
@@ -541,17 +547,24 @@ impl Origin {
             }
             let mut track_properties = TrackProperties::default();
             track_properties.set_dynamic_groups(track.new_group_requests.is_some());
-            PublishOption {
+            let (withdrawal, withdrawn) = oneshot::channel();
+            track.publish_withdrawal = Some(withdrawal);
+            let option = PublishOption {
                 content_exists: content_exists(track.numbering.largest()),
                 forward: track.demand.is_none(),
                 track_properties,
-            }
+            };
+            (option, withdrawn)
         };
         let publisher = session.publisher();
-        let subscription = publisher
-            .publish(namespace.to_string(), track_name.to_string(), option)
-            .await
-            .with_context(|| format!("publish {namespace}/{track_name}"))?;
+        // Dropping the request withdraws an unanswered PUBLISH: draft-18 resets
+        // its request stream, and a late PUBLISH_OK gets PUBLISH_DONE.
+        let published = tokio::select! {
+            published = publisher.publish(namespace.to_string(), track_name.to_string(), option) => published,
+            Ok(()) = withdrawn => bail!("PUBLISH of {namespace}/{track_name} withdrawn before its answer"),
+        };
+        let subscription =
+            published.with_context(|| format!("publish {namespace}/{track_name}"))?;
         let request = (key_of_session, subscription.request_id());
         let track_alias = subscription.track_alias();
         let (forward, new_group_request) = match &subscription {
@@ -564,6 +577,7 @@ impl Origin {
         };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
+        track.publish_withdrawal = None;
         track.lifecycle = Lifecycle::Live;
         let start = subscription
             .filter_type()
@@ -853,15 +867,32 @@ impl Origin {
         Some(key)
     }
 
+    /// Makes a `publish` of the track still awaiting PUBLISH_OK fail, dropping
+    /// its PUBLISH request. Does nothing when none waits.
+    pub async fn withdraw_publish(&self, namespace: &str, track_name: &str) {
+        let key = track_key(namespace, track_name);
+        if let Some(withdrawal) = self
+            .state
+            .lock()
+            .await
+            .tracks
+            .get_mut(&key)
+            .and_then(|track| track.publish_withdrawal.take())
+        {
+            let _ = withdrawal.send(());
+        }
+    }
+
     /// Ends every subscription to the track with PUBLISH_DONE (TRACK_ENDED,
     /// draft-ietf-moq-transport-14 §9.12). Does nothing for a track that is
-    /// not registered. Waits for a `publish` in flight, whose subscription is
-    /// then ended too. A new SUBSCRIBE or TRACK_STATUS then finds no track
-    /// until `ensure_track` or `publish` takes it up again, with its numbering
-    /// and cache, at the next group; FETCH still serves the cache. A track
-    /// published on demand reports no demand until `publish_on_demand` is
-    /// called again.
+    /// not registered. Withdraws the track's PUBLISH still unanswered, as
+    /// `withdraw_publish` does; one answered meanwhile is ended too. A new
+    /// SUBSCRIBE or TRACK_STATUS then finds no track until `ensure_track` or
+    /// `publish` takes it up again, with its numbering and cache, at the next
+    /// group; FETCH still serves the cache. A track published on demand
+    /// reports no demand until `publish_on_demand` is called again.
     pub async fn end_track(&self, namespace: &str, track_name: &str) -> Result<()> {
+        self.withdraw_publish(namespace, track_name).await;
         let key = track_key(namespace, track_name);
         let ended = {
             let _publishing = self.publishing.lock().await;
@@ -1390,6 +1421,21 @@ mod tests {
         })
         .await;
         ended.unwrap();
+        done
+    }
+
+    /// Accepts a PUBLISH the client withdrew; returns the PUBLISH_DONE it answers with.
+    async fn late_publish_ok(
+        peers: &Peers,
+        handler: &crate::publish::PublishHandler,
+    ) -> crate::publish::PublishDoneHandler {
+        handler
+            .ok(128, FilterType::LargestObject, true)
+            .await
+            .unwrap();
+        let SessionEvent::PublishDone(done) = next_event(&peers.server).await else {
+            panic!("expected PUBLISH_DONE");
+        };
         done
     }
 
@@ -2413,39 +2459,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_track_ended_while_its_publish_awaits_publish_ok_is_done_once_accepted() {
+    async fn a_track_ended_while_its_publish_awaits_publish_ok_withdraws_the_publish() {
         for version in DRAFTS {
             // Arrange
             let peers = origin_with_track("origin-end-track-publishing", RETENTION, version).await;
             let origin = &peers.origin;
 
             // Act
-            let (published, (ended, (accepted, done))) = within(async {
+            let (published, (handler, ended)) = within(async {
                 tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
                     let SessionEvent::Publish(handler) = next_event(&peers.server).await else {
                         panic!("expected PUBLISH from the client");
                     };
-                    tokio::join!(origin.end_track(NAMESPACE, TRACK), async {
-                        let accepted = handler
-                            .ok(128, FilterType::LargestObject, true)
-                            .await
-                            .unwrap();
-                        handler.accept_data_receiver().await;
-                        let SessionEvent::PublishDone(done) = next_event(&peers.server).await
-                        else {
-                            panic!("expected PUBLISH_DONE");
-                        };
-                        (accepted, done)
-                    })
+                    (handler, origin.end_track(NAMESPACE, TRACK).await)
                 })
             })
             .await;
+            let done = within(late_publish_ok(&peers, &handler)).await;
 
             // Assert
-            published.unwrap();
+            assert!(published.is_err(), "{version:?}");
             ended.unwrap();
-            assert_eq!(done.request_id(), accepted.request_id());
-            assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
+            assert_eq!(done.request_id(), handler.request_id);
+            assert_eq!(done.status_code(), PublishDoneCode::InternalError);
+            assert!(!origin.is_serving(&peers.client).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_withdrawn_publish_fails_and_the_track_is_published_again() {
+        for version in DRAFTS {
+            // Arrange: the peer leaves the first PUBLISH unanswered
+            let peers = origin_with_track("origin-withdraw-publish", RETENTION, version).await;
+            let origin = &peers.origin;
+
+            // Act
+            let (withdrawn, handler) = within(async {
+                tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
+                    let SessionEvent::Publish(handler) = next_event(&peers.server).await else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    origin.withdraw_publish(NAMESPACE, TRACK).await;
+                    handler
+                })
+            })
+            .await;
+            let done = within(late_publish_ok(&peers, &handler)).await;
+            let accepted = within(publish_accepted_as_asked(&peers)).await;
+
+            // Assert
+            assert!(withdrawn.is_err(), "{version:?}");
+            assert_eq!(done.request_id(), handler.request_id);
+            assert_eq!(done.status_code(), PublishDoneCode::InternalError);
+            assert_ne!(accepted.request_id(), handler.request_id);
         }
     }
 
