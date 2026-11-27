@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { bearerToken, temporaryAppToken } from '../../../../utils/access'
+import { getErrorMessage } from '../../../../utils/page'
 import { type RecordingLayout, type RecordingFormat, type Recorder, listRecordings } from '../recording/recorderApi'
 import { latestBot, startBot, stopBot } from '../../../../utils/roomBots'
 import { type ActiveRecording, RECORDER_BOT_TYPE, activeRecording } from '../recording/recorderBot'
@@ -74,7 +75,7 @@ export function useRoomRecording(
         setActive(activeRecording(await latestBot(RECORDER_BOT_TYPE, namespacePrefix)))
         setError(null)
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
+        setError(getErrorMessage(caught))
       }
     }
     try {
@@ -93,7 +94,7 @@ export function useRoomRecording(
       )
       setReachable(true)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(getErrorMessage(caught))
     }
   }, [namespacePrefix, recorder, recorderUrl, relayUrl])
 
@@ -109,7 +110,7 @@ export function useRoomRecording(
       setActive(await action())
       setError(null)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(getErrorMessage(caught))
     } finally {
       setBusy(false)
     }

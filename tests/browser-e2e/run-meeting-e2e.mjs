@@ -6,6 +6,7 @@ import {
   runCommand,
   spawnProcess,
   spawnViteServer,
+  terminateAll,
   terminateProcess,
   waitForOutput,
 } from "./process.mjs";
@@ -48,9 +49,7 @@ async function main() {
   const baseUrl = getDefaultBaseUrl();
 
   const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
+    await terminateAll(childProcesses);
     if (ownedDockerServices) {
       await dockerCompose("stop", ...composeServices).catch(() => {});
     }

@@ -3,6 +3,19 @@
 COMPOSE_LOGS_PID=""
 VTS_PID=""
 
+# Prints the secret of app `$2` in the VTS apps file `$1`.
+app_secret() {
+  jq -er --arg id "$2" '.[] | select(.appId == $id) | .secret' "$1"
+}
+
+# Mints a token for app `$2` with the secret in the VTS apps file `$1`; the
+# remaining arguments go to auth-token (build it with `--features cli` first).
+mint() {
+  local apps_file="$1" app_id="$2"
+  shift 2
+  AUTH_TOKEN_SECRET="$(app_secret "$apps_file" "$app_id")" ./target/debug/auth-token --app-id "$app_id" "$@"
+}
+
 # Bypasses the compose vts service, whose image compiles every VTS dependency from scratch.
 start_vts() {
   cargo build -p vts
