@@ -70,7 +70,7 @@ enum LateResponseAction {
     UnsubscribeNamespace { namespace: Vec<String> },
     /// A late PUBLISH_NAMESPACE_OK accepted an announcement we gave up on.
     PublishNamespaceDone { namespace: Vec<String> },
-    /// A late PUBLISH_OK accepted a publication nobody publishes on.
+    /// A late PUBLISH_OK accepted a PUBLISH subscription nobody publishes on.
     PublishDone,
     /// A late FETCH_OK started a fetch nobody reads.
     FetchCancel,

@@ -131,7 +131,7 @@ impl OriginState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Publication {
+enum ServedTrack {
     /// A SUBSCRIBE the peer sent.
     Subscribed,
     /// A PUBLISH this endpoint sent.
@@ -250,7 +250,7 @@ enum OutletState {
 }
 
 struct Serving {
-    publication: Publication,
+    kind: ServedTrack,
     /// The Start Location (draft-14 §9.7); objects before it are not sent,
     /// and none is while it is `None`.
     start: Option<Location>,
@@ -384,9 +384,9 @@ impl Outlet {
             return true;
         };
         serving.send_task.cancel();
-        match serving.publication {
-            Publication::Subscribed => false,
-            Publication::Published => {
+        match serving.kind {
+            ServedTrack::Subscribed => false,
+            ServedTrack::Published => {
                 self.state = OutletState::Released {
                     _session: serving.publisher.session.clone(),
                 };
@@ -572,7 +572,7 @@ impl Origin {
         track.outlets.push(Outlet {
             request,
             state: OutletState::Serving(Serving {
-                publication: Publication::Published,
+                kind: ServedTrack::Published,
                 start,
                 forward,
                 send_task: track.outlet_send_task(&publisher, &subscription),
@@ -782,7 +782,7 @@ impl Origin {
         track.outlets.push(Outlet {
             request,
             state: OutletState::Serving(Serving {
-                publication: Publication::Subscribed,
+                kind: ServedTrack::Subscribed,
                 start,
                 forward: handler.forward,
                 send_task: track.outlet_send_task(&publisher, &subscription),

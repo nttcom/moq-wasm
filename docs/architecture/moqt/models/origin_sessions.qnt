@@ -61,7 +61,7 @@ module origin_sessions {
   const SUBSCRIBE_ENDS_PUBLISH: bool
   const REFRESH_ON_RELEASE: bool
 
-  // `Outlet` of one request: its `publication` and `forward`.
+  // `Outlet` of one request: its `kind` and `forward`.
   type OutletState =
     | NoOutlet
     | Serving(bool)  // Subscribed or Published, with its Forward State

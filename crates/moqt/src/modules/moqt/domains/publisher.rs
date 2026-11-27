@@ -24,7 +24,8 @@ use crate::{
             request_failure::record_outcome,
             send_targets::SendTargets,
             session_context::{
-                Publication, PublicationTarget, PublishedNamespaceRecord, SessionContext,
+                PublishSubscription, PublishSubscriptionTarget, PublishedNamespaceRecord,
+                SessionContext,
             },
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
@@ -39,7 +40,7 @@ pub struct Publisher {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NamespaceAnnouncement {
-    Publication,
+    Publish,
     ToSubscriptions,
 }
 
@@ -62,7 +63,7 @@ impl Publisher {
 
     async fn publish_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
         let (connection, pending) = self
-            .announce(namespace, NamespaceAnnouncement::Publication)
+            .announce(namespace, NamespaceAnnouncement::Publish)
             .await?;
         tracing::Span::current().record("request_id", pending.request_id);
         match pending.accepted().await {
@@ -78,7 +79,7 @@ impl Publisher {
         namespace: String,
     ) -> Result<PendingPublishNamespace, RequestFailure> {
         let (_, pending) = self
-            .announce(namespace, NamespaceAnnouncement::Publication)
+            .announce(namespace, NamespaceAnnouncement::Publish)
             .await?;
         Ok(pending)
     }
@@ -107,7 +108,7 @@ impl Publisher {
         announcement: NamespaceAnnouncement,
     ) -> Result<(Arc<Connection>, PendingPublishNamespace), RequestFailure> {
         let request = match announcement {
-            NamespaceAnnouncement::Publication => OutgoingRequest::PublishNamespace,
+            NamespaceAnnouncement::Publish => OutgoingRequest::PublishNamespace,
             NamespaceAnnouncement::ToSubscriptions => OutgoingRequest::SubscribedNamespace,
         };
         let (carried, connection, mut pending) = loop {
@@ -127,7 +128,7 @@ impl Publisher {
         // not resent as PUBLISH_NAMESPACE on the next one.
         let carried = carried
             .as_ref()
-            .filter(|_| announcement == NamespaceAnnouncement::Publication);
+            .filter(|_| announcement == NamespaceAnnouncement::Publish);
         pending.recorded(PublishedNamespaceRecord::insert(
             &self.session,
             carried,
@@ -186,15 +187,15 @@ impl Publisher {
         error_reason: String,
     ) -> anyhow::Result<()> {
         let request_id = subscription.request_id();
-        let targets: Vec<(Arc<Connection>, u64)> = match self.session.remove_publication(request_id)
-        {
-            Some(publication) => publication
-                .targets
-                .into_iter()
-                .filter_map(|target| Some((target.connection.upgrade()?, target.request_id)))
-                .collect(),
-            None => self.session.connection_of(request_id).into_iter().collect(),
-        };
+        let targets: Vec<(Arc<Connection>, u64)> =
+            match self.session.remove_publish_subscription(request_id) {
+                Some(publish_subscription) => publish_subscription
+                    .targets
+                    .into_iter()
+                    .filter_map(|target| Some((target.connection.upgrade()?, target.request_id)))
+                    .collect(),
+                None => self.session.connection_of(request_id).into_iter().collect(),
+            };
         // Served until PUBLISH_DONE is written, so no migration closes a
         // connection before.
         let mut sent = Ok(());
@@ -263,13 +264,13 @@ impl Publisher {
         };
         let request_id = logical_id(connection.generation, publish_ok.request_id);
         if self.session.follows_go_away() {
-            self.session.add_publication(
+            self.session.add_publish_subscription(
                 request_id,
-                Publication {
+                PublishSubscription {
                     track_namespace: track_namespace.clone(),
                     track_name: track_name.clone(),
                     option: option.clone(),
-                    targets: vec![PublicationTarget {
+                    targets: vec![PublishSubscriptionTarget {
                         connection: Arc::downgrade(&connection),
                         track_alias,
                         request_id: publish_ok.request_id,
@@ -326,8 +327,8 @@ impl Publisher {
 
     fn send_targets(&self, subscription: &Subscription) -> SendTargets {
         let request_id = subscription.request_id();
-        if self.session.has_publication(request_id) {
-            return SendTargets::Publication {
+        if self.session.has_publish_subscription(request_id) {
+            return SendTargets::Publish {
                 session: self.session.clone(),
                 request_id,
             };
@@ -1028,7 +1029,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_publish_sends_done_for_late_ok_and_allows_later_publication() {
+    async fn cancelled_publish_sends_done_for_late_ok_and_allows_later_publish() {
         for version in DRAFTS {
             // Arrange
             let (client, server) = connected_sessions("publish-cancel-late-ok", version).await;
@@ -1096,7 +1097,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_done_ends_only_its_publication() {
+    async fn publish_done_ends_only_its_subscription() {
         for version in DRAFTS {
             // Arrange
             let (client, server) = connected_sessions("publish-done-isolation", version).await;
@@ -1109,7 +1110,7 @@ mod tests {
                     group_id: before.location.group_id + 1,
                     object_id: 0,
                 },
-                payload: Bytes::from_static(b"after the other publication ended"),
+                payload: Bytes::from_static(b"after the other subscription ended"),
                 ..object_with_extensions()
             };
             within(send_subgroup_object(&client, &kept, &before)).await;
@@ -1130,7 +1131,7 @@ mod tests {
                     .await
                     .unwrap();
                 let SessionEvent::PublishDone(done) = next_event(&server).await else {
-                    panic!("expected PUBLISH_DONE for the ended publication");
+                    panic!("expected PUBLISH_DONE for the ended subscription");
                 };
                 done
             })
@@ -1174,11 +1175,11 @@ mod tests {
             first_handler.accept_data_receiver().await;
             second_handler.accept_data_receiver().await;
             let first_object = Object {
-                payload: Bytes::from_static(b"first publication"),
+                payload: Bytes::from_static(b"first subscription"),
                 ..object_with_extensions()
             };
             let second_object = Object {
-                payload: Bytes::from_static(b"second publication"),
+                payload: Bytes::from_static(b"second subscription"),
                 ..object_with_extensions()
             };
 
@@ -1304,7 +1305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_publication_holds_its_connection_until_publish_done_is_written() {
+    async fn a_publish_subscription_holds_its_connection_until_publish_done_is_written() {
         // Arrange
         let (client, server) =
             connected_sessions_following_go_away("publish-done-published", Version::Draft14).await;

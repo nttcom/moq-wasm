@@ -22,7 +22,7 @@ module origin {
   const CHECK_ENDED: bool
   const ATOMIC_HANDLE: bool
 
-  // An outlet's `OutletState`: `Serving` with its `Publication`, or `Released`.
+  // An outlet's `OutletState`: `Serving` with its `ServedTrack`, or `Released`.
   type Publication = Subscribed | Published | Released
 
   // A SUBSCRIBE as its sender and the origin's handler see it.

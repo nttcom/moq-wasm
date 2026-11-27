@@ -22,7 +22,7 @@ use crate::{
                 connection::{Connection, CutoverStart, SinkCutover, SinkReceiver},
                 group_cutover::GroupCutover,
                 publisher::{send_publish, send_publish_namespace},
-                session_context::{CarriedSubscription, PublicationTarget, SessionContext},
+                session_context::{CarriedSubscription, PublishSubscriptionTarget, SessionContext},
                 session_creator::{ClientEndpoint, SetupRejected},
                 session_events::{self, SessionEventReceiver},
                 subscriber::{send_subscribe, send_subscribe_namespace},
@@ -370,7 +370,10 @@ impl Router {
     fn unsubscribed(&self, connection: &Arc<Connection>, handler: UnsubscribeHandler) {
         let request_id = handler.subscribe_id();
         connection.stop_serving(request_id);
-        if self.session.leave_publication(request_id, connection) {
+        if self
+            .session
+            .leave_publish_subscription(request_id, connection)
+        {
             return;
         }
         self.forward(SessionEvent::Unsubscribe(handler));
@@ -405,11 +408,11 @@ impl Router {
             )));
         }
         self.session.forget_previous(connection);
-        let ended_publications = self.session.forget_connection(connection);
+        let ended_publish_subscriptions = self.session.forget_connection(connection);
         for request_id in connection
             .take_served()
             .into_iter()
-            .chain(ended_publications)
+            .chain(ended_publish_subscriptions)
         {
             self.forward(SessionEvent::Unsubscribe(UnsubscribeHandler::ended(
                 self.session.clone(),
@@ -584,13 +587,14 @@ async fn migrate(
         .await
         .with_context(|| format!("PUBLISH_NAMESPACE {namespace} on the new connection failed"))?;
     }
-    for (request_id, track_namespace, track_name, option) in session.publication_requests() {
+    for (request_id, track_namespace, track_name, option) in session.publish_subscription_requests()
+    {
         match send_publish(&connection, &track_namespace, &track_name, &option).await {
             Ok((publish_ok, track_alias)) => {
                 connection.carry(request_id, publish_ok.request_id);
-                session.add_publication_target(
+                session.add_publish_subscription_target(
                     request_id,
-                    PublicationTarget {
+                    PublishSubscriptionTarget {
                         connection: Arc::downgrade(&connection),
                         track_alias,
                         request_id: publish_ok.request_id,
@@ -2064,7 +2068,11 @@ mod tests {
                 panic!("expected UNSUBSCRIBE, got {event:?}");
             };
             assert_eq!(handler.subscribe_id(), published.request_id());
-            assert!(!client.context().has_publication(published.request_id()));
+            assert!(
+                !client
+                    .context()
+                    .has_publish_subscription(published.request_id())
+            );
         }
     }
 
