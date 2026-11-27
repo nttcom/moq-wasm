@@ -22,12 +22,14 @@ pub(crate) struct Routes {
 }
 
 /// A route registry that keeps what the relay registers, as Redis does, and
-/// lists no other relay.
+/// lists no other relay but `namespace_subscriber_relay`.
 #[derive(Default)]
 pub(crate) struct InMemoryRouteRegistry {
     routes: Mutex<Routes>,
     held_call: Mutex<Option<Arc<Notify>>>,
+    held_subscriber_lookup: Mutex<Option<Arc<Notify>>>,
     fail_next_registration: AtomicBool,
+    namespace_subscriber_relay: Option<RelayInfo>,
 }
 
 impl InMemoryRouteRegistry {
@@ -40,6 +42,25 @@ impl InMemoryRouteRegistry {
     pub(crate) fn hold_next_route_call(&self) -> Arc<Notify> {
         let released = Arc::new(Notify::new());
         *self.held_call.lock().unwrap() = Some(released.clone());
+        released
+    }
+
+    /// Clients of the relay `relay_id` subscribe to every namespace.
+    pub(crate) fn with_namespace_subscriber_relay(relay_id: &str) -> Self {
+        Self {
+            namespace_subscriber_relay: Some(RelayInfo {
+                relay_id: relay_id.to_string(),
+                host: relay_id.to_string(),
+                port: 4434,
+            }),
+            ..Self::default()
+        }
+    }
+
+    /// `hold_next_route_call` for the next `find_namespace_subscribers`.
+    pub(crate) fn hold_next_subscriber_lookup(&self) -> Arc<Notify> {
+        let released = Arc::new(Notify::new());
+        *self.held_subscriber_lookup.lock().unwrap() = Some(released.clone());
         released
     }
 
@@ -160,6 +181,10 @@ impl RelayRouteRegistry for InMemoryRouteRegistry {
         &self,
         _track_namespace: &str,
     ) -> anyhow::Result<Vec<RelayInfo>> {
-        Ok(Vec::new())
+        let held = self.held_subscriber_lookup.lock().unwrap().take();
+        if let Some(released) = held {
+            released.notified().await;
+        }
+        Ok(self.namespace_subscriber_relay.iter().cloned().collect())
     }
 }

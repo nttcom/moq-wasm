@@ -159,7 +159,9 @@ impl PublishNamespaceDone {
 
     /// Withdraws the publisher route unless a client published the namespace
     /// again meanwhile; only once it is withdrawn, tells remote subscriber
-    /// relays the namespace is gone, so they can drop their local copy.
+    /// relays the namespace is gone, so they can drop their local copy. The
+    /// route stays locked until they are told, so a later publisher's
+    /// PUBLISH_NAMESPACE reaches them after this DONE.
     #[tracing::instrument(
         level = "debug",
         name = "relay.sequence.publish_namespace_done.withdraw_namespace_publication",
@@ -172,13 +174,13 @@ impl PublishNamespaceDone {
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
     ) {
-        match cascading_relay_context
+        let _reconciled = match cascading_relay_context
             .namespace_routes
             .reconcile_publisher(track_namespace, table)
             .await
         {
-            Ok(true) => {}
-            Ok(false) => return,
+            Ok(reconciled) if reconciled.withdrawn => reconciled,
+            Ok(_) => return,
             Err(err) => {
                 tracing::warn!(
                     error = ?err,
@@ -187,7 +189,7 @@ impl PublishNamespaceDone {
                 );
                 return;
             }
-        }
+        };
 
         let relays = match cascading_relay_context
             .route_registry
@@ -230,7 +232,7 @@ impl PublishNamespaceDone {
 #[cfg(test)]
 mod tests {
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use moqt::{SessionEvent, Version, namespace::PublishNamespaceDoneHandler};
 
@@ -241,16 +243,20 @@ mod tests {
             verified_token::VerifiedToken,
         },
         cascading::{namespace_routes::NamespaceRoutes, route_registry::NoopRelayRouteRegistry},
+        control_plane::sequences::publish_namespace::PublishNamespace,
+        data_plane::cache::store::TrackCacheStore,
         directory::track::NamespaceSubscription,
         session::session_repository::NewSession,
         test_support::{
             directory_fixtures::{
-                client_subscription, inter_relay_connection_manager, namespaces_and_tracks,
+                client_subscription, inter_relay_connection_manager, local_publisher_resolver,
+                namespaces_and_tracks,
             },
+            in_memory_route_registry::InMemoryRouteRegistry,
             mock_session::{
-                RecordedControlMessages, add_recorded_relay_session, detached_session_repository,
-                mock_session_with_transport_stats, recorded_session_answering_subscribe,
-                session_repository_with_sessions,
+                MockPublishNamespaceHandler, RecordedControlMessages, add_recorded_relay_session,
+                detached_session_repository, mock_session_with_transport_stats,
+                recorded_session_answering_subscribe, session_repository_with_sessions,
             },
             relay_clients::{next_event, publish_namespace, subscribe_namespace},
         },
@@ -531,6 +537,93 @@ mod tests {
         assert_eq!(
             recorded.namespace_subscriptions(),
             vec![format!("unsubscribe {NAMESPACE}")]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_remote_relay_keeps_the_namespace_another_client_publishes_while_the_last_one_withdraws()
+     {
+        // Arrange
+        const REMOTE_RELAY: SessionId = 4;
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(
+            LEAVING_PUBLISHER,
+            0,
+            NAMESPACE.to_string(),
+            SessionPeer::Client,
+        );
+        let route_registry = Arc::new(InMemoryRouteRegistry::with_namespace_subscriber_relay(
+            "relay-2",
+        ));
+        let namespace_routes = NamespaceRoutes::new(route_registry.clone());
+        drop(
+            namespace_routes
+                .reconcile_publisher(NAMESPACE, &table)
+                .await,
+        );
+        let repository = session_repository_with_sessions(
+            vec![
+                (
+                    LEAVING_PUBLISHER,
+                    mock_session_with_transport_stats(Default::default()),
+                ),
+                (
+                    REMAINING_PUBLISHER,
+                    mock_session_with_transport_stats(Default::default()),
+                ),
+            ],
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let remote_relay = add_recorded_relay_session(&repository, REMOTE_RELAY).await;
+        let inter_relay_connection_manager = inter_relay_connection_manager(repository.clone());
+        inter_relay_connection_manager.record_dialed("relay-2", REMOTE_RELAY);
+        let forwarder = ControlMessageForwarder { repository };
+        forwarder
+            .publish_namespace_to_relay(REMOTE_RELAY, NAMESPACE.to_string())
+            .await;
+        let context = || CascadingRelayContext {
+            route_registry: route_registry.as_ref(),
+            namespace_routes: &namespace_routes,
+            inter_relay_connection_manager: &inter_relay_connection_manager,
+        };
+        let done = PublishNamespaceDoneHandler {
+            track_namespace: NAMESPACE.to_string(),
+            track_namespace_tuple: NAMESPACE.split('/').map(str::to_string).collect(),
+            request_id: None,
+        };
+        let publish = MockPublishNamespaceHandler::new(NAMESPACE);
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let resolver = Arc::new(local_publisher_resolver());
+        let lookup_released = route_registry.hold_next_subscriber_lookup();
+
+        // Act: the next client publishes while the withdrawal looks up the remote relays
+        let withdrawal =
+            PublishNamespaceDone.handle(LEAVING_PUBLISHER, &table, &forwarder, context(), &done);
+        let publication = PublishNamespace.handle(
+            REMAINING_PUBLISHER,
+            &table,
+            &forwarder,
+            &cache_store,
+            &resolver,
+            context(),
+            &publish,
+        );
+        let release = async {
+            // Paused time advances only once both handlers wait.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            lookup_released.notify_one();
+        };
+        tokio::join!(withdrawal, publication, release);
+
+        // Assert
+        assert_eq!(
+            remote_relay.namespace_announcements(),
+            [
+                format!("publish {NAMESPACE}"),
+                format!("done {NAMESPACE}"),
+                format!("publish {NAMESPACE}"),
+            ]
         );
     }
 
