@@ -52,6 +52,26 @@ pub enum PublishDoneCode {
     ExcessiveLoad,
 }
 
+impl PublishDoneCode {
+    /// The code's name in the drafts' PUBLISH_DONE code tables
+    /// (draft-14 §13.1.3, draft-18 §15.10.3), e.g. `TRACK_ENDED`. Unlike the
+    /// code number, it is the same on every draft.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InternalError => "INTERNAL_ERROR",
+            Self::Unauthorized => "UNAUTHORIZED",
+            Self::TrackEnded => "TRACK_ENDED",
+            Self::SubscriptionEnded => "SUBSCRIPTION_ENDED",
+            Self::GoingAway => "GOING_AWAY",
+            Self::Expired => "EXPIRED",
+            Self::TooFarBehind => "TOO_FAR_BEHIND",
+            Self::MalformedTrack => "MALFORMED_TRACK",
+            Self::UpdateFailed => "UPDATE_FAILED",
+            Self::ExcessiveLoad => "EXCESSIVE_LOAD",
+        }
+    }
+}
+
 /// Data stream reset codes (draft-ietf-moq-transport-14 §13.1.8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataStreamResetCode {
