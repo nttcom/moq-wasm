@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-
+use moq_wasm::Version;
 use url::Url;
 
 use crate::track::{FullTrackName, Namespace};
@@ -84,17 +84,7 @@ pub struct RelayArgs {
     /// MoQT drafts offered to the relay, comma-separated and most preferred
     /// first, each draft-14 or draft-18; draft-18, then draft-14, when omitted
     #[arg(long, env = "MOQT_VERSIONS", value_delimiter = ',')]
-    pub versions: Vec<moqt::Version>,
-}
-
-impl RelayArgs {
-    pub fn offered_versions(&self) -> Vec<moqt::Version> {
-        if self.versions.is_empty() {
-            moqt::DEFAULT_VERSIONS.to_vec()
-        } else {
-            self.versions.clone()
-        }
-    }
+    pub versions: Vec<Version>,
 }
 
 #[derive(Args, Debug)]
@@ -116,6 +106,17 @@ pub enum Codec {
     H265,
 }
 
+impl Codec {
+    /// The WebCodecs codec string the SDK takes; the parameter sets in the
+    /// stream give the rest.
+    pub fn codec_family(self) -> &'static str {
+        match self {
+            Self::H264 => "avc1",
+            Self::H265 => "hvc1",
+        }
+    }
+}
+
 #[derive(Args, Debug)]
 pub struct SubscribeArgs {
     #[command(flatten)]
@@ -127,11 +128,12 @@ pub struct SubscribeArgs {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use moq_wasm::Version;
     use url::Url;
 
     use super::{Cli, Command, TelemetryArgs};
 
-    fn offered_versions(args: &[&str]) -> Vec<moqt::Version> {
+    fn offered_versions(args: &[&str]) -> Vec<Version> {
         let cli = Cli::try_parse_from(
             [
                 "moq-cli",
@@ -148,7 +150,7 @@ mod tests {
         let Command::Subscribe(subscribe) = cli.command else {
             panic!("expected the subscribe command");
         };
-        subscribe.relay.offered_versions()
+        subscribe.relay.versions
     }
 
     #[test]
@@ -156,14 +158,8 @@ mod tests {
         // Act / Assert
         assert_eq!(
             offered_versions(&["--versions", "draft-18,draft-14"]),
-            [moqt::Version::Draft18, moqt::Version::Draft14]
+            [Version::Draft18, Version::Draft14]
         );
-    }
-
-    #[test]
-    fn without_versions_the_default_is_offered() {
-        // Act / Assert
-        assert_eq!(offered_versions(&[]), moqt::DEFAULT_VERSIONS);
     }
 
     fn endpoint(telemetry: Option<&str>, no_telemetry: bool, relay: &str) -> Option<String> {

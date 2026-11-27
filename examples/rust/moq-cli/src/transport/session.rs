@@ -1,57 +1,53 @@
-use std::sync::Arc;
+use std::path::PathBuf;
 
-use anyhow::Result;
-use moqt::{
-    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
-};
-use tokio::sync::Mutex;
+use anyhow::{Result, anyhow, ensure};
+use moq_wasm::{CertificateVerification, ConnectOptions, RefreshToken, Session};
 use tracing::info;
 
-use super::{auth_token_file::current_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
+use super::auth_token_file::{current_auth_token, read_auth_token};
 use crate::cli::RelayArgs;
 
-pub struct RelayConnection {
-    pub session: Arc<Session>,
-    auth_token_refresh: Option<AuthTokenRefreshTask>,
-}
-
-impl RelayConnection {
-    pub async fn close(self) {
-        drop(self.auth_token_refresh);
-        self.session.close().await;
-    }
-}
-
-pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConnection> {
-    let auth_token = current_auth_token(relay).await?;
-    let current = auth_token.clone().map(|token| Arc::new(Mutex::new(token)));
-    let authorization_token = match (&relay.auth_token_file, &current) {
-        (Some(_), Some(current)) => Some(AuthorizationTokenSource::shared(Arc::clone(current))),
-        _ => auth_token.map(Into::into),
-    };
-    let config = ClientConfig {
+pub async fn connect_relay(relay: &RelayArgs) -> Result<Session> {
+    let options = ConnectOptions {
+        token: current_auth_token(relay).await?,
+        refresh_token: relay.auth_token_file.clone().map(refresh_from_file),
         certificate_verification: CertificateVerification::native_roots_or_disabled(
             !relay.insecure,
         ),
-        authorization_token,
-        versions: relay.offered_versions(),
-        ..ClientConfig::default()
+        versions: relay.versions.clone(),
     };
-    let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    info!(relay = %relay.url, "connecting to relay");
-    let connecting = endpoint.connect(relay.url.as_str()).await?;
-    let session = Arc::new(connecting.await?);
-    let auth_token_refresh = match (&relay.auth_token_file, current) {
-        (Some(path), Some(current)) => Some(AuthTokenRefreshTask::run(
-            session.clone(),
-            path.clone(),
-            app_id.to_string(),
-            current,
-        )),
-        _ => None,
-    };
-    Ok(RelayConnection {
-        session,
-        auth_token_refresh,
+    info!(url = %relay.url, "connecting to relay");
+    moq_wasm::connect(relay.url.as_str(), options).await
+}
+
+/// The session asks for a later token 5 minutes before the current one
+/// expires and every 30 s after that; the file is re-read each time until it
+/// holds a new token.
+fn refresh_from_file(path: PathBuf) -> RefreshToken {
+    RefreshToken::new(move |current| {
+        let path = path.clone();
+        async move {
+            let token = read_auth_token(&path).await?;
+            ensure!(
+                token != current,
+                "auth token file {} is not rewritten yet",
+                path.display()
+            );
+            Ok(token)
+        }
     })
+}
+
+/// Runs `work` until it ends or the relay session does, then closes the
+/// session.
+pub async fn run_until_closed(
+    session: &Session,
+    work: impl Future<Output = Result<()>>,
+) -> Result<()> {
+    let result = tokio::select! {
+        result = work => result,
+        end = session.closed() => Err(anyhow!("the relay session ended: {end:?}")),
+    };
+    session.close().await;
+    result
 }

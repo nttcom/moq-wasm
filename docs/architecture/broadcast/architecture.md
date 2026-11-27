@@ -6,7 +6,7 @@ Living document. Update alongside any change to track layout, publishing flow, o
 ## Scope
 `crates/broadcast` converts `mediapack::MediaEvent`s into an MSF broadcast (draft-ietf-moq-msf-02 §11.3, §11.4)—catalog, LOC and CMAF tracks, media timeline, and 60 s FETCH cache—and reads broadcasts back into `MediaEvent`s for `egress-gateway` and `sip-gateway`.
 
-Used by `ingest-gateway`, `gst-plugin-moqt`, `recorder`, `robotics`, `moq-cli`, `sdk/js` (Live Viewer MP4 publisher & browser SDK), `sdk/python`, and `sdk/rust` (`moq-wasm`). Runs on native (`NATIVE`) and `wasm32` (`BROWSER`) by routing all tasks, timers, and clocks through `moqt::executor`. Track layout summary: [`crates/broadcast/README.md`](../../../crates/broadcast/README.md).
+Used by `ingest-gateway`, `gst-plugin-moqt`, `recorder`, `robotics`, `sdk/js` (Live Viewer MP4 publisher & browser SDK), `sdk/python`, and `sdk/rust` (`moq-wasm`). Runs on native (`NATIVE`) and `wasm32` (`BROWSER`) by routing all tasks, timers, and clocks through `moqt::executor`. Track layout summary: [`crates/broadcast/README.md`](../../../crates/broadcast/README.md).
 
 ## Core Types & Pipeline
 

@@ -11,7 +11,7 @@ moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecu
 
 | Flag | publish | subscribe | Meaning |
 | --- | :-: | :-: | --- |
-| `--relay` | ● | ● | Relay URL (e.g. `moqt://localhost:4433`) |
+| `--relay` | ● | ● | Relay URL: `moqt://` (QUIC), `https://` (WebTransport), or `wss://` (WebSocket) |
 | `--namespace` | ● | | Broadcast namespace (e.g. `anon/tokyo/cam01`) |
 | `--codec` | ● | | Input codec: `h264` (default) or `h265` |
 | `--track` | | ● | Full track name (e.g. `anon/tokyo/cam01/video`) |
@@ -24,13 +24,13 @@ moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecu
 
 ## Publish and subscribe
 
-- `publish` reads H.264 Annex-B (or H.265 with `--codec h265`, e.g. `ffmpeg ... -c:v copy -f hevc -`) and publishes `catalog`, `video` (LOC), `video_cmaf`, and `video_timeline` via `crates/broadcast`.
+- `publish` reads H.264 Annex-B (or H.265 with `--codec h265`, e.g. `ffmpeg ... -c:v copy -f hevc -`) and publishes `catalog`, `video` (LOC), `video_timeline`, and `chat` with the Rust SDK (`sdk/rust`).
 - Access units are timestamped on arrival; pace file inputs with `ffmpeg -re` (excess input is dropped).
 - `subscribe` writes raw track payloads to stdout (Annex-B for `video`).
 
 ## Auth token
 
-Without a token, access is limited to `anon/`. `--auth-token-file` polls every 10 s and pushes updated tokens to the relay so external rotation keeps the stream alive:
+Without a token, access is limited to `anon/`. `--auth-token-file` is re-read from 5 minutes before the token expires (every 30 s until it holds a new token), and the new token is pushed to the relay so external rotation keeps the stream alive:
 
 ```sh
 AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "<appId>") | .secret' apps.json)" \

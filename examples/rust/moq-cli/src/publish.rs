@@ -1,64 +1,53 @@
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
-use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
-use mediapack::{
-    MediaEvent, Timestamp, elementary_stream::ElementaryStreamDemuxer,
-    h264::AvcDecoderConfigurationRecord, hevc::HevcDecoderConfigurationRecord,
-    parameter_sets::NalDecoderConfig,
+use moq_wasm::{
+    Session,
+    media::{self, AnnexBSplitter, MediaSourceOptions, TrackKind},
 };
-use moqt::{RequestErrorCode, Session, SessionEvent, publish::Origin};
 use tokio::{io::AsyncReadExt, time::Instant};
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::cli::{Codec, PublishArgs};
 use crate::track::Namespace;
-use crate::transport::connect_relay;
+use crate::transport::{connect_relay, run_until_closed};
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 
 pub async fn run(args: PublishArgs) -> Result<()> {
-    let connection = connect_relay(&args.relay, args.namespace.app_id()).await?;
-    let session = &connection.session;
-    let result = match args.codec {
-        Codec::H264 => {
-            publish_stdin::<AvcDecoderConfigurationRecord>(session, &args.namespace).await
-        }
-        Codec::H265 => {
-            publish_stdin::<HevcDecoderConfigurationRecord>(session, &args.namespace).await
-        }
-    };
-    connection.close().await;
-    result
+    let session = connect_relay(&args.relay).await?;
+    run_until_closed(
+        &session,
+        publish_stdin(&session, &args.namespace, args.codec),
+    )
+    .await
 }
 
 /// Publishes stdin as the `video` track of an MSF broadcast in `namespace`.
-async fn publish_stdin<C: NalDecoderConfig>(
-    session: &Arc<Session>,
-    namespace: &Namespace,
-) -> Result<()> {
-    let relay = RelayConnection::with_session(session.clone(), Origin::default());
-    let broadcast = Broadcast::new(relay.clone(), namespace.0.clone());
-    broadcast
+async fn publish_stdin(session: &Session, namespace: &Namespace, codec: Codec) -> Result<()> {
+    let broadcast = media::create_broadcast(session, &namespace.0)
         .announce()
         .await
         .context("failed to publish the namespace")?;
     info!(track_namespace = %namespace.0.join("/"), "broadcast started");
-    let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+    // The stream has keyframes only where the encoder put them, so its
+    // tracks are sent and cached at the relay even while nobody subscribes.
+    let source = broadcast.add_media_source(MediaSourceOptions {
+        on_demand: false,
+        ..MediaSourceOptions::new("Video")
+    });
     // The catalog lists an `audio` placeholder next to `video` until an audio
     // configuration arrives; this publisher sends video only.
-    let audio_track = writer.source_tracks().audio.clone();
-    writer
-        .remove_track(&audio_track)
+    source
+        .remove_track(TrackKind::Audio)
         .await
         .context("failed to remove the audio track")?;
-    let mut demuxer = ElementaryStreamDemuxer::<C>::new();
-    let started = Instant::now();
-    let arrival = || Timestamp::from_micros(started.elapsed().as_micros() as u64);
+    let codec = codec.codec_family();
+    source.configure_video(codec)?;
+    let mut splitter = AnnexBSplitter::new(codec)?;
+    let mut clock = ArrivalClock::new();
 
     let mut reader = tokio::io::stdin();
     let mut read_buf = vec![0u8; READ_BUFFER_BYTES];
-    // Keeps the listener registered while the loop body writes frames: tokio
+    // Keeps the listener registered while the loop body pushes frames: tokio
     // drops a SIGINT that arrives while none is registered.
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -66,53 +55,49 @@ async fn publish_stdin<C: NalDecoderConfig>(
     loop {
         let read = tokio::select! {
             result = reader.read(&mut read_buf) => result?,
-            event = session.receive_event() => {
-                if let Some(event) = relay.handle(event?).await {
-                    answer_unhandled(event).await;
-                }
-                continue;
-            }
-            close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),
             _ = &mut ctrl_c => {
                 info!("received ctrl-c, shutting down");
-                return Ok(());
+                break;
             }
         };
-        let events = if read == 0 {
-            demuxer.finish(arrival())
+        let access_units = if read == 0 {
+            splitter.finish()
         } else {
-            demuxer.push(&read_buf[..read], arrival())
+            splitter.push(&read_buf[..read])
         }
         .context("failed to read the input; check --codec")?;
-        for event in events {
-            if let MediaEvent::VideoConfig(config) = &event {
-                info!(codec = %config.codec_string(), "codec resolved");
-            }
-            writer.push(event)?;
+        for access_unit in access_units {
+            source.push_video(access_unit, clock.next())?;
         }
         if read == 0 {
             info!("input ended");
-            return Ok(());
+            break;
         }
     }
+    broadcast.close().await
 }
 
-/// The broadcast answers the requests for its own tracks; a SUBSCRIBE for
-/// any other track is rejected so the relay does not wait for an answer.
-async fn answer_unhandled(event: SessionEvent) {
-    match event {
-        SessionEvent::Subscribe(handler) => {
-            let reason = format!(
-                "{}/{} is not published here",
-                handler.track_namespace, handler.track_name
-            );
-            if let Err(error) = handler
-                .error(RequestErrorCode::TrackDoesNotExist, reason)
-                .await
-            {
-                warn!(%error, "failed to reject SUBSCRIBE");
-            }
+/// Times each access unit by its arrival, since the stream carries no
+/// timestamps; units completed by one read are 1 µs apart.
+struct ArrivalClock {
+    started: Instant,
+    last_micros: Option<u64>,
+}
+
+impl ArrivalClock {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            last_micros: None,
         }
-        event => debug!(?event, "session event ignored"),
+    }
+
+    fn next(&mut self) -> u64 {
+        let arrival = self.started.elapsed().as_micros() as u64;
+        let micros = self
+            .last_micros
+            .map_or(arrival, |last| arrival.max(last + 1));
+        self.last_micros = Some(micros);
+        micros
     }
 }
