@@ -14,8 +14,11 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
   private readonly subscriptions = new Map<MediaKind, TrackSubscription>()
   private readonly handlers = new Map<string, ObjectHandler>()
   private readonly publishDones = new Map<string, (done: PublishDone) => void>()
+  private readonly opened = new Map<string, TrackSubscription>()
   /// Makes `endBeforeGroup` reject, as when the SUBSCRIBE_UPDATE cannot be sent.
   endBeforeGroupError: Error | undefined
+  /// The largest group SUBSCRIBE_OK reports for the subscriptions `open` makes.
+  openedLargestGroup: bigint | undefined
 
   /// Makes a subscription to `name` the one of `kind`, as `subscribe` does.
   subscribed(kind: MediaKind, name: string): TrackSubscription {
@@ -47,7 +50,14 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
   ): Promise<TrackSubscription> {
     this.calls.push(`open ${wireName}`)
     this.handlers.set(wireName, handler)
-    return this.trackSubscription(wireName, track)
+    const subscription = this.trackSubscription(wireName, track, this.openedLargestGroup)
+    this.opened.set(wireName, subscription)
+    return subscription
+  }
+
+  /// The subscription `open` made for `name`.
+  openedFor(name: string): TrackSubscription | undefined {
+    return this.opened.get(name)
   }
 
   async close(subscription: TrackSubscription): Promise<void> {
@@ -76,11 +86,12 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
     this.calls.push(`retire ${subscription.name}`)
   }
 
-  private trackSubscription(name: string, track: MediaCatalogTrack): TrackSubscription {
+  private trackSubscription(name: string, track: MediaCatalogTrack, largestGroup?: bigint): TrackSubscription {
     const done = new Promise<PublishDone>((resolve) => this.publishDones.set(name, resolve))
+    const largest = largestGroup === undefined ? undefined : { groupId: largestGroup, objectId: 0n }
     return {
       id: 0n,
-      handle: { largest: undefined, done } as unknown as MoqSubscription,
+      handle: { largest, done } as unknown as MoqSubscription,
       priority: 128,
       forward: true,
       name,

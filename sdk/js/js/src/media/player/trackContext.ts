@@ -1,4 +1,10 @@
-import type { MoqSession, MoqSubscription, ReceivedObject } from '../../core/session'
+import {
+  type MoqSession,
+  type MoqSubscription,
+  type ReceivedObject,
+  type StreamResetCode,
+  StreamResetError
+} from '../../core/session'
 import { readLocHeader } from '../internal/loc'
 import { isAtOrBefore } from '../internal/location'
 import type { DeliveryObserver } from './deliveryObserver'
@@ -17,6 +23,9 @@ export type PlayedTrack = { name: string; track: MediaCatalogTrack }
 /// `cached` marks an object a joining FETCH brought: it predates the
 /// subscription, so its arrival says nothing about the delivery.
 export type ObjectHandler = (groupId: bigint, object: ReceivedObject, cached: boolean) => void
+
+/// Told of a subgroup stream of group `groupId` the publisher reset.
+export type ResetHandler = (groupId: bigint, code: StreamResetCode) => void
 
 export type TrackContext = {
   /// Set by `LivePlayer.start`.
@@ -68,7 +77,8 @@ export async function readGroups(
   context: TrackContext,
   id: bigint,
   subscription: MoqSubscription,
-  handler: ObjectHandler
+  handler: ObjectHandler,
+  onReset: ResetHandler = () => {}
 ): Promise<void> {
   const streams: Promise<void>[] = []
   try {
@@ -79,7 +89,12 @@ export async function readGroups(
           for await (const object of group) {
             handler(group.groupId, object, false)
           }
-        })().catch((error: unknown) => context.log('info', `group ${group.groupId} ended early: ${error}`))
+        })().catch((error: unknown) => {
+          context.log('info', `group ${group.groupId} ended early: ${error}`)
+          if (error instanceof StreamResetError) {
+            onReset(group.groupId, error.code)
+          }
+        })
       )
     }
   } catch (error) {
@@ -94,11 +109,18 @@ export async function readJoinedObjects(
   context: TrackContext,
   id: bigint,
   subscription: MoqSubscription,
-  handler: ObjectHandler
+  handler: ObjectHandler,
+  onReset: ResetHandler = () => {}
 ): Promise<void> {
   let openedGroupId: bigint | undefined
   try {
-    for await (const object of subscription) {
+    for await (const event of subscription.events()) {
+      if (event.kind === 'reset') {
+        context.log('info', `group ${event.groupId} ended early: reset with ${event.code}`)
+        onReset(event.groupId, event.code)
+        continue
+      }
+      const object = event.object
       if (object.groupId !== openedGroupId) {
         openedGroupId = object.groupId
         context.observer.opened(id, object.groupId)

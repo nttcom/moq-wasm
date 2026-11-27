@@ -34,6 +34,35 @@ export type PublishDoneCode =
 
 export type PublishDone = { readonly code: PublishDoneCode; readonly reason: string }
 
+/** A stream reset code's name, the same on every draft. */
+export type StreamResetCode =
+  | 'INTERNAL_ERROR'
+  | 'CANCELLED'
+  | 'DELIVERY_TIMEOUT'
+  | 'SESSION_CLOSED'
+  | 'MALFORMED_TRACK'
+  | 'GOING_AWAY'
+  | 'TOO_FAR_BEHIND'
+  | 'UNKNOWN_OBJECT_STATUS'
+  | 'EXPIRED_AUTH_TOKEN'
+  | 'EXCESSIVE_LOAD'
+
+/// What `MoqSubscription.events` yields: an object, or a subgroup stream of
+/// group `groupId` the publisher reset with `code`.
+export type SubscriptionEvent =
+  | { readonly kind: 'object'; readonly object: ReceivedObject }
+  | { readonly kind: 'reset'; readonly groupId: bigint; readonly code: StreamResetCode }
+
+/// Thrown by a `MoqGroup` whose stream the publisher reset.
+export class StreamResetError extends Error {
+  constructor(
+    readonly code: StreamResetCode,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
 export type CloseInfo = { readonly code: number | undefined; readonly reason: string }
 
 export type MoqVersion = 'draft-14' | 'draft-18'
@@ -98,6 +127,7 @@ type WasmSubscription = Pick<
   | 'largest'
   | 'done'
   | 'next'
+  | 'nextEvent'
   | 'nextGroup'
   | 'setForward'
   | 'setPriority'
@@ -303,6 +333,23 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     yield* objects(() => this.call(() => this.inner.next()))
   }
 
+  /// The iterator's objects, with each subgroup stream the publisher reset.
+  async *events(): AsyncIterable<SubscriptionEvent> {
+    for (;;) {
+      const event: Moqt.MoqObject | Moqt.StreamReset | undefined = await this.call(() => this.inner.nextEvent())
+      if (!event) {
+        return
+      }
+      if ('code' in event) {
+        const reset = { kind: 'reset', groupId: event.groupId, code: event.code as StreamResetCode } as const
+        event.free()
+        yield reset
+      } else {
+        yield { kind: 'object', object: received(event) }
+      }
+    }
+  }
+
   /// Each subgroup stream, status objects included.
   async *groups(): AsyncIterable<MoqGroup> {
     for (;;) {
@@ -433,10 +480,14 @@ export class MoqGroup implements AsyncIterable<ReceivedObject> {
     this.subgroupId = inner.subgroupId
   }
 
-  /// Ends once the stream finishes; throws when it was reset.
+  /// Ends once the stream finishes; throws a `StreamResetError` when the
+  /// publisher reset it.
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
     try {
       yield* objects(() => this.inner.next())
+    } catch (error) {
+      const code = (error as { streamResetCode?: StreamResetCode } | undefined)?.streamResetCode
+      throw code ? new StreamResetError(code, (error as Error).message) : error
     } finally {
       this.inner.free()
     }

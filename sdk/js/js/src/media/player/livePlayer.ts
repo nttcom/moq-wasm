@@ -37,7 +37,7 @@ import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, PlayedTrack, TrackContext } from './trackContext'
-import { TrackSubscriptions } from './trackSubscriptions'
+import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { VideoSwitcher } from './videoSwitcher'
 import { type StatusState, getErrorMessage } from '../internal/status'
 import {
@@ -229,7 +229,8 @@ export class LivePlayer {
         deliveryTimeoutMs:
           options.deliveryTimeoutMs === null ? undefined : (options.deliveryTimeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS),
         groupOrder: options.groupOrder
-      }
+      },
+      (subscription, groupId) => this.groupReset(subscription, groupId)
     )
     this.videoSwitcher = new VideoSwitcher({
       subscriptions: this.subscriptions,
@@ -1444,6 +1445,16 @@ export class LivePlayer {
     if (this.subscriptions.resumeForward()) {
       this.cmafLive.sink?.resumeAtNewestRange()
       this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+    }
+  }
+
+  /// No later object of a reset video group arrives to tell the decoder it
+  /// lost the group, so the reset asks for a new one itself.
+  private groupReset(subscription: TrackSubscription, groupId: bigint): void {
+    if (subscription === this.subscriptions.get('video')) {
+      this.requestGroupAfterCut(groupId)
+    } else {
+      this.videoSwitcher.groupReset(subscription, groupId)
     }
   }
 

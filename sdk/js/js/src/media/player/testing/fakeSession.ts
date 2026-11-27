@@ -7,8 +7,11 @@ import type {
   MoqSubscribeOptions,
   MoqSubscription,
   PublishDone,
-  ReceivedObject
+  ReceivedObject,
+  StreamResetCode,
+  SubscriptionEvent
 } from '../../../core/session'
+import { StreamResetError } from '../../../core/session'
 import { TIMESTAMP_ID } from '../../internal/loc'
 import { UNOBSERVED_DELIVERIES } from '../deliveryObserver'
 import type { TrackContext } from '../trackContext'
@@ -29,7 +32,8 @@ export type SubscribeCall = {
 /// `requestNewGroup video 7`;
 /// `failedClose` makes each
 /// UNSUBSCRIBE fail. `publishDone` ends the newest subscription to a track
-/// with PUBLISH_DONE.
+/// with PUBLISH_DONE. A group `resets` lists is reset with its code after its
+/// objects.
 export class FakeSession {
   readonly calls: SubscribeCall[] = []
   readonly updates: string[] = []
@@ -37,6 +41,7 @@ export class FakeSession {
   private readonly endings = new Map<string, (done: PublishDone) => void>()
   failedClose: Error | undefined
   drained: Promise<void> = Promise.resolve()
+  resets = new Map<bigint, StreamResetCode>()
 
   constructor(
     private readonly largest: MoqLocation | undefined,
@@ -104,12 +109,25 @@ export class FakeSession {
       drain = resolve
     })
     const objects = this.objects
+    const resets = this.resets
     const groupIds = [...new Set(objects.map((object) => object.groupId))]
     return {
       largest: this.largest,
       done,
       async *[Symbol.asyncIterator]() {
         yield* objects
+        drain()
+      },
+      async *events(): AsyncGenerator<SubscriptionEvent> {
+        for (const groupId of groupIds) {
+          for (const object of objects.filter((object) => object.groupId === groupId)) {
+            yield { kind: 'object', object }
+          }
+          const code = resets.get(groupId)
+          if (code) {
+            yield { kind: 'reset', groupId, code }
+          }
+        }
         drain()
       },
       async *groups() {
@@ -119,7 +137,7 @@ export class FakeSession {
           yield {
             groupId,
             subgroupId: 0n,
-            [Symbol.asyncIterator]: () => iterate(group, last ? drain : () => {})
+            [Symbol.asyncIterator]: () => iterate(group, resets.get(groupId), last ? drain : () => {})
           } as unknown as MoqGroup
         }
       },
@@ -143,9 +161,16 @@ export class FakeSession {
   }
 }
 
-async function* iterate(objects: ReceivedObject[], onEnd: () => void): AsyncGenerator<ReceivedObject> {
+async function* iterate(
+  objects: ReceivedObject[],
+  reset: StreamResetCode | undefined,
+  onEnd: () => void
+): AsyncGenerator<ReceivedObject> {
   yield* objects
   onEnd()
+  if (reset) {
+    throw new StreamResetError(reset, `reset with ${reset}`)
+  }
 }
 
 export function receivedObject(groupId: bigint, objectId: bigint, captureMicros?: number): ReceivedObject {
