@@ -13,8 +13,8 @@ use moqt::{namespace::NamespaceInterest, object::Location};
 
 use crate::modules::{
     directory::track::{
-        Consumer, CreationFailure, CreationState, DownstreamSubscription, MatchingPublication,
-        NamespaceSubscription, PendingProducersOutcome, Producer, ProducerOrigin, ProducerState,
+        Consumer, CreationFailure, CreationState, DownstreamSubscription, NamespaceSubscription,
+        PendingProducersOutcome, PrefixMatch, Producer, ProducerOrigin, ProducerState,
         ReleasedUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
         Track, TrackState,
     },
@@ -700,18 +700,15 @@ impl InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "debug",
-        name = "relay.local_pub_sub_directory.matching_publications",
+        name = "relay.local_pub_sub_directory.prefix_matches",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    pub(crate) fn matching_publications(
-        &self,
-        track_namespace_prefix: &str,
-    ) -> HashSet<MatchingPublication> {
+    pub(crate) fn prefix_matches(&self, track_namespace_prefix: &str) -> HashSet<PrefixMatch> {
         let mut matching = HashSet::new();
         for entry in self.publisher_namespaces.iter() {
             if namespace_has_prefix(entry.key(), track_namespace_prefix) {
-                matching.insert(MatchingPublication::Namespace(entry.key().clone()));
+                matching.insert(PrefixMatch::Namespace(entry.key().clone()));
             }
         }
 
@@ -719,7 +716,7 @@ impl InMemoryLocalPubSubDirectory {
             if namespace_has_prefix(&entry.key().track_namespace, track_namespace_prefix)
                 && entry.value().publishers().next().is_some()
             {
-                matching.insert(MatchingPublication::Track(entry.key().clone()));
+                matching.insert(PrefixMatch::Track(entry.key().clone()));
             }
         }
         matching
@@ -1653,13 +1650,13 @@ mod tests {
         // Act
         let subscribers =
             table.get_namespace_subscribers("room1/member", NamespaceInterest::NamespacesAndTracks);
-        let matching = table.matching_publications("room");
+        let matching = table.prefix_matches("room");
 
         // Assert
         assert!(subscribers.is_empty());
         assert_eq!(
             matching,
-            HashSet::from([MatchingPublication::Namespace("room/member".to_string())])
+            HashSet::from([PrefixMatch::Namespace("room/member".to_string())])
         );
     }
 
@@ -1916,14 +1913,14 @@ mod tests {
         }
 
         // Act
-        let matching = table.matching_publications("APP/site1");
+        let matching = table.prefix_matches("APP/site1");
 
         // Assert
         assert_eq!(
             matching,
             HashSet::from([
-                MatchingPublication::Namespace("APP/site1/cam1".to_string()),
-                MatchingPublication::Track(TrackKey::new("APP/site1/cam1", "video")),
+                PrefixMatch::Namespace("APP/site1/cam1".to_string()),
+                PrefixMatch::Track(TrackKey::new("APP/site1/cam1", "video")),
             ])
         );
     }

@@ -331,7 +331,7 @@ module namespace_announcements {
   }
 
   // The route registered, SUBSCRIBE_NAMESPACE_OK (moqt sends the held
-  // NAMESPACEs), then `matching_publications`.
+  // NAMESPACEs), then `prefix_matches`.
   action subscribeRouted(x: str): bool = all {
     val t = s.subTasks.get(x)
     val m = s.moqt.get(x)
@@ -415,7 +415,7 @@ module namespace_announcements {
     },
   }
 
-  // `forget_announced_namespaces`, then `matching_publications` less what the
+  // `forget_announced_namespaces`, then `prefix_matches` less what the
   // old prefix covered (`Offer::was_offered`).
   action updateForgot(x: str): bool = all {
     val t = s.subTasks.get(x)
