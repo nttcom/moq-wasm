@@ -34,7 +34,7 @@ impl TransportReceiveStream for WtReceiveStream {
 
 fn io_error_to_read_error(error: &std::io::Error) -> ReadError {
     match error.kind() {
-        std::io::ErrorKind::ConnectionReset => ReadError::Reset,
+        std::io::ErrorKind::ConnectionReset => ReadError::Reset(reset_code(error)),
         std::io::ErrorKind::ConnectionAborted => ReadError::ConnectionLost,
         std::io::ErrorKind::NotConnected
             if matches!(
@@ -49,6 +49,21 @@ fn io_error_to_read_error(error: &std::io::Error) -> ReadError {
         std::io::ErrorKind::NotConnected => ReadError::Closed,
         std::io::ErrorKind::UnexpectedEof => ReadError::Closed,
         _ => todo!("handle other web-transport-quinn read errors: {:?}", error),
+    }
+}
+
+/// The application code of a RESET_STREAM, which WebTransport carries in
+/// the HTTP/3 error space. A code outside the WebTransport range was not sent
+/// by the peer's application, so it reads as 0, INTERNAL_ERROR in every draft.
+fn reset_code(error: &std::io::Error) -> u64 {
+    match error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<quinn::ReadError>())
+    {
+        Some(quinn::ReadError::Reset(code)) => {
+            web_transport_quinn::proto::error_from_http3(code.into_inner()).map_or(0, u64::from)
+        }
+        _ => 0,
     }
 }
 
@@ -68,6 +83,21 @@ mod tests {
 
         // Assert
         assert_eq!(mapped, ReadError::ConnectionLost);
+    }
+
+    #[test]
+    fn a_reset_carries_the_webtransport_code() {
+        // Arrange
+        let http3_code = web_transport_quinn::proto::error_to_http3(2);
+        let error = std::io::Error::from(quinn::ReadError::Reset(
+            quinn::VarInt::from_u64(http3_code).unwrap(),
+        ));
+
+        // Act
+        let mapped = io_error_to_read_error(&error);
+
+        // Assert
+        assert_eq!(mapped, ReadError::Reset(2));
     }
 
     #[test]

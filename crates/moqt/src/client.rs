@@ -14,7 +14,9 @@ pub use crate::modules::client::request_error::{FetchError, RequestError};
 pub use crate::modules::client::session::{
     GroupStartOptions, PublishTrackOptions, Session, SubscribeOptions,
 };
-pub use crate::modules::client::subscription::{Group, PublishDone, ReceivedObject, Subscription};
+pub use crate::modules::client::subscription::{
+    Group, GroupReadError, PublishDone, ReceivedObject, Subscription, SubscriptionEvent,
+};
 pub use crate::modules::client::track_follower::{FollowEvent, TrackFollower};
 pub use crate::modules::client::track_watch::{PublishRequest, TrackWatch, WatchEvent};
 pub use crate::modules::client::track_writer::TrackWriter;

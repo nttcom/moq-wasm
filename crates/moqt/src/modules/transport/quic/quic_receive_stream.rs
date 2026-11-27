@@ -22,7 +22,7 @@ impl TransportReceiveStream for QUICReceiveStream {
             .poll_read_buf(cx, buf)
             .map_err(|e| match e {
                 quinn::ReadError::ClosedStream => ReadError::Closed,
-                quinn::ReadError::Reset(_) => ReadError::Reset,
+                quinn::ReadError::Reset(code) => ReadError::Reset(code.into_inner()),
                 quinn::ReadError::ConnectionLost(_) => ReadError::ConnectionLost,
                 _ => todo!("handle other read errors: {:?}", e),
             })

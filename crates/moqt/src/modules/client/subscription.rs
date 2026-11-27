@@ -2,13 +2,15 @@ use std::{future::Future, sync::Arc};
 
 use anyhow::bail;
 use bytes::Bytes;
+use thiserror::Error;
 use tokio::sync::Mutex;
 
 use crate::{
-    Session, Subscription as MoqtSubscription, TrackObject, TrackReader,
+    Session, Subscription as MoqtSubscription, TrackEvent, TrackObject, TrackReader,
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, Location, MalformedTrackError,
-        Object, ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
+        DataReceiver, DataStreamResetCode, ExtensionHeaders, ForwardingPreference, Location,
+        MalformedTrackError, Object, ObjectStatus, ReadError, StreamDataReceiver,
+        StreamReceiveError, Subgroup, TrackData,
     },
     publish::PublishDoneCode,
 };
@@ -58,6 +60,18 @@ fn subgroup_id(forwarding: ForwardingPreference) -> u64 {
         ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
         ForwardingPreference::Datagram => 0,
     }
+}
+
+/// What `Subscription::next_event` yields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubscriptionEvent {
+    Object(ReceivedObject),
+    /// The publisher reset a subgroup stream of group `group_id` with `code`
+    /// (draft-14 §13.1.8, draft-18 §15.10.4); its remaining objects are lost.
+    Reset {
+        group_id: u64,
+        code: DataStreamResetCode,
+    },
 }
 
 /// The PUBLISH_DONE (draft-14 §9.12) that ended a subscription.
@@ -115,6 +129,17 @@ impl Subscription {
     /// of one subgroup come in order; status objects are skipped. Fails once
     /// `next_group` read the subscription.
     pub async fn next(&self) -> anyhow::Result<Option<ReceivedObject>> {
+        loop {
+            match self.next_event().await? {
+                Some(SubscriptionEvent::Object(object)) => return Ok(Some(object)),
+                Some(SubscriptionEvent::Reset { .. }) => continue,
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// `next`, with the subgroup streams the publisher reset.
+    pub async fn next_event(&self) -> anyhow::Result<Option<SubscriptionEvent>> {
         let mut reading = self.reading.lock().await;
         if let Reading::Unstarted = *reading {
             *reading = Reading::Objects(self.session.subscriber().track_reader(&self.subscription));
@@ -122,7 +147,10 @@ impl Subscription {
         let Reading::Objects(reader) = &mut *reading else {
             bail!("the subscription is read by group");
         };
-        Ok(reader.next_object().await?.map(ReceivedObject::from))
+        Ok(reader.next_event().await?.map(|event| match event {
+            TrackEvent::Object(object) => SubscriptionEvent::Object(object.into()),
+            TrackEvent::Reset { group_id, code } => SubscriptionEvent::Reset { group_id, code },
+        }))
     }
 
     /// The next subgroup stream; `None` once the track has no more streams.
@@ -222,16 +250,32 @@ impl Group {
     }
 
     /// The next object, a status object such as End of Group included;
-    /// `None` once the publisher finished the stream. Fails when the stream
-    /// was reset.
-    pub async fn next(&self) -> anyhow::Result<Option<ReceivedObject>> {
+    /// `None` once the publisher finished the stream.
+    pub async fn next(&self) -> Result<Option<ReceivedObject>, GroupReadError> {
         let mut receiver = self.receiver.lock().await;
         loop {
-            match receiver.receive().await? {
-                Some(Subgroup::Object(object)) => return Ok(Some(object.into())),
-                Some(Subgroup::Header(_)) => continue,
-                None => return Ok(None),
+            match receiver.receive().await {
+                Ok(Some(Subgroup::Object(object))) => return Ok(Some(object.into())),
+                Ok(Some(Subgroup::Header(_))) => continue,
+                Ok(None) => return Ok(None),
+                Err(StreamReceiveError::Closed(ReadError::Reset(code))) => {
+                    let code = receiver.version().data_stream_reset_code_from_wire(code);
+                    return Err(GroupReadError::Reset(code));
+                }
+                Err(error) => return Err(GroupReadError::Receive(error)),
             }
         }
     }
+}
+
+/// Why `Group::next` failed.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum GroupReadError {
+    /// The publisher reset the stream with this code (draft-14 §13.1.8,
+    /// draft-18 §15.10.4).
+    #[error("subgroup stream reset with {}", .0.name())]
+    Reset(DataStreamResetCode),
+    #[error(transparent)]
+    Receive(StreamReceiveError),
 }

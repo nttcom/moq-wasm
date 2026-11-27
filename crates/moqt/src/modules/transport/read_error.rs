@@ -5,9 +5,9 @@ pub enum ReadError {
     /// The stream has been closed.
     #[error("stream closed by peer")]
     Closed,
-    /// The stream has been reset by the peer.
-    #[error("stream reset by peer")]
-    Reset,
+    /// The peer reset the stream with this application error code.
+    #[error("stream reset by peer with code {0}")]
+    Reset(u64),
     /// An error occurred while reading from the stream.
     #[error("connection lost")]
     ConnectionLost,

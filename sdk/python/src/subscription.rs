@@ -230,7 +230,7 @@ impl Group {
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let group = self.group.clone();
         self.scope.future_into_py(py, async move {
-            match group.next().await? {
+            match group.next().await.map_err(anyhow::Error::from)? {
                 Some(object) => Ok(Object::from(object)),
                 None => Err(PyStopAsyncIteration::new_err("the stream ended")),
             }

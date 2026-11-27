@@ -304,7 +304,7 @@ mod tests {
         // Arrange
         let mut stream = fetched_stream("fetch-object-reset").await;
         let expected = object_with_extensions();
-        let reset_error = StreamReceiveError::Closed(ReadError::Reset).to_string();
+        let reset_error = StreamReceiveError::Closed(ReadError::Reset(0)).to_string();
         within(stream.sender.send_object(&expected)).await.unwrap();
         let Fetch::Object(_) = within(stream.receiver.receive()).await.unwrap() else {
             panic!("expected an object before RESET");

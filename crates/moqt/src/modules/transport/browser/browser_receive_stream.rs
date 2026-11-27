@@ -109,8 +109,8 @@ impl TransportReceiveStream for BrowserReceiveStream {
 }
 
 fn read_error(error: &JsValue) -> ReadError {
-    if stream_error_code(error).is_some() {
-        ReadError::Reset
+    if let Some(code) = stream_error_code(error) {
+        ReadError::Reset(code)
     } else if is_session_error(error) {
         ReadError::ConnectionLost
     } else {

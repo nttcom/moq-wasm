@@ -601,7 +601,7 @@ impl Group {
             .scoped(self.group.next())
             .await
             .map(|object| object.map(MoqObject))
-            .map_err(anyhow_error)
+            .map_err(|error| anyhow_error(error.into()))
     }
 }
 

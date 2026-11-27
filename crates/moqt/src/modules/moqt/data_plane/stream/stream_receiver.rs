@@ -109,7 +109,7 @@ mod tests {
     #[tokio::test]
     async fn stream_reset_is_reported_as_closed() {
         // Arrange
-        let mut receiver = receiver_reading(Err(ReadError::Reset));
+        let mut receiver = receiver_reading(Err(ReadError::Reset(0)));
 
         // Act
         let result = receiver.receive().await;
@@ -117,7 +117,7 @@ mod tests {
         // Assert
         assert!(matches!(
             result,
-            Err(StreamReceiveError::Closed(ReadError::Reset))
+            Err(StreamReceiveError::Closed(ReadError::Reset(0)))
         ));
     }
 

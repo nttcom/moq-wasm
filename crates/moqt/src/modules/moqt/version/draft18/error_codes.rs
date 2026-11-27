@@ -70,19 +70,19 @@ wire_codes! {
     }
 }
 
-/// §15.10.4.
-pub(crate) fn stream_reset_code_to_wire(code: DataStreamResetCode) -> u64 {
-    match code {
-        DataStreamResetCode::InternalError => 0x0,
-        DataStreamResetCode::Cancelled => 0x1,
-        DataStreamResetCode::DeliveryTimeout => 0x2,
-        DataStreamResetCode::SessionClosed => 0x3,
-        DataStreamResetCode::GoingAway => 0x4,
-        DataStreamResetCode::TooFarBehind => 0x5,
-        DataStreamResetCode::UnknownObjectStatus => 0x6,
-        DataStreamResetCode::ExpiredAuthToken => 0x7,
-        DataStreamResetCode::ExcessiveLoad => 0x9,
-        DataStreamResetCode::MalformedTrack => 0x12,
+// §15.10.4.
+wire_codes! {
+    DataStreamResetCode: stream_reset_code_to_wire, stream_reset_code_from_wire {
+        InternalError = 0x0,
+        Cancelled = 0x1,
+        DeliveryTimeout = 0x2,
+        SessionClosed = 0x3,
+        GoingAway = 0x4,
+        TooFarBehind = 0x5,
+        UnknownObjectStatus = 0x6,
+        ExpiredAuthToken = 0x7,
+        ExcessiveLoad = 0x9,
+        MalformedTrack = 0x12,
     }
 }
 
@@ -117,9 +117,11 @@ pub(crate) fn termination_code_to_wire(code: TerminationErrorCode) -> u32 {
 mod tests {
     use super::{
         publish_done_code_from_wire, publish_done_code_to_wire, request_error_code_from_wire,
-        request_error_code_to_wire,
+        request_error_code_to_wire, stream_reset_code_from_wire, stream_reset_code_to_wire,
     };
-    use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
+    use crate::modules::moqt::control_plane::error_codes::{
+        DataStreamResetCode, PublishDoneCode, RequestErrorCode,
+    };
 
     #[test]
     fn a_value_reads_as_the_code_it_is_sent_for() {
@@ -131,6 +133,12 @@ mod tests {
         assert_eq!(
             publish_done_code_from_wire(publish_done_code_to_wire(PublishDoneCode::UpdateFailed)),
             PublishDoneCode::UpdateFailed
+        );
+        assert_eq!(
+            stream_reset_code_from_wire(stream_reset_code_to_wire(
+                DataStreamResetCode::MalformedTrack
+            )),
+            DataStreamResetCode::MalformedTrack
         );
     }
 

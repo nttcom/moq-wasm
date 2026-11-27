@@ -228,8 +228,8 @@ impl TransportReceiveStream for QmuxReceiveStream {
     ) -> Poll<Result<(), ReadError>> {
         self.shared.waker.register(cx.waker());
         let mut state = self.shared.state.lock().expect("receive stream lock");
-        if state.reset_code.is_some() {
-            return Poll::Ready(Err(ReadError::Reset));
+        if let Some(code) = state.reset_code {
+            return Poll::Ready(Err(ReadError::Reset(code)));
         }
         let Some(chunk) = state.chunks.front_mut() else {
             if state.final_size == Some(state.received) {
