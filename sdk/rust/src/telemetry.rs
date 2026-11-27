@@ -128,9 +128,9 @@ mod tests {
         let session = relay.connect_with_token("session-token").await;
 
         // Act
-        session
-            .scoped(async { tracing::info!("inside the session") })
-            .await;
+        tokio::spawn(session.scoped(async { tracing::info!("inside the session") }))
+            .await
+            .unwrap();
         tracing::info!("outside any session");
         telemetry.flush().await;
 

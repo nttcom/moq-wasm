@@ -116,8 +116,9 @@ impl Session {
     /// [`telemetry::layer`](crate::telemetry::layer) installed, its logs and
     /// spans, and those of the `moqt` tasks it starts, are reported with the
     /// session's latest token. Tasks it starts with `tokio::spawn` need their
-    /// own `scoped`.
-    pub fn scoped<F: Future>(&self, future: F) -> impl Future<Output = F::Output> {
+    /// own `scoped`. The returned future does not borrow the session, so it
+    /// can be passed to `tokio::spawn`.
+    pub fn scoped<F: Future>(&self, future: F) -> impl Future<Output = F::Output> + use<F> {
         self.scope.scoped(future)
     }
 
