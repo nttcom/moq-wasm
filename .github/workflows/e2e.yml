@@ -50,7 +50,7 @@ on:
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
       - "tests/live-translate-e2e/**"
-      - "services/live-translate/**"
+      - "examples/rust/live-translate/**"
       - "tests/object-dedup-e2e/**"
       - "tests/cross-version-e2e/**"
       - "Cargo.toml"
@@ -113,7 +113,7 @@ on:
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
       - "tests/live-translate-e2e/**"
-      - "services/live-translate/**"
+      - "examples/rust/live-translate/**"
       - "tests/object-dedup-e2e/**"
       - "tests/cross-version-e2e/**"
       - "Cargo.toml"
@@ -275,7 +275,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-translate-e2e.mjs|tests/browser-e2e/relay-dev.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-translate/*|examples/browser/tests/live-translate-e2e*|sdk/js/*|services/live-translate/*|services/temporary-apps/*|crates/google-cloud/*|crates/http-server/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/telemetry-otlp/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-translate-e2e.mjs|tests/browser-e2e/relay-dev.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-translate/*|examples/browser/tests/live-translate-e2e*|sdk/js/*|examples/rust/live-translate/*|services/temporary-apps/*|crates/google-cloud/*|crates/http-server/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/telemetry-otlp/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_translate=true
                   ;;
               esac
@@ -317,7 +317,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain|services/live-translate/*|tests/live-translate-e2e/*)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain|examples/rust/live-translate/*|tests/live-translate-e2e/*)
                   compose_suites+=(live-translate)
                   ;;
               esac

@@ -61,7 +61,7 @@ flowchart LR
 | **Web meetings & telephony** | Multi-party A/V, recording, SIP trunks | [Meeting](https://nttcom.github.io/moq-wasm/examples/meeting/), [`recorder`](services/recorder/README.md), [`sip-gateway`](docs/architecture/sip-gateway/architecture.md) |
 | **Live streaming & production** | Cascading relays, RTMP/SRT/RTP ingest, ABR, relay-cache rewind | [Live Viewer](https://nttcom.github.io/moq-wasm/examples/live-viewer/), [`ingest-gateway`](services/ingest-gateway/README.md), [`egress-gateway`](services/egress-gateway/README.md), [`moqtsink`](sdk/gstreamer/README.md) |
 | **Surveillance & monitoring** | ONVIF/RTSP pull, on-demand camera streams, PTZ | [Remote Monitoring](https://nttcom.github.io/moq-wasm/examples/remote-monitoring/), [`ingest-gateway pull`](services/ingest-gateway/README.md#pull) |
-| **AI agents** | Pipecat voice transport, live translation, object-detection bots | [AI Voice Agent](https://nttcom.github.io/moq-wasm/examples/moq-ai-voice-agent/), [`sdk/python`](sdk/python/README.md), [`bot-dispatcher`](services/bot-dispatcher/README.md) |
+| **AI agents** | Pipecat voice transport, live translation, object-detection bots | [AI Voice Agent](https://nttcom.github.io/moq-wasm/examples/moq-ai-voice-agent/), [`sdk/python`](sdk/python/README.md), [`bot-dispatcher`](services/bot-dispatcher/README.md), [`live-translate`](docs/architecture/live-translate/architecture.md) |
 | **Drones & robotics** | Camera feeds, action arbitration, dead-man hold | [`robotics`](docs/architecture/robotics/architecture.md), [`sdk/rust`](sdk/rust/README.md#a-robot), [`moq-robot-sim`](examples/rust/moq-robot-sim/README.md) |
 | **Cloud gaming & real-time game data** | WebCodecs video, unreliable datagrams, prioritized streams | [Datagram](https://nttcom.github.io/moq-wasm/examples/datagram/), [`moqt`](crates/moqt/README.md) |
 
@@ -88,7 +88,7 @@ All three SDKs interoperate, follow `GOAWAY`, reconnect automatically, and suppo
 | --- | --- |
 | [`services/relay`](services/relay/README.md) | MoQT relay (QUIC, WebTransport, WebSocket on one port), `FETCH` cache, cascading, draft-14/18 |
 | [`services/vts`](services/vts/README.md) · [`services/console`](services/console/README.md) · [`services/temporary-apps`](services/temporary-apps/README.md) | JWT verification (VTS), app/token console, and temporary-app (`temp-*`) token mint / bot-launch proxy |
-| [`services/bot-dispatcher`](services/bot-dispatcher/README.md) · [`services/live-translate`](docs/architecture/live-translate/architecture.md) | On-demand room bot launcher and live audio translation |
+| [`services/bot-dispatcher`](services/bot-dispatcher/README.md) | On-demand room bot launcher |
 | [`services/observability`](docs/architecture/observability/architecture.md) | Client telemetry collector and OTLP forwarder ([design](docs/architecture/telemetry/architecture.md)) |
 
 ### Media & telephony gateways

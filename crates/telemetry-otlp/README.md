@@ -2,7 +2,7 @@
 
 Shared `tracing` and OpenTelemetry (OTLP) bootstrap for workspace server binaries: stdout/stderr logs, optional OTLP traces/logs/metrics, `EventLogger` for structured data records, and W3C Trace Context propagation.
 
-> **Workspace crate**: Internal library used by every service under `services/` (`relay`, `ingest-gateway`, `egress-gateway`, `sip-gateway`, `recorder`, `vts`, `console`, `bot-dispatcher`, `live-translate`, `observability`, `temporary-apps`) and `auth-token` (`vts-client`). Native-only.
+> **Workspace crate**: Internal library used by every service under `services/` (`relay`, `ingest-gateway`, `egress-gateway`, `sip-gateway`, `recorder`, `vts`, `console`, `bot-dispatcher`, `observability`, `temporary-apps`), the `live-translate` example, and `auth-token` (`vts-client`). Native-only.
 
 ## Usage
 
