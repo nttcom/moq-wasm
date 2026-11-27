@@ -46,8 +46,6 @@ async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<Sub
         .subscribe_current_group(namespace, CATALOG_TRACK_NAME, GroupStartOptions::default())
         .await
         .with_context(|| format!("failed to subscribe {track_namespace}/{CATALOG_TRACK_NAME}"))?;
-    // Starts at the current group, or asks a track with long groups to start
-    // one (draft-18 §5.1.3.1).
     let media = session
         .subscribe_group_start(namespace, &track.name, 0, GroupStartOptions::default())
         .await

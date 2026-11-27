@@ -20,9 +20,6 @@ pub async fn connect_relay(relay: &RelayArgs) -> Result<Session> {
     moq_wasm::connect(relay.url.as_str(), options).await
 }
 
-/// The session asks for a later token 5 minutes before the current one
-/// expires and every 30 s after that; the file is re-read each time until it
-/// holds a new token.
 fn refresh_from_file(path: PathBuf) -> RefreshToken {
     RefreshToken::new(move |current| {
         let path = path.clone();
@@ -38,8 +35,6 @@ fn refresh_from_file(path: PathBuf) -> RefreshToken {
     })
 }
 
-/// Runs `work` until it ends or the relay session does, then closes the
-/// session.
 pub async fn run_until_closed(
     session: &Session,
     work: impl Future<Output = Result<()>>,
