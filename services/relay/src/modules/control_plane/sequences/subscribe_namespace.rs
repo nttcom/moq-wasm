@@ -553,8 +553,9 @@ async fn subscribe_at_publisher_relays(
 /// Call before subscribing the wider namespace (draft-18 §10.18 refuses an
 /// overlap). Their publications leave the directory here and their
 /// PUBLISH_NAMESPACE_DONEs are ignored, so clients keep the namespaces the
-/// wider subscription announces again; one announced on them after this is
-/// withdrawn by `RelayNamespaceSubscriptions::defer_withdrawal` instead.
+/// wider subscription announces again; the PUBLISH_NAMESPACE_DONE of one
+/// announced on them after this waits for
+/// `RelayNamespaceSubscriptions::finish_replacement`.
 async fn end_replaced_subscriptions(
     session_id: SessionId,
     replaced: &[String],
@@ -1081,7 +1082,6 @@ mod tests {
         (ctx, manager, publisher_relay)
     }
 
-    /// relay-b's PUBLISH_NAMESPACE of `track_namespace` as `request_id`.
     async fn announce_from_publisher_relay(
         ctx: &DownstreamPublishContext,
         manager: &InterRelayConnectionManager,
@@ -1105,7 +1105,6 @@ mod tests {
             .await;
     }
 
-    /// relay-b's PUBLISH_NAMESPACE_DONE ending its PUBLISH_NAMESPACE `request_id`.
     async fn withdraw_from_publisher_relay(
         ctx: &DownstreamPublishContext,
         manager: &InterRelayConnectionManager,

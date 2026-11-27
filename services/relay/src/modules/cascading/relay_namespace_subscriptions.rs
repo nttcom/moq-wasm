@@ -28,8 +28,8 @@ struct State {
 
 struct Replacement {
     prefixes: Vec<String>,
-    /// Namespaces under `prefixes` withdrawn while the replacement is
-    /// answered; the caller decides after the answer whether clients lose them.
+    /// Namespaces under `prefixes` whose PUBLISH_NAMESPACE_DONE arrived before
+    /// the replacement was answered.
     withdrawn: Vec<String>,
 }
 
@@ -103,7 +103,6 @@ impl RelayNamespaceSubscriptions {
             .remove(&(session_id, track_namespace.to_string()))
     }
 
-    /// Sessions holding a subscription under `track_namespace_prefix`.
     pub(crate) fn sessions_under_prefix(&self, track_namespace_prefix: &str) -> HashSet<SessionId> {
         self.lock()
             .subscribed
@@ -160,9 +159,9 @@ impl RelayNamespaceSubscriptions {
         self.lock().superseded.remove(&(session_id, request_id))
     }
 
-    /// Returns true, recording the namespace for `finish_replacement`, when
-    /// it lies under a subscription of the session being replaced: the
-    /// withdrawal may only end that subscription's request.
+    /// Holds back the withdrawal for `finish_replacement` when the namespace
+    /// lies under a subscription the session is replacing, since the
+    /// PUBLISH_NAMESPACE_DONE may only end that subscription's request.
     pub(crate) fn defer_withdrawal(&self, session_id: SessionId, track_namespace: &str) -> bool {
         let mut state = self.lock();
         let Some(replacement) = state.replacing.get_mut(&session_id) else {

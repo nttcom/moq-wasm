@@ -46,9 +46,8 @@ impl PublishNamespaceDone {
             tracing::debug!(session_id, request_id, %track_namespace, "withdrawal of a replaced namespace subscription ignored");
             return;
         }
-        // A namespace announced on a replaced subscription after it was
-        // superseded: whether clients lose it is decided once the wider
-        // subscription is answered.
+        // Announced on a replaced subscription after it was superseded, so
+        // whether clients lose it waits for the wider subscription's answer.
         if !is_origin_client
             && cascading_relay_context
                 .inter_relay_connection_manager
