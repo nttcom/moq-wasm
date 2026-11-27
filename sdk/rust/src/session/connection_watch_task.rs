@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use moqt::{
     client,
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop},
 };
 use tokio::sync::watch;
 
@@ -10,7 +10,7 @@ use super::{SessionEnd, end};
 
 /// Ends the session with `ConnectionLost` once its last connection closed.
 pub(super) struct ConnectionWatchTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl ConnectionWatchTask {
@@ -21,13 +21,10 @@ impl ConnectionWatchTask {
         let join_handle = executor::spawn("moq-wasm-connection-watch", async move {
             let close = client.closed().await;
             end(&end_sender, SessionEnd::ConnectionLost(close));
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for ConnectionWatchTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 use moqt::{
     client::{self, NamespaceWatch},
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop},
 };
 use tokio::time::Instant;
 
@@ -82,7 +82,7 @@ fn skips(client: &client::Session, options: &WatchOptions, namespace: &[String])
 
 /// One handler run, aborted when dropped.
 struct HandlerTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl HandlerTask {
@@ -94,14 +94,11 @@ impl HandlerTask {
             if let Err(error) = handler.await {
                 tracing::warn!(error = %format!("{error:#}"), track_namespace, "broadcast handler failed");
             }
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for HandlerTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }
 

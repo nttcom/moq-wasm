@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use moqt::{
     client,
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop},
 };
 use tokio::sync::watch;
 
@@ -14,7 +14,7 @@ use crate::token::TokenKeeper;
 /// refresh"). Ends the session with `TokenExpired` when the token expired
 /// unrefreshed.
 pub(super) struct TokenRefreshTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl TokenRefreshTask {
@@ -47,13 +47,10 @@ impl TokenRefreshTask {
                 end(&end_sender, SessionEnd::TokenExpired);
                 client.close().await;
             }
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for TokenRefreshTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }
